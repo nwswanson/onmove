@@ -1,11 +1,11 @@
-import type { HealthState } from '../../../../shared/contracts'
-import { UpdateTable } from '@/features/updates/update-table'
-import type { UpdateTableDraft } from '@/features/updates/update-table-contract'
+import type { HealthState, UpdateParent } from '../../../../shared/contracts'
+import { UpdateList } from '@/features/updates/update-list'
+import type { UpdateListDraft } from '@/features/updates/update-list-contract'
 import {
-  UPDATE_TABLE_STATE_OPTIONS,
-  updateTableRows
+  UPDATE_LIST_STATE_OPTIONS,
+  updateListItems
 } from '@/features/updates/updates-presenters'
-import { useCommitmentUpdatesModel } from '@/features/updates/use-commitment-updates-model'
+import { useUpdatesModel } from '@/features/updates/use-updates-model'
 
 function today(): string {
   const now = new Date()
@@ -14,27 +14,35 @@ function today(): string {
   return `${now.getFullYear()}-${month}-${day}`
 }
 
-export function CommitmentUpdates({
-  commitmentId,
+function parentLabel(parent: UpdateParent): string {
+  if (parent.type === 'focus') return 'Focus'
+  if (parent.type === 'thread') return 'Thread'
+  return 'Commitment'
+}
+
+export function DirectUpdates({
+  parent,
   onUpdatesChanged
 }: {
-  commitmentId: number
+  parent: UpdateParent
   onUpdatesChanged?: () => void | Promise<void>
 }): React.JSX.Element {
-  const model = useCommitmentUpdatesModel(commitmentId)
+  const model = useUpdatesModel(parent)
 
   async function changed(): Promise<void> {
     await onUpdatesChanged?.()
   }
 
   return (
-    <UpdateTable
-      rows={updateTableRows(model.updates)}
-      stateOptions={UPDATE_TABLE_STATE_OPTIONS}
+    <UpdateList
+      ariaLabel={`${parentLabel(parent)} updates`}
+      items={updateListItems(model.updates)}
+      stateOptions={UPDATE_LIST_STATE_OPTIONS}
       defaultDate={today()}
+      defaultState="none"
       loading={model.loading}
       loadError={model.loadError}
-      onCreate={async (draft: UpdateTableDraft) => {
+      onCreate={async (draft: UpdateListDraft) => {
         await model.createUpdate({
           date: draft.date,
           observation: draft.observation,

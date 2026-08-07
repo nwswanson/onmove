@@ -43,9 +43,10 @@ describe('Thread, Commitment, and Update models', () => {
       reviewFrequencyDays: 7,
       lastReviewDate: null,
       nextReviewDate: '2026-01-08',
-      needsReview: false
+      needsReview: true,
+      reviewDue: false
     })
-    expect(sprint.snapshot('2026-01-08').needsReview).toBe(true)
+    expect(sprint.snapshot('2026-01-08').reviewDue).toBe(true)
   })
 
   it('does not let active threads block closing their parent focus', () => {
@@ -229,7 +230,7 @@ describe('Thread, Commitment, and Update models', () => {
     expect(thread.snapshot('2026-01-01').health).toBe('green')
   })
 
-  it('uses effective date and then insertion order to derive the latest commitment state', () => {
+  it('uses the highest recorded date and then insertion order for the latest commitment update', () => {
     const focus = database!.domain.focuses.create({ title: 'Project execution' })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'focus', id: focus.id },
@@ -261,13 +262,42 @@ describe('Thread, Commitment, and Update models', () => {
       state: 'red'
     })
 
-    expect(commitment.snapshot('2026-01-06').state).toBe('red')
-    expect(commitment.snapshot('2026-01-10')).toMatchObject({
-      state: 'yellow',
-      lastUpdateDate: '2026-01-10'
+    expect(commitment.snapshot('2026-01-06')).toMatchObject({
+      state: 'red',
+      lastUpdateDate: '2027-01-01'
     })
-    expect(commitment.snapshot('2026-12-31').state).toBe('yellow')
+    expect(commitment.snapshot('2026-01-10')).toMatchObject({
+      state: 'red',
+      lastUpdateDate: '2027-01-01'
+    })
+    expect(commitment.snapshot('2026-12-31').state).toBe('red')
     expect(commitment.snapshot('2027-01-01').state).toBe('red')
+  })
+
+  it('includes a future-dated commitment update in its parent Thread health', () => {
+    const focus = database!.domain.focuses.create({ title: 'Project execution' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Sprint execution',
+      reviewFrequencyDays: 7
+    })
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Improve ticket quality'
+    })
+    database!.domain.updates.create({
+      parent: { type: 'commitment', id: commitment.id },
+      date: '2099-12-31',
+      observation: 'Deferred assessment',
+      state: 'red'
+    })
+
+    expect(commitment.snapshot('2026-01-01')).toMatchObject({
+      state: 'red',
+      lastUpdateDate: '2099-12-31'
+    })
+    expect(thread.snapshot('2026-01-01').health).toBe('red')
   })
 
   it('changes last review only when a direct thread update is recorded', () => {
@@ -291,12 +321,13 @@ describe('Thread, Commitment, and Update models', () => {
     expect(thread.snapshot('2026-01-09')).toMatchObject({
       lastReviewDate: null,
       nextReviewDate: '2026-01-08',
-      needsReview: true
+      needsReview: true,
+      reviewDue: true
     })
     thread.snapshot('2026-01-09')
     expect(thread.snapshot('2026-01-09').lastReviewDate).toBeNull()
 
-    database!.domain.updates.create({
+    const directReview = database!.domain.updates.create({
       parent: { type: 'thread', id: thread.id },
       date: '2026-01-03',
       observation: 'Sprint review completed',
@@ -305,12 +336,31 @@ describe('Thread, Commitment, and Update models', () => {
     expect(thread.snapshot('2026-01-09')).toMatchObject({
       lastReviewDate: '2026-01-03',
       nextReviewDate: '2026-01-10',
-      needsReview: false
+      needsReview: true,
+      reviewDue: false
     })
-    expect(thread.snapshot('2026-01-10').needsReview).toBe(true)
+    expect(thread.snapshot('2026-01-10').reviewDue).toBe(true)
+
+    thread.update({ needsReview: false })
+    expect(thread.snapshot('2026-01-10')).toMatchObject({
+      needsReview: false,
+      reviewDue: false,
+      lastReviewDate: '2026-01-03'
+    })
+
+    const laterReview = database!.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2026-01-05',
+      observation: 'A later direct review'
+    })
+    expect(thread.snapshot('2026-01-10').lastReviewDate).toBe('2026-01-05')
+    laterReview.update({ date: '2026-01-02' })
+    expect(thread.snapshot('2026-01-10').lastReviewDate).toBe('2026-01-03')
+    directReview.delete()
+    expect(thread.snapshot('2026-01-10').lastReviewDate).toBe('2026-01-02')
   })
 
-  it('derives cadence deadlines from the latest effective commitment update', () => {
+  it('derives cadence deadlines from the highest-dated commitment update', () => {
     const focus = database!.domain.focuses.create({ title: 'Project execution' })
     const commitment = database!.domain.commitments.create(
       {
@@ -340,6 +390,20 @@ describe('Thread, Commitment, and Update models', () => {
       needsUpdate: false
     })
     expect(commitment.snapshot('2026-01-15').needsUpdate).toBe(true)
+
+    database!.domain.updates.create({
+      parent: { type: 'commitment', id: commitment.id },
+      date: '2099-12-31',
+      observation: 'Intentionally defer the next update',
+      state: 'yellow'
+    })
+    expect(commitment.snapshot('2026-01-15')).toMatchObject({
+      state: 'yellow',
+      lastUpdateDate: '2099-12-31',
+      nextUpdateDate: '2100-01-07',
+      needsUpdate: false
+    })
+
     commitment.setStatus('paused')
     expect(commitment.snapshot('2026-01-15').needsUpdate).toBe(false)
   })
@@ -385,6 +449,14 @@ describe('Thread, Commitment, and Update models', () => {
         focusId: focus.id,
         title: 'Bad frequency',
         reviewFrequencyDays: 0
+      })
+    ).toThrow(ModelValidationError)
+    expect(() =>
+      database!.domain.threads.create({
+        focusId: focus.id,
+        title: 'Bad review flag',
+        reviewFrequencyDays: 7,
+        needsReview: 'yes' as never
       })
     ).toThrow(ModelValidationError)
     expect(() =>

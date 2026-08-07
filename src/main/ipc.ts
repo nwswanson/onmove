@@ -12,7 +12,9 @@ import {
   type FocusStatus,
   type SetItemStatusInput,
   type UpdateParent,
-  type UpdateFocusInput
+  type UpdateCommitmentInput,
+  type UpdateFocusInput,
+  type UpdateThreadInput
 } from '../shared/contracts'
 import type { AppDatabase } from './database'
 
@@ -78,6 +80,9 @@ export function registerAppIpc(
   ipcMain.handle(IPC_CHANNELS.createThread, (_event, input: CreateThreadInput) =>
     database.domain.threads.create(input).snapshot()
   )
+  ipcMain.handle(IPC_CHANNELS.updateThread, (_event, id: number, input: UpdateThreadInput) =>
+    database.domain.threads.requireModel(id).update(input).snapshot()
+  )
   ipcMain.handle(IPC_CHANNELS.listCommitments, (_event, parent: CommitmentParent) =>
     parent.type === 'focus'
       ? database.domain.commitments.listForFocus(parent.id)
@@ -85,6 +90,11 @@ export function registerAppIpc(
   )
   ipcMain.handle(IPC_CHANNELS.createCommitment, (_event, input: CreateCommitmentInput) =>
     database.domain.commitments.create(input).snapshot()
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.updateCommitment,
+    (_event, id: number, input: UpdateCommitmentInput) =>
+      database.domain.commitments.requireModel(id).update(input).snapshot()
   )
   ipcMain.handle(IPC_CHANNELS.listUpdates, (_event, parent: UpdateParent) => {
     if (parent.type === 'focus') return database.domain.updates.listForFocus(parent.id)

@@ -457,6 +457,21 @@ const migrations: readonly Migration[] = [
           ON updates(commitment_id, recorded_on DESC, id DESC);
       `)
     }
+  },
+  {
+    version: 8,
+    name: 'review_inclusion',
+    up(database) {
+      database.exec(`
+        ALTER TABLE focuses
+        ADD COLUMN needs_review INTEGER NOT NULL DEFAULT 1
+          CHECK (needs_review IN (0, 1));
+
+        ALTER TABLE threads
+        ADD COLUMN needs_review INTEGER NOT NULL DEFAULT 1
+          CHECK (needs_review IN (0, 1));
+      `)
+    }
   }
 ]
 

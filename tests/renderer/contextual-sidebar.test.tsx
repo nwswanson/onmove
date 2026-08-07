@@ -15,6 +15,7 @@ import type { StateLabelModel } from '../../src/renderer/src/components/ui/state
 interface TestItem {
   id: string
   label: string
+  description?: string
   disabled?: boolean
   stateLabel?: StateLabelModel
 }
@@ -117,6 +118,7 @@ describe('ContextualSidebarNavigation', () => {
       {
         id: 'quality',
         label: 'Improve ticket quality',
+        description: 'Last updated · 2026-08-07',
         stateLabel: { label: 'Red', tone: 'danger' }
       }
     ])
@@ -126,6 +128,7 @@ describe('ContextualSidebarNavigation', () => {
     expect(within(item).getByText('Red', { selector: '[data-tone="danger"]' })).toHaveClass(
       'bg-destructive'
     )
+    expect(within(item).getByText('Last updated · 2026-08-07')).toBeInTheDocument()
   })
 
   it('replaces levels, retains each parent selection, and navigates back globally', async () => {

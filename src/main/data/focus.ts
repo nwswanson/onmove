@@ -21,6 +21,8 @@ interface FocusRow {
   goal: string
   status: string
   status_changed_at: string
+  needs_review: number
+  last_review_date: string | null
   created_at: string
   updated_at: string
 }
@@ -77,6 +79,32 @@ function normalizeStatus(value: FocusStatus | undefined): FocusStatus {
   return status
 }
 
+function normalizeNeedsReview(value: boolean | undefined): boolean {
+  if (value === undefined) return true
+  if (typeof value !== 'boolean') {
+    throw new ModelValidationError('focus needsReview must be a boolean')
+  }
+  return value
+}
+
+function normalizeDate(value: string, field: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new ModelValidationError(`${field} must use YYYY-MM-DD`)
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`)
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+    throw new ModelValidationError(`${field} must be a real calendar date`)
+  }
+  return value
+}
+
+function today(now = new Date()): string {
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 function focusFromRow(row: FocusRow): FocusRecord {
   return {
     id: Number(row.id),
@@ -86,6 +114,8 @@ function focusFromRow(row: FocusRow): FocusRecord {
     goal: row.goal,
     status: row.status as FocusStatus,
     statusChangedAt: row.status_changed_at,
+    lastReviewDate: row.last_review_date,
+    needsReview: Boolean(row.needs_review),
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
@@ -141,6 +171,10 @@ export class FocusModel extends BaseModel<FocusRecord> {
     return this.repository.statusHistory(this.id)
   }
 
+  snapshot(asOf?: string): FocusSnapshot {
+    return asOf === undefined ? this.toSnapshot() : this.repository.materialize(this.id, asOf)
+  }
+
   toSnapshot(): FocusSnapshot {
     return structuredClone(this.record)
   }
@@ -159,14 +193,15 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
     const now = timestamp()
     const result = this.database.run(
       `INSERT INTO focuses (
-         kind, title, description, goal, status, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         kind, title, description, goal, status, needs_review, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         normalizeKind(input.kind),
         normalizeTitle(input.title),
         normalizeDescription(input.description),
         normalizeGoal(input.goal),
         normalizeStatus(input.status),
+        normalizeNeedsReview(input.needsReview) ? 1 : 0,
         now,
         now
       ]
@@ -175,20 +210,40 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
   }
 
   find(id: number): FocusRecord | null {
+    return this.materializeOrNull(id, today())
+  }
+
+  materialize(id: number, asOf = today()): FocusSnapshot {
+    const record = this.materializeOrNull(id, normalizeDate(asOf, 'asOf'))
+    if (!record) throw new ModelNotFoundError('Focus', id)
+    return record
+  }
+
+  private materializeOrNull(id: number, asOf: string): FocusRecord | null {
     assertId(id)
     const row = this.database.get<FocusRow>(
-      `SELECT id, kind, title, description, goal, status, status_changed_at, created_at, updated_at
+      `SELECT id, kind, title, description, goal, status, status_changed_at, needs_review,
+              created_at, updated_at,
+              (SELECT recorded_on FROM updates
+               WHERE focus_id = focuses.id AND recorded_on <= ?
+               ORDER BY recorded_on DESC, id DESC LIMIT 1) AS last_review_date
        FROM focuses WHERE id = ?`,
-      [id]
+      [asOf, id]
     )
     return row ? focusFromRow(row) : null
   }
 
-  list(): FocusSnapshot[] {
+  list(asOf = today()): FocusSnapshot[] {
+    const date = normalizeDate(asOf, 'asOf')
     return this.database
       .all<FocusRow>(
-        `SELECT id, kind, title, description, goal, status, status_changed_at, created_at, updated_at
-         FROM focuses ORDER BY id`
+        `SELECT id, kind, title, description, goal, status, status_changed_at, needs_review,
+                created_at, updated_at,
+                (SELECT recorded_on FROM updates
+                 WHERE focus_id = focuses.id AND recorded_on <= ?
+                 ORDER BY recorded_on DESC, id DESC LIMIT 1) AS last_review_date
+         FROM focuses ORDER BY id`,
+        [date]
       )
       .map(focusFromRow)
   }
@@ -199,7 +254,7 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
 
     this.database.run(
       `UPDATE focuses
-       SET title = ?, description = ?, goal = ?, status = ?, updated_at = ?
+       SET title = ?, description = ?, goal = ?, status = ?, needs_review = ?, updated_at = ?
        WHERE id = ?`,
       [
         input.title === undefined ? current.title : normalizeTitle(input.title),
@@ -208,6 +263,9 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
           : normalizeDescription(input.description),
         input.goal === undefined ? current.goal : normalizeGoal(input.goal),
         input.status === undefined ? current.status : normalizeStatus(input.status),
+        input.needsReview === undefined
+          ? (current.needsReview ? 1 : 0)
+          : (normalizeNeedsReview(input.needsReview) ? 1 : 0),
         timestamp(),
         id
       ]

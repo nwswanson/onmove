@@ -29,6 +29,17 @@ Thread, or Commitment. SQLite requires exactly one valid parent for every Commit
 
 ## Entities
 
+### Focus
+
+| Field | Meaning |
+| --- | --- |
+| `lastReviewDate` | Derived date of the newest effective Update directly on this Focus. |
+| `needsReview` | Persisted inclusion policy; false excludes the Focus from review workflows without changing its lifecycle status. |
+
+Recording a direct Focus Update is the explicit act that reviews the Focus. Updates on its Threads
+or Commitments do not advance the Focus review date. `lastReviewDate` is a projection and is never
+written directly.
+
 ### Thread
 
 | Field | Meaning |
@@ -40,11 +51,13 @@ Thread, or Commitment. SQLite requires exactly one valid parent for every Commit
 | `reviewFrequencyDays` | Positive whole-number review interval. |
 | `lastReviewDate` | Derived date of the newest effective Update directly on this Thread. |
 | `nextReviewDate` | `lastReviewDate + reviewFrequencyDays`; creation date is the initial baseline. |
-| `needsReview` | True on or after `nextReviewDate`, but only while the Thread is active. |
+| `needsReview` | Persisted inclusion policy; false excludes the Thread from review workflows. |
+| `reviewDue` | True on or after `nextReviewDate` only when the Thread is active and included in reviews. |
 
 In this first version, recording a direct Thread Update is the explicit act that completes a review.
 Opening, selecting, or materializing a Thread does not change `lastReviewDate`. Updates on one of its
-Commitments also do not count as a Thread review.
+Commitments also do not count as a Thread review. The persisted `needsReview` flag is independent of
+status; clearing it suppresses `reviewDue` without pausing or closing the Thread.
 
 ### Commitment
 
@@ -57,13 +70,18 @@ Commitments also do not count as a Thread review.
 | `dueDate` | Optional calendar date. |
 | `cadenceDays` | Optional positive update interval. |
 | `status` | `active`, `paused`, `done`, or `cancelled`, with immutable transition history. |
-| `state` | State of the latest effective Update, or `none` when there is no Update. |
-| `lastUpdateDate` | Effective date of that latest Update. |
+| `state` | State of the Update with the highest recorded date, or `none` when there is no Update. |
+| `lastUpdateDate` | Recorded date of that latest Update, including a future date. |
 | `nextUpdateDate` | Latest Update date plus cadence; creation date is the initial baseline. |
 | `needsUpdate` | True when cadence is due and the Commitment is active. |
 
 Commitments are promises, standards, or expectations—not todo items. Completing a Focus does not
 require every Commitment or Thread to be closed first.
+
+A Commitment Update's recorded date orders the projection; it is not an activation date. A
+future-dated Update therefore becomes the Commitment's current state and cadence baseline
+immediately. This permits deliberate deferral for now; review-specific future-date policy remains a
+separate concern.
 
 ### Update
 
@@ -81,6 +99,10 @@ cadence projections before its date.
 Date, observation, and state are editable without changing the Update's parent or identity. An
 Update can also be deleted. Every edit or deletion immediately changes any derived Commitment state,
 Thread health, review date, or cadence projection that depends on the affected observation.
+
+In the UI, Add update immediately inserts a valid blank Update using today's local date and `none`
+state. There is no separate unsaved draft or Create confirmation. Once inserted, all three fields use
+the standard throttled autosave behavior.
 
 ## Naive Thread health rule
 
@@ -155,6 +177,8 @@ The materialized result is:
 Sprint execution.health              yellow
 Sprint execution.lastReviewDate      2026-02-03
 Sprint execution.nextReviewDate      2026-02-10
+Sprint execution.needsReview         true
+Sprint execution.reviewDue           false
 Improve ticket quality.state         yellow
 Improve ticket quality.nextUpdateDate 2026-02-10
 ```
@@ -195,14 +219,29 @@ Thread and Commitment may remain active because they are evidence and dimensions
 ## Current UI boundary
 
 - The named IPC surface lists, creates, edits, and deletes Updates without exposing repository
-  dispatch or SQL. The Commitment page presents its direct Updates in an inline editable table.
+  dispatch or SQL. Focus Overall and the Commitment page present their own direct Updates as
+  responsive editor cards; neither surface includes descendant Updates.
 - Focus and contextual-sidebar Commitment rows show `CommitmentSnapshot.state` as a labeled
   semantic badge. The renderer consumes that model projection directly rather than recomputing the
-  latest Update.
-- Update rows use a receiver-owned table contract. Domain snapshots are translated into date,
-  observation, and state fields; the table owns editors, state labels, colors, validation, and row
+  latest Update. Every Commitment representation also shows `lastUpdateDate` as “Last updated,”
+  including the main list, contextual sidebar, Commitment screen, and context drawer; an empty
+  history is displayed as `Never`.
+- Commitment lists show lifecycle status as a read-only semantic label. The selected Commitment
+  screen owns a compact status selector for `active`, `paused`, `done`, and `cancelled`; it writes
+  through the named typed IPC method and therefore preserves the SQLite status-transition audit.
+- A pure feature view-model projection supplies every Commitment list. Active records come first in
+  `red`, `yellow`, `green`, then `none` state order; Paused records follow; Done and Cancelled records
+  share the final closed group. Equal priorities retain repository order. The Focus screen renders
+  Current (with Active and Paused subsections) separately from Done / Cancelled, and the contextual
+  sidebar consumes the same ordered groups.
+- Update cards use a receiver-owned list contract. Domain snapshots are translated into date,
+  observation, and state fields; the list owns editors, state labels, colors, validation, and item
   actions. Observation uses the shared lightweight rich-text editor and remains optional.
-- Updates on Focuses and Threads are supported by the model but do not yet have UI surfaces.
+- Updates on Threads are supported by the model but do not yet have a UI surface.
+- Mutating a direct Focus Update refreshes the Focus projection so `lastReviewDate` changes in the
+  Overall header and inspector without requiring navigation or relaunch.
+- Focus and Thread inspectors show their derived `lastReviewDate` and expose the persisted
+  `needsReview` inclusion flag through the generic drawer checkbox contract.
 - Health is implemented only for Threads; a later Focus-level rollup can compose Thread health and
   direct Focus evidence.
 - Cadence currently reports when an Update is due. Notification scheduling is a later concern.

@@ -237,7 +237,7 @@ function HomeView({
           errorMessage: 'The example item could not be updated.',
           onInvoke: (values) => {
             onChange({
-              title: values.title,
+              title: typeof values.title === 'string' ? values.title : '',
               status: values.status as HomeExample['status']
             })
             contextDrawer.onClose()
@@ -374,6 +374,7 @@ export function App(): React.JSX.Element {
               focus={selectedFocus}
               contextDrawer={contextDrawer}
               onUpdateFocus={(input) => application.updateFocus(selectedFocus.id, input)}
+              onRefreshFocus={() => application.refreshFocus(selectedFocus.id)}
               onDeleteFocus={() => deleteFocus(selectedFocus.id)}
             />
           ) : (

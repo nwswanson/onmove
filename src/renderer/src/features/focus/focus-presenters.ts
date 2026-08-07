@@ -1,13 +1,20 @@
 import type {
   CommitmentSnapshot,
+  CommitmentStatus,
   FocusSnapshot,
   FocusStatus,
   ThreadSnapshot,
-  UpdateFocusInput
+  UpdateFocusInput,
+  UpdateThreadInput
 } from '../../../../shared/contracts'
-import type { ContextDrawerAdapter } from '@/components/ui/context-drawer'
+import type {
+  ContextDrawerAdapter,
+  ContextDrawerValues
+} from '@/components/ui/context-drawer'
 import type { ContextualSidebarItemModel } from '@/components/ui/contextual-sidebar'
+import type { LifecycleStatusOptionModel } from '@/components/ui/lifecycle-status'
 import type { SidebarNavigationItemModel } from '@/components/ui/sidebar-navigation'
+import { buildCommitmentListModel } from '@/features/focus/commitment-list-model'
 import { healthStateLabel } from '@/features/shared/state-presenters'
 
 const FOCUS_STATUS_OPTIONS = [
@@ -16,6 +23,35 @@ const FOCUS_STATUS_OPTIONS = [
   { value: 'cancelled', label: 'Cancelled' },
   { value: 'done', label: 'Done' }
 ] as const
+
+export const COMMITMENT_STATUS_OPTIONS = [
+  { value: 'active', label: 'Active', tone: 'primary' },
+  { value: 'paused', label: 'Paused', tone: 'neutral' },
+  { value: 'done', label: 'Done', tone: 'success' },
+  { value: 'cancelled', label: 'Cancelled', tone: 'danger' }
+] as const satisfies readonly LifecycleStatusOptionModel[]
+
+/** Translate a domain lifecycle status into the receiver-owned visual contract. */
+export function commitmentStatusLabel(
+  status: CommitmentStatus
+): LifecycleStatusOptionModel {
+  const option = COMMITMENT_STATUS_OPTIONS.find((candidate) => candidate.value === status)
+  if (!option) throw new Error(`Unsupported Commitment status "${status}".`)
+  return option
+}
+
+function textValue(values: ContextDrawerValues, id: string): string {
+  const value = values[id]
+  return typeof value === 'string' ? value : ''
+}
+
+function booleanValue(values: ContextDrawerValues, id: string): boolean {
+  return values[id] === true
+}
+
+export function dateOrNeverLabel(value: string | null): string {
+  return value ?? 'Never'
+}
 
 export function focusPrimaryNavigationItems(
   focuses: readonly FocusSnapshot[]
@@ -60,13 +96,20 @@ export function focusContextSidebarItems(
 export function commitmentContextSidebarItems(
   commitments: readonly CommitmentSnapshot[]
 ): ContextualSidebarItemModel[] {
-  return commitments.map((commitment) => ({
-    id: String(commitment.id),
-    label: commitment.title,
-    lines: 2,
-    stateLabel: healthStateLabel(commitment.state),
-    accessory: 'disclosure'
-  }))
+  return buildCommitmentListModel(commitments).groups.flatMap((group) =>
+    group.commitments.map((commitment) => {
+      const status = commitmentStatusLabel(commitment.status)
+      return {
+        id: String(commitment.id),
+        label: commitment.title,
+        description: `${status.label} · Last updated · ${dateOrNeverLabel(commitment.lastUpdateDate)}`,
+        group: { id: group.id, label: group.label },
+        lines: 2,
+        stateLabel: healthStateLabel(commitment.state),
+        accessory: 'disclosure'
+      }
+    })
+  )
 }
 
 export function focusDrawerAdapter({
@@ -97,19 +140,32 @@ export function focusDrawerAdapter({
               required: true
             },
             {
-              kind: 'rich-text',
-              id: 'description',
-              label: 'Description / notes',
-              value: focus.description ?? ''
-            },
-            {
               kind: 'select',
               id: 'status',
               label: 'Status',
               value: focus.status,
               options: FOCUS_STATUS_OPTIONS
             },
-            { kind: 'static', id: 'kind', label: 'Kind', value: focus.kind }
+            { kind: 'static', id: 'kind', label: 'Kind', value: focus.kind },
+            {
+              kind: 'static',
+              id: 'last-reviewed',
+              label: 'Last reviewed',
+              value: dateOrNeverLabel(focus.lastReviewDate)
+            },
+            {
+              kind: 'checkbox',
+              id: 'needs-review',
+              label: 'Needs review',
+              value: focus.needsReview,
+              description: 'Include this Focus in review workflows.'
+            },
+            {
+              kind: 'rich-text',
+              id: 'description',
+              label: 'Description / notes',
+              value: focus.description ?? ''
+            }
           ]
         }
       ],
@@ -118,8 +174,11 @@ export function focusDrawerAdapter({
         errorMessage: 'The focus text could not be saved. Please try again.',
         onInvoke: (values) =>
           onSave({
-            title: values.title,
-            description: values.description.trim().length === 0 ? null : values.description
+            title: textValue(values, 'title'),
+            description:
+              textValue(values, 'description').trim().length === 0
+                ? null
+                : textValue(values, 'description')
           })
       },
       actions: [
@@ -147,10 +206,13 @@ export function focusDrawerAdapter({
           errorMessage: 'The focus could not be updated. Please try again.',
           onInvoke: (values) =>
             onSave({
-              title: values.title,
+              title: textValue(values, 'title'),
               description:
-                values.description.trim().length === 0 ? null : values.description,
-              status: values.status as FocusStatus
+                textValue(values, 'description').trim().length === 0
+                  ? null
+                  : textValue(values, 'description'),
+              status: textValue(values, 'status') as FocusStatus,
+              needsReview: booleanValue(values, 'needs-review')
             })
         }
       ]
@@ -160,7 +222,8 @@ export function focusDrawerAdapter({
 
 export function threadDrawerAdapter(
   thread: ThreadSnapshot,
-  parentTitle: string
+  parentTitle: string,
+  onSave: (input: UpdateThreadInput) => Promise<void>
 ): ContextDrawerAdapter {
   return {
     id: `thread:${thread.id}`,
@@ -187,9 +250,31 @@ export function threadDrawerAdapter(
               id: 'review-frequency',
               label: 'Review frequency',
               value: `${thread.reviewFrequencyDays} days`
+            },
+            {
+              kind: 'static',
+              id: 'last-reviewed',
+              label: 'Last reviewed',
+              value: dateOrNeverLabel(thread.lastReviewDate)
+            },
+            {
+              kind: 'checkbox',
+              id: 'needs-review',
+              label: 'Needs review',
+              value: thread.needsReview,
+              description: 'Include this Thread in review workflows.'
             }
-          ],
-          note: 'No editable settings here yet.'
+          ]
+        }
+      ],
+      actions: [
+        {
+          id: 'save',
+          label: 'Save changes',
+          pendingLabel: 'Saving…',
+          errorMessage: 'The thread could not be updated. Please try again.',
+          onInvoke: (values) =>
+            onSave({ needsReview: booleanValue(values, 'needs-review') })
         }
       ]
     }
@@ -239,6 +324,12 @@ export function commitmentDrawerAdapter(
               label: 'State',
               value: commitment.state,
               capitalization: 'capitalize'
+            },
+            {
+              kind: 'static',
+              id: 'last-updated',
+              label: 'Last updated',
+              value: dateOrNeverLabel(commitment.lastUpdateDate)
             }
           ],
           note: 'No editable settings here yet.'

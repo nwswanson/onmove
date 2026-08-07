@@ -90,20 +90,32 @@ describe('database migrations', () => {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       ) STRICT;
+      CREATE TABLE threads (
+        id INTEGER PRIMARY KEY
+      ) STRICT;
       INSERT INTO focuses (
         kind, title, description, status, status_changed_at, created_at, updated_at
       ) VALUES (
         'generic', 'Existing focus', NULL, 'active', NULL,
         '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
       );
+      INSERT INTO threads (id) VALUES (1);
     `)
     legacy.close()
 
     const database = new AppDatabase(databasePath)
-    expect(database.domain.focuses.list()).toMatchObject([
-      { title: 'Existing focus', goal: '' }
-    ])
     database.close()
+
+    const migrated = new DatabaseSync(databasePath)
+    expect(migrated.prepare('SELECT title, goal, needs_review FROM focuses').get()).toMatchObject({
+      title: 'Existing focus',
+      goal: '',
+      needs_review: 1
+    })
+    expect(migrated.prepare('SELECT needs_review FROM threads').get()).toMatchObject({
+      needs_review: 1
+    })
+    migrated.close()
   })
 
   it('preserves existing updates while allowing state-only updates', () => {

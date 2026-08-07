@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type {
   CreateUpdateInput,
   EditUpdateInput,
+  UpdateParent,
   UpdateSnapshot
 } from '../../../../shared/contracts'
 
@@ -11,7 +12,13 @@ function sortUpdates(updates: readonly UpdateSnapshot[]): UpdateSnapshot[] {
   )
 }
 
-export interface CommitmentUpdatesModel {
+function updateParent(type: UpdateParent['type'], id: number): UpdateParent {
+  if (type === 'focus') return { type, id }
+  if (type === 'thread') return { type, id }
+  return { type, id }
+}
+
+export interface UpdatesModel {
   updates: UpdateSnapshot[]
   loading: boolean
   loadError: string | null
@@ -22,15 +29,17 @@ export interface CommitmentUpdatesModel {
   deleteUpdate: (id: number) => Promise<void>
 }
 
-/** Persistence-backed operations for direct updates on one Commitment. */
-export function useCommitmentUpdatesModel(commitmentId: number): CommitmentUpdatesModel {
+/** Persistence-backed operations for direct Updates on one typed domain parent. */
+export function useUpdatesModel(parent: UpdateParent): UpdatesModel {
+  const parentType = parent.type
+  const parentId = parent.id
   const [updates, setUpdates] = useState<UpdateSnapshot[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
-    window.onmove.domain.listUpdates({ type: 'commitment', id: commitmentId }).then(
+    window.onmove.domain.listUpdates(updateParent(parentType, parentId)).then(
       (nextUpdates) => {
         if (!active) return
         setUpdates(sortUpdates(nextUpdates))
@@ -45,14 +54,14 @@ export function useCommitmentUpdatesModel(commitmentId: number): CommitmentUpdat
     return () => {
       active = false
     }
-  }, [commitmentId])
+  }, [parentId, parentType])
 
   async function createUpdate(
     input: Omit<CreateUpdateInput, 'parent'>
   ): Promise<UpdateSnapshot> {
     const created = await window.onmove.domain.createUpdate({
       ...input,
-      parent: { type: 'commitment', id: commitmentId }
+      parent: updateParent(parentType, parentId)
     })
     setUpdates((current) => sortUpdates([...current, created]))
     return created

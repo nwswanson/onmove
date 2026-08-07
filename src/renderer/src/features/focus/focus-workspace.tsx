@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import {
   ChevronRight,
   Info
 } from 'lucide-react'
 import type {
+  CommitmentSnapshot,
+  CommitmentStatus,
   CreateCommitmentInput,
   CreateThreadInput,
   FocusSnapshot,
@@ -24,12 +26,19 @@ import {
 } from '@/components/ui/contextual-sidebar'
 import { Dialog, DialogField } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import {
+  LifecycleStatusLabel,
+  LifecycleStatusSelect
+} from '@/components/ui/lifecycle-status'
 import { RichTextContent, RichTextEditor } from '@/components/ui/rich-text-editor'
 import { StateLabel } from '@/components/ui/state-label'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
 import {
+  COMMITMENT_STATUS_OPTIONS,
   commitmentContextSidebarItems,
   commitmentDrawerAdapter,
+  commitmentStatusLabel,
+  dateOrNeverLabel,
   focusContextSidebarItems,
   focusDrawerAdapter,
   threadDrawerAdapter,
@@ -37,7 +46,7 @@ import {
 } from '@/features/focus/focus-presenters'
 import { useFocusWorkspaceModel } from '@/features/focus/use-focus-workspace-model'
 import { healthStateLabel } from '@/features/shared/state-presenters'
-import { CommitmentUpdates } from '@/features/updates/commitment-updates'
+import { DirectUpdates } from '@/features/updates/direct-updates'
 
 const CONTEXTUAL_SIDEBAR_MIN = 220
 const CONTEXTUAL_SIDEBAR_MAX = 320
@@ -209,6 +218,7 @@ interface FocusWorkspaceProps {
   focus: FocusSnapshot
   contextDrawer: ContextDrawerControl
   onUpdateFocus: (input: UpdateFocusInput) => Promise<void>
+  onRefreshFocus: () => Promise<FocusSnapshot>
   onDeleteFocus: () => Promise<void>
 }
 
@@ -216,12 +226,18 @@ export function FocusWorkspace({
   focus,
   contextDrawer,
   onUpdateFocus,
+  onRefreshFocus,
   onDeleteFocus
 }: FocusWorkspaceProps): React.JSX.Element {
   const model = useFocusWorkspaceModel({ focus, onUpdateFocus })
   const [newThreadOpen, setNewThreadOpen] = useState(false)
   const [newCommitmentOpen, setNewCommitmentOpen] = useState(false)
   const [contextualSidebarWidth, setContextualSidebarWidth] = useState(252)
+  const [commitmentStatusSavingId, setCommitmentStatusSavingId] = useState<number | null>(null)
+  const [commitmentStatusError, setCommitmentStatusError] = useState<{
+    id: number
+    message: string
+  } | null>(null)
 
   const [focusLevel] = useState(
     () =>
@@ -282,7 +298,9 @@ export function FocusWorkspace({
     : navigationSnapshot.level === commitmentsLevel
       ? null
       : selectedThread
-        ? threadDrawerAdapter(selectedThread, focus.title)
+        ? threadDrawerAdapter(selectedThread, focus.title, (input) =>
+            model.updateThread(selectedThread.id, input).then(() => undefined)
+          )
         : focusDrawerAdapter({ focus, onSave: onUpdateFocus, onDelete: onDeleteFocus })
 
   async function createThread(input: CreateThreadInput): Promise<void> {
@@ -300,9 +318,100 @@ export function FocusWorkspace({
     }
   }
 
+  async function updateCommitmentStatus(
+    commitmentId: number,
+    status: CommitmentStatus
+  ): Promise<void> {
+    setCommitmentStatusSavingId(commitmentId)
+    setCommitmentStatusError(null)
+    try {
+      const updated = await model.updateCommitment(commitmentId, { status })
+      if (contextDrawer.pinnedAdapter?.id === `commitment:${commitmentId}`) {
+        contextDrawer.onPin(
+          commitmentDrawerAdapter(updated, focus.title, [`focus:${focus.id}`])
+        )
+      }
+    } catch {
+      setCommitmentStatusError({
+        id: commitmentId,
+        message: 'The commitment status could not be updated. Please try again.'
+      })
+    } finally {
+      setCommitmentStatusSavingId(null)
+    }
+  }
+
+  async function refreshFocusAfterUpdates(): Promise<void> {
+    const updated = await onRefreshFocus()
+    if (contextDrawer.pinnedAdapter?.id === `focus:${focus.id}`) {
+      contextDrawer.onPin(
+        focusDrawerAdapter({
+          focus: updated,
+          onSave: onUpdateFocus,
+          onDelete: onDeleteFocus
+        })
+      )
+    }
+  }
+
   function openCommitments(commitmentId?: number): void {
     navigation.navigateTo(commitmentsLevel)
     if (commitmentId !== undefined) navigation.select(String(commitmentId))
+  }
+
+  function renderCommitmentRow(commitment: CommitmentSnapshot): React.JSX.Element {
+    return (
+      <div
+        key={commitment.id}
+        role="listitem"
+        className="flex items-center border-b border-border/65 last:border-b-0"
+      >
+        <button
+          type="button"
+          className="flex min-h-11 min-w-0 flex-1 items-center gap-3 px-3 text-left text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/55"
+          aria-label={`Open commitment ${commitment.title}`}
+          aria-describedby={`commitment-${commitment.id}-last-updated`}
+          onClick={() => openCommitments(commitment.id)}
+        >
+          <span className="min-w-0 flex-1">
+            <span className="block truncate">{commitment.title}</span>
+            <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <LifecycleStatusLabel
+                model={commitmentStatusLabel(commitment.status)}
+                size="compact"
+              />
+              <span
+                id={`commitment-${commitment.id}-last-updated`}
+                className="min-w-0 truncate text-xs text-muted-foreground"
+              >
+                Last updated · {dateOrNeverLabel(commitment.lastUpdateDate)}
+              </span>
+            </span>
+          </span>
+          <StateLabel model={healthStateLabel(commitment.state)} size="compact" />
+          <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
+        </button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="mr-1 size-8 text-muted-foreground"
+          aria-label={`Pin commitment ${commitment.title} in context drawer`}
+          title="Pin in context drawer"
+          onClick={() =>
+            contextDrawer.onPin(
+              commitmentDrawerAdapter(
+                commitment,
+                focus.title,
+                [`focus:${focus.id}`]
+              )
+            )
+          }
+        >
+          <Info aria-hidden="true" />
+        </Button>
+      </div>
+    )
   }
 
   const main = (
@@ -311,15 +420,43 @@ export function FocusWorkspace({
           <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="commitment-heading">
             {selectedCommitment ? (
               <>
-                <p className="mb-2 text-[0.6875rem] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
-                  Commitment
-                </p>
-                <h1 id="commitment-heading" className="text-2xl font-semibold tracking-[-0.025em]">
-                  {selectedCommitment.title}
-                </h1>
-                <CommitmentUpdates
+                <div className="flex items-start justify-between gap-4 border-b border-border/70 pb-5">
+                  <div className="min-w-0 flex-1">
+                    <p className="mb-2 text-[0.6875rem] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
+                      Commitment
+                    </p>
+                    <h1 id="commitment-heading" className="text-2xl font-semibold tracking-[-0.025em]">
+                      {selectedCommitment.title}
+                    </h1>
+                    <p
+                      aria-label="Commitment last updated"
+                      className="mt-2 text-xs text-muted-foreground"
+                    >
+                      <span className="font-medium text-foreground/80">Last updated</span>
+                      {' · '}{dateOrNeverLabel(selectedCommitment.lastUpdateDate)}
+                    </p>
+                  </div>
+                  <LifecycleStatusSelect
+                    aria-label="Commitment status"
+                    value={selectedCommitment.status}
+                    options={COMMITMENT_STATUS_OPTIONS}
+                    disabled={commitmentStatusSavingId === selectedCommitment.id}
+                    onValueChange={(status) =>
+                      void updateCommitmentStatus(
+                        selectedCommitment.id,
+                        status as CommitmentStatus
+                      )
+                    }
+                  />
+                </div>
+                {commitmentStatusError?.id === selectedCommitment.id && (
+                  <p role="alert" className="mt-3 text-xs text-destructive">
+                    {commitmentStatusError.message}
+                  </p>
+                )}
+                <DirectUpdates
                   key={selectedCommitment.id}
-                  commitmentId={selectedCommitment.id}
+                  parent={{ type: 'commitment', id: selectedCommitment.id }}
                   onUpdatesChanged={model.refreshCommitments}
                 />
               </>
@@ -337,6 +474,13 @@ export function FocusWorkspace({
             <h1 id="thread-heading" className="text-2xl font-semibold tracking-[-0.025em]">
               {selectedThread.title}
             </h1>
+            <p
+              aria-label="Thread last reviewed"
+              className="mt-2 text-xs text-muted-foreground"
+            >
+              <span className="font-medium text-foreground/80">Last reviewed</span>
+              {' · '}{dateOrNeverLabel(selectedThread.lastReviewDate)}
+            </p>
           </section>
         ) : (
           <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="focus-heading">
@@ -345,6 +489,13 @@ export function FocusWorkspace({
                 <h1 id="focus-heading" className="truncate text-2xl font-semibold tracking-[-0.025em]">
                   {focus.title}
                 </h1>
+                <p
+                  aria-label="Focus last reviewed"
+                  className="mt-1.5 text-xs text-muted-foreground"
+                >
+                  <span className="font-medium text-foreground/80">Last reviewed</span>
+                  {' · '}{dateOrNeverLabel(focus.lastReviewDate)}
+                </p>
                 {focus.description ? (
                   <RichTextContent
                     value={focus.description}
@@ -390,53 +541,68 @@ export function FocusWorkspace({
                 </h2>
               </div>
 
-              <div className="overflow-hidden rounded-xl border border-border/80 bg-card/45">
-                <div role="list" aria-label="Focus commitments">
-                  {model.commitments.map((commitment) => (
-                    <div
-                      key={commitment.id}
-                      role="listitem"
-                      className="flex items-center border-b border-border/65 last:border-b-0"
-                    >
-                      <button
-                        type="button"
-                        className="flex min-h-11 min-w-0 flex-1 items-center gap-3 px-3 text-left text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/55"
-                        aria-label={`Open commitment ${commitment.title}`}
-                        onClick={() => openCommitments(commitment.id)}
-                      >
-                        <span className="min-w-0 flex-1 truncate">{commitment.title}</span>
-                        <StateLabel model={healthStateLabel(commitment.state)} size="compact" />
-                        <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
-                      </button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="mr-1 size-8 text-muted-foreground"
-                        aria-label={`Pin commitment ${commitment.title} in context drawer`}
-                        title="Pin in context drawer"
-                        onClick={() =>
-                          contextDrawer.onPin(
-                            commitmentDrawerAdapter(
-                              commitment,
-                              focus.title,
-                              [`focus:${focus.id}`]
-                            )
-                          )
-                        }
-                      >
-                        <Info aria-hidden="true" />
-                      </Button>
-                    </div>
-                  ))}
-                  {model.commitments.length === 0 && (
-                    <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                      No commitments
-                    </p>
-                  )}
-                </div>
+              <div className="space-y-5">
+                <section aria-labelledby="current-commitments-heading">
+                  <h3
+                    id="current-commitments-heading"
+                    className="mb-2 text-xs font-semibold text-muted-foreground"
+                  >
+                    Current
+                  </h3>
+                  <div
+                    role="list"
+                    aria-label="Current commitments"
+                    className="overflow-hidden rounded-xl border border-border/80 bg-card/45"
+                  >
+                    {model.commitmentList.groups.slice(0, 2).map((group) =>
+                      group.commitments.length > 0 ? (
+                        <Fragment key={group.id}>
+                          <div
+                            role="presentation"
+                            className="border-b border-border/65 bg-muted/35 px-3 py-1.5 text-[0.6875rem] font-semibold tracking-[0.06em] text-muted-foreground uppercase"
+                          >
+                            {group.label}
+                          </div>
+                          {group.commitments.map(renderCommitmentRow)}
+                        </Fragment>
+                      ) : null
+                    )}
+                    {model.commitmentList.current.length === 0 && (
+                      <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+                        No active or paused commitments
+                      </p>
+                    )}
+                  </div>
+                </section>
+
+                <section aria-labelledby="closed-commitments-heading">
+                  <h3
+                    id="closed-commitments-heading"
+                    className="mb-2 text-xs font-semibold text-muted-foreground"
+                  >
+                    Done / Cancelled
+                  </h3>
+                  <div
+                    role="list"
+                    aria-label="Done and cancelled commitments"
+                    className="overflow-hidden rounded-xl border border-border/80 bg-card/45"
+                  >
+                    {model.commitmentList.closed.map(renderCommitmentRow)}
+                    {model.commitmentList.closed.length === 0 && (
+                      <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+                        No done or cancelled commitments
+                      </p>
+                    )}
+                  </div>
+                </section>
               </div>
             </section>
+
+            <DirectUpdates
+              key={`focus-updates:${focus.id}`}
+              parent={{ type: 'focus', id: focus.id }}
+              onUpdatesChanged={refreshFocusAfterUpdates}
+            />
 
             {model.loadError && <p role="alert" className="mt-5 text-sm text-destructive">{model.loadError}</p>}
           </section>

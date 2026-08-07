@@ -27,6 +27,7 @@ export interface ContextualSidebarItemGroup {
 export interface ContextualSidebarItemModel {
   id: string
   label: string
+  description?: string
   ariaLabel?: string
   group?: ContextualSidebarItemGroup
   icon?: 'overview' | 'item' | 'paused'
@@ -196,6 +197,11 @@ export class ContextualSidebarLevel extends ContextualSidebarLevelBase {
       if (item.label.trim().length === 0) {
         throw new Error(
           `Contextual sidebar level "${this.id}" contains item "${id}" without a label.`
+        )
+      }
+      if (item.description !== undefined && item.description.trim().length === 0) {
+        throw new Error(
+          `Contextual sidebar level "${this.id}" contains item "${id}" with an empty description.`
         )
       }
       if (ids.has(id)) {
@@ -461,8 +467,24 @@ export function ContextualSidebar({
                         ) : item.icon === 'item' ? (
                           <Circle aria-hidden="true" />
                         ) : null}
-                        <span className={cn('min-w-0 flex-1', item.lines === 2 ? 'line-clamp-2' : 'truncate')}>
-                          {item.label}
+                        <span className="min-w-0 flex-1">
+                          <span
+                            className={cn(
+                              'block',
+                              item.description
+                                ? 'truncate'
+                                : item.lines === 2
+                                  ? 'line-clamp-2'
+                                  : 'truncate'
+                            )}
+                          >
+                            {item.label}
+                          </span>
+                          {item.description && (
+                            <span className="mt-0.5 block truncate text-[0.6875rem] text-muted-foreground">
+                              {item.description}
+                            </span>
+                          )}
                         </span>
                         {item.stateLabel && (
                           <StateLabel model={item.stateLabel} size="compact" />

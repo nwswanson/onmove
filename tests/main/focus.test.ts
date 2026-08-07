@@ -32,6 +32,8 @@ describe('Focus models', () => {
       description: null,
       goal: '',
       status: 'active',
+      lastReviewDate: null,
+      needsReview: true,
       statusChangedAt: expect.any(String)
     })
     expect(focus.statusHistory()).toMatchObject([{ from: null, to: 'active' }])
@@ -89,6 +91,9 @@ describe('Focus models', () => {
     expect(() => database!.domain.focuses.create({ title: 'Invalid', kind: 'other' as never })).toThrow(
       ModelValidationError
     )
+    expect(() =>
+      database!.domain.focuses.create({ title: 'Invalid', needsReview: 'yes' as never })
+    ).toThrow(ModelValidationError)
     expect(() => focus.setStatus('unknown' as never)).toThrow(ModelValidationError)
   })
 
@@ -134,7 +139,7 @@ describe('Focus models', () => {
       description: 'Stored in SQLite',
       goal: 'Retain the goal too'
     })
-    focus.setStatus('paused')
+    focus.setStatus('paused').update({ needsReview: false })
     const id = focus.id
     database!.close()
 
@@ -145,8 +150,49 @@ describe('Focus models', () => {
       title: 'Persistent',
       description: 'Stored in SQLite',
       goal: 'Retain the goal too',
-      status: 'paused'
+      status: 'paused',
+      needsReview: false
     })
     expect(reopened.statusHistory()).toHaveLength(2)
+  })
+
+  it('derives last review from only the latest effective direct Focus update', () => {
+    const focus = database!.domain.focuses.create({ title: 'Project execution' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Sprint execution',
+      reviewFrequencyDays: 7
+    })
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'focus', id: focus.id },
+      type: 'ongoing',
+      title: 'Align sponsors'
+    })
+
+    database!.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2026-01-04',
+      observation: 'Thread reviewed'
+    })
+    database!.domain.updates.create({
+      parent: { type: 'commitment', id: commitment.id },
+      date: '2026-01-05',
+      observation: 'Commitment reviewed'
+    })
+    expect(focus.snapshot('2026-01-05').lastReviewDate).toBeNull()
+
+    database!.domain.updates.create({
+      parent: { type: 'focus', id: focus.id },
+      date: '2026-01-03',
+      observation: 'Focus reviewed'
+    })
+    database!.domain.updates.create({
+      parent: { type: 'focus', id: focus.id },
+      date: '2026-01-10',
+      observation: 'Future review'
+    })
+
+    expect(focus.snapshot('2026-01-09').lastReviewDate).toBe('2026-01-03')
+    expect(focus.snapshot('2026-01-10').lastReviewDate).toBe('2026-01-10')
   })
 })

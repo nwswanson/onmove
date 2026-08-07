@@ -47,6 +47,13 @@ export type ContextDrawerFieldModel =
       required?: boolean
     }
   | {
+      kind: 'checkbox'
+      id: string
+      label: string
+      value: boolean
+      description?: string
+    }
+  | {
       kind: 'static'
       id: string
       label: string
@@ -60,7 +67,8 @@ export interface ContextDrawerSectionModel {
   note?: string
 }
 
-export type ContextDrawerValues = Readonly<Record<string, string>>
+export type ContextDrawerValue = string | boolean
+export type ContextDrawerValues = Readonly<Record<string, ContextDrawerValue>>
 
 export interface ContextDrawerAutosaveModel {
   fieldIds: readonly string[]
@@ -244,7 +252,7 @@ function ContextDrawerSection({
   )
 }
 
-function initialDrawerValues(model: ContextDrawerModel): Record<string, string> {
+function initialDrawerValues(model: ContextDrawerModel): Record<string, ContextDrawerValue> {
   return Object.fromEntries(
     model.sections.flatMap((section) =>
       section.fields.flatMap((field) =>
@@ -281,6 +289,9 @@ export function validateContextDrawerModel(model: ContextDrawerModel): void {
         if (values.size !== field.options.length || !values.has(field.value)) {
           throw new Error(`Context drawer select field "${fieldId}" has invalid options or value.`)
         }
+      }
+      if (field.kind === 'checkbox' && typeof field.value !== 'boolean') {
+        throw new Error(`Context drawer checkbox field "${fieldId}" requires a boolean value.`)
       }
       fieldIds.add(fieldId)
     }
@@ -333,6 +344,19 @@ function autosaveValues(
   )
 }
 
+function drawerStringValue(values: ContextDrawerValues, fieldId: string): string {
+  const value = values[fieldId]
+  return typeof value === 'string' ? value : ''
+}
+
+function requiredFieldValid(
+  field: ContextDrawerFieldModel,
+  values: ContextDrawerValues
+): boolean {
+  if (field.kind === 'static' || field.kind === 'checkbox' || !field.required) return true
+  return drawerStringValue(values, field.id).trim().length > 0
+}
+
 function ContextDrawerInspector({
   adapterId,
   model,
@@ -345,17 +369,16 @@ function ContextDrawerInspector({
   onClose: () => void
 }): React.JSX.Element {
   validateContextDrawerModel(model)
-  const [values, setValues] = useState<Record<string, string>>(() => initialDrawerValues(model))
+  const [values, setValues] = useState<Record<string, ContextDrawerValue>>(
+    () => initialDrawerValues(model)
+  )
   const valuesRef = useRef(values)
   const [pendingActionId, setPendingActionId] = useState<string | null>(null)
   const [confirmingAction, setConfirmingAction] = useState<ContextDrawerActionModel | null>(null)
   const [error, setError] = useState<string | null>(null)
   const actions = model.actions ?? []
   const fieldsValid = model.sections.every((section) =>
-    section.fields.every(
-      (field) =>
-        field.kind === 'static' || !field.required || (values[field.id] ?? '').trim().length > 0
-    )
+    section.fields.every((field) => requiredFieldValid(field, values))
   )
   const autosave = useThrottledAutosave({
     initialValue: autosaveValues(model, values),
@@ -369,14 +392,12 @@ function ContextDrawerInspector({
       section.fields.every(
         (field) =>
           !autosaveIds.has(field.id) ||
-          field.kind === 'static' ||
-          !field.required ||
-          (nextValues[field.id] ?? '').trim().length > 0
+          requiredFieldValid(field, nextValues)
       )
     )
   }
 
-  function updateValue(fieldId: string, value: string): void {
+  function updateValue(fieldId: string, value: ContextDrawerValue): void {
     const nextValues = { ...valuesRef.current, [fieldId]: value }
     valuesRef.current = nextValues
     setValues(nextValues)
@@ -491,6 +512,33 @@ function ContextDrawerInspector({
                     )
                   }
 
+                  if (field.kind === 'checkbox') {
+                    return (
+                      <label
+                        key={field.id}
+                        htmlFor={inputId}
+                        className="flex cursor-pointer items-start gap-2.5 rounded-lg outline-none"
+                      >
+                        <input
+                          id={inputId}
+                          type="checkbox"
+                          aria-label={field.label}
+                          className="mt-0.5 size-4 shrink-0 accent-primary focus-visible:ring-2 focus-visible:ring-ring/45"
+                          checked={values[field.id] === true}
+                          onChange={(event) => updateValue(field.id, event.target.checked)}
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-xs font-medium">{field.label}</span>
+                          {field.description && (
+                            <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+                              {field.description}
+                            </span>
+                          )}
+                        </span>
+                      </label>
+                    )
+                  }
+
                   return (
                     <div key={field.id} className="space-y-1.5">
                       <label htmlFor={inputId} className="text-xs font-medium">
@@ -502,7 +550,7 @@ function ContextDrawerInspector({
                           id={inputId}
                           className="h-9 w-full rounded-lg border border-border bg-background/75 px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/35"
                           required={field.required}
-                          value={values[field.id] ?? ''}
+                          value={drawerStringValue(values, field.id)}
                           onChange={(event) => updateValue(field.id, event.target.value)}
                         >
                           {field.options.map((option) => (
@@ -516,7 +564,7 @@ function ContextDrawerInspector({
                           id={inputId}
                           ariaLabel={field.label}
                           placeholder={field.placeholder}
-                          value={values[field.id] ?? ''}
+                          value={drawerStringValue(values, field.id)}
                           onChange={(value) => updateValue(field.id, value)}
                           compact
                         />
@@ -525,7 +573,7 @@ function ContextDrawerInspector({
                           id={inputId}
                           required={field.required}
                           placeholder={field.placeholder}
-                          value={values[field.id] ?? ''}
+                          value={drawerStringValue(values, field.id)}
                           onChange={(event) => updateValue(field.id, event.target.value)}
                         />
                       )}

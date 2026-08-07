@@ -59,6 +59,11 @@ describe('registerAppIpc', () => {
           listForFocus: vi.fn(() => [{ id: 21, focusId: 12, title: 'Sprint execution' }]),
           create: vi.fn(() => ({
             snapshot: () => ({ id: 22, focusId: 12, title: 'Team health' })
+          })),
+          requireModel: vi.fn(() => ({
+            update: vi.fn(() => ({
+              snapshot: () => ({ id: 21, focusId: 12, title: 'Sprint execution', needsReview: false })
+            }))
           }))
         },
         commitments: {
@@ -70,6 +75,11 @@ describe('registerAppIpc', () => {
           ]),
           create: vi.fn(() => ({
             snapshot: () => ({ id: 33, title: 'Align sponsors' })
+          })),
+          requireModel: vi.fn(() => ({
+            update: vi.fn(() => ({
+              snapshot: () => ({ id: 31, title: 'Ship safely', status: 'paused' })
+            }))
           }))
         },
         updates: {
@@ -136,6 +146,9 @@ describe('registerAppIpc', () => {
       title: 'Team health',
       reviewFrequencyDays: 7
     })).toMatchObject({ id: 22, title: 'Team health' })
+    expect(await handlers.get(IPC_CHANNELS.updateThread)?.(undefined, 21, {
+      needsReview: false
+    })).toMatchObject({ id: 21, needsReview: false })
     expect(await handlers.get(IPC_CHANNELS.listCommitments)?.(undefined, {
       type: 'focus',
       id: 12
@@ -149,6 +162,9 @@ describe('registerAppIpc', () => {
       type: 'ongoing',
       title: 'Align sponsors'
     })).toMatchObject({ id: 33, title: 'Align sponsors' })
+    expect(await handlers.get(IPC_CHANNELS.updateCommitment)?.(undefined, 31, {
+      status: 'paused'
+    })).toMatchObject({ id: 31, status: 'paused' })
     expect(await handlers.get(IPC_CHANNELS.listUpdates)?.(undefined, {
       type: 'commitment',
       id: 31

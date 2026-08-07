@@ -16,12 +16,12 @@ SQLite/domain -> typed preload snapshot -> feature model hook -> feature present
 | Boundary | Receiver-owned contract | Caller responsibility | Receiver responsibility |
 | --- | --- | --- | --- |
 | Main sidebar | `SidebarNavigationItemModel` | Map visible destinations to ids, labels, semantic tokens, and selection callbacks | Rows, icons, focus, selection, empty state, and action placement |
-| Contextual sidebar | `ContextualSidebarItemModel` and `ContextualSidebarLevelOptions` | Map hierarchy records to row models and declare parent/new-item capabilities | Row markup, groups, Back, selection, accessibility, and deletion reconciliation |
+| Contextual sidebar | `ContextualSidebarItemModel` and `ContextualSidebarLevelOptions` | Map hierarchy records to labels, optional descriptions, semantic state, and parent/new-item capabilities | Row markup, primary/secondary text, groups, Back, selection, accessibility, and deletion reconciliation |
 | Semantic state label | `StateLabelModel` | Translate a domain state to label text and a semantic tone | Badge markup, dot, sizing, and semantic color tokens |
 | Rich text | `RichTextEditorProps` and the drawer's `rich-text` field kind | Supply an opaque persisted string and typed change/save callbacks | Lexical state, legacy-text import, toolbar, formatting, serialization, focus, and accessibility |
 | Existing-record text persistence | `useThrottledAutosave` and `ContextDrawerAutosaveModel` | Supply the latest draft, persistence callback, and drawer field capabilities | The 750 ms interval, coalescing, write serialization, blur/close flushing, pending state, and errors |
-| Context drawer | `ContextDrawerModel` inside `ContextDrawerAdapter` | Map the selected record to fields and typed action capabilities | Inputs/static values, draft state, validation, pending/errors, confirmation, close, resize, and pin UI |
-| Commitment updates | `UpdateTableRowModel`, `UpdateTableDraft`, and `UpdateTableStateOptionModel` | Map Update snapshots and translate drafts into typed update mutations | Inline editors, add/save/delete actions, validation, empty/loading/errors, and visible state labels/colors |
+| Context drawer | `ContextDrawerModel` inside `ContextDrawerAdapter` | Map the selected record to text/select/checkbox/static fields and typed action capabilities | Inputs/static values, boolean controls, draft state, validation, pending/errors, confirmation, close, resize, and pin UI |
+| Direct updates | `UpdateListItemModel`, `UpdateListDraft`, and `UpdateListStateOptionModel` | Bind one typed Focus, Thread, or Commitment parent; map Update snapshots, provide explicit creation defaults, and translate drafts into typed mutations | Responsive cards, inline editors, immediate blank-record creation, automatic edit persistence, delete actions, validation, empty/loading/errors, accessible owner label, and visible state labels/colors |
 | Main view | `WorkspaceShellProps.main` UI-composition slot | A feature view renders its own screen from feature-model data | Shell placement, sizing, and clipping |
 
 The main-view slot is intentionally different: it is a UI-to-UI composition boundary, not a
@@ -47,21 +47,35 @@ Business hooks never return React nodes, and shared shell components never impor
 
 `CommitmentSnapshot` does not expose “drawer settings.” The Focus feature presenter receives that
 snapshot plus the resolved parent title and returns a `ContextDrawerAdapter`. Today the adapter
-contains static Title, Parent, Status, and State fields. Later, business support for editing can be
-adapted into the drawer's existing `text`, `select`, and action contracts without changing
-Commitment's domain representation or allowing it to render itself.
+contains static Title, Parent, Status, State, and Last updated fields. Separately, the selected
+Commitment screen adapts lifecycle status into the generic `LifecycleStatusSelect` contract and
+delegates its value to the typed workspace-model mutation. This keeps the reusable selector free of
+Commitment types and persistence. Later, additional business editing can be adapted into the
+drawer's existing `text`, `select`, and action contracts without changing Commitment's domain
+representation or allowing it to render itself.
 
 The same Commitment is separately adapted into `ContextualSidebarItemModel` for the hierarchy. The
-sidebar receives only `{ id, label, lines, stateLabel, accessory }`; it never receives
+sidebar receives only `{ id, label, description, lines, stateLabel, accessory }`; it never receives
 `CommitmentSnapshot`. Its nested `StateLabelModel` is created from the snapshot's already-derived
-state, so the renderer never needs the Update collection. Consequently, changing sidebar row layout
-cannot affect business code, and adding Commitment fields cannot silently change navigation
-presentation.
+state, and its description combines presenter-owned lifecycle-status text with the snapshot's
+already-derived `lastUpdateDate`, so the renderer never needs the Update collection. Consequently,
+changing sidebar row layout cannot affect business code, and adding Commitment fields cannot
+silently change navigation presentation.
 
-Direct Commitment Updates follow the same pattern. `useCommitmentUpdatesModel` owns persistence,
-`updates-presenters.ts` maps snapshots and health states, and `UpdateTable` accepts only its own row,
-draft, and state-option contracts. The table does not import `UpdateSnapshot`, `HealthState`, or the
-preload API.
+Collection ordering is also outside the receivers. `buildCommitmentListModel` accepts domain
+snapshots and returns ordered Active, Paused, and closed groups. Both the Focus list composition and
+the sidebar presenter consume that projection, so neither UI receiver embeds lifecycle or health
+priority rules.
+
+Direct Focus and Commitment Updates follow the same pattern. `useUpdatesModel` owns persistence for
+one typed parent, `DirectUpdates` supplies the owner-specific accessible label, and
+`updates-presenters.ts` maps snapshots and health states. `UpdateList` accepts only its own item,
+draft, and state-option contracts; it does not import `UpdateSnapshot`, `HealthState`, or the preload
+API. Its card layout keeps the narrative observation at full width; date, state, and actions wrap
+independently above it as the available main-view width changes. The receiver's `defaultDate` and
+`defaultState` make creation behavior explicit: Add immediately persists an empty Update, with
+pending and failure feedback, and never creates a temporary UI-only draft. The resulting card's
+date, state, and observation edits all enter the shared autosave pipeline.
 
 Multiline content follows one shared receiver contract. `RichTextEditor` owns a deliberately small
 Lexical configuration: undo/redo, bold, italic, underline, bulleted and numbered lists, and a text

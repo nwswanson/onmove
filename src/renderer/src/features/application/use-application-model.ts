@@ -19,6 +19,7 @@ export interface ApplicationModel {
   selectFocus: (focusId: number) => void
   createFocus: (input: CreateFocusInput) => Promise<void>
   updateFocus: (focusId: number, input: UpdateFocusInput) => Promise<void>
+  refreshFocus: (focusId: number) => Promise<FocusSnapshot>
   deleteFocus: (focusId: number) => Promise<void>
   showDataFolder: () => Promise<void>
 }
@@ -81,6 +82,15 @@ export function useApplicationModel(): ApplicationModel {
     if (!isVisibleFocus(updated)) setSelectedFocusId(null)
   }
 
+  async function refreshFocus(focusId: number): Promise<FocusSnapshot> {
+    const nextFocuses = await window.onmove.domain.listFocuses()
+    const refreshed = nextFocuses.find((focus) => focus.id === focusId)
+    if (!refreshed) throw new Error('Focus no longer exists')
+    setFocuses(nextFocuses)
+    if (!isVisibleFocus(refreshed)) setSelectedFocusId(null)
+    return refreshed
+  }
+
   async function deleteFocus(focusId: number): Promise<void> {
     const deleted = await window.onmove.domain.deleteFocus(focusId)
     if (!deleted) throw new Error('Focus no longer exists')
@@ -100,6 +110,7 @@ export function useApplicationModel(): ApplicationModel {
     selectFocus,
     createFocus,
     updateFocus,
+    refreshFocus,
     deleteFocus,
     showDataFolder: () => window.onmove.showDataFolder()
   }

@@ -5,9 +5,15 @@ import type {
   CreateThreadInput,
   FocusSnapshot,
   ThreadSnapshot,
-  UpdateFocusInput
+  UpdateFocusInput,
+  UpdateCommitmentInput,
+  UpdateThreadInput
 } from '../../../../shared/contracts'
 import { useThrottledAutosave } from '@/lib/use-throttled-autosave'
+import {
+  buildCommitmentListModel,
+  type CommitmentListModel
+} from '@/features/focus/commitment-list-model'
 
 interface FocusWorkspaceModelOptions {
   focus: FocusSnapshot
@@ -22,9 +28,12 @@ export interface FocusWorkspaceModel {
   loadError: string | null
   threads: ThreadSnapshot[]
   commitments: CommitmentSnapshot[]
+  commitmentList: CommitmentListModel
   saveGoal: (goal?: string) => Promise<void>
   createThread: (input: CreateThreadInput) => Promise<ThreadSnapshot>
+  updateThread: (id: number, input: UpdateThreadInput) => Promise<ThreadSnapshot>
   createCommitment: (input: CreateCommitmentInput) => Promise<CommitmentSnapshot>
+  updateCommitment: (id: number, input: UpdateCommitmentInput) => Promise<CommitmentSnapshot>
   refreshCommitments: () => Promise<void>
 }
 
@@ -41,6 +50,7 @@ export function useFocusWorkspaceModel({
     initialValue: focus.goal,
     onSave: (nextGoal: string) => onUpdateFocus({ goal: nextGoal })
   })
+  const commitmentList = buildCommitmentListModel(commitments)
 
   useEffect(() => {
     let active = true
@@ -80,12 +90,34 @@ export function useFocusWorkspaceModel({
     return created
   }
 
+  async function updateThread(
+    id: number,
+    input: UpdateThreadInput
+  ): Promise<ThreadSnapshot> {
+    const updated = await window.onmove.domain.updateThread(id, input)
+    setThreads((current) =>
+      current.map((thread) => (thread.id === updated.id ? updated : thread))
+    )
+    return updated
+  }
+
   async function createCommitment(
     input: CreateCommitmentInput
   ): Promise<CommitmentSnapshot> {
     const created = await window.onmove.domain.createCommitment(input)
     setCommitments((current) => [...current, created])
     return created
+  }
+
+  async function updateCommitment(
+    id: number,
+    input: UpdateCommitmentInput
+  ): Promise<CommitmentSnapshot> {
+    const updated = await window.onmove.domain.updateCommitment(id, input)
+    setCommitments((current) =>
+      current.map((commitment) => (commitment.id === updated.id ? updated : commitment))
+    )
+    return updated
   }
 
   async function refreshCommitments(): Promise<void> {
@@ -104,9 +136,12 @@ export function useFocusWorkspaceModel({
     loadError,
     threads,
     commitments,
+    commitmentList,
     saveGoal,
     createThread,
+    updateThread,
     createCommitment,
+    updateCommitment,
     refreshCommitments
   }
 }

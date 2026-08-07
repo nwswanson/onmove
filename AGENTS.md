@@ -31,8 +31,10 @@
 - Describe contextual inspectors with the shared `ContextDrawerModel` contract and render them only
   through `ContextDrawerOutlet`. The receiver guarantees a visible close button and requires a
   descriptive accessible label; feature code must not compose the low-level drawer shell directly.
-- Drive the right drawer through a screen-owned, data-only `ContextDrawerAdapter` and the shared persistent
-  `ContextDrawerOutlet`. The application shell must not switch on domain entity types. Navigating
+- Render boolean inspector settings through the receiver-owned drawer `checkbox` field contract;
+  feature presenters supply boolean values and translate submitted values into typed mutations.
+- Drive the right drawer through a screen-owned, data-only `ContextDrawerAdapter` and the shared
+  persistent `ContextDrawerOutlet`. The application shell must not switch on domain entity types. Navigating
   must replace the active adapter without closing the drawer or resetting its width; use the shared
   empty state when a screen has no contextual settings.
 - Use the drawer controller's generic adapter pin to inspect an item without changing the main view
@@ -71,9 +73,44 @@ and do not rely on color alone to communicate selection or status.
   `SidebarNavigationItemModel`, contextual navigation accepts `ContextualSidebarItemModel`, and the
   drawer accepts `ContextDrawerModel`; callers must not provide row/drawer JSX, arbitrary classes,
   render callbacks, or domain records to those receivers.
+- Use the shared Lexical-backed `RichTextEditor` for every multiline user-authored field, currently
+  Focus description/notes, Focus goal, and Update observation. Keep titles, dates, statuses, and
+  other compact values as native controls. Rich text is limited to text formatting, lists, and
+  color; do not add images or other embedded media. Within bulleted or numbered lists, Tab nests
+  the selected item and Shift+Tab outdents it; outside lists, preserve normal keyboard focus
+  navigation.
+- Persist rich text as the versioned `onmove-rich-text:1:` Lexical JSON envelope in the existing
+  text fields. Continue accepting legacy plain text and render it through the same component; do
+  not require a destructive content migration.
+- Route edits to existing text records through the shared throttled-autosave hook. Coalesce the
+  latest draft into at most one save per 750 ms, flush it on blur, and serialize overlapping writes;
+  creation dialogs remain explicit because no persistent record exists before Create succeeds.
 - Keep domain-to-UI translation in plain feature presenter `.ts` modules. Presenters may import
   domain types and UI contract types but must not render React. Domain snapshots and model hooks
   must not expose UI fields, icons, styling, or render methods.
+- Render direct Focus and Commitment Updates through the receiver-owned `UpdateList` contract.
+  Focus Updates belong in Overall and Commitment Updates stay in the selected Commitment view;
+  neither list includes descendant Updates. Give every Update its own responsive card: observation
+  uses the full card width while date, state, and actions occupy a wrapping metadata header. Do not
+  reintroduce tabular columns. Updates must expose editable date, optional multi-line observation,
+  and state plus add/delete actions. `Add update` must immediately persist a blank Update using the
+  current local date and `none` state; do not introduce a second Create/Cancel draft step. All
+  persisted Update fields autosave through the shared throttle; do not render a manual save action.
+  Blank and state-only Updates are valid. State must always have a text label as well as semantic color
+  (`destructive` for red/warning, `success` for green, muted for none).
+- Show every Commitment row's derived state using the shared receiver-owned state-label contract.
+  The label must use `CommitmentSnapshot.state`, which already projects the Update with the highest
+  recorded date (including a future date); do not sort or inspect Updates again in the renderer.
+  Show the snapshot's `lastUpdateDate` with a visible `Never` fallback in Commitment screens,
+  drawers, contextual rows, and main-view lists.
+- Show Commitment lifecycle status as a receiver-owned, read-only label in lists. Edit it only from
+  the selected Commitment's compact detail-header selector, and persist changes through the named
+  `updateCommitment` IPC method so SQLite transition auditing remains intact.
+- Build all Commitment collections through the pure feature view-model projection. Order Active
+  Commitments by state (`red`, `yellow`, `green`, `none`), followed by Paused, followed by the
+  combined Done / Cancelled group; preserve repository order within equal priorities. The main view
+  exposes Current (separate Active and Paused sections) and Done / Cancelled lists, while the
+  contextual sidebar uses the same ordered groups.
 - Keep view identifiers and navigation definitions typed. Add tests whenever a destination or
   sidebar action is introduced.
 - Prefer small view components and shared shadcn/ui primitives over a monolithic application shell.
@@ -85,6 +122,11 @@ and do not rely on color alone to communicate selection or status.
   auditing.
 - Treat Thread health, review dates, Commitment state, and cadence deadlines as model projections.
   Do not add writable columns or UI mutations for those derived values.
+- Order Commitment Updates by their recorded date without capping them at today. A future-dated
+  Update immediately supplies the Commitment's state and cadence baseline.
+- Derive Focus and Thread `lastReviewDate` from their newest effective direct Update only. Keep the
+  persisted `needsReview` inclusion flag separate from lifecycle status and from the Thread's
+  derived `reviewDue` projection.
 - A Commitment must have exactly one Focus or Thread parent. An Update must have exactly one Focus,
   Thread, or Commitment parent. Preserve these SQLite constraints and cascades.
 - Return UI-ready snapshots through named IPC methods. Do not expose generic SQL or arbitrary model

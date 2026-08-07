@@ -35,6 +35,8 @@ function focus(overrides: Partial<FocusSnapshot> = {}): FocusSnapshot {
     goal: '',
     status: 'active',
     statusChangedAt: '2026-01-01T00:00:00.000Z',
+    lastReviewDate: null,
+    needsReview: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides
@@ -51,7 +53,8 @@ function thread(overrides: Partial<ThreadSnapshot> = {}): ThreadSnapshot {
     reviewFrequencyDays: 7,
     lastReviewDate: null,
     nextReviewDate: '2026-01-08',
-    needsReview: false,
+    needsReview: true,
+    reviewDue: false,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides
@@ -111,8 +114,10 @@ function installApi(
     getFocusStatusHistory: vi.fn(),
     listThreads: vi.fn().mockResolvedValue([]),
     createThread: vi.fn(),
+    updateThread: vi.fn(),
     listCommitments: vi.fn().mockResolvedValue([]),
     createCommitment: vi.fn(),
+    updateCommitment: vi.fn(),
     listUpdates: vi.fn().mockResolvedValue([]),
     createUpdate: vi.fn(),
     updateUpdate: vi.fn(),
@@ -256,7 +261,7 @@ describe('App', () => {
   it('persists the Focus goal and drills into focus-level commitments', async () => {
     const current = focus({ goal: 'Deliver the release safely' })
     const updated = focus({ goal: 'Deliver predictable customer value' })
-    const focusCommitment = commitment({ state: 'red' })
+    const focusCommitment = commitment({ state: 'red', lastUpdateDate: '2026-01-04' })
     const updateFocus = vi.fn().mockResolvedValue(updated)
     const listCommitments = vi.fn().mockResolvedValue([focusCommitment])
     installApi({
@@ -280,7 +285,13 @@ describe('App', () => {
       .getByRole('button', { name: 'Open commitment Keep sponsors aligned' })
       .closest<HTMLElement>('[role="listitem"]')
     expect(commitmentRow).not.toBeNull()
+    expect(
+      within(commitmentRow!).getByText('Active', {
+        selector: '[data-slot="lifecycle-status-label"]'
+      })
+    ).toBeVisible()
     expect(within(commitmentRow!).getByText('Red', { selector: '[data-tone="danger"]' })).toBeVisible()
+    expect(within(commitmentRow!).getByText('Last updated · 2026-01-04')).toBeVisible()
 
     await user.click(
       await screen.findByRole('button', { name: 'Open commitment Keep sponsors aligned' })
@@ -291,6 +302,14 @@ describe('App', () => {
       'page'
     )
     expect(screen.getByRole('heading', { name: 'Keep sponsors aligned' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Commitment last updated')).toHaveTextContent(
+      'Last updated · 2026-01-04'
+    )
+    expect(
+      within(screen.getByRole('navigation', { name: 'Focus commitments' })).getByText(
+        'Active · Last updated · 2026-01-04'
+      )
+    ).toBeVisible()
     expect(screen.queryByRole('button', { name: 'New thread' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'New commitment' })).toBeInTheDocument()
 
@@ -300,6 +319,182 @@ describe('App', () => {
       'page'
     )
     expect(screen.getByRole('button', { name: 'New thread' })).toBeInTheDocument()
+  })
+
+  it('shows Commitment status in lists and changes it from the detail header', async () => {
+    const current = focus()
+    const activeCommitment = commitment({ status: 'active' })
+    const pausedCommitment = commitment({ status: 'paused' })
+    const updateCommitment = vi.fn().mockResolvedValue(pausedCommitment)
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listCommitments: vi.fn().mockResolvedValue([activeCommitment]),
+      updateCommitment
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Quarterly plan' }))
+    const commitmentRow = screen
+      .getByRole('button', { name: 'Open commitment Keep sponsors aligned' })
+      .closest<HTMLElement>('[role="listitem"]')
+    expect(commitmentRow).not.toBeNull()
+    expect(
+      within(commitmentRow!).getByText('Active', {
+        selector: '[data-slot="lifecycle-status-label"]'
+      })
+    ).toBeVisible()
+
+    await user.click(
+      screen.getByRole('button', { name: 'Open commitment Keep sponsors aligned' })
+    )
+    const commitmentNavigation = screen.getByRole('navigation', {
+      name: 'Focus commitments'
+    })
+    expect(within(commitmentNavigation).getByText('Active · Last updated · Never')).toBeVisible()
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Commitment status' }), 'paused')
+
+    expect(updateCommitment).toHaveBeenCalledWith(20, { status: 'paused' })
+    expect(
+      await within(commitmentNavigation).findByText('Paused · Last updated · Never')
+    ).toBeVisible()
+    expect(screen.getByRole('combobox', { name: 'Commitment status' })).toHaveValue('paused')
+    await user.click(screen.getByRole('button', { name: 'Toggle context drawer' }))
+    const commitmentDrawer = screen.getByRole('complementary', {
+      name: 'Commitment context drawer'
+    })
+    expect(within(commitmentDrawer).getByText('paused')).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: 'Back to Focus sections' }))
+    const updatedRow = screen
+      .getByRole('button', { name: 'Open commitment Keep sponsors aligned' })
+      .closest<HTMLElement>('[role="listitem"]')
+    expect(updatedRow).not.toBeNull()
+    expect(
+      within(updatedRow!).getByText('Paused', {
+        selector: '[data-slot="lifecycle-status-label"]'
+      })
+    ).toBeVisible()
+  })
+
+  it('groups and orders Commitment lists through the shared collection model', async () => {
+    const current = focus()
+    const commitments = [
+      commitment({ id: 1, title: 'Done item', status: 'done', state: 'red' }),
+      commitment({ id: 2, title: 'No-state item', status: 'active', state: 'none' }),
+      commitment({ id: 3, title: 'Paused item', status: 'paused', state: 'red' }),
+      commitment({ id: 4, title: 'Green item', status: 'active', state: 'green' }),
+      commitment({ id: 5, title: 'Cancelled item', status: 'cancelled', state: 'yellow' }),
+      commitment({ id: 6, title: 'Red item', status: 'active', state: 'red' }),
+      commitment({ id: 7, title: 'Yellow item', status: 'active', state: 'yellow' })
+    ]
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listCommitments: vi.fn().mockResolvedValue(commitments)
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Quarterly plan' }))
+    const currentList = screen.getByRole('list', { name: 'Current commitments' })
+    const closedList = screen.getByRole('list', { name: 'Done and cancelled commitments' })
+    expect(
+      within(currentList)
+        .getAllByRole('button', { name: /^Open commitment/ })
+        .map((button) => button.getAttribute('aria-label'))
+    ).toEqual([
+      'Open commitment Red item',
+      'Open commitment Yellow item',
+      'Open commitment Green item',
+      'Open commitment No-state item',
+      'Open commitment Paused item'
+    ])
+    expect(within(currentList).getByText('Active', { selector: '[role="presentation"]' })).toBeVisible()
+    expect(within(currentList).getByText('Paused', { selector: '[role="presentation"]' })).toBeVisible()
+    expect(
+      within(closedList)
+        .getAllByRole('button', { name: /^Open commitment/ })
+        .map((button) => button.getAttribute('aria-label'))
+    ).toEqual(['Open commitment Done item', 'Open commitment Cancelled item'])
+
+    await user.click(screen.getByRole('button', { name: 'Commitments' }))
+    const navigation = screen.getByRole('navigation', { name: 'Focus commitments' })
+    const commitmentTitles = new Set(commitments.map(({ title }) => title))
+    expect(
+      within(navigation)
+        .getAllByRole('button')
+        .map((button) => button.getAttribute('aria-label'))
+        .filter((label): label is string => label !== null && commitmentTitles.has(label))
+    ).toEqual([
+      'Red item',
+      'Yellow item',
+      'Green item',
+      'No-state item',
+      'Paused item',
+      'Done item',
+      'Cancelled item'
+    ])
+    expect(
+      within(navigation).getByText('Active', { selector: '[data-slot="sidebar-group-label"]' })
+    ).toBeVisible()
+    expect(
+      within(navigation).getByText('Paused', { selector: '[data-slot="sidebar-group-label"]' })
+    ).toBeVisible()
+    expect(
+      within(navigation).getByText('Done / Cancelled', {
+        selector: '[data-slot="sidebar-group-label"]'
+      })
+    ).toBeVisible()
+  })
+
+  it('lists direct Focus Updates in Overall and refreshes the derived review date', async () => {
+    let lastReviewDate = '2026-08-01'
+    const directUpdate = update({
+      id: 40,
+      parent: { type: 'focus', id: 1 },
+      date: lastReviewDate,
+      observation: 'The overall launch remains clear',
+      state: 'green'
+    })
+    const listFocuses = vi.fn(async () => [focus({ lastReviewDate })])
+    const listUpdates = vi.fn(async (parent) =>
+      parent.type === 'focus' ? [directUpdate] : []
+    )
+    const createUpdate = vi.fn(async (input) => {
+      lastReviewDate = input.date ?? lastReviewDate
+      return update({
+        id: 41,
+        parent: input.parent,
+        date: lastReviewDate,
+        observation: input.observation,
+        state: input.state
+      })
+    })
+    installApi({ listFocuses, listUpdates, createUpdate })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Quarterly plan' }))
+    const focusUpdates = await screen.findByRole('list', { name: 'Focus updates' })
+    expect(within(focusUpdates).getByText('The overall launch remains clear')).toBeVisible()
+    expect(listUpdates).toHaveBeenCalledWith({ type: 'focus', id: 1 })
+    expect(screen.queryByRole('list', { name: 'Commitment updates' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Add update' }))
+    await waitFor(() => expect(createUpdate).toHaveBeenCalledOnce())
+    const newDate = createUpdate.mock.calls[0][0].date
+    expect(createUpdate).toHaveBeenCalledWith({
+      parent: { type: 'focus', id: 1 },
+      date: newDate,
+      observation: '',
+      state: 'none'
+    })
+    expect(screen.queryByRole('button', { name: 'Create update' })).not.toBeInTheDocument()
+    expect(await screen.findByLabelText('Focus last reviewed')).toHaveTextContent(
+      `Last reviewed · ${newDate}`
+    )
+    expect(listFocuses).toHaveBeenCalledTimes(2)
   })
 
   it('creates and selects a title-only commitment from the drilled contextual level', async () => {
@@ -344,8 +539,8 @@ describe('App', () => {
     const createdUpdate = update({
       id: 31,
       date: '2026-08-07',
-      observation: 'New signal',
-      state: 'red'
+      observation: '',
+      state: 'none'
     })
     const updateUpdate = vi.fn().mockResolvedValue(editedUpdate)
     const createUpdate = vi.fn().mockResolvedValue(createdUpdate)
@@ -371,9 +566,9 @@ describe('App', () => {
 
     await user.type(observation, ' and acceptance criteria improved')
     await user.selectOptions(screen.getByLabelText('Update state'), 'green')
-    await user.click(screen.getByRole('button', { name: 'Save update' }))
-    expect(updateUpdate).toHaveBeenCalledOnce()
-    const editInput = updateUpdate.mock.calls[0][1]
+    expect(screen.queryByRole('button', { name: 'Save update' })).not.toBeInTheDocument()
+    await waitFor(() => expect(updateUpdate).toHaveBeenCalled(), { timeout: 2_000 })
+    const editInput = updateUpdate.mock.calls.at(-1)?.[1]
     expect(editInput).toMatchObject({ date: '2026-08-01', state: 'green' })
     expect(isRichText(editInput.observation)).toBe(true)
     expect(richTextPlainText(editInput.observation)).toBe(
@@ -382,28 +577,29 @@ describe('App', () => {
     expect(screen.getByText('Green', { selector: 'span' })).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Add update' }))
-    const newDate = screen.getByLabelText('New update date') as HTMLInputElement
-    const newDateValue = newDate.value
-    await user.selectOptions(screen.getByLabelText('New update state'), 'red')
-    await user.click(screen.getByRole('button', { name: 'Create update' }))
-    expect(createUpdate).toHaveBeenCalledOnce()
+    await waitFor(() => expect(createUpdate).toHaveBeenCalledOnce())
     const createUpdateInput = createUpdate.mock.calls[0][0]
     expect(createUpdateInput).toMatchObject({
       parent: { type: 'commitment', id: 20 },
-      date: newDateValue,
-      state: 'red'
+      date: expect.any(String),
+      state: 'none'
     })
     expect(createUpdateInput.observation).toBe('')
+    expect(await screen.findAllByLabelText('Update observation')).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: 'Create update' })).not.toBeInTheDocument()
 
-    const existingRow = observation.closest('tr')
-    expect(existingRow).not.toBeNull()
-    await user.click(within(existingRow!).getByRole('button', { name: 'Delete update' }))
+    const existingCard = observation.closest<HTMLElement>('[role="listitem"]')
+    expect(existingCard).not.toBeNull()
+    await user.click(within(existingCard!).getByRole('button', { name: 'Delete update' }))
     expect(deleteUpdate).toHaveBeenCalledWith(30)
   })
 
-  it('persists a state-only Update and refreshes its Commitment row from None to Red', async () => {
+  it('persists a blank Update immediately, then autosaves state and refreshes its Commitment row', async () => {
     const current = focus()
     const emptyCommitment = commitment()
+    const blankCommitment = commitment({
+      lastUpdateDate: '2026-08-07'
+    })
     const redCommitment = commitment({
       state: 'red',
       lastUpdateDate: '2026-08-07'
@@ -411,8 +607,16 @@ describe('App', () => {
     const listCommitments = vi
       .fn()
       .mockResolvedValueOnce([emptyCommitment])
+      .mockResolvedValueOnce([blankCommitment])
       .mockResolvedValue([redCommitment])
     const createUpdate = vi.fn().mockResolvedValue(
+      update({
+        date: '2026-08-07',
+        observation: '',
+        state: 'none'
+      })
+    )
+    const updateUpdate = vi.fn().mockResolvedValue(
       update({
         date: '2026-08-07',
         observation: '',
@@ -422,7 +626,8 @@ describe('App', () => {
     installApi({
       listFocuses: vi.fn().mockResolvedValue([current]),
       listCommitments,
-      createUpdate
+      createUpdate,
+      updateUpdate
     })
     const user = userEvent.setup()
     render(<App />)
@@ -432,12 +637,17 @@ describe('App', () => {
       await screen.findByRole('button', { name: 'Open commitment Keep sponsors aligned' })
     )
     await user.click(screen.getByRole('button', { name: 'Add update' }))
-    await user.selectOptions(screen.getByLabelText('New update state'), 'red')
-    await user.click(screen.getByRole('button', { name: 'Create update' }))
-
+    await waitFor(() => expect(createUpdate).toHaveBeenCalledOnce())
     expect(createUpdate).toHaveBeenCalledWith({
       parent: { type: 'commitment', id: 20 },
       date: expect.any(String),
+      observation: '',
+      state: 'none'
+    })
+    await user.selectOptions(await screen.findByLabelText('Update state'), 'red')
+    await waitFor(() => expect(updateUpdate).toHaveBeenCalledOnce(), { timeout: 2_000 })
+    expect(updateUpdate).toHaveBeenCalledWith(30, {
+      date: '2026-08-07',
       observation: '',
       state: 'red'
     })
@@ -449,6 +659,12 @@ describe('App', () => {
         selector: '[data-tone="danger"]'
       })
     ).toBeVisible()
+    expect(
+      await within(commitmentNavigation).findByText('Active · Last updated · 2026-08-07')
+    ).toBeVisible()
+    expect(screen.getByLabelText('Commitment last updated')).toHaveTextContent(
+      'Last updated · 2026-08-07'
+    )
 
     await user.click(screen.getByRole('button', { name: 'Back to Focus sections' }))
     const commitmentRow = screen
@@ -456,6 +672,7 @@ describe('App', () => {
       .closest<HTMLElement>('[role="listitem"]')
     expect(commitmentRow).not.toBeNull()
     expect(within(commitmentRow!).getByText('Red', { selector: '[data-tone="danger"]' })).toBeVisible()
+    expect(within(commitmentRow!).getByText('Last updated · 2026-08-07')).toBeVisible()
   })
 
   it('pins a commitment in the drawer across navigation without changing contextual selection', async () => {
@@ -496,25 +713,42 @@ describe('App', () => {
   })
 
   it('keeps the drawer open and replaces its adapter across Focus, Thread, Commitment, and Home', async () => {
-    const current = focus({ title: 'Project Atlas' })
-    const sprint = thread()
+    const current = focus({ title: 'Project Atlas', lastReviewDate: '2026-01-02' })
+    const sprint = thread({ lastReviewDate: '2026-01-03' })
+    const updatedSprint = thread({ lastReviewDate: '2026-01-03', needsReview: false })
     const focusCommitment = commitment()
+    const updateThread = vi.fn().mockResolvedValue(updatedSprint)
     installApi({
       listFocuses: vi.fn().mockResolvedValue([current]),
       listThreads: vi.fn().mockResolvedValue([sprint]),
-      listCommitments: vi.fn().mockResolvedValue([focusCommitment])
+      listCommitments: vi.fn().mockResolvedValue([focusCommitment]),
+      updateThread
     })
     const user = userEvent.setup()
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    expect(screen.getByLabelText('Focus last reviewed')).toHaveTextContent(
+      'Last reviewed · 2026-01-02'
+    )
     await user.click(screen.getByRole('button', { name: 'Toggle context drawer' }))
-    expect(screen.getByRole('complementary', { name: 'Focus context drawer' })).toBeInTheDocument()
+    const focusDrawer = screen.getByRole('complementary', { name: 'Focus context drawer' })
+    expect(focusDrawer).toBeInTheDocument()
+    expect(within(focusDrawer).getByText('2026-01-02')).toBeInTheDocument()
+    expect(within(focusDrawer).getByLabelText('Needs review')).toBeChecked()
 
     await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
+    expect(screen.getByLabelText('Thread last reviewed')).toHaveTextContent(
+      'Last reviewed · 2026-01-03'
+    )
     const threadDrawer = screen.getByRole('complementary', { name: 'Thread context drawer' })
     expect(within(threadDrawer).getByRole('heading', { name: 'Thread' })).toBeInTheDocument()
     expect(within(threadDrawer).getAllByText('Sprint execution')).toHaveLength(2)
+    expect(within(threadDrawer).getByText('2026-01-03')).toBeInTheDocument()
+    await user.click(within(threadDrawer).getByLabelText('Needs review'))
+    await user.click(within(threadDrawer).getByRole('button', { name: 'Save changes' }))
+    expect(updateThread).toHaveBeenCalledWith(10, { needsReview: false })
+    expect(within(threadDrawer).getByLabelText('Needs review')).not.toBeChecked()
 
     await user.click(screen.getByRole('button', { name: 'Overall' }))
     expect(screen.getByRole('complementary', { name: 'Focus context drawer' })).toBeInTheDocument()
@@ -525,6 +759,11 @@ describe('App', () => {
     })
     expect(within(commitmentDrawer).getByRole('heading', { name: 'Commitment' })).toBeInTheDocument()
     expect(within(commitmentDrawer).getAllByText('Keep sponsors aligned')).toHaveLength(2)
+    expect(within(commitmentDrawer).getByText('Last updated')).toBeInTheDocument()
+    expect(within(commitmentDrawer).getByText('Never')).toBeInTheDocument()
+    expect(screen.getByLabelText('Commitment last updated')).toHaveTextContent(
+      'Last updated · Never'
+    )
 
     await user.click(screen.getByRole('button', { name: 'Home' }))
     expect(screen.getByRole('complementary', { name: 'Home item context drawer' })).toBeInTheDocument()
@@ -533,7 +772,12 @@ describe('App', () => {
 
   it('edits title, notes, and status in the contextual drawer', async () => {
     const current = focus({ description: 'Old notes' })
-    const updated = focus({ title: 'Revised plan', description: 'New notes', status: 'paused' })
+    const updated = focus({
+      title: 'Revised plan',
+      description: 'New notes',
+      status: 'paused',
+      needsReview: false
+    })
     const updateFocus = vi.fn().mockResolvedValue(updated)
     installApi({
       listFocuses: vi.fn().mockResolvedValue([current]),
@@ -553,11 +797,16 @@ describe('App', () => {
     const notes = screen.getByLabelText('Description / notes')
     await user.type(notes, ' plus new notes')
     await user.selectOptions(screen.getByLabelText('Status'), 'paused')
+    await user.click(screen.getByLabelText('Needs review'))
     await user.click(screen.getByRole('button', { name: 'Save changes' }))
 
     expect(updateFocus).toHaveBeenCalledOnce()
     const drawerInput = updateFocus.mock.calls[0][1]
-    expect(drawerInput).toMatchObject({ title: 'Revised plan', status: 'paused' })
+    expect(drawerInput).toMatchObject({
+      title: 'Revised plan',
+      status: 'paused',
+      needsReview: false
+    })
     expect(isRichText(drawerInput.description)).toBe(true)
     expect(richTextPlainText(drawerInput.description)).toBe(' plus new notesOld notes')
     expect(await screen.findByRole('heading', { name: 'Revised plan' })).toBeInTheDocument()

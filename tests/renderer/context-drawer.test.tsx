@@ -80,6 +80,13 @@ describe('ContextDrawerOutlet', () => {
                       { value: 'paused', label: 'Paused' }
                     ]
                   },
+                  {
+                    kind: 'checkbox',
+                    id: 'needs-review',
+                    label: 'Needs review',
+                    value: true,
+                    description: 'Include this item in review workflows.'
+                  },
                   { kind: 'static', id: 'parent', label: 'Parent', value: 'Focus — Atlas' }
                 ]
               }
@@ -112,11 +119,16 @@ describe('ContextDrawerOutlet', () => {
     await user.type(title, 'Revised')
     await user.type(screen.getByLabelText('Notes'), ' updated')
     await user.selectOptions(screen.getByLabelText('Status'), 'paused')
+    await user.click(screen.getByLabelText('Needs review'))
     await user.click(screen.getByRole('button', { name: 'Save' }))
 
     expect(save).toHaveBeenCalledOnce()
     const values = save.mock.calls[0][0]
-    expect(values).toMatchObject({ title: 'Revised', status: 'paused' })
+    expect(values).toMatchObject({
+      title: 'Revised',
+      status: 'paused',
+      'needs-review': false
+    })
     expect(isRichText(values.notes)).toBe(true)
     expect(richTextPlainText(values.notes)).toBe(' updatedExisting notes')
   })

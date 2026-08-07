@@ -27,8 +27,11 @@ const api: OnMoveApi = {
       ipcRenderer.invoke(IPC_CHANNELS.getFocusStatusHistory, id),
     listThreads: (focusId) => ipcRenderer.invoke(IPC_CHANNELS.listThreads, focusId),
     createThread: (input) => ipcRenderer.invoke(IPC_CHANNELS.createThread, input),
+    updateThread: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateThread, id, input),
     listCommitments: (parent) => ipcRenderer.invoke(IPC_CHANNELS.listCommitments, parent),
     createCommitment: (input) => ipcRenderer.invoke(IPC_CHANNELS.createCommitment, input),
+    updateCommitment: (id, input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.updateCommitment, id, input),
     listUpdates: (parent) => ipcRenderer.invoke(IPC_CHANNELS.listUpdates, parent),
     createUpdate: (input) => ipcRenderer.invoke(IPC_CHANNELS.createUpdate, input),
     updateUpdate: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateUpdate, id, input),

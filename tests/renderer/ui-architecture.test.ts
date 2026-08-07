@@ -24,7 +24,7 @@ const featureComponentFiles = [
   join(rendererRoot, 'App.tsx'),
   ...featureFiles.filter((path) => extname(path) === '.tsx')
 ]
-const featureReceiverFiles = featureFiles.filter((path) => /update-table\.tsx$/.test(path))
+const featureReceiverFiles = featureFiles.filter((path) => /update-list\.tsx$/.test(path))
 
 describe('renderer architecture boundaries', () => {
   it.each(sourceFiles(uiRoot))('%s remains domain and persistence agnostic', (path) => {

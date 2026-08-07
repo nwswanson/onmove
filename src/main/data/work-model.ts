@@ -33,6 +33,7 @@ interface ThreadRow {
   title: string
   status: string
   review_frequency_days: number
+  needs_review: number
   created_at: string
   updated_at: string
 }
@@ -135,6 +136,14 @@ function normalizeState(state: HealthState | undefined): HealthState {
 function normalizePositiveDays(value: number, field: string): number {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new ModelValidationError(`${field} must be a positive whole number of days`)
+  }
+  return value
+}
+
+function normalizeNeedsReview(value: boolean | undefined, field: string): boolean {
+  if (value === undefined) return true
+  if (typeof value !== 'boolean') {
+    throw new ModelValidationError(`${field} must be a boolean`)
   }
   return value
 }
@@ -261,13 +270,14 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
     const createdAt = timestamp(now)
     const result = this.database.run(
       `INSERT INTO threads (
-         focus_id, title, status, review_frequency_days, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?)`,
+         focus_id, title, status, review_frequency_days, needs_review, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         input.focusId,
         normalizeTitle(input.title, 'thread'),
         normalizeStatus(input.status),
         normalizePositiveDays(input.reviewFrequencyDays, 'reviewFrequencyDays'),
+        normalizeNeedsReview(input.needsReview, 'needsReview') ? 1 : 0,
         createdAt,
         createdAt
       ]
@@ -298,7 +308,7 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
     if (!current) throw new ModelNotFoundError('Thread', id)
     this.database.run(
       `UPDATE threads
-       SET title = ?, status = ?, review_frequency_days = ?, updated_at = ?
+       SET title = ?, status = ?, review_frequency_days = ?, needs_review = ?, updated_at = ?
        WHERE id = ?`,
       [
         input.title === undefined ? current.title : normalizeTitle(input.title, 'thread'),
@@ -306,6 +316,9 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
         input.reviewFrequencyDays === undefined
           ? current.reviewFrequencyDays
           : normalizePositiveDays(input.reviewFrequencyDays, 'reviewFrequencyDays'),
+        input.needsReview === undefined
+          ? (current.needsReview ? 1 : 0)
+          : (normalizeNeedsReview(input.needsReview, 'needsReview') ? 1 : 0),
         timestamp(),
         id
       ]
@@ -342,7 +355,7 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
   private materializeOrNull(id: number, asOf: string): ThreadRecord | null {
     assertId(id, 'thread')
     const row = this.database.get<ThreadRow>(
-      `SELECT id, focus_id, title, status, review_frequency_days, created_at, updated_at
+      `SELECT id, focus_id, title, status, review_frequency_days, needs_review, created_at, updated_at
        FROM threads WHERE id = ?`,
       [id]
     )
@@ -359,13 +372,12 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
         `SELECT COALESCE((
            SELECT update_row.state FROM updates update_row
            WHERE update_row.commitment_id = commitment.id
-             AND update_row.recorded_on <= ?
            ORDER BY update_row.recorded_on DESC, update_row.id DESC LIMIT 1
          ), 'none') AS state
          FROM commitments commitment
          WHERE commitment.thread_id = ? AND commitment.status = 'active'
          ORDER BY commitment.id`,
-        [asOf, id]
+        [id]
       )
       .map(({ state }) => state as HealthState)
     const lastReviewDate = latest?.recorded_on ?? null
@@ -381,7 +393,8 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
       reviewFrequencyDays: Number(row.review_frequency_days),
       lastReviewDate,
       nextReviewDate,
-      needsReview: row.status === 'active' && nextReviewDate <= asOf,
+      needsReview: Boolean(row.needs_review),
+      reviewDue: Boolean(row.needs_review) && row.status === 'active' && nextReviewDate <= asOf,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }
@@ -540,9 +553,9 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
     if (!row) return null
     const latest = this.database.get<LatestUpdateRow>(
       `SELECT recorded_on, state FROM updates
-       WHERE commitment_id = ? AND recorded_on <= ?
+       WHERE commitment_id = ?
        ORDER BY recorded_on DESC, id DESC LIMIT 1`,
-      [id, asOf]
+      [id]
     )
     const cadenceDays = row.cadence_days === null ? null : Number(row.cadence_days)
     const lastUpdateDate = latest?.recorded_on ?? null

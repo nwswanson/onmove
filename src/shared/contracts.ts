@@ -19,8 +19,10 @@ export const IPC_CHANNELS = {
   getFocusStatusHistory: 'domain:get-focus-status-history',
   listThreads: 'domain:list-threads',
   createThread: 'domain:create-thread',
+  updateThread: 'domain:update-thread',
   listCommitments: 'domain:list-commitments',
   createCommitment: 'domain:create-commitment',
+  updateCommitment: 'domain:update-commitment',
   listUpdates: 'domain:list-updates',
   createUpdate: 'domain:create-update',
   updateUpdate: 'domain:update-update',
@@ -108,6 +110,8 @@ export interface FocusSnapshot {
   goal: string
   status: FocusStatus
   statusChangedAt: string
+  lastReviewDate: string | null
+  needsReview: boolean
   createdAt: string
   updatedAt: string
 }
@@ -126,6 +130,7 @@ export interface CreateFocusInput {
   description?: string | null
   goal?: string
   status?: FocusStatus
+  needsReview?: boolean
 }
 
 export interface UpdateFocusInput {
@@ -133,6 +138,7 @@ export interface UpdateFocusInput {
   description?: string | null
   goal?: string
   status?: FocusStatus
+  needsReview?: boolean
 }
 
 export type ThreadStatus = FocusStatus
@@ -154,6 +160,7 @@ export interface ThreadSnapshot {
   lastReviewDate: string | null
   nextReviewDate: string
   needsReview: boolean
+  reviewDue: boolean
   createdAt: string
   updatedAt: string
 }
@@ -163,12 +170,14 @@ export interface CreateThreadInput {
   title: string
   status?: ThreadStatus
   reviewFrequencyDays: number
+  needsReview?: boolean
 }
 
 export interface UpdateThreadInput {
   title?: string
   status?: ThreadStatus
   reviewFrequencyDays?: number
+  needsReview?: boolean
 }
 
 export type CommitmentParent =
@@ -269,8 +278,10 @@ export interface DomainApi {
   getFocusStatusHistory: (id: number) => Promise<FocusStatusTransition[]>
   listThreads: (focusId: number) => Promise<ThreadSnapshot[]>
   createThread: (input: CreateThreadInput) => Promise<ThreadSnapshot>
+  updateThread: (id: number, input: UpdateThreadInput) => Promise<ThreadSnapshot>
   listCommitments: (parent: CommitmentParent) => Promise<CommitmentSnapshot[]>
   createCommitment: (input: CreateCommitmentInput) => Promise<CommitmentSnapshot>
+  updateCommitment: (id: number, input: UpdateCommitmentInput) => Promise<CommitmentSnapshot>
   listUpdates: (parent: UpdateParent) => Promise<UpdateSnapshot[]>
   createUpdate: (input: CreateUpdateInput) => Promise<UpdateSnapshot>
   updateUpdate: (id: number, input: EditUpdateInput) => Promise<UpdateSnapshot>

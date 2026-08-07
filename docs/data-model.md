@@ -39,7 +39,9 @@ Focuses are top-level portfolio objects rather than hierarchy children. Their in
   title: string,
   description: string | null,
   goal: string,
-  status: 'active' | 'paused' | 'cancelled' | 'done'
+  status: 'active' | 'paused' | 'cancelled' | 'done',
+  lastReviewDate: string | null,
+  needsReview: boolean
 }
 ```
 
@@ -48,11 +50,13 @@ Focuses are top-level portfolio objects rather than hierarchy children. Their in
 Titles are required but intentionally not unique. Status is materialized on the `focuses` row and
 every actual change is appended by SQLite triggers to `focus_status_transitions`. Active and paused
 records appear in sidebar navigation; paused records are visually muted. Cancelled and done records
-remain durable and queryable but are omitted from navigation.
+remain durable and queryable but are omitted from navigation. `needsReview` is a durable inclusion
+flag independent of status. `lastReviewDate` is derived from the newest effective Update directly
+on the Focus; descendant Thread and Commitment Updates do not advance it.
 
 `FocusModel` supplies update, status, history, refresh, and deletion helpers. The renderer reaches
 these operations only through named IPC methods. Threads and Commitments use named list and create
-methods; Updates use named list, create, edit, and delete methods. Repository dispatch and SQL
+and update methods; Updates use named list, create, edit, and delete methods. Repository dispatch and SQL
 remain unavailable to the renderer.
 
 The model beneath Focus—Threads, Commitments, dated Updates, health, reviews, and cadence—is detailed

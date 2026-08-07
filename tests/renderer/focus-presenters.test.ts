@@ -5,11 +5,15 @@ import type {
   ThreadSnapshot
 } from '../../src/shared/contracts'
 import {
+  COMMITMENT_STATUS_OPTIONS,
   commitmentContextSidebarItems,
   commitmentDrawerAdapter,
+  commitmentStatusLabel,
+  dateOrNeverLabel,
   focusContextSidebarItems,
   focusDrawerAdapter,
-  focusPrimaryNavigationItems
+  focusPrimaryNavigationItems,
+  threadDrawerAdapter
 } from '../../src/renderer/src/features/focus/focus-presenters'
 import { healthStateLabel } from '../../src/renderer/src/features/shared/state-presenters'
 
@@ -21,6 +25,8 @@ const focus: FocusSnapshot = {
   goal: 'Ship safely',
   status: 'active',
   statusChangedAt: '2026-01-01T00:00:00.000Z',
+  lastReviewDate: null,
+  needsReview: true,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z'
 }
@@ -35,6 +41,7 @@ const thread: ThreadSnapshot = {
   lastReviewDate: null,
   nextReviewDate: '2026-01-08',
   needsReview: false,
+  reviewDue: false,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z'
 }
@@ -48,7 +55,7 @@ const commitment: CommitmentSnapshot = {
   state: 'green',
   dueDate: null,
   cadenceDays: null,
-  lastUpdateDate: null,
+  lastUpdateDate: '2026-01-07',
   nextUpdateDate: null,
   needsUpdate: false,
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -56,6 +63,11 @@ const commitment: CommitmentSnapshot = {
 }
 
 describe('Focus presentation adapters', () => {
+  it('formats missing and effective review dates for every UI receiver', () => {
+    expect(dateOrNeverLabel(null)).toBe('Never')
+    expect(dateOrNeverLabel('2026-01-06')).toBe('2026-01-06')
+  })
+
   it('maps domain records into primary and contextual receiver contracts', () => {
     expect(focusPrimaryNavigationItems([focus, { ...focus, id: 2, status: 'paused' }])).toEqual([
       {
@@ -93,6 +105,8 @@ describe('Focus presentation adapters', () => {
       {
         id: '20',
         label: 'Improve ticket quality',
+        description: 'Active · Last updated · 2026-01-07',
+        group: { id: 'active', label: 'Active' },
         lines: 2,
         stateLabel: { label: 'Green', tone: 'success' },
         accessory: 'disclosure'
@@ -105,6 +119,19 @@ describe('Focus presentation adapters', () => {
     expect(healthStateLabel('yellow')).toEqual({ label: 'Yellow', tone: 'warning' })
     expect(healthStateLabel('green')).toEqual({ label: 'Green', tone: 'success' })
     expect(healthStateLabel('none')).toEqual({ label: 'None', tone: 'neutral' })
+  })
+
+  it('maps every Commitment lifecycle status into the shared label contract', () => {
+    expect(COMMITMENT_STATUS_OPTIONS).toEqual([
+      { value: 'active', label: 'Active', tone: 'primary' },
+      { value: 'paused', label: 'Paused', tone: 'neutral' },
+      { value: 'done', label: 'Done', tone: 'success' },
+      { value: 'cancelled', label: 'Cancelled', tone: 'danger' }
+    ])
+    expect(commitmentStatusLabel('active')).toEqual(COMMITMENT_STATUS_OPTIONS[0])
+    expect(commitmentStatusLabel('paused')).toEqual(COMMITMENT_STATUS_OPTIONS[1])
+    expect(commitmentStatusLabel('done')).toEqual(COMMITMENT_STATUS_OPTIONS[2])
+    expect(commitmentStatusLabel('cancelled')).toEqual(COMMITMENT_STATUS_OPTIONS[3])
   })
 
   it('describes Focus editing in the drawer contract and delegates typed actions', async () => {
@@ -122,22 +149,51 @@ describe('Focus presentation adapters', () => {
           value: 'Launch notes'
         }),
         expect.objectContaining({ kind: 'select', id: 'status', value: 'active' }),
-        expect.objectContaining({ kind: 'static', id: 'kind', value: 'generic' })
+        expect.objectContaining({ kind: 'static', id: 'kind', value: 'generic' }),
+        expect.objectContaining({ kind: 'static', id: 'last-reviewed', value: 'Never' }),
+        expect.objectContaining({ kind: 'checkbox', id: 'needs-review', value: true })
       ])
     )
 
     const save = adapter.model.actions?.find((action) => action.id === 'save')
     const remove = adapter.model.actions?.find((action) => action.id === 'delete')
-    await save?.onInvoke({ title: 'Revised', description: '', status: 'paused' })
+    await save?.onInvoke({
+      title: 'Revised',
+      description: '',
+      status: 'paused',
+      'needs-review': false
+    })
     await remove?.onInvoke({})
 
     expect(onSave).toHaveBeenCalledWith({
       title: 'Revised',
       description: null,
-      status: 'paused'
+      status: 'paused',
+      needsReview: false
     })
     expect(onDelete).toHaveBeenCalledOnce()
     expect(remove?.confirmation?.confirmLabel).toBe('Delete focus')
+  })
+
+  it('describes Thread review settings and delegates the inclusion toggle', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const adapter = threadDrawerAdapter(
+      { ...thread, lastReviewDate: '2026-01-06', needsReview: true },
+      focus.title,
+      onSave
+    )
+
+    expect(adapter.model.sections[0]?.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'static', id: 'last-reviewed', value: '2026-01-06' }),
+        expect.objectContaining({ kind: 'checkbox', id: 'needs-review', value: true })
+      ])
+    )
+
+    const save = adapter.model.actions?.find((action) => action.id === 'save')
+    await save?.onInvoke({ 'needs-review': false })
+
+    expect(onSave).toHaveBeenCalledWith({ needsReview: false })
   })
 
   it('exposes Commitment facts without exposing UI markup or the domain object', () => {
@@ -163,6 +219,12 @@ describe('Focus presentation adapters', () => {
           label: 'State',
           value: 'green',
           capitalization: 'capitalize'
+        },
+        {
+          kind: 'static',
+          id: 'last-updated',
+          label: 'Last updated',
+          value: '2026-01-07'
         }
       ],
       note: 'No editable settings here yet.'
