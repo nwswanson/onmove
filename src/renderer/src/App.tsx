@@ -1,17 +1,13 @@
 import { useReducer, useState } from 'react'
 import { AlertTriangle, ChevronRight, FolderOpen, House, Info, Settings } from 'lucide-react'
-import type { FocusSnapshot } from '../../shared/contracts'
 import { Button } from '@/components/ui/button'
 import {
-  ContextDrawer,
   ContextDrawerOutlet,
-  ContextDrawerSection,
   contextDrawerReducer,
   initialContextDrawerState,
   type ContextDrawerAdapter,
   type ContextDrawerControl
 } from '@/components/ui/context-drawer'
-import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import {
   Sidebar,
@@ -24,14 +20,16 @@ import {
   SidebarMenuButton,
   SidebarMenuItem
 } from '@/components/ui/sidebar'
+import {
+  SidebarNavigation,
+  type SidebarNavigationItemModel
+} from '@/components/ui/sidebar-navigation'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Toolbar, ToolbarGroup } from '@/components/ui/toolbar'
 import { ApplicationShell, WorkspaceShell } from '@/components/ui/workspace-shell'
 import { useApplicationModel } from '@/features/application/use-application-model'
-import {
-  FocusList,
-  NewFocusDialog
-} from '@/features/focus/focus-ui'
+import { NewFocusDialog } from '@/features/focus/focus-ui'
+import { focusPrimaryNavigationItems } from '@/features/focus/focus-presenters'
 import { FocusWorkspace } from '@/features/focus/focus-workspace'
 
 interface HomeExample {
@@ -95,18 +93,18 @@ function AppToolbar({
 }
 
 interface AppSidebarProps {
-  focuses: FocusSnapshot[]
-  selectedFocusId: number | null
+  focusItems: readonly SidebarNavigationItemModel[]
+  selectedFocusId: string | null
   enabled: boolean
   width: number
   onHome: () => void
-  onSelectFocus: (focusId: number) => void
+  onSelectFocus: (focusId: string) => void
   onNewFocus: () => void
   onShowData: () => void
 }
 
 function AppSidebar({
-  focuses,
+  focusItems,
   selectedFocusId,
   enabled,
   width,
@@ -139,29 +137,27 @@ function AppSidebar({
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupLabel>Items</SidebarGroupLabel>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                type="button"
-                isActive={homeActive}
-                aria-current={homeActive ? 'page' : undefined}
-                onClick={onHome}
-              >
-                <House aria-hidden="true" />
-                <span>Home</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
+          <SidebarNavigation
+            items={[{ id: 'home', label: 'Home', icon: 'home' }]}
+            selectedItemId={homeActive ? 'home' : null}
+            onSelect={onHome}
+          />
         </SidebarGroup>
 
         <SidebarGroup className="mt-5">
           <SidebarGroupLabel>Focuses</SidebarGroupLabel>
-          <FocusList
-            focuses={focuses}
-            selectedFocusId={selectedFocusId}
-            disabled={!enabled}
+          <SidebarNavigation
+            items={focusItems}
+            selectedItemId={selectedFocusId}
+            emptyLabel="No focuses yet"
             onSelect={onSelectFocus}
-            onNew={onNewFocus}
+            action={{
+              id: 'new-focus',
+              label: 'New focus',
+              icon: 'add',
+              disabled: !enabled,
+              onInvoke: onNewFocus
+            }}
           />
         </SidebarGroup>
       </SidebarContent>
@@ -206,14 +202,49 @@ function HomeView({
   const contextDrawerAdapter: ContextDrawerAdapter = {
     id: 'home:example',
     invalidationKeys: [],
-    render: ({ width, onClose }) => (
-      <HomeContextPanel
-        value={value}
-        width={width}
-        onChange={onChange}
-        onClose={onClose}
-      />
-    )
+    model: {
+      title: 'Home item',
+      description: 'Example contextual editor',
+      ariaLabel: 'Home item context drawer',
+      sections: [
+        {
+          id: 'details',
+          fields: [
+            { kind: 'text', id: 'title', label: 'Title', value: value.title },
+            {
+              kind: 'select',
+              id: 'status',
+              label: 'Status',
+              value: value.status,
+              options: [
+                { value: 'good', label: 'Good' },
+                { value: 'attention', label: 'Needs attention' }
+              ]
+            },
+            {
+              kind: 'static',
+              id: 'current-state',
+              label: 'Current state',
+              value: value.status === 'good' ? 'Good state' : 'Needs attention'
+            }
+          ]
+        }
+      ],
+      actions: [
+        {
+          id: 'done',
+          label: 'Done',
+          errorMessage: 'The example item could not be updated.',
+          onInvoke: (values) => {
+            onChange({
+              title: values.title,
+              status: values.status as HomeExample['status']
+            })
+            contextDrawer.onClose()
+          }
+        }
+      ]
+    }
   }
 
   return (
@@ -254,69 +285,6 @@ function HomeView({
   )
 }
 
-interface HomeContextPanelProps {
-  value: HomeExample
-  width: number
-  onChange: (value: HomeExample) => void
-  onClose: () => void
-}
-
-function HomeContextPanel({
-  value,
-  width,
-  onChange,
-  onClose
-}: HomeContextPanelProps): React.JSX.Element {
-  return (
-    <ContextDrawer
-      title="Home item"
-      description="Example contextual editor"
-      aria-label="Home item context drawer"
-      style={{ width }}
-      onClose={onClose}
-      footer={<Button onClick={onClose}>Done</Button>}
-    >
-      <ContextDrawerSection>
-        <div className="space-y-1.5">
-          <label htmlFor="home-context-title" className="text-xs font-medium">
-            Title
-          </label>
-          <Input
-            id="home-context-title"
-            value={value.title}
-            onChange={(event) => onChange({ ...value, title: event.target.value })}
-          />
-        </div>
-        <div className="space-y-1.5">
-          <label htmlFor="home-context-status" className="text-xs font-medium">
-            Status
-          </label>
-          <select
-            id="home-context-status"
-            className="h-9 w-full rounded-lg border border-border bg-background/75 px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/35"
-            value={value.status}
-            onChange={(event) =>
-              onChange({ ...value, status: event.target.value as HomeExample['status'] })
-            }
-          >
-            <option value="good">Good</option>
-            <option value="attention">Needs attention</option>
-          </select>
-        </div>
-        <div className="flex items-center gap-2 rounded-lg bg-muted/70 px-3 py-2.5 text-xs">
-          <span
-            className={`size-2 rounded-full ${
-              value.status === 'good' ? 'bg-success' : 'bg-destructive'
-            }`}
-            aria-hidden="true"
-          />
-          <span>{value.status === 'good' ? 'Good state' : 'Needs attention'}</span>
-        </div>
-      </ContextDrawerSection>
-    </ContextDrawer>
-  )
-}
-
 function LoadingView(): React.JSX.Element {
   return (
     <main className="flex min-w-0 flex-1 items-start p-10" aria-label="Loading application">
@@ -343,6 +311,7 @@ export function App(): React.JSX.Element {
     status: 'good'
   })
   const selectedFocus = application.selectedFocus
+  const focusItems = focusPrimaryNavigationItems(application.navigableFocuses)
   const toolbarTitle = selectedFocus?.title ?? 'Home'
   const contextDrawer = {
     open: contextDrawerState.open,
@@ -378,12 +347,12 @@ export function App(): React.JSX.Element {
         }
         primarySidebar={
           <AppSidebar
-            focuses={application.focuses}
-            selectedFocusId={selectedFocus?.id ?? null}
+            focusItems={focusItems}
+            selectedFocusId={selectedFocus ? String(selectedFocus.id) : null}
             enabled={application.enabled}
             width={sidebarWidth}
             onHome={application.goHome}
-            onSelectFocus={application.selectFocus}
+            onSelectFocus={(focusId) => application.selectFocus(Number(focusId))}
             onNewFocus={() => setNewFocusOpen(true)}
             onShowData={() => void application.showDataFolder()}
           />

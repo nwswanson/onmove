@@ -1,17 +1,12 @@
 import { useEffect, useState } from 'react'
 import {
   ChevronRight,
-  Circle,
-  Info,
-  Layers3,
-  PauseCircle
+  Info
 } from 'lucide-react'
 import type {
-  CommitmentSnapshot,
   CreateCommitmentInput,
   CreateThreadInput,
   FocusSnapshot,
-  ThreadSnapshot,
   UpdateFocusInput
 } from '../../../../shared/contracts'
 import { Badge } from '@/components/ui/badge'
@@ -32,58 +27,17 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
 import {
-  CommitmentContextPanel,
-  FocusContextPanel,
-  ThreadContextPanel
-} from '@/features/focus/focus-ui'
+  commitmentContextSidebarItems,
+  commitmentDrawerAdapter,
+  focusContextSidebarItems,
+  focusDrawerAdapter,
+  threadDrawerAdapter,
+  threadSidebarItemId
+} from '@/features/focus/focus-presenters'
 import { useFocusWorkspaceModel } from '@/features/focus/use-focus-workspace-model'
 
 const CONTEXTUAL_SIDEBAR_MIN = 220
 const CONTEXTUAL_SIDEBAR_MAX = 320
-
-type FocusContextItem =
-  | { id: 'overall'; kind: 'overall'; title: 'Overall' }
-  | { id: string; kind: 'thread'; thread: ThreadSnapshot }
-
-function focusContextItems(threads: readonly ThreadSnapshot[]): FocusContextItem[] {
-  return [
-    { id: 'overall', kind: 'overall', title: 'Overall' },
-    ...threads.map((thread) => ({
-      id: `thread:${thread.id}`,
-      kind: 'thread' as const,
-      thread
-    }))
-  ]
-}
-
-function threadDrawerAdapter(thread: ThreadSnapshot): ContextDrawerAdapter {
-  return {
-    id: `thread:${thread.id}`,
-    invalidationKeys: [`focus:${thread.focusId}`, `thread:${thread.id}`],
-    render: ({ width, onClose }) => (
-      <ThreadContextPanel thread={thread} width={width} onClose={onClose} />
-    )
-  }
-}
-
-function commitmentDrawerAdapter(
-  commitment: CommitmentSnapshot,
-  ancestorKeys: readonly string[] = []
-): ContextDrawerAdapter {
-  return {
-    id: `commitment:${commitment.id}`,
-    invalidationKeys: [
-      ...new Set([
-        ...ancestorKeys,
-        `${commitment.parent.type}:${commitment.parent.id}`,
-        `commitment:${commitment.id}`
-      ])
-    ],
-    render: ({ width, onClose }) => (
-      <CommitmentContextPanel commitment={commitment} width={width} onClose={onClose} />
-    )
-  }
-}
 
 interface NewThreadDialogProps {
   focusId: number
@@ -268,40 +222,11 @@ export function FocusWorkspace({
 
   const [focusLevel] = useState(
     () =>
-      new ContextualSidebarLevel<FocusContextItem>({
+      new ContextualSidebarLevel({
         id: `focus:${focus.id}`,
         title: 'Focus',
         ariaLabel: 'Focus sections',
-        items: focusContextItems([]),
-        getItemId: (item) => item.id,
-        getItemAriaLabel: (item) =>
-          item.kind === 'overall'
-            ? item.title
-            : `${item.thread.title}${item.thread.status === 'paused' ? ', paused' : ''}`,
-        getItemGroup: (item) =>
-          item.kind === 'overall'
-            ? { id: 'focus', label: 'Focus' }
-            : { id: 'threads', label: 'Threads' },
-        getItemClassName: (item) =>
-          item.kind === 'thread' && item.thread.status === 'paused'
-            ? 'text-muted-foreground opacity-55'
-            : undefined,
-        renderItem: (item) =>
-          item.kind === 'overall' ? (
-            <>
-              <Layers3 aria-hidden="true" />
-              <span className="truncate">{item.title}</span>
-            </>
-          ) : (
-            <>
-              {item.thread.status === 'paused' ? (
-                <PauseCircle aria-hidden="true" />
-              ) : (
-                <Circle aria-hidden="true" />
-              )}
-              <span className="truncate">{item.thread.title}</span>
-            </>
-          ),
+        items: focusContextSidebarItems([]),
         newItem: {
           label: 'New thread',
           onCreate: () => setNewThreadOpen(true)
@@ -311,26 +236,17 @@ export function FocusWorkspace({
 
   const [commitmentsLevel] = useState(
     () =>
-      new ContextualSidebarLevel<CommitmentSnapshot>({
+      new ContextualSidebarLevel({
         id: `focus:${focus.id}:commitments`,
         title: 'Commitments',
         ariaLabel: 'Focus commitments',
         parent: focusLevel,
         parentItemId: 'overall',
         items: [],
-        getItemId: (commitment) => String(commitment.id),
-        getItemAriaLabel: (commitment) => commitment.title,
-        getItemClassName: () => 'h-auto min-h-9 py-2',
         newItem: {
           label: 'New commitment',
           onCreate: () => setNewCommitmentOpen(true)
-        },
-        renderItem: (commitment) => (
-          <>
-            <span className="min-w-0 flex-1 line-clamp-2">{commitment.title}</span>
-            <ChevronRight className="ml-auto" aria-hidden="true" />
-          </>
-        )
+        }
       })
   )
 
@@ -340,39 +256,31 @@ export function FocusWorkspace({
   const navigationSnapshot = useContextualSidebarNavigation(navigation)
 
   useEffect(() => {
-    focusLevel.setItems(focusContextItems(model.threads))
-    commitmentsLevel.setItems(model.commitments)
+    focusLevel.setItems(focusContextSidebarItems(model.threads))
+    commitmentsLevel.setItems(commitmentContextSidebarItems(model.commitments))
     navigation.refresh()
   }, [commitmentsLevel, focusLevel, model.commitments, model.threads, navigation])
 
-  const selectedFocusItem =
+  const selectedThread =
     navigationSnapshot.level === focusLevel && navigationSnapshot.selectedItemId
-      ? focusLevel.getItem(navigationSnapshot.selectedItemId)
+      ? model.threads.find(
+          (thread) => threadSidebarItemId(thread.id) === navigationSnapshot.selectedItemId
+        )
       : undefined
   const selectedCommitment =
     navigationSnapshot.level === commitmentsLevel && navigationSnapshot.selectedItemId
-      ? commitmentsLevel.getItem(navigationSnapshot.selectedItemId)
+      ? model.commitments.find(
+          (commitment) => String(commitment.id) === navigationSnapshot.selectedItemId
+        )
       : undefined
 
   const contextDrawerAdapter: ContextDrawerAdapter | null = selectedCommitment
-    ? commitmentDrawerAdapter(selectedCommitment, [`focus:${focus.id}`])
+    ? commitmentDrawerAdapter(selectedCommitment, focus.title, [`focus:${focus.id}`])
     : navigationSnapshot.level === commitmentsLevel
       ? null
-      : selectedFocusItem?.kind === 'thread'
-        ? threadDrawerAdapter(selectedFocusItem.thread)
-        : {
-            id: `focus:${focus.id}`,
-            invalidationKeys: [`focus:${focus.id}`],
-            render: ({ width, onClose }) => (
-              <FocusContextPanel
-                focus={focus}
-                width={width}
-                onClose={onClose}
-                onSave={onUpdateFocus}
-                onDelete={onDeleteFocus}
-              />
-            )
-          }
+      : selectedThread
+        ? threadDrawerAdapter(selectedThread, focus.title)
+        : focusDrawerAdapter({ focus, onSave: onUpdateFocus, onDelete: onDeleteFocus })
 
   async function createThread(input: CreateThreadInput): Promise<void> {
     await model.createThread(input)
@@ -380,7 +288,9 @@ export function FocusWorkspace({
 
   async function createCommitment(input: CreateCommitmentInput): Promise<void> {
     const created = await model.createCommitment(input)
-    commitmentsLevel.setItems([...commitmentsLevel.items, created])
+    commitmentsLevel.setItems(
+      commitmentContextSidebarItems([...model.commitments, created])
+    )
     navigation.refresh()
     if (navigation.getSnapshot().level === commitmentsLevel) {
       navigation.select(String(created.id))
@@ -414,10 +324,10 @@ export function FocusWorkspace({
               </>
             )}
           </section>
-        ) : selectedFocusItem?.kind === 'thread' ? (
+        ) : selectedThread ? (
           <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="thread-heading">
             <h1 id="thread-heading" className="text-2xl font-semibold tracking-[-0.025em]">
-              {selectedFocusItem.thread.title}
+              {selectedThread.title}
             </h1>
           </section>
         ) : (
@@ -491,7 +401,11 @@ export function FocusWorkspace({
                         title="Pin in context drawer"
                         onClick={() =>
                           contextDrawer.onPin(
-                            commitmentDrawerAdapter(commitment, [`focus:${focus.id}`])
+                            commitmentDrawerAdapter(
+                              commitment,
+                              focus.title,
+                              [`focus:${focus.id}`]
+                            )
                           )
                         }
                       >

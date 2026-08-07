@@ -4,10 +4,10 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import {
-  ContextDrawer,
   ContextDrawerOutlet,
   contextDrawerReducer,
   initialContextDrawerState,
+  validateContextDrawerModel,
   type ContextDrawerAdapter
 } from '../../src/renderer/src/components/ui/context-drawer'
 
@@ -15,20 +15,96 @@ function adapter(id: string, title: string): ContextDrawerAdapter {
   return {
     id,
     invalidationKeys: [id],
-    render: ({ width, onClose }) => (
-      <ContextDrawer
-        title={title}
-        aria-label={`${title} drawer`}
-        style={{ width }}
-        onClose={onClose}
-      >
-        <p>{title} settings</p>
-      </ContextDrawer>
-    )
+    model: {
+      title,
+      ariaLabel: `${title} drawer`,
+      sections: [{ id: 'settings', fields: [], note: `${title} settings` }]
+    }
   }
 }
 
 describe('ContextDrawerOutlet', () => {
+  it('rejects malformed receiver models before rendering them', () => {
+    expect(() =>
+      validateContextDrawerModel({
+        title: 'Commitment',
+        ariaLabel: 'Commitment drawer',
+        sections: [
+          {
+            id: 'details',
+            fields: [
+              { kind: 'static', id: 'title', label: 'Title', value: 'One' },
+              { kind: 'static', id: 'title', label: 'Duplicate', value: 'Two' }
+            ]
+          }
+        ]
+      })
+    ).toThrow('duplicate field id "title"')
+  })
+
+  it('owns editable-field rendering, draft state, validation, and action dispatch', async () => {
+    const save = vi.fn().mockResolvedValue(undefined)
+    const user = userEvent.setup()
+    render(
+      <ContextDrawerOutlet
+        open
+        adapter={{
+          id: 'commitment:2',
+          invalidationKeys: ['commitment:2'],
+          model: {
+            title: 'Commitment',
+            ariaLabel: 'Commitment drawer',
+            sections: [
+              {
+                id: 'details',
+                fields: [
+                  { kind: 'text', id: 'title', label: 'Title', value: 'Initial', required: true },
+                  {
+                    kind: 'select',
+                    id: 'status',
+                    label: 'Status',
+                    value: 'active',
+                    options: [
+                      { value: 'active', label: 'Active' },
+                      { value: 'paused', label: 'Paused' }
+                    ]
+                  },
+                  { kind: 'static', id: 'parent', label: 'Parent', value: 'Focus — Atlas' }
+                ]
+              }
+            ],
+            actions: [
+              {
+                id: 'save',
+                label: 'Save',
+                requiresValidFields: true,
+                errorMessage: 'Could not save.',
+                onInvoke: save
+              }
+            ]
+          }
+        }}
+        pinnedAdapter={null}
+        width={320}
+        minWidth={280}
+        maxWidth={384}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onUnpin={vi.fn()}
+      />
+    )
+
+    const title = screen.getByLabelText(/^Title/)
+    expect(screen.getByText('Focus — Atlas')).toBeInTheDocument()
+    await user.clear(title)
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    await user.type(title, 'Revised')
+    await user.selectOptions(screen.getByLabelText('Status'), 'paused')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(save).toHaveBeenCalledWith({ title: 'Revised', status: 'paused' })
+  })
+
   it('renders the shared empty representation when an active screen has no adapter', async () => {
     const onClose = vi.fn()
     const onWidthChange = vi.fn()

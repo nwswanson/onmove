@@ -1,106 +1,61 @@
 # Contextual sidebar navigation
 
-The **contextual sidebar** is the secondary hierarchy pane between the persistent primary sidebar
-and the main view. It is distinct from the right-side **context drawer**, which edits the currently
-selected object.
+The contextual sidebar is the secondary hierarchy pane. Its navigation controller remains generic,
+and its rows now use a receiver-owned data contract rather than caller-provided render functions.
 
-Navigating deeper replaces the contextual sidebar's current level. It does not append another
-column. The shared primitives live in
-`src/renderer/src/components/ui/contextual-sidebar.tsx` and divide responsibility three ways:
+Responsibility is divided as follows:
 
-- `ContextualSidebarLevel<TItem>` owns one level's typed items, item identifiers, item renderer,
-  groups, optional new-item action, selection callback, and optional parent.
-- `ContextualSidebarNavigation` owns the current level and the selected item at every visited level.
-- `ContextualSidebar` renders the current level and owns global controls such as Back.
-- `useContextualSidebarNavigation` lets the main view consume the same current level and selection.
+- `ContextualSidebarItemModel` defines the only row data accepted by the receiver: stable id,
+  label, accessible label, group, semantic icon token, tone, line count, accessory, and disabled
+  state.
+- `ContextualSidebarLevel` owns a collection of those row models plus its parent assertion and
+  optional New action.
+- `ContextualSidebarNavigation` owns the current level, selection retention, Back traversal, and
+  reconciliation after deletion.
+- `ContextualSidebar` owns every row element, icon, class, focus state, selection marker, group
+  label, empty state, and New button.
+- A feature presenter converts Threads or Commitments into `ContextualSidebarItemModel[]` before
+  the level sees them.
 
-## Root and parent rules
+There is deliberately no `renderItem`, arbitrary class name, React node, or domain generic on a
+level. A caller can request a two-line row or muted tone using vocabulary the sidebar contract
+defines, but cannot replace receiver markup.
 
-A navigation controller starts at one parentless root. For a Focus, that root will eventually own
-the Focus's Thread items. A Focus is not itself an item in another contextual level; the persistent
-primary sidebar owns Focus selection.
-
-Every deeper level must explicitly assert the currently visible level and one of that level's items
-as its parent. A Commitment level beneath a Thread therefore points to the Thread level and the
-selected Thread item. An Update level beneath Commitments points to the Commitment level and its
-selected Commitment item. `navigateTo` rejects unrelated levels and parent-item mismatches, which
-prevents the main view and contextual sidebar from silently diverging.
-
-```tsx
-const threads = new ContextualSidebarLevel<ThreadSnapshot>({
-  id: `focus:${focus.id}:threads`,
-  title: 'Threads',
-  ariaLabel: `${focus.title} threads`,
-  items: () => threadSnapshots,
-  getItemId: (thread) => String(thread.id),
-  renderItem: (thread) => <span>{thread.title}</span>,
-  newItem: {
-    label: 'New thread',
-    onCreate: () => setNewThreadOpen(true)
-  },
-  onSelect: (thread) => setSelectedThreadId(thread.id)
+```ts
+const root = new ContextualSidebarLevel({
+  id: `focus:${focus.id}`,
+  title: 'Focus',
+  ariaLabel: 'Focus sections',
+  items: focusContextSidebarItems(threads),
+  newItem: { label: 'New thread', onCreate: openNewThread }
 })
 
-const commitments = new ContextualSidebarLevel<CommitmentSnapshot>({
-  id: `thread:${thread.id}:commitments`,
+const commitments = new ContextualSidebarLevel({
+  id: `focus:${focus.id}:commitments`,
   title: 'Commitments',
-  ariaLabel: `${thread.title} commitments`,
-  parent: threads,
-  parentItemId: String(thread.id),
-  items: () => commitmentSnapshots,
-  getItemId: (commitment) => String(commitment.id),
-  renderItem: (commitment) => <span>{commitment.title}</span>,
-  onSelect: (commitment) => setSelectedCommitmentId(commitment.id)
+  ariaLabel: 'Focus commitments',
+  parent: root,
+  parentItemId: 'overall',
+  items: commitmentContextSidebarItems(focusCommitments),
+  newItem: { label: 'New commitment', onCreate: openNewCommitment }
 })
-
-const navigation = new ContextualSidebarNavigation(threads)
-
-navigation.select(String(thread.id))
-navigation.navigateTo(commitments)
-
-function Workspace(): React.JSX.Element {
-  const current = useContextualSidebarNavigation(navigation)
-  const selectedCommitment =
-    current.level === commitments && current.selectedItemId
-      ? commitments.getItem(current.selectedItemId)
-      : undefined
-
-  return (
-    <>
-      <ContextualSidebar navigation={navigation} />
-      <main>{selectedCommitment?.title}</main>
-    </>
-  )
-}
 ```
 
-The first item is selected by default. Set `selectFirstItem: false` when a level may intentionally
-have no selection, or set `initialSelectedItemId` for a specific initial record. Explicit
-selections are retained independently for each level, so Back restores the parent's previous
-selection.
+The navigation snapshot exposes only a selected presentation id. The feature view resolves that id
+against its own model data when it needs the selected Thread or Commitment. Domain records never
+live inside the shared level.
 
-## Data changes
+## Parent and deletion rules
 
-`items` may be an array or a provider function. For ordinary async IPC data, call
-`level.setItems(nextSnapshots)` and then `navigation.refresh()` from the load or mutation handler.
-If the selected record disappeared, the controller selects the first remaining record or `null`
-when the level is empty.
+A controller starts at one parentless root. Every entered child level must assert both the current
+parent level and one selected parent item. `navigateTo` rejects unrelated levels and mismatched
+parent selections.
 
-Deletion reconciliation keeps the deepest still-valid level. Removing a selected leaf selects the
-first surviving peer and leaves the level open; removing the final leaf leaves that valid collection
-open with no selection. If a level's asserted parent item was deleted, `navigation.refresh()` walks
-up the full parent chain to the nearest reachable ancestor and reconciles that ancestor's selection.
-This also handles cascades that invalidate multiple nested levels in one mutation.
+Selections are retained independently per level, so Back restores the previous parent selection.
+After items change, `navigation.refresh()` selects the first surviving peer or `null`. If the item
+asserted by a deeper level disappears, refresh walks upward to the nearest reachable ancestor. This
+handles leaf deletion and cascades without embedding Focus/Thread/Commitment rules in navigation.
 
-Item identifiers must be non-empty and unique within a level. Level identifiers cannot repeat in
-their own parent chain. `renderItem` supplies domain-specific row content, while
-`getItemClassName` can opt a level into taller or multi-line rows without replacing the shared
-button semantics. `getItemGroup` supplies semantic group labels. `newItem` declares the optional
-level-local creation action; the shared contextual sidebar renders its icon, button, location,
-disabled behavior, and accessible label. This lets a root level offer New Thread and its child
-level offer New Commitment without either adapter reimplementing footer UI. `footer` remains
-available for uncommon custom controls. Disabled items remain visible but cannot become selected.
-
-The live Focus root uses these interfaces for Overall and persisted Threads. Its Focus-level
-Commitments section creates a child level that asserts Overall as its parent item, so opening a
-Commitment replaces the contextual sidebar while Back restores the previous root selection.
+Item and level ids must be non-empty and unique. Labels and group labels are validated at the
+receiver boundary. The optional `newItem` callback is a capability supplied by the feature; the
+sidebar owns its placement, icon, semantics, and disabled presentation.

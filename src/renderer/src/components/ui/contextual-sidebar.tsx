@@ -1,9 +1,5 @@
-import {
-  useSyncExternalStore,
-  type ComponentProps,
-  type ReactNode
-} from 'react'
-import { ChevronLeft, Plus } from 'lucide-react'
+import { useSyncExternalStore, type ComponentProps } from 'react'
+import { ChevronLeft, ChevronRight, Circle, Layers3, PauseCircle, Plus } from 'lucide-react'
 import {
   Sidebar,
   SidebarContent,
@@ -17,14 +13,26 @@ import {
 } from '@/components/ui/sidebar'
 import { cn } from '@/lib/utils'
 
-export interface ContextualSidebarItemRenderState {
-  itemId: string
-  selected: boolean
-}
-
 export interface ContextualSidebarItemGroup {
   id: string
-  label: ReactNode
+  label: string
+}
+
+/**
+ * Receiver-owned presentation contract for one contextual navigation row.
+ * Feature presenters convert domain records into this shape; the sidebar owns
+ * all markup, icons, selection styling, focus behavior, and accessibility.
+ */
+export interface ContextualSidebarItemModel {
+  id: string
+  label: string
+  ariaLabel?: string
+  group?: ContextualSidebarItemGroup
+  icon?: 'overview' | 'item' | 'paused'
+  accessory?: 'disclosure'
+  tone?: 'default' | 'muted'
+  lines?: 1 | 2
+  disabled?: boolean
 }
 
 export interface ContextualSidebarNewItemAction {
@@ -36,29 +44,23 @@ export interface ContextualSidebarNewItemAction {
 
 export interface ContextualSidebarLevelBaseOptions {
   id: string
-  title: ReactNode
+  title: string
   ariaLabel: string
   parent?: ContextualSidebarLevelBase | null
   parentItemId?: string
-  emptyState?: ReactNode
+  emptyState?: string
   newItem?:
     | ContextualSidebarNewItemAction
     | (() => ContextualSidebarNewItemAction | null)
-  footer?: ReactNode | (() => ReactNode)
   initialSelectedItemId?: string | null
   selectFirstItem?: boolean
 }
 
-export interface ContextualSidebarLevelOptions<TItem>
-  extends ContextualSidebarLevelBaseOptions {
-  items: readonly TItem[] | (() => readonly TItem[])
-  getItemId: (item: TItem) => string
-  renderItem: (item: TItem, state: ContextualSidebarItemRenderState) => ReactNode
-  getItemAriaLabel?: (item: TItem) => string
-  getItemGroup?: (item: TItem) => ContextualSidebarItemGroup | null
-  getItemClassName?: (item: TItem, state: ContextualSidebarItemRenderState) => string | undefined
-  isItemDisabled?: (item: TItem) => boolean
-  onSelect?: (item: TItem) => void
+export interface ContextualSidebarLevelOptions extends ContextualSidebarLevelBaseOptions {
+  items:
+    | readonly ContextualSidebarItemModel[]
+    | (() => readonly ContextualSidebarItemModel[])
+  onSelect?: (itemId: string) => void
 }
 
 /**
@@ -68,15 +70,14 @@ export interface ContextualSidebarLevelOptions<TItem>
  */
 export abstract class ContextualSidebarLevelBase {
   readonly id: string
-  readonly title: ReactNode
+  readonly title: string
   readonly ariaLabel: string
   readonly parent: ContextualSidebarLevelBase | null
   readonly parentItemId: string | null
-  readonly emptyState: ReactNode
+  readonly emptyState: string
   readonly initialSelectedItemId: string | null | undefined
   readonly selectFirstItem: boolean
   private readonly resolveNewItem: () => ContextualSidebarNewItemAction | null
-  private readonly resolveFooter: () => ReactNode
 
   protected constructor({
     id,
@@ -86,7 +87,6 @@ export abstract class ContextualSidebarLevelBase {
     parentItemId,
     emptyState = 'No items',
     newItem,
-    footer = null,
     initialSelectedItemId,
     selectFirstItem = true
   }: ContextualSidebarLevelBaseOptions) {
@@ -121,18 +121,13 @@ export abstract class ContextualSidebarLevelBase {
     this.parentItemId = normalizedParentItemId
     this.emptyState = emptyState
     this.resolveNewItem = typeof newItem === 'function' ? newItem : () => newItem ?? null
-    this.resolveFooter = typeof footer === 'function' ? footer : () => footer
     this.initialSelectedItemId = initialSelectedItemId
     this.selectFirstItem = selectFirstItem
   }
 
   abstract getItemIds(): readonly string[]
+  abstract getItem(itemId: string): ContextualSidebarItemModel | undefined
   abstract hasItem(itemId: string): boolean
-  abstract isItemDisabled(itemId: string): boolean
-  abstract getItemAriaLabel(itemId: string): string | undefined
-  abstract getItemGroup(itemId: string): ContextualSidebarItemGroup | null
-  abstract getItemClassName(itemId: string, selected: boolean): string | undefined
-  abstract renderItem(itemId: string, selected: boolean): ReactNode
   abstract notifySelection(itemId: string): void
 
   getNewItem(): ContextualSidebarNewItemAction | null {
@@ -146,49 +141,33 @@ export abstract class ContextualSidebarLevelBase {
     const ariaLabel = action.ariaLabel?.trim() || label
     return { ...action, label, ariaLabel }
   }
-
-  getFooter(): ReactNode {
-    return this.resolveFooter()
-  }
 }
 
 /**
- * Typed definition for one sidebar level. It may be instantiated directly or
- * subclassed when a domain wants named Focus/Thread/Commitment level classes.
+ * Definition for one sidebar level. It accepts only the sidebar's own item
+ * contract, never domain records or caller-provided markup.
  */
-export class ContextualSidebarLevel<TItem> extends ContextualSidebarLevelBase {
-  private itemSource: readonly TItem[] | (() => readonly TItem[])
-  private readonly resolveItemId: (item: TItem) => string
-  private readonly renderItemContent: ContextualSidebarLevelOptions<TItem>['renderItem']
-  private readonly resolveItemAriaLabel?: ContextualSidebarLevelOptions<TItem>['getItemAriaLabel']
-  private readonly resolveItemGroup?: ContextualSidebarLevelOptions<TItem>['getItemGroup']
-  private readonly resolveItemClassName?: ContextualSidebarLevelOptions<TItem>['getItemClassName']
-  private readonly resolveItemDisabled?: ContextualSidebarLevelOptions<TItem>['isItemDisabled']
-  private readonly onItemSelect?: ContextualSidebarLevelOptions<TItem>['onSelect']
+export class ContextualSidebarLevel extends ContextualSidebarLevelBase {
+  private itemSource: ContextualSidebarLevelOptions['items']
+  private readonly onItemSelect?: ContextualSidebarLevelOptions['onSelect']
 
-  constructor(options: ContextualSidebarLevelOptions<TItem>) {
+  constructor(options: ContextualSidebarLevelOptions) {
     super(options)
     this.itemSource = options.items
-    this.resolveItemId = options.getItemId
-    this.renderItemContent = options.renderItem
-    this.resolveItemAriaLabel = options.getItemAriaLabel
-    this.resolveItemGroup = options.getItemGroup
-    this.resolveItemClassName = options.getItemClassName
-    this.resolveItemDisabled = options.isItemDisabled
     this.onItemSelect = options.onSelect
     this.readEntries()
   }
 
-  get items(): readonly TItem[] {
+  get items(): readonly ContextualSidebarItemModel[] {
     return typeof this.itemSource === 'function' ? this.itemSource() : this.itemSource
   }
 
-  setItems(items: readonly TItem[]): void {
+  setItems(items: readonly ContextualSidebarItemModel[]): void {
     this.itemSource = items
     this.readEntries()
   }
 
-  getItem(itemId: string): TItem | undefined {
+  getItem(itemId: string): ContextualSidebarItemModel | undefined {
     return this.readEntries().find((entry) => entry.id === itemId)?.item
   }
 
@@ -200,57 +179,40 @@ export class ContextualSidebarLevel<TItem> extends ContextualSidebarLevelBase {
     return this.getItem(itemId) !== undefined
   }
 
-  isItemDisabled(itemId: string): boolean {
-    const item = this.requireItem(itemId)
-    return this.resolveItemDisabled?.(item) ?? false
-  }
-
-  getItemAriaLabel(itemId: string): string | undefined {
-    const item = this.requireItem(itemId)
-    return this.resolveItemAriaLabel?.(item)
-  }
-
-  getItemGroup(itemId: string): ContextualSidebarItemGroup | null {
-    const item = this.requireItem(itemId)
-    const group = this.resolveItemGroup?.(item) ?? null
-    if (!group) return null
-    const id = group.id.trim()
-    if (id.length === 0) {
-      throw new Error(`Contextual sidebar level "${this.id}" contains an item group without an id.`)
-    }
-    return { ...group, id }
-  }
-
-  getItemClassName(itemId: string, selected: boolean): string | undefined {
-    const item = this.requireItem(itemId)
-    return this.resolveItemClassName?.(item, { itemId, selected })
-  }
-
-  renderItem(itemId: string, selected: boolean): ReactNode {
-    const item = this.requireItem(itemId)
-    return this.renderItemContent(item, { itemId, selected })
-  }
-
   notifySelection(itemId: string): void {
-    this.onItemSelect?.(this.requireItem(itemId))
+    this.requireItem(itemId)
+    this.onItemSelect?.(itemId)
   }
 
-  private readEntries(): Array<{ id: string; item: TItem }> {
+  private readEntries(): Array<{ id: string; item: ContextualSidebarItemModel }> {
     const ids = new Set<string>()
     return this.items.map((item) => {
-      const id = this.resolveItemId(item).trim()
+      const id = item.id.trim()
       if (id.length === 0) {
         throw new Error(`Contextual sidebar level "${this.id}" contains an item without an id.`)
       }
+      if (item.label.trim().length === 0) {
+        throw new Error(
+          `Contextual sidebar level "${this.id}" contains item "${id}" without a label.`
+        )
+      }
       if (ids.has(id)) {
         throw new Error(`Contextual sidebar level "${this.id}" contains duplicate item id "${id}".`)
+      }
+      if (item.group && item.group.id.trim().length === 0) {
+        throw new Error(`Contextual sidebar level "${this.id}" contains an item group without an id.`)
+      }
+      if (item.group && item.group.label.trim().length === 0) {
+        throw new Error(
+          `Contextual sidebar level "${this.id}" contains item group "${item.group.id}" without a label.`
+        )
       }
       ids.add(id)
       return { id, item }
     })
   }
 
-  private requireItem(itemId: string): TItem {
+  private requireItem(itemId: string): ContextualSidebarItemModel {
     const item = this.getItem(itemId)
     if (item === undefined) {
       throw new Error(`Contextual sidebar level "${this.id}" does not contain item "${itemId}".`)
@@ -329,7 +291,7 @@ export class ContextualSidebarNavigation {
         `Cannot select missing item "${itemId}" in contextual sidebar level "${this.currentLevel.id}".`
       )
     }
-    if (this.currentLevel.isItemDisabled(itemId)) return false
+    if (this.currentLevel.getItem(itemId)?.disabled) return false
     this.selections.set(this.currentLevel, itemId)
     this.currentLevel.notifySelection(itemId)
     this.publish()
@@ -425,7 +387,7 @@ export function ContextualSidebar({
   const itemIds = level.getItemIds()
   const groups = itemIds.reduce<Array<{ group: ContextualSidebarItemGroup | null; itemIds: string[] }>>(
     (result, itemId) => {
-      const group = level.getItemGroup(itemId)
+      const group = level.getItem(itemId)?.group ?? null
       const previous = result.at(-1)
       if (previous && previous.group?.id === group?.id) {
         previous.itemIds.push(itemId)
@@ -436,7 +398,6 @@ export function ContextualSidebar({
     },
     []
   )
-  const footer = level.getFooter()
   const newItem = level.getNewItem()
   const newItemDisabled =
     typeof newItem?.disabled === 'function' ? newItem.disabled() : newItem?.disabled
@@ -475,18 +436,35 @@ export function ContextualSidebar({
               <SidebarMenu>
                 {groupItemIds.map((itemId) => {
                   const selected = itemId === selectedItemId
+                  const item = level.getItem(itemId)
+                  if (!item) return null
                   return (
                     <SidebarMenuItem key={itemId}>
                       <SidebarMenuButton
                         type="button"
                         isActive={selected}
                         aria-current={selected ? 'page' : undefined}
-                        aria-label={level.getItemAriaLabel(itemId)}
-                        disabled={level.isItemDisabled(itemId)}
-                        className={level.getItemClassName(itemId, selected)}
+                        aria-label={item.ariaLabel ?? item.label}
+                        disabled={item.disabled}
+                        className={cn(
+                          item.tone === 'muted' && 'text-muted-foreground opacity-55',
+                          item.lines === 2 && 'h-auto min-h-9 py-2'
+                        )}
                         onClick={() => navigation.select(itemId)}
                       >
-                        {level.renderItem(itemId, selected)}
+                        {item.icon === 'overview' ? (
+                          <Layers3 aria-hidden="true" />
+                        ) : item.icon === 'paused' ? (
+                          <PauseCircle aria-hidden="true" />
+                        ) : item.icon === 'item' ? (
+                          <Circle aria-hidden="true" />
+                        ) : null}
+                        <span className={cn('min-w-0 flex-1', item.lines === 2 ? 'line-clamp-2' : 'truncate')}>
+                          {item.label}
+                        </span>
+                        {item.accessory === 'disclosure' && (
+                          <ChevronRight className="ml-auto" aria-hidden="true" />
+                        )}
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   )
@@ -499,25 +477,22 @@ export function ContextualSidebar({
           )}
         </nav>
       </SidebarContent>
-      {(footer || newItem) && (
+      {newItem && (
         <SidebarFooter className="border-t border-sidebar-border p-2">
-          {footer}
-          {newItem && (
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  type="button"
-                  aria-label={newItem.ariaLabel}
-                  disabled={newItemDisabled}
-                  className="text-sidebar-foreground/72"
-                  onClick={newItem.onCreate}
-                >
-                  <Plus aria-hidden="true" />
-                  <span className="truncate">{newItem.label}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          )}
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                type="button"
+                aria-label={newItem.ariaLabel}
+                disabled={newItemDisabled}
+                className="text-sidebar-foreground/72"
+                onClick={newItem.onCreate}
+              >
+                <Plus aria-hidden="true" />
+                <span className="truncate">{newItem.label}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
         </SidebarFooter>
       )}
     </Sidebar>

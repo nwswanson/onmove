@@ -11,6 +11,7 @@ export interface ApplicationModel {
   state: AppState | null
   error: string | null
   focuses: FocusSnapshot[]
+  navigableFocuses: FocusSnapshot[]
   selectedFocus: FocusSnapshot | null
   selectedFocusId: number | null
   enabled: boolean
@@ -91,6 +92,7 @@ export function useApplicationModel(): ApplicationModel {
     state,
     error,
     focuses,
+    navigableFocuses: focuses.filter(isVisibleFocus),
     selectedFocus,
     selectedFocusId,
     enabled: Boolean(state),

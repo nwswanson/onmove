@@ -1,8 +1,11 @@
-import { Fragment } from 'react'
+import { useState } from 'react'
 import { Undo2, X } from 'lucide-react'
 import type * as React from 'react'
 import { Button } from '@/components/ui/button'
+import { Dialog } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { ResizeHandle } from '@/components/ui/resize-handle'
+import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 
 export interface ContextDrawerProps extends Omit<React.ComponentProps<'aside'>, 'title'> {
@@ -12,20 +15,83 @@ export interface ContextDrawerProps extends Omit<React.ComponentProps<'aside'>, 
   onClose: () => void
 }
 
-export interface ContextDrawerRenderProps {
-  width: number
-  onClose: () => void
+export interface ContextDrawerSelectOption {
+  value: string
+  label: string
+}
+
+export type ContextDrawerFieldModel =
+  | {
+      kind: 'text'
+      id: string
+      label: string
+      value: string
+      required?: boolean
+      multiline?: boolean
+      placeholder?: string
+    }
+  | {
+      kind: 'select'
+      id: string
+      label: string
+      value: string
+      options: readonly ContextDrawerSelectOption[]
+      required?: boolean
+    }
+  | {
+      kind: 'static'
+      id: string
+      label: string
+      value: string
+      capitalization?: 'normal' | 'capitalize'
+    }
+
+export interface ContextDrawerSectionModel {
+  id: string
+  fields: readonly ContextDrawerFieldModel[]
+  note?: string
+}
+
+export type ContextDrawerValues = Readonly<Record<string, string>>
+
+export interface ContextDrawerConfirmationModel {
+  title: string
+  description: string
+  body?: string
+  confirmLabel: string
+}
+
+export interface ContextDrawerActionModel {
+  id: string
+  label: string
+  pendingLabel?: string
+  variant?: 'default' | 'destructive' | 'outline' | 'ghost'
+  align?: 'start' | 'end'
+  requiresValidFields?: boolean
+  disabled?: boolean | ((values: ContextDrawerValues) => boolean)
+  confirmation?: ContextDrawerConfirmationModel
+  errorMessage: string
+  onInvoke: (values: ContextDrawerValues) => void | Promise<void>
+}
+
+/** Receiver-owned description of what the generic drawer can display and edit. */
+export interface ContextDrawerModel {
+  title: string
+  description?: string
+  ariaLabel: string
+  sections: readonly ContextDrawerSectionModel[]
+  actions?: readonly ContextDrawerActionModel[]
 }
 
 /**
- * A screen-owned adapter for the application drawer. The shell knows only how
- * to keep the outlet open and sized; the active screen owns what is rendered.
+ * A feature-owned identity and receiver-owned presentation model. Features
+ * provide data and actions; only ContextDrawerOutlet renders UI.
  */
 export interface ContextDrawerAdapter {
   id: string
   /** Entity/ancestor keys whose deletion makes this representation invalid. */
   invalidationKeys: readonly string[]
-  render: (props: ContextDrawerRenderProps) => React.ReactNode
+  model: ContextDrawerModel
 }
 
 export interface ContextDrawerState {
@@ -161,6 +227,265 @@ function ContextDrawerSection({
   )
 }
 
+function initialDrawerValues(model: ContextDrawerModel): Record<string, string> {
+  return Object.fromEntries(
+    model.sections.flatMap((section) =>
+      section.fields.flatMap((field) =>
+        field.kind === 'static' ? [] : [[field.id, field.value] as const]
+      )
+    )
+  )
+}
+
+export function validateContextDrawerModel(model: ContextDrawerModel): void {
+  if (model.title.trim().length === 0 || model.ariaLabel.trim().length === 0) {
+    throw new Error('A context drawer model requires a title and accessible label.')
+  }
+
+  const sectionIds = new Set<string>()
+  const fieldIds = new Set<string>()
+  for (const section of model.sections) {
+    const sectionId = section.id.trim()
+    if (!sectionId || sectionIds.has(sectionId)) {
+      throw new Error(`Context drawer contains an invalid or duplicate section id "${section.id}".`)
+    }
+    sectionIds.add(sectionId)
+
+    for (const field of section.fields) {
+      const fieldId = field.id.trim()
+      if (!fieldId || fieldIds.has(fieldId)) {
+        throw new Error(`Context drawer contains an invalid or duplicate field id "${field.id}".`)
+      }
+      if (field.label.trim().length === 0) {
+        throw new Error(`Context drawer field "${fieldId}" requires a label.`)
+      }
+      if (field.kind === 'select') {
+        const values = new Set(field.options.map((option) => option.value))
+        if (values.size !== field.options.length || !values.has(field.value)) {
+          throw new Error(`Context drawer select field "${fieldId}" has invalid options or value.`)
+        }
+      }
+      fieldIds.add(fieldId)
+    }
+  }
+
+  const actionIds = new Set<string>()
+  for (const action of model.actions ?? []) {
+    const actionId = action.id.trim()
+    if (!actionId || actionIds.has(actionId) || action.label.trim().length === 0) {
+      throw new Error(`Context drawer contains an invalid action "${action.id}".`)
+    }
+    actionIds.add(actionId)
+  }
+}
+
+function ContextDrawerInspector({
+  adapterId,
+  model,
+  width,
+  onClose
+}: {
+  adapterId: string
+  model: ContextDrawerModel
+  width: number
+  onClose: () => void
+}): React.JSX.Element {
+  validateContextDrawerModel(model)
+  const [values, setValues] = useState<Record<string, string>>(() => initialDrawerValues(model))
+  const [pendingActionId, setPendingActionId] = useState<string | null>(null)
+  const [confirmingAction, setConfirmingAction] = useState<ContextDrawerActionModel | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const actions = model.actions ?? []
+  const fieldsValid = model.sections.every((section) =>
+    section.fields.every(
+      (field) =>
+        field.kind === 'static' || !field.required || (values[field.id] ?? '').trim().length > 0
+    )
+  )
+
+  function updateValue(fieldId: string, value: string): void {
+    setValues((current) => ({ ...current, [fieldId]: value }))
+  }
+
+  function actionDisabled(action: ContextDrawerActionModel): boolean {
+    if (pendingActionId) return true
+    if (action.requiresValidFields && !fieldsValid) return true
+    return typeof action.disabled === 'function'
+      ? action.disabled(values)
+      : (action.disabled ?? false)
+  }
+
+  async function invoke(action: ContextDrawerActionModel): Promise<void> {
+    setPendingActionId(action.id)
+    setError(null)
+    try {
+      await action.onInvoke(values)
+      setConfirmingAction(null)
+    } catch {
+      setError(action.errorMessage)
+      setConfirmingAction(null)
+    } finally {
+      setPendingActionId(null)
+    }
+  }
+
+  function requestAction(action: ContextDrawerActionModel): void {
+    if (action.confirmation) {
+      setConfirmingAction(action)
+    } else {
+      void invoke(action)
+    }
+  }
+
+  return (
+    <>
+      <ContextDrawer
+        title={model.title}
+        description={model.description}
+        aria-label={model.ariaLabel}
+        style={{ width }}
+        onClose={onClose}
+        footer={
+          actions.length > 0 ? (
+            <>
+              {actions.map((action) => (
+                <Button
+                  key={action.id}
+                  type="button"
+                  variant={action.variant}
+                  className={action.align === 'start' ? 'mr-auto' : undefined}
+                  disabled={actionDisabled(action)}
+                  onClick={() => requestAction(action)}
+                >
+                  {pendingActionId === action.id
+                    ? (action.pendingLabel ?? action.label)
+                    : action.label}
+                </Button>
+              ))}
+            </>
+          ) : undefined
+        }
+      >
+        {model.sections.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No settings here.</p>
+        ) : (
+          <div className="space-y-4">
+            {model.sections.map((section) => (
+              <ContextDrawerSection key={section.id}>
+                {section.fields.map((field) => {
+                  const inputId = `${adapterId}-${field.id}`
+                  if (field.kind === 'static') {
+                    return (
+                      <dl key={field.id}>
+                        <dt className="text-[0.6875rem] font-medium text-muted-foreground">
+                          {field.label}
+                        </dt>
+                        <dd
+                          className={cn(
+                            'mt-0.5 text-sm',
+                            field.capitalization === 'capitalize' && 'capitalize'
+                          )}
+                        >
+                          {field.value}
+                        </dd>
+                      </dl>
+                    )
+                  }
+
+                  return (
+                    <div key={field.id} className="space-y-1.5">
+                      <label htmlFor={inputId} className="text-xs font-medium">
+                        {field.label}
+                        {field.required && <span className="text-destructive"> *</span>}
+                      </label>
+                      {field.kind === 'select' ? (
+                        <select
+                          id={inputId}
+                          className="h-9 w-full rounded-lg border border-border bg-background/75 px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/35"
+                          required={field.required}
+                          value={values[field.id] ?? ''}
+                          onChange={(event) => updateValue(field.id, event.target.value)}
+                        >
+                          {field.options.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : field.multiline ? (
+                        <Textarea
+                          id={inputId}
+                          required={field.required}
+                          placeholder={field.placeholder}
+                          value={values[field.id] ?? ''}
+                          onChange={(event) => updateValue(field.id, event.target.value)}
+                        />
+                      ) : (
+                        <Input
+                          id={inputId}
+                          required={field.required}
+                          placeholder={field.placeholder}
+                          value={values[field.id] ?? ''}
+                          onChange={(event) => updateValue(field.id, event.target.value)}
+                        />
+                      )}
+                    </div>
+                  )
+                })}
+                {section.note && (
+                  <p className="text-xs text-muted-foreground">{section.note}</p>
+                )}
+              </ContextDrawerSection>
+            ))}
+            {error && (
+              <p role="alert" className="px-1 text-xs text-destructive">
+                {error}
+              </p>
+            )}
+          </div>
+        )}
+      </ContextDrawer>
+
+      {confirmingAction?.confirmation && (
+        <Dialog
+          open
+          title={confirmingAction.confirmation.title}
+          description={confirmingAction.confirmation.description}
+          onClose={() => !pendingActionId && setConfirmingAction(null)}
+          footer={
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={Boolean(pendingActionId)}
+                onClick={() => setConfirmingAction(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant={confirmingAction.variant}
+                disabled={Boolean(pendingActionId)}
+                onClick={() => void invoke(confirmingAction)}
+              >
+                {pendingActionId === confirmingAction.id
+                  ? (confirmingAction.pendingLabel ?? confirmingAction.label)
+                  : confirmingAction.confirmation.confirmLabel}
+              </Button>
+            </>
+          }
+        >
+          {confirmingAction.confirmation.body && (
+            <p className="text-sm leading-6 text-muted-foreground">
+              {confirmingAction.confirmation.body}
+            </p>
+          )}
+        </Dialog>
+      )}
+    </>
+  )
+}
+
 /**
  * Persistent, domain-agnostic drawer outlet. Swapping adapters replaces only
  * the drawer representation; it never changes the caller-owned open state.
@@ -211,21 +536,20 @@ function ContextDrawerOutlet({
           </div>
         )}
         <div className="min-h-0 flex-1">
-          {renderedAdapter ? (
-            <Fragment key={renderedAdapter.id}>
-              {renderedAdapter.render({ width, onClose })}
-            </Fragment>
-          ) : (
-            <ContextDrawer
-              title="Context"
-              description="Current selection"
-              aria-label="Context drawer"
-              style={{ width }}
-              onClose={onClose}
-            >
-              <p className="text-sm text-muted-foreground">No settings here.</p>
-            </ContextDrawer>
-          )}
+          <ContextDrawerInspector
+            key={renderedAdapter?.id ?? 'context:empty'}
+            adapterId={renderedAdapter?.id ?? 'context-empty'}
+            model={
+              renderedAdapter?.model ?? {
+                title: 'Context',
+                description: 'Current selection',
+                ariaLabel: 'Context drawer',
+                sections: []
+              }
+            }
+            width={width}
+            onClose={onClose}
+          />
         </div>
       </div>
     </>

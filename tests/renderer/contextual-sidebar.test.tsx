@@ -22,33 +22,28 @@ function level(
   title: string,
   items: readonly TestItem[] | (() => readonly TestItem[]),
   options: {
-    parent?: ContextualSidebarLevel<TestItem>
+    parent?: ContextualSidebarLevel
     parentItemId?: string
-    onSelect?: (item: TestItem) => void
+    onSelect?: (itemId: string) => void
     getItemGroup?: (item: TestItem) => { id: string; label: string } | null
     newItem?: ContextualSidebarNewItemAction
-    footer?: React.ReactNode
   } = {}
-): ContextualSidebarLevel<TestItem> {
+): ContextualSidebarLevel {
+  const resolveItems = (): TestItem[] => {
+    const resolved = typeof items === 'function' ? items() : items
+    return resolved.map((item) => ({
+      ...item,
+      group: options.getItemGroup?.(item) ?? undefined
+    }))
+  }
   return new ContextualSidebarLevel({
     id,
     title,
     ariaLabel: title,
     parent: options.parent,
     parentItemId: options.parentItemId,
-    items,
-    getItemId: (item) => item.id,
-    getItemAriaLabel: (item) => item.label,
-    getItemGroup: options.getItemGroup,
-    isItemDisabled: (item) => item.disabled ?? false,
-    renderItem: (item, state) => (
-      <span>
-        {item.label}
-        <span aria-hidden="true">{state.selected ? ' selected' : ''}</span>
-      </span>
-    ),
+    items: typeof items === 'function' ? resolveItems : resolveItems(),
     newItem: options.newItem,
-    footer: options.footer,
     onSelect: options.onSelect
   })
 }
@@ -58,7 +53,7 @@ function SelectionProbe({
   levels
 }: {
   navigation: ContextualSidebarNavigation
-  levels: readonly ContextualSidebarLevel<TestItem>[]
+  levels: readonly ContextualSidebarLevel[]
 }): React.JSX.Element {
   const snapshot = useContextualSidebarNavigation(navigation)
   const currentLevel = levels.find((candidate) => candidate === snapshot.level)
@@ -153,7 +148,7 @@ describe('ContextualSidebarNavigation', () => {
     expect(screen.getByLabelText('Main selection')).toHaveTextContent('Sprint execution')
 
     await user.click(screen.getByRole('button', { name: 'Team health' }))
-    expect(onThreadSelect).toHaveBeenCalledWith({ id: 'health', label: 'Team health' })
+    expect(onThreadSelect).toHaveBeenCalledWith('health')
     expect(screen.getByRole('button', { name: 'Team health' })).toHaveAttribute(
       'aria-current',
       'page'

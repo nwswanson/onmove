@@ -12,13 +12,17 @@ function sourceFiles(directory: string): string[] {
 
 const rendererRoot = resolve('src/renderer/src')
 const uiRoot = join(rendererRoot, 'components/ui')
-const modelFiles = [
-  join(rendererRoot, 'features/application/use-application-model.ts'),
-  join(rendererRoot, 'features/focus/use-focus-workspace-model.ts')
-]
+const featureRoot = join(rendererRoot, 'features')
+const featureFiles = sourceFiles(featureRoot)
+const modelFiles = featureFiles.filter((path) => /use-[^/]+-model\.ts$/.test(path))
 const viewCompositionFiles = [
   join(rendererRoot, 'App.tsx'),
   join(rendererRoot, 'features/focus/focus-workspace.tsx')
+]
+const presenterFiles = featureFiles.filter((path) => /-presenters\.ts$/.test(path))
+const featureComponentFiles = [
+  join(rendererRoot, 'App.tsx'),
+  ...featureFiles.filter((path) => extname(path) === '.tsx')
 ]
 
 describe('renderer architecture boundaries', () => {
@@ -39,5 +43,32 @@ describe('renderer architecture boundaries', () => {
     const source = readFileSync(path, 'utf8')
 
     expect(source).not.toContain('window.onmove')
+    expect(source).not.toMatch(/<ContextDrawer(?:\s|>)/)
+  })
+
+  it.each(presenterFiles)('%s remains a non-rendering contract translator', (path) => {
+    const source = readFileSync(path, 'utf8')
+
+    expect(extname(path)).toBe('.ts')
+    expect(source).not.toMatch(/from ['"]react['"]|ReactNode|JSX\.Element/)
+  })
+
+  it.each(featureComponentFiles)('%s cannot bypass the model-driven drawer receiver', (path) => {
+    const source = readFileSync(path, 'utf8')
+
+    expect(source).not.toMatch(/<ContextDrawer(?:\s|>)/)
+  })
+
+  it('keeps model-driven receiver contracts free of caller render hooks', () => {
+    const drawerSource = readFileSync(join(uiRoot, 'context-drawer.tsx'), 'utf8')
+    const sidebarSource = readFileSync(join(uiRoot, 'contextual-sidebar.tsx'), 'utf8')
+    const adapterContract = drawerSource.slice(
+      drawerSource.indexOf('export interface ContextDrawerAdapter'),
+      drawerSource.indexOf('export interface ContextDrawerState')
+    )
+
+    expect(adapterContract).toContain('model: ContextDrawerModel')
+    expect(adapterContract).not.toMatch(/render|ReactNode/)
+    expect(sidebarSource).not.toContain('renderItem')
   })
 })

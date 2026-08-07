@@ -28,10 +28,10 @@
   owns Back navigation and restores the selection previously held by each parent level.
 - Declare ordinary level-local creation through a contextual level's optional `newItem` action;
   do not hard-code New Thread or New Commitment footer markup in domain adapters.
-- Build contextual inspectors with the shared `ContextDrawer` primitives. Every drawer must have a
-  visible close button, a descriptive accessible label, and view-specific content composed inside
-  the common shell.
-- Drive the right drawer through a screen-owned `ContextDrawerAdapter` and the shared persistent
+- Describe contextual inspectors with the shared `ContextDrawerModel` contract and render them only
+  through `ContextDrawerOutlet`. The receiver guarantees a visible close button and requires a
+  descriptive accessible label; feature code must not compose the low-level drawer shell directly.
+- Drive the right drawer through a screen-owned, data-only `ContextDrawerAdapter` and the shared persistent
   `ContextDrawerOutlet`. The application shell must not switch on domain entity types. Navigating
   must replace the active adapter without closing the drawer or resetting its width; use the shared
   empty state when a screen has no contextual settings.
@@ -59,6 +59,21 @@ and do not rely on color alone to communicate selection or status.
 
 - Keep the renderer sandboxed. Access application data only through the typed `window.onmove` preload
   API.
+- Keep `src/renderer/src/components/ui` domain-free: it must not import feature modules, shared
+  domain contracts, main/preload modules, or access `window.onmove`.
+- Compose the window with `ApplicationShell` and each active screen with `WorkspaceShell`. Supply
+  toolbar, primary sidebar, contextual sidebar, main view, and drawer as independent slots rather
+  than rebuilding the frame in feature components.
+- Put preload calls, persistence-backed state, and domain mutation rules in feature model hooks.
+  Model hooks must not import UI components; feature views translate their results into generic
+  sidebar levels, main content, and drawer adapters.
+- Use receiver-owned contracts when domain data enters reusable UI. Primary navigation accepts
+  `SidebarNavigationItemModel`, contextual navigation accepts `ContextualSidebarItemModel`, and the
+  drawer accepts `ContextDrawerModel`; callers must not provide row/drawer JSX, arbitrary classes,
+  render callbacks, or domain records to those receivers.
+- Keep domain-to-UI translation in plain feature presenter `.ts` modules. Presenters may import
+  domain types and UI contract types but must not render React. Domain snapshots and model hooks
+  must not expose UI fields, icons, styling, or render methods.
 - Keep view identifiers and navigation definitions typed. Add tests whenever a destination or
   sidebar action is introduced.
 - Prefer small view components and shared shadcn/ui primitives over a monolithic application shell.

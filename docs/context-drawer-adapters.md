@@ -1,84 +1,62 @@
-# Context drawer adapters
+# Context drawer contracts
 
-The right-side context drawer is a persistent application affordance, while its contents belong to
-the active screen. The shared types and outlet live in
+The right-side drawer is a model-driven receiver. A domain object never renders itself and a
+feature cannot supply drawer JSX. The receiver owns the accepted format in
 `src/renderer/src/components/ui/context-drawer.tsx`:
 
-- `ContextDrawerAdapter` identifies one active representation and renders it from shared width and
-  close controls.
-- `ContextDrawerOutlet` owns open/closed behavior, the resize handle, adapter replacement, and the
-  fallback shown when the active screen has no settings.
-- `ContextDrawer` and `ContextDrawerSection` provide the common macOS-style inspector shell.
+- `ContextDrawerModel` describes the title, accessible label, sections, fields, and actions.
+- `ContextDrawerFieldModel` is a closed union of `text`, `select`, and `static` fields.
+- `ContextDrawerActionModel` describes validation, pending/error labels, optional confirmation, and
+  a capability callback.
+- `ContextDrawerAdapter` adds stable identity and deletion-invalidation keys to that model.
+- `ContextDrawerOutlet` alone owns markup, draft state, validation, pending/error state,
+  confirmation dialogs, sizing, closing, pinning, and empty behavior.
 
-The application owns only persistent drawer state (`open` and `width`). It does not switch on Focus,
-Thread, Commitment, or any future domain type. Each active workspace derives an adapter from the
-same selection that drives its main view:
+This direction is intentional:
 
-```tsx
-const adapter: ContextDrawerAdapter | null = selectedCommitment
-  ? {
-      id: `commitment:${selectedCommitment.id}`,
-      render: ({ width, onClose }) => (
-        <CommitmentContextPanel
-          commitment={selectedCommitment}
-          width={width}
-          onClose={onClose}
-        />
-      )
-    }
-  : null
-
-return <ContextDrawerOutlet adapter={adapter} {...persistentDrawerState} />
+```text
+CommitmentSnapshot -> Focus feature presenter -> ContextDrawerModel -> ContextDrawerOutlet
+domain data            translation only          receiver contract    renderer
 ```
 
-The toolbar information button toggles `open` and reports that state through `aria-pressed`.
-Closing and reopening the drawer does not discard a pinned adapter or reset its width.
+For example, a Commitment currently produces static fields. Its domain snapshot has no drawer
+method and contains no UI state:
 
-Adapter identifiers must include the entity kind and stable identifier. Changing adapters replaces
-the rendered inspector state, but never closes the outlet or resets its width. Navigating Back or
-to another primary destination therefore immediately shows that screen's adapter in the already
-open drawer.
+```ts
+const adapter = commitmentDrawerAdapter(commitment, 'Project Atlas', ['focus:1'])
 
-## Pinned inspections
-
-An item may be inspected without becoming the main or contextual-sidebar selection. Call the
-shared controller's `onPin(adapter)` with that item's normal drawer adapter. This opens the drawer
-if needed and gives the supplied adapter precedence over the active screen:
-
-```tsx
-<Button
-  aria-label={`Pin commitment ${commitment.title} in context drawer`}
-  onClick={() => contextDrawer.onPin(commitmentDrawerAdapter(commitment))}
->
-  Pin
-</Button>
+adapter.model.sections[0].fields
+// [
+//   { kind: 'static', id: 'title',  label: 'Title',  value: 'Improve ticket quality' },
+//   { kind: 'static', id: 'parent', label: 'Parent', value: 'Focus — Project Atlas' },
+//   { kind: 'static', id: 'status', label: 'Status', value: 'active' },
+//   { kind: 'static', id: 'state',  label: 'State',  value: 'green' }
+// ]
 ```
 
-The pinned adapter survives main-view navigation, contextual navigation, and temporarily closing
-the drawer. The outlet provides a global “Follow current selection” action to unpin it. Do not
-modify the main view selection or contextual navigation merely to inspect an item, and reuse the
-same adapter factory for ordinary selection and pinned rendering so their representations cannot
-diverge.
+“No editable settings here yet” is therefore a description of the current adapter, not a
+limitation baked into Commitment. When Commitment title editing is implemented, its presenter can
+emit a `text` field and save action after the business layer exposes that mutation. The receiver
+does not change, and the domain object still does not learn about inputs, buttons, or dialogs.
 
-## Deletion lifecycle
+## Actions and data flow
 
-Every adapter declares `invalidationKeys` for its own entity and any owning ancestors. For example,
-a Focus-level Commitment declares both `focus:1` and `commitment:2`. After a successful model
-deletion, call `contextDrawer.onInvalidate(deletedKeys)`.
+The drawer owns a string-valued draft keyed by field id. An action receives a read-only snapshot of
+that draft. The feature presenter converts those values into a typed business input before calling
+the model hook. Thus the UI contract does not depend on `FocusStatus`, `CommitmentSnapshot`, or any
+other domain type.
 
-The shared reducer applies these defaults:
+Confirmation and error presentation are declarative. A delete action supplies confirmation text
+and an `onInvoke` capability; it does not render its own modal. Required-field validation and
+pending button state are also receiver behavior.
 
-- An unrelated deletion leaves the pin unchanged.
-- Deleting the pinned entity or an owning ancestor clears the pin.
-- Invalidation never closes the drawer; it immediately resumes the active screen adapter or the
-  shared empty state.
-- Hiding and reopening the drawer does not affect a valid pin.
-- A failed deletion does not invalidate anything, change selection, or close the drawer.
+## Pinning and deletion lifecycle
 
-These rules are centralized in `contextDrawerReducer`; domain screens should report successful
-deletions rather than recreating lifecycle behavior locally.
+The application owns persistent drawer state (`open`, width, and optional pinned adapter). A pin
+takes precedence over active navigation until “Follow current selection” clears it. Adapter
+identifiers use a stable kind/id pair such as `commitment:20`.
 
-Use `null` when the active screen or collection does not expose contextual settings. The outlet
-keeps its close button and displays the shared “No settings here” state. Domain components should
-not implement their own resize handles, open state, or navigation-specific drawer branching in the
-application shell.
+Each adapter declares invalidation keys for itself and owning ancestors. After a successful model
+deletion, the feature reports those keys to the drawer controller. Unrelated or failed deletions
+preserve the pin. Invalidating a pinned entity clears the pin without closing the drawer, allowing
+the outlet to resume the current screen model or its receiver-owned empty state.
