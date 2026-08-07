@@ -8,7 +8,10 @@ sandboxed from Node.js.
 
 - A native-feeling macOS window with inset traffic lights, light/dark appearance support, and a
   conventional application menu.
-- An attractive shadcn/ui-based shell with an intentionally empty sidebar.
+- A shadcn/ui-based application shell with Home and Portfolio views, active navigation, and
+  bottom-anchored workspace utilities.
+- A semantic product palette using Cerulean for primary selection, Tigerlily for alerts, and
+  Greenery for healthy states.
 - A real SQLite database using Electron's bundled `node:sqlite` implementation and WAL mode.
 - Versioned, transactional migrations and a typed, subclassable domain-model layer.
 - Recursive parent/child items, nullable relation references, JSON metadata, and materialized status

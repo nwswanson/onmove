@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AppState, DomainApi, OnMoveApi } from '../../src/shared/contracts'
@@ -55,25 +55,33 @@ describe('App', () => {
     expect(screen.getByLabelText('Primary sidebar')).toBeInTheDocument()
   })
 
-  it('renders the hello-world data returned by SQLite', async () => {
+  it('opens on Home with the active sidebar item marked as the current page', async () => {
     installApi()
 
     render(<App />)
 
-    expect(await screen.findByRole('heading', { name: 'Hello, world.' })).toBeInTheDocument()
-    expect(screen.getByTestId('greeting-count')).toHaveTextContent('0')
-    expect(screen.getByText('Opened 1 time')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Home' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('button', { name: 'Portfolio' })).not.toHaveAttribute('aria-current')
+    expect(screen.getByText('Your home view is ready for its first items.')).toBeInTheDocument()
   })
 
-  it('saves and displays a persistent hello', async () => {
-    const api = installApi()
+  it('changes the main view when Portfolio and Home are selected', async () => {
+    installApi()
     const user = userEvent.setup()
     render(<App />)
 
-    await user.click(await screen.findByRole('button', { name: 'Save a hello' }))
+    await user.click(await screen.findByRole('button', { name: 'Portfolio' }))
 
-    expect(api.recordGreeting).toHaveBeenCalledOnce()
-    await waitFor(() => expect(screen.getByTestId('greeting-count')).toHaveTextContent('1'))
+    expect(screen.getByRole('heading', { name: 'Portfolio' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Portfolio' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    expect(screen.getByText('Your portfolio is ready for its first collection.')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Home' }))
+    expect(screen.getByRole('heading', { name: 'Home' })).toBeInTheDocument()
   })
 
   it('asks Electron to reveal the database in Finder', async () => {
@@ -81,9 +89,18 @@ describe('App', () => {
     const user = userEvent.setup()
     render(<App />)
 
-    await user.click(await screen.findByRole('button', { name: 'Show data in Finder' }))
+    await user.click(await screen.findByRole('button', { name: 'Data & storage' }))
 
     expect(api.showDataFolder).toHaveBeenCalledOnce()
+  })
+
+  it('anchors settings and database health controls in the sidebar footer', async () => {
+    installApi()
+    render(<App />)
+
+    expect(await screen.findByRole('button', { name: /Settings/ })).toBeDisabled()
+    expect(screen.getByTestId('local-data-status')).toHaveTextContent('Local data ready')
+    expect(screen.getByTestId('launch-count')).toHaveTextContent('1')
   })
 
   it('shows a useful error if the database fails to load', async () => {
@@ -94,18 +111,7 @@ describe('App', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'The local database could not be opened.'
     )
-  })
-
-  it('keeps the current count and reports an error if saving fails', async () => {
-    installApi({ recordGreeting: vi.fn().mockRejectedValue(new Error('disk full')) })
-    const user = userEvent.setup()
-    render(<App />)
-
-    await user.click(await screen.findByRole('button', { name: 'Save a hello' }))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Your greeting could not be saved. Please try again.'
-    )
-    expect(screen.getByTestId('greeting-count')).toHaveTextContent('0')
+    expect(screen.getByTestId('local-data-status')).toHaveTextContent('Local data unavailable')
+    expect(screen.getByRole('button', { name: 'Data & storage' })).toBeDisabled()
   })
 })

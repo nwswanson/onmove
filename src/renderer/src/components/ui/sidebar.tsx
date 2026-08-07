@@ -19,11 +19,75 @@ function SidebarHeader({ className, ...props }: React.ComponentProps<'div'>): Re
 }
 
 function SidebarContent({ className, ...props }: React.ComponentProps<'div'>): React.JSX.Element {
-  return <div data-slot="sidebar-content" className={cn('min-h-0 flex-1 p-3', className)} {...props} />
+  return (
+    <div
+      data-slot="sidebar-content"
+      className={cn('flex min-h-0 flex-1 flex-col overflow-auto p-3', className)}
+      {...props}
+    />
+  )
 }
 
 function SidebarFooter({ className, ...props }: React.ComponentProps<'div'>): React.JSX.Element {
   return <div data-slot="sidebar-footer" className={cn('flex flex-col gap-2 p-4', className)} {...props} />
 }
 
-export { Sidebar, SidebarContent, SidebarFooter, SidebarHeader }
+function SidebarGroup({ className, ...props }: React.ComponentProps<'div'>): React.JSX.Element {
+  return <div data-slot="sidebar-group" className={cn('flex flex-col gap-1.5', className)} {...props} />
+}
+
+function SidebarGroupLabel({ className, ...props }: React.ComponentProps<'div'>): React.JSX.Element {
+  return (
+    <div
+      data-slot="sidebar-group-label"
+      className={cn(
+        'px-2 pb-1 text-[0.6875rem] font-semibold tracking-[0.08em] text-muted-foreground uppercase',
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+function SidebarMenu({ className, ...props }: React.ComponentProps<'ul'>): React.JSX.Element {
+  return <ul data-slot="sidebar-menu" className={cn('flex flex-col gap-1', className)} {...props} />
+}
+
+function SidebarMenuItem({ className, ...props }: React.ComponentProps<'li'>): React.JSX.Element {
+  return <li data-slot="sidebar-menu-item" className={cn('relative', className)} {...props} />
+}
+
+function SidebarMenuButton({
+  className,
+  isActive = false,
+  ...props
+}: React.ComponentProps<'button'> & { isActive?: boolean }): React.JSX.Element {
+  return (
+    <button
+      data-slot="sidebar-menu-button"
+      data-active={isActive}
+      className={cn(
+        'group/menu-button relative flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm font-medium outline-none transition-colors',
+        'text-sidebar-foreground/72 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+        'focus-visible:ring-2 focus-visible:ring-ring/55 disabled:pointer-events-none disabled:opacity-40',
+        'data-[active=true]:bg-primary/30 data-[active=true]:text-sidebar-primary-foreground data-[active=true]:ring-1 data-[active=true]:ring-primary/45',
+        'data-[active=true]:before:absolute data-[active=true]:before:top-2 data-[active=true]:before:bottom-2 data-[active=true]:before:left-0 data-[active=true]:before:w-0.5 data-[active=true]:before:rounded-full data-[active=true]:before:bg-primary',
+        '[&_svg]:size-4 [&_svg]:shrink-0',
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+export {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem
+}

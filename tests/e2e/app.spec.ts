@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { _electron as electron, expect, test, type ElectronApplication } from '@playwright/test'
 
-test('persists a hello across real Electron launches', async () => {
+test('navigates between views and persists SQLite launch state across Electron launches', async () => {
   const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-e2e-'))
   let application: ElectronApplication | undefined
 
@@ -19,10 +19,10 @@ test('persists a hello across real Electron launches', async () => {
   try {
     application = await launch()
     let window = await application.firstWindow()
-    await expect(window.getByRole('heading', { name: 'Hello, world.' })).toBeVisible()
-    await expect(window.getByTestId('greeting-count')).toHaveText('0')
-    await window.getByRole('button', { name: 'Save a hello' }).click()
-    await expect(window.getByTestId('greeting-count')).toHaveText('1')
+    await expect(window.getByRole('heading', { name: 'Home' })).toBeVisible()
+    await expect(window.getByTestId('launch-count')).toHaveText('1')
+    await window.getByRole('button', { name: 'Portfolio' }).click()
+    await expect(window.getByRole('heading', { name: 'Portfolio' })).toBeVisible()
     await application.close()
     application = undefined
 
@@ -30,8 +30,8 @@ test('persists a hello across real Electron launches', async () => {
 
     application = await launch()
     window = await application.firstWindow()
-    await expect(window.getByTestId('greeting-count')).toHaveText('1')
-    await expect(window.getByText('Opened 2 times')).toBeVisible()
+    await expect(window.getByRole('heading', { name: 'Home' })).toBeVisible()
+    await expect(window.getByTestId('launch-count')).toHaveText('2')
   } finally {
     await application?.close()
     rmSync(userDataDirectory, { recursive: true, force: true })
