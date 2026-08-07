@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { CheckCircle2, Circle, PauseCircle, Plus, Target } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
+import { Circle, PauseCircle, Plus } from 'lucide-react'
 import type {
   CreateFocusInput,
   FocusSnapshot,
@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/sidebar'
 import { Textarea } from '@/components/ui/textarea'
 import { isVisibleFocus } from '@/features/focus/focus-utils'
+import { FocusWorkspace } from '@/features/focus/focus-workspace'
 
 interface FocusListProps {
   focuses: FocusSnapshot[]
@@ -150,54 +151,12 @@ export function NewFocusDialog({ onClose, onCreate }: NewFocusDialogProps): Reac
 
 interface FocusViewProps {
   focus: FocusSnapshot
-  onOpenContext: () => void
+  toolbar: ReactNode
 }
 
-export function FocusView({ focus, onOpenContext }: FocusViewProps): React.JSX.Element {
-  const paused = focus.status === 'paused'
-
+export function FocusView({ focus, toolbar }: FocusViewProps): React.JSX.Element {
   return (
-    <main className="min-w-0 flex-1 overflow-auto bg-background" aria-labelledby="focus-heading">
-      <section className="mx-auto w-full max-w-5xl p-8 sm:p-10">
-        <div className="flex items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <h1 id="focus-heading" className="truncate text-2xl font-semibold tracking-[-0.025em]">
-              {focus.title}
-            </h1>
-            <p className="mt-1.5 max-w-2xl whitespace-pre-wrap text-sm text-muted-foreground">
-              {focus.description ?? 'No description or notes.'}
-            </p>
-          </div>
-          <span
-            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
-              paused
-                ? 'bg-muted text-muted-foreground'
-                : 'bg-success/15 text-success-foreground'
-            }`}
-          >
-            {paused ? <PauseCircle className="size-3.5" /> : <CheckCircle2 className="size-3.5" />}
-            {paused ? 'Paused' : 'Active'}
-          </span>
-        </div>
-
-        <button
-          type="button"
-          className="mt-10 flex w-full max-w-md items-center gap-3 rounded-xl border border-border/80 bg-card/45 p-3.5 text-left shadow-xs outline-none transition-colors hover:border-primary/65 hover:bg-primary/10 focus-visible:ring-2 focus-visible:ring-ring/55"
-          aria-label={`Edit ${focus.title}`}
-          onClick={onOpenContext}
-        >
-          <span className="flex size-9 items-center justify-center rounded-lg bg-primary/25 text-sidebar-primary-foreground">
-            <Target className="size-4" aria-hidden="true" />
-          </span>
-          <span>
-            <span className="block text-sm font-medium">Focus details</span>
-            <span className="mt-0.5 block text-xs text-muted-foreground">
-              Edit title, notes, and status
-            </span>
-          </span>
-        </button>
-      </section>
-    </main>
+    <FocusWorkspace focus={focus} toolbar={toolbar} />
   )
 }
 

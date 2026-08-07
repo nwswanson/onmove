@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc 3.10.1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>focus-thread-commitment-model</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      white-space: pre-wrap;
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: 1.5em;}
+    div.column{flex: auto;}
+    @media screen {
+    div.columns{gap: min(4vw, 1.5em);}
+    div.column{overflow-x: auto;}
+    }
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+    /* CSS for syntax highlighting */
+    html { -webkit-text-size-adjust: 100%; }
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+    code span.at { color: #7d9029; } /* Attribute */
+    code span.bn { color: #40a070; } /* BaseN */
+    code span.bu { color: #008000; } /* BuiltIn */
+    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #4070a0; } /* Char */
+    code span.cn { color: #880000; } /* Constant */
+    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+    code span.dt { color: #902000; } /* DataType */
+    code span.dv { color: #40a070; } /* DecVal */
+    code span.er { color: #ff0000; font-weight: bold; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #40a070; } /* Float */
+    code span.fu { color: #06287e; } /* Function */
+    code span.im { color: #008000; font-weight: bold; } /* Import */
+    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+    code span.op { color: #666666; } /* Operator */
+    code span.ot { color: #007020; } /* Other */
+    code span.pp { color: #bc7a00; } /* Preprocessor */
+    code span.sc { color: #4070a0; } /* SpecialChar */
+    code span.ss { color: #bb6688; } /* SpecialString */
+    code span.st { color: #4070a0; } /* String */
+    code span.va { color: #19177c; } /* Variable */
+    code span.vs { color: #4070a0; } /* VerbatimString */
+    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+  </style>
+</head>
+<body>
+<h1 id="focus-thread-commitment-and-update-model">Focus, Thread,
+Commitment, and Update model</h1>
+<p>This document describes the first model-only implementation of work
+tracking beneath a Focus. It does not add renderer UI. The model is
+designed around observations and commitments rather than a todo
+list.</p>
+<h2 id="shape-of-the-model">Shape of the model</h2>
+<pre class="text"><code>Focus: Project execution
+├── Thread: Sprint execution
+│   ├── Commitment: Improve ticket quality
+│   │   └── Updates[]
+│   ├── Commitment: Hold weekly refinement
+│   │   └── Updates[]
+│   └── Updates[]                   direct Thread reviews
+├── Thread: Team health
+│   ├── Commitments[]
+│   └── Updates[]
+├── Commitments[]                   Focus-level commitments are also valid
+└── Updates[]                       Focus-level observations are also valid</code></pre>
+<p>A Focus owns zero or more Threads. A Thread is one dimension by which
+the Focus can be understood, but it never blocks the Focus lifecycle: a
+Focus may move to <code>done</code> or <code>cancelled</code> while
+Threads are still active.</p>
+<p>Commitments can belong directly to a Focus or to one Thread. Updates
+can belong directly to a Focus, Thread, or Commitment. SQLite requires
+exactly one valid parent for every Commitment and Update.</p>
+<h2 id="entities">Entities</h2>
+<h3 id="thread">Thread</h3>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>focusId</code></td>
+<td>Required parent Focus.</td>
+</tr>
+<tr>
+<td><code>title</code></td>
+<td>Required description of the dimension being judged. Duplicate titles
+are permitted.</td>
+</tr>
+<tr>
+<td><code>health</code></td>
+<td>Derived <code>red</code>, <code>yellow</code>, <code>green</code>,
+or <code>none</code>; it is never written directly.</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td><code>active</code>, <code>paused</code>, <code>done</code>, or
+<code>cancelled</code>. Changes have an immutable audit history.</td>
+</tr>
+<tr>
+<td><code>reviewFrequencyDays</code></td>
+<td>Positive whole-number review interval.</td>
+</tr>
+<tr>
+<td><code>lastReviewDate</code></td>
+<td>Derived date of the newest effective Update directly on this
+Thread.</td>
+</tr>
+<tr>
+<td><code>nextReviewDate</code></td>
+<td><code>lastReviewDate + reviewFrequencyDays</code>; creation date is
+the initial baseline.</td>
+</tr>
+<tr>
+<td><code>needsReview</code></td>
+<td>True on or after <code>nextReviewDate</code>, but only while the
+Thread is active.</td>
+</tr>
+</tbody>
+</table>
+<p>In this first version, recording a direct Thread Update is the
+explicit act that completes a review. Opening, selecting, or
+materializing a Thread does not change <code>lastReviewDate</code>.
+Updates on one of its Commitments also do not count as a Thread
+review.</p>
+<h3 id="commitment">Commitment</h3>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>parent</code></td>
+<td>Exactly one Focus or Thread.</td>
+</tr>
+<tr>
+<td><code>type</code></td>
+<td><code>action</code> for a bounded promise or <code>ongoing</code>
+for a continuing standard.</td>
+</tr>
+<tr>
+<td><code>title</code></td>
+<td>Required statement of the commitment.</td>
+</tr>
+<tr>
+<td><code>updates</code></td>
+<td>Dated observations parented to this Commitment.</td>
+</tr>
+<tr>
+<td><code>dueDate</code></td>
+<td>Optional calendar date.</td>
+</tr>
+<tr>
+<td><code>cadenceDays</code></td>
+<td>Optional positive update interval.</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td><code>active</code>, <code>paused</code>, <code>done</code>, or
+<code>cancelled</code>, with immutable transition history.</td>
+</tr>
+<tr>
+<td><code>state</code></td>
+<td>State of the latest effective Update, or <code>none</code> when
+there is no Update.</td>
+</tr>
+<tr>
+<td><code>lastUpdateDate</code></td>
+<td>Effective date of that latest Update.</td>
+</tr>
+<tr>
+<td><code>nextUpdateDate</code></td>
+<td>Latest Update date plus cadence; creation date is the initial
+baseline.</td>
+</tr>
+<tr>
+<td><code>needsUpdate</code></td>
+<td>True when cadence is due and the Commitment is active.</td>
+</tr>
+</tbody>
+</table>
+<p>Commitments are promises, standards, or expectations—not todo items.
+Completing a Focus does not require every Commitment or Thread to be
+closed first.</p>
+<h3 id="update">Update</h3>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>parent</code></td>
+<td>Exactly one Focus, Thread, or Commitment.</td>
+</tr>
+<tr>
+<td><code>date</code></td>
+<td>Effective calendar date. Defaults to the local current day but
+accepts past or future dates.</td>
+</tr>
+<tr>
+<td><code>observation</code></td>
+<td>Required freeform text describing what was observed.</td>
+</tr>
+<tr>
+<td><code>state</code></td>
+<td><code>red</code>, <code>yellow</code>, <code>green</code>, or
+<code>none</code>. Defaults to <code>none</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Update order is determined by effective <code>date</code>, then
+insertion order for two Updates on the same day. A future-dated Update
+is stored immediately but does not affect health, state, review, or
+cadence projections before its date.</p>
+<h2 id="naive-thread-health-rule">Naive Thread health rule</h2>
+<p>The current health calculation considers:</p>
+<ol type="1">
+<li>the latest effective Update directly on the Thread; and</li>
+<li>the latest effective state of every active Commitment parented to
+that Thread.</li>
+</ol>
+<p>Severity is aggregated as follows:</p>
+<pre class="text"><code>any red    → red
+else yellow present → yellow
+else unknown/none present → none
+else every value is green → green</code></pre>
+<p>Paused, done, and cancelled Commitments do not participate in current
+Thread health. This keeps an old red observation on a closed Commitment
+from permanently holding the Thread red. The rule is deliberately small
+and lives in model code so it can later be replaced without migrating
+stored health values.</p>
+<h2 id="end-to-end-example">End-to-end example</h2>
+<p>Suppose a portfolio contains the Focus <strong>Project
+execution</strong>. One important dimension is whether the team executes
+sprints well, so it receives a Thread called <strong>Sprint
+execution</strong> with a seven-day review frequency.</p>
+<p>That Thread has an ongoing Commitment called <strong>Improve ticket
+quality</strong>, also with a seven-day update cadence.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode ts"><code class="sourceCode typescript"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="kw">const</span> projectExecution <span class="op">=</span> database<span class="op">.</span><span class="at">domain</span><span class="op">.</span><span class="at">focuses</span><span class="op">.</span><span class="fu">create</span>({</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  title<span class="op">:</span> <span class="st">&#39;Project execution&#39;</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>})</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="kw">const</span> sprintExecution <span class="op">=</span> database<span class="op">.</span><span class="at">domain</span><span class="op">.</span><span class="at">threads</span><span class="op">.</span><span class="fu">create</span>({</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>  focusId<span class="op">:</span> projectExecution<span class="op">.</span><span class="at">id</span><span class="op">,</span></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>  title<span class="op">:</span> <span class="st">&#39;Sprint execution&#39;</span><span class="op">,</span></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>  reviewFrequencyDays<span class="op">:</span> <span class="dv">7</span></span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>})</span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a><span class="kw">const</span> ticketQuality <span class="op">=</span> database<span class="op">.</span><span class="at">domain</span><span class="op">.</span><span class="at">commitments</span><span class="op">.</span><span class="fu">create</span>({</span>
+<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a>  parent<span class="op">:</span> { type<span class="op">:</span> <span class="st">&#39;thread&#39;</span><span class="op">,</span> id<span class="op">:</span> sprintExecution<span class="op">.</span><span class="at">id</span> }<span class="op">,</span></span>
+<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a>  type<span class="op">:</span> <span class="st">&#39;ongoing&#39;</span><span class="op">,</span></span>
+<span id="cb3-14"><a href="#cb3-14" aria-hidden="true" tabindex="-1"></a>  title<span class="op">:</span> <span class="st">&#39;Improve ticket quality&#39;</span><span class="op">,</span></span>
+<span id="cb3-15"><a href="#cb3-15" aria-hidden="true" tabindex="-1"></a>  cadenceDays<span class="op">:</span> <span class="dv">7</span></span>
+<span id="cb3-16"><a href="#cb3-16" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div>
+<p>On February 3, the sprint review is positive, but ticket quality
+still needs attention:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode ts"><code class="sourceCode typescript"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>database<span class="op">.</span><span class="at">domain</span><span class="op">.</span><span class="at">updates</span><span class="op">.</span><span class="fu">create</span>({</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  parent<span class="op">:</span> { type<span class="op">:</span> <span class="st">&#39;thread&#39;</span><span class="op">,</span> id<span class="op">:</span> sprintExecution<span class="op">.</span><span class="at">id</span> }<span class="op">,</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  date<span class="op">:</span> <span class="st">&#39;2026-02-03&#39;</span><span class="op">,</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>  observation<span class="op">:</span> <span class="st">&#39;The sprint goal was met and carryover stayed low.&#39;</span><span class="op">,</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>  state<span class="op">:</span> <span class="st">&#39;green&#39;</span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>})</span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>database<span class="op">.</span><span class="at">domain</span><span class="op">.</span><span class="at">updates</span><span class="op">.</span><span class="fu">create</span>({</span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>  parent<span class="op">:</span> { type<span class="op">:</span> <span class="st">&#39;commitment&#39;</span><span class="op">,</span> id<span class="op">:</span> ticketQuality<span class="op">.</span><span class="at">id</span> }<span class="op">,</span></span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a>  date<span class="op">:</span> <span class="st">&#39;2026-02-03&#39;</span><span class="op">,</span></span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a>  observation<span class="op">:</span> <span class="st">&#39;Several tickets still entered the sprint without acceptance criteria.&#39;</span><span class="op">,</span></span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a>  state<span class="op">:</span> <span class="st">&#39;yellow&#39;</span></span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div>
+<p>The materialized result is:</p>
+<pre class="text"><code>Sprint execution.health              yellow
+Sprint execution.lastReviewDate      2026-02-03
+Sprint execution.nextReviewDate      2026-02-10
+Improve ticket quality.state         yellow
+Improve ticket quality.nextUpdateDate 2026-02-10</code></pre>
+<p>On February 10, refinement has improved and both records receive
+green observations:</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode ts"><code class="sourceCode typescript"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>database<span class="op">.</span><span class="at">domain</span><span class="op">.</span><span class="at">updates</span><span class="op">.</span><span class="fu">create</span>({</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>  parent<span class="op">:</span> { type<span class="op">:</span> <span class="st">&#39;commitment&#39;</span><span class="op">,</span> id<span class="op">:</span> ticketQuality<span class="op">.</span><span class="at">id</span> }<span class="op">,</span></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>  date<span class="op">:</span> <span class="st">&#39;2026-02-10&#39;</span><span class="op">,</span></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>  observation<span class="op">:</span> <span class="st">&#39;Every sprint candidate now has acceptance criteria and an owner.&#39;</span><span class="op">,</span></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>  state<span class="op">:</span> <span class="st">&#39;green&#39;</span></span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>})</span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>database<span class="op">.</span><span class="at">domain</span><span class="op">.</span><span class="at">updates</span><span class="op">.</span><span class="fu">create</span>({</span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>  parent<span class="op">:</span> { type<span class="op">:</span> <span class="st">&#39;thread&#39;</span><span class="op">,</span> id<span class="op">:</span> sprintExecution<span class="op">.</span><span class="at">id</span> }<span class="op">,</span></span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a>  date<span class="op">:</span> <span class="st">&#39;2026-02-10&#39;</span><span class="op">,</span></span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a>  observation<span class="op">:</span> <span class="st">&#39;The sprint review completed with no quality exceptions.&#39;</span><span class="op">,</span></span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a>  state<span class="op">:</span> <span class="st">&#39;green&#39;</span></span>
+<span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div>
+<p>Now the Thread health is green, both next dates advance to February
+17, and the full observation history remains available. If Project
+execution is marked done at this point—or even before it—the Thread and
+Commitment may remain active because they are evidence and dimensions,
+not closure gates.</p>
+<h2 id="persistence-and-deletion">Persistence and deletion</h2>
+<ul>
+<li>Deleting a Focus cascades through its Threads, direct Commitments,
+descendant Commitments, Updates, and status histories.</li>
+<li>Deleting a Thread cascades only through that Thread’s Commitments,
+Updates, and histories; direct Focus Commitments remain.</li>
+<li>Deleting a Commitment removes its Updates and status history.</li>
+<li>Changing a lifecycle status appends a directional transition;
+assigning the same status again does not create a duplicate event.</li>
+<li>All derived values are rebuilt from durable Updates when SQLite is
+reopened.</li>
+</ul>
+<h2 id="deliberate-boundaries-in-this-iteration">Deliberate boundaries
+in this iteration</h2>
+<ul>
+<li>No UI or IPC surface has been added for these entities yet.</li>
+<li>Health is implemented only for Threads; a later Focus-level rollup
+can compose Thread health and direct Focus evidence.</li>
+<li>Cadence currently reports when an Update is due. Notification
+scheduling is a later concern.</li>
+<li>An Update directly on a Thread is treated as a completed review. If
+reviews later need a separate workflow, that can become an explicit
+Update kind without rewriting existing observations.</li>
+</ul>
+</body>
+</html>

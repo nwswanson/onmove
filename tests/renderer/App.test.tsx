@@ -143,6 +143,97 @@ describe('App', () => {
     expect(duplicates[1]).toHaveAttribute('aria-current', 'page')
   })
 
+  it('defaults to an undeletable Overall section and switches to Thread entry tools', async () => {
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([
+        focus({ title: 'Deliver Project Atlas', description: 'Protect a predictable launch.' })
+      ])
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Deliver Project Atlas' }))
+
+    expect(screen.getByRole('heading', { name: 'Deliver Project Atlas' })).toBeInTheDocument()
+    const toolbar = screen.getByRole('toolbar', { name: 'Application toolbar' })
+    expect(screen.getByRole('main')).toContainElement(toolbar)
+    expect(screen.getByLabelText('Primary sidebar')).not.toContainElement(toolbar)
+    expect(screen.getByLabelText('Focus sidebar')).toBeInTheDocument()
+    expect(screen.getByLabelText('Focus sidebar')).toHaveStyle({ width: '252px' })
+    fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize Focus sidebar' }), {
+      key: 'ArrowRight'
+    })
+    expect(screen.getByLabelText('Focus sidebar')).toHaveStyle({ width: '268px' })
+    expect(screen.getByRole('tablist', { name: 'Focus sections' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Overall' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.queryByRole('button', { name: /delete overall/i })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Deliver Project Atlas description')).toHaveValue(
+      'Protect a predictable launch.'
+    )
+    expect(screen.getByRole('heading', { name: 'Commitments' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'New commitment' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Updates' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'New update' })).toBeInTheDocument()
+    expect(screen.queryByText('Current assessment')).not.toBeInTheDocument()
+    expect(screen.queryByText('Current reality')).not.toBeInTheDocument()
+    expect(screen.queryByText('Linked commitments')).not.toBeInTheDocument()
+    expect(screen.queryByText('Independent views of success')).not.toBeInTheDocument()
+    expect(screen.queryByText('Append-only')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: 'Sprint execution, At risk' }))
+
+    expect(screen.getByRole('tab', { name: 'Sprint execution, At risk' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByRole('heading', { name: 'Sprint execution' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Sprint execution description')).toHaveValue(
+      'Keep sprint planning clear, timely, and predictable.'
+    )
+    expect(
+      screen.getByLabelText('Commitment: Improve ticket quality before sprint planning')
+    ).toBeInTheDocument()
+  })
+
+  it('supports inline adding, editing, and deleting prototype commitments and updates', async () => {
+    installApi({ listFocuses: vi.fn().mockResolvedValue([focus()]) })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Quarterly plan' }))
+
+    await user.click(screen.getByRole('button', { name: 'New commitment' }))
+    const newCommitment = screen.getByLabelText('Commitment: Untitled')
+    await user.type(newCommitment, 'Publish the readiness note')
+    expect(newCommitment).toHaveValue('Publish the readiness note')
+
+    await user.click(screen.getByRole('button', { name: 'New update' }))
+    const newUpdate = screen.getByLabelText('Update: Untitled')
+    await user.type(newUpdate, 'Sponsors confirmed the launch sequence')
+    expect(newUpdate).toHaveValue('Sponsors confirmed the launch sequence')
+
+    const existingUpdate = screen.getByLabelText(
+      'Update: Sponsors accepted the release sequence; reliability scope remains open.'
+    )
+    await user.clear(existingUpdate)
+    await user.type(existingUpdate, 'Reliability scope was resolved.')
+    expect(existingUpdate).toHaveValue('Reliability scope was resolved.')
+
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Delete update The team reports sustainable workload for the current release slice.'
+      })
+    )
+    expect(
+      screen.queryByLabelText(
+        'Update: The team reports sustainable workload for the current release slice.'
+      )
+    ).not.toBeInTheDocument()
+  })
+
   it('edits title, notes, and status in the contextual drawer', async () => {
     const current = focus({ description: 'Old notes' })
     const updated = focus({ title: 'Revised plan', description: 'New notes', status: 'paused' })
@@ -155,7 +246,7 @@ describe('App', () => {
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: 'Quarterly plan' }))
-    await user.click(screen.getByRole('button', { name: 'Edit Quarterly plan' }))
+    await user.click(screen.getByRole('button', { name: 'Open Focus context' }))
     expect(screen.getByRole('complementary', { name: 'Focus context drawer' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Close context drawer' })).toBeInTheDocument()
 
@@ -185,7 +276,7 @@ describe('App', () => {
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: 'Quarterly plan' }))
-    await user.click(screen.getByRole('button', { name: 'Edit Quarterly plan' }))
+    await user.click(screen.getByRole('button', { name: 'Open Focus context' }))
     await user.selectOptions(screen.getByLabelText('Status'), 'done')
     await user.click(screen.getByRole('button', { name: 'Save changes' }))
 
@@ -204,7 +295,7 @@ describe('App', () => {
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: 'Delete me' }))
-    await user.click(screen.getByRole('button', { name: 'Edit Delete me' }))
+    await user.click(screen.getByRole('button', { name: 'Open Focus context' }))
     await user.click(screen.getByRole('button', { name: 'Delete' }))
 
     expect(screen.getByRole('dialog', { name: 'Delete focus?' })).toBeInTheDocument()
