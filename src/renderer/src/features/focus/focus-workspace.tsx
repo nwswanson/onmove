@@ -3,6 +3,7 @@ import {
   ChevronRight,
   Circle,
   Layers3,
+  PanelRightOpen,
   PauseCircle
 } from 'lucide-react'
 import type {
@@ -16,6 +17,11 @@ import type {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
+  ContextDrawerOutlet,
+  type ContextDrawerAdapter,
+  type ContextDrawerControl
+} from '@/components/ui/context-drawer'
+import {
   ContextualSidebar,
   ContextualSidebarLevel,
   ContextualSidebarNavigation,
@@ -25,6 +31,11 @@ import { Dialog, DialogField } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { ResizeHandle } from '@/components/ui/resize-handle'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  CommitmentContextPanel,
+  FocusContextPanel,
+  ThreadContextPanel
+} from '@/features/focus/focus-ui'
 
 const CONTEXTUAL_SIDEBAR_MIN = 220
 const CONTEXTUAL_SIDEBAR_MAX = 320
@@ -42,6 +53,24 @@ function focusContextItems(threads: readonly ThreadSnapshot[]): FocusContextItem
       thread
     }))
   ]
+}
+
+function threadDrawerAdapter(thread: ThreadSnapshot): ContextDrawerAdapter {
+  return {
+    id: `thread:${thread.id}`,
+    render: ({ width, onClose }) => (
+      <ThreadContextPanel thread={thread} width={width} onClose={onClose} />
+    )
+  }
+}
+
+function commitmentDrawerAdapter(commitment: CommitmentSnapshot): ContextDrawerAdapter {
+  return {
+    id: `commitment:${commitment.id}`,
+    render: ({ width, onClose }) => (
+      <CommitmentContextPanel commitment={commitment} width={width} onClose={onClose} />
+    )
+  }
 }
 
 interface NewThreadDialogProps {
@@ -209,12 +238,16 @@ function NewCommitmentDialog({
 
 interface FocusWorkspaceProps {
   focus: FocusSnapshot
+  contextDrawer: ContextDrawerControl
   onUpdateFocus: (input: UpdateFocusInput) => Promise<void>
+  onDeleteFocus: () => Promise<void>
 }
 
 export function FocusWorkspace({
   focus,
-  onUpdateFocus
+  contextDrawer,
+  onUpdateFocus,
+  onDeleteFocus
 }: FocusWorkspaceProps): React.JSX.Element {
   const [goal, setGoal] = useState(focus.goal)
   const [goalSaving, setGoalSaving] = useState(false)
@@ -263,7 +296,8 @@ export function FocusWorkspace({
         newItem: {
           label: 'New thread',
           onCreate: () => setNewThreadOpen(true)
-        }
+        },
+        onSelect: () => contextDrawer.onClearOverride()
       })
   )
 
@@ -283,6 +317,7 @@ export function FocusWorkspace({
           label: 'New commitment',
           onCreate: () => setNewCommitmentOpen(true)
         },
+        onSelect: () => contextDrawer.onClearOverride(),
         renderItem: (commitment) => (
           <>
             <span className="min-w-0 flex-1 line-clamp-2">{commitment.title}</span>
@@ -327,6 +362,25 @@ export function FocusWorkspace({
       ? commitmentsLevel.getItem(navigationSnapshot.selectedItemId)
       : undefined
 
+  const contextDrawerAdapter: ContextDrawerAdapter | null = selectedCommitment
+    ? commitmentDrawerAdapter(selectedCommitment)
+    : navigationSnapshot.level === commitmentsLevel
+      ? null
+      : selectedFocusItem?.kind === 'thread'
+        ? threadDrawerAdapter(selectedFocusItem.thread)
+        : {
+            id: `focus:${focus.id}`,
+            render: ({ width, onClose }) => (
+              <FocusContextPanel
+                focus={focus}
+                width={width}
+                onClose={onClose}
+                onSave={onUpdateFocus}
+                onDelete={onDeleteFocus}
+              />
+            )
+          }
+
   async function saveGoal(): Promise<void> {
     const normalizedGoal = goal.trim()
     if (normalizedGoal === focus.goal) return
@@ -361,6 +415,7 @@ export function FocusWorkspace({
   }
 
   function openCommitments(commitmentId?: number): void {
+    contextDrawer.onClearOverride()
     navigation.navigateTo(commitmentsLevel)
     if (commitmentId !== undefined) navigation.select(String(commitmentId))
   }
@@ -455,16 +510,31 @@ export function FocusWorkspace({
               <div className="overflow-hidden rounded-xl border border-border/80 bg-card/45">
                 <div role="list" aria-label="Focus commitments">
                   {commitments.map((commitment) => (
-                    <div key={commitment.id} role="listitem" className="border-b border-border/65 last:border-b-0">
+                    <div
+                      key={commitment.id}
+                      role="listitem"
+                      className="flex items-center border-b border-border/65 last:border-b-0"
+                    >
                       <button
                         type="button"
-                        className="flex min-h-11 w-full items-center gap-3 px-3 text-left text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/55"
+                        className="flex min-h-11 min-w-0 flex-1 items-center gap-3 px-3 text-left text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/55"
                         aria-label={`Open commitment ${commitment.title}`}
                         onClick={() => openCommitments(commitment.id)}
                       >
                         <span className="min-w-0 flex-1 truncate">{commitment.title}</span>
                         <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
                       </button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="mr-1 size-8 text-muted-foreground"
+                        aria-label={`Inspect commitment ${commitment.title}`}
+                        title="Inspect in context drawer"
+                        onClick={() => contextDrawer.onOverride(commitmentDrawerAdapter(commitment))}
+                      >
+                        <PanelRightOpen aria-hidden="true" />
+                      </Button>
                     </div>
                   ))}
                   {commitments.length === 0 && (
@@ -480,6 +550,8 @@ export function FocusWorkspace({
           </section>
         )}
       </main>
+
+      <ContextDrawerOutlet adapter={contextDrawerAdapter} {...contextDrawer} />
 
       {newThreadOpen && (
         <NewThreadDialog

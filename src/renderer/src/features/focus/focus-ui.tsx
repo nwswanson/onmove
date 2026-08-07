@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { Circle, PauseCircle, Plus } from 'lucide-react'
 import type {
+  CommitmentSnapshot,
   CreateFocusInput,
   FocusSnapshot,
   FocusStatus,
+  ThreadSnapshot,
   UpdateFocusInput
 } from '../../../../shared/contracts'
 import { Button } from '@/components/ui/button'
@@ -307,5 +309,95 @@ export function FocusContextPanel({
         <p className="text-sm leading-6 text-muted-foreground">This action cannot be undone.</p>
       </Dialog>
     </>
+  )
+}
+
+interface ReadonlyContextPanelProps {
+  kind: 'Thread' | 'Commitment'
+  title: string
+  details: ReadonlyArray<{ label: string; value: string }>
+  width: number
+  onClose: () => void
+}
+
+function ReadonlyContextPanel({
+  kind,
+  title,
+  details,
+  width,
+  onClose
+}: ReadonlyContextPanelProps): React.JSX.Element {
+  return (
+    <ContextDrawer
+      title={kind}
+      description={title}
+      aria-label={`${kind} context drawer`}
+      style={{ width }}
+      onClose={onClose}
+    >
+      <ContextDrawerSection>
+        <dl className="space-y-3">
+          <div>
+            <dt className="text-[0.6875rem] font-medium text-muted-foreground">Title</dt>
+            <dd className="mt-0.5 text-sm">{title}</dd>
+          </div>
+          {details.map((detail) => (
+            <div key={detail.label}>
+              <dt className="text-[0.6875rem] font-medium text-muted-foreground">
+                {detail.label}
+              </dt>
+              <dd className="mt-0.5 text-sm capitalize">{detail.value}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="text-xs text-muted-foreground">No editable settings here yet.</p>
+      </ContextDrawerSection>
+    </ContextDrawer>
+  )
+}
+
+export function ThreadContextPanel({
+  thread,
+  width,
+  onClose
+}: {
+  thread: ThreadSnapshot
+  width: number
+  onClose: () => void
+}): React.JSX.Element {
+  return (
+    <ReadonlyContextPanel
+      kind="Thread"
+      title={thread.title}
+      details={[
+        { label: 'Status', value: thread.status },
+        { label: 'Review frequency', value: `${thread.reviewFrequencyDays} days` }
+      ]}
+      width={width}
+      onClose={onClose}
+    />
+  )
+}
+
+export function CommitmentContextPanel({
+  commitment,
+  width,
+  onClose
+}: {
+  commitment: CommitmentSnapshot
+  width: number
+  onClose: () => void
+}): React.JSX.Element {
+  return (
+    <ReadonlyContextPanel
+      kind="Commitment"
+      title={commitment.title}
+      details={[
+        { label: 'Status', value: commitment.status },
+        { label: 'State', value: commitment.state }
+      ]}
+      width={width}
+      onClose={onClose}
+    />
   )
 }

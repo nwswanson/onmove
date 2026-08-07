@@ -76,7 +76,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
   try {
     application = await launch()
     let window = await application.firstWindow()
-    await expect(window.getByRole('heading', { name: 'Home' })).toBeVisible()
+    await expect(window.getByRole('heading', { name: 'Home', exact: true })).toBeVisible()
     await expect(window.getByRole('toolbar', { name: 'Application toolbar' })).toBeVisible()
     await expect(window.getByText('Overview')).toBeVisible()
     await expect(window.getByText('Focuses', { exact: true })).toBeVisible()
@@ -85,24 +85,55 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await window.getByLabel(/Description \/ notes/).fill('Stored notes')
     await window.getByRole('button', { name: 'Create focus' }).click()
     await expect(window.getByRole('heading', { name: 'Persistent focus' })).toBeVisible()
+    await window.getByRole('button', { name: 'Open context drawer' }).click()
+    await expect(window.getByRole('complementary', { name: 'Focus context drawer' })).toBeVisible()
     await window.getByLabel('Goal').fill('Deliver predictable customer value')
     await window.getByLabel('Goal').blur()
     await window.getByRole('button', { name: 'New thread' }).click()
-    await window.getByLabel(/^Title/).fill('Sprint execution')
+    await window
+      .getByRole('dialog', { name: 'New thread' })
+      .getByLabel(/^Title/)
+      .fill('Sprint execution')
     await window.getByRole('button', { name: 'Create thread' }).click()
     await expect(window.getByRole('button', { name: 'Sprint execution' })).toBeVisible()
+    await window.getByRole('button', { name: 'Sprint execution' }).click()
+    await expect(window.getByRole('complementary', { name: 'Thread context drawer' })).toBeVisible()
+    await window.getByRole('button', { name: 'Overall' }).click()
+    await expect(window.getByRole('complementary', { name: 'Focus context drawer' })).toBeVisible()
     await window.getByRole('button', { name: 'Commitments' }).click()
     await expect(window.getByRole('navigation', { name: 'Focus commitments' })).toBeVisible()
+    await expect(window.getByRole('complementary', { name: 'Context drawer' })).toContainText(
+      'No settings here.'
+    )
     await window.getByRole('button', { name: 'New commitment' }).click()
-    await window.getByLabel(/^Title/).fill('Keep sponsors aligned')
+    await window
+      .getByRole('dialog', { name: 'New commitment' })
+      .getByLabel(/^Title/)
+      .fill('Keep sponsors aligned')
     await window.getByRole('button', { name: 'Create commitment' }).click()
     await expect(window.getByRole('button', { name: 'Keep sponsors aligned' })).toHaveAttribute(
       'aria-current',
       'page'
     )
     await expect(window.getByRole('heading', { name: 'Keep sponsors aligned' })).toBeVisible()
+    await expect(
+      window.getByRole('complementary', { name: 'Commitment context drawer' })
+    ).toBeVisible()
     await window.getByRole('button', { name: 'Back to Focus sections' }).click()
-    await window.getByRole('button', { name: 'Open Focus context' }).click()
+    await expect(window.getByRole('complementary', { name: 'Focus context drawer' })).toBeVisible()
+    await window
+      .getByRole('button', { name: 'Inspect commitment Keep sponsors aligned' })
+      .click()
+    await expect(
+      window.getByRole('complementary', { name: 'Commitment context drawer' })
+    ).toBeVisible()
+    await expect(window.getByRole('button', { name: 'Overall' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    await expect(window.getByRole('heading', { name: 'Persistent focus' })).toBeVisible()
+    await window.getByRole('button', { name: 'Return drawer to current selection' }).click()
+    await expect(window.getByRole('complementary', { name: 'Focus context drawer' })).toBeVisible()
     await window.getByLabel('Status').selectOption('paused')
     await window.getByRole('button', { name: 'Save changes' }).click()
     await expect(window.getByRole('button', { name: 'Persistent focus, paused' })).toBeVisible()
@@ -122,7 +153,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
 
     application = await launch()
     window = await application.firstWindow()
-    await expect(window.getByRole('heading', { name: 'Home' })).toBeVisible()
+    await expect(window.getByRole('heading', { name: 'Home', exact: true })).toBeVisible()
     await window.getByRole('button', { name: 'Persistent focus, paused' }).click()
     await expect(window.getByRole('heading', { name: 'Persistent focus' })).toBeVisible()
     await expect(window.getByLabel('Goal')).toHaveValue('Deliver predictable customer value')
@@ -130,12 +161,12 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(
       window.getByRole('button', { name: 'Open commitment Keep sponsors aligned' })
     ).toBeVisible()
-    await window.getByRole('button', { name: 'Open Focus context' }).click()
+    await window.getByRole('button', { name: 'Open context drawer' }).click()
     await expect(window.getByLabel('Description / notes')).toHaveValue('Stored notes')
     await window.getByRole('button', { name: 'Delete' }).click()
     await expect(window.getByRole('dialog', { name: 'Delete focus?' })).toBeVisible()
     await window.getByRole('button', { name: 'Delete focus' }).click()
-    await expect(window.getByRole('heading', { name: 'Home' })).toBeVisible()
+    await expect(window.getByRole('heading', { name: 'Home', exact: true })).toBeVisible()
     await expect(window.getByText('No focuses yet')).toBeVisible()
     await application.close()
     application = undefined

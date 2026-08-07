@@ -2,7 +2,13 @@ import { useEffect, useState } from 'react'
 import { AlertTriangle, ChevronRight, FolderOpen, House, PanelRightOpen, Settings } from 'lucide-react'
 import type { AppState, CreateFocusInput, FocusSnapshot, UpdateFocusInput } from '../../shared/contracts'
 import { Button } from '@/components/ui/button'
-import { ContextDrawer, ContextDrawerSection } from '@/components/ui/context-drawer'
+import {
+  ContextDrawer,
+  ContextDrawerOutlet,
+  ContextDrawerSection,
+  type ContextDrawerAdapter,
+  type ContextDrawerControl
+} from '@/components/ui/context-drawer'
 import { Input } from '@/components/ui/input'
 import { ResizeHandle } from '@/components/ui/resize-handle'
 import { Separator } from '@/components/ui/separator'
@@ -20,7 +26,6 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Toolbar, ToolbarGroup } from '@/components/ui/toolbar'
 import {
-  FocusContextPanel,
   FocusList,
   NewFocusDialog
 } from '@/features/focus/focus-ui'
@@ -39,7 +44,6 @@ const DRAWER_MAX = 384
 
 interface AppToolbarProps {
   title: string
-  contextLabel: string
   enabled: boolean
   onOpenContext: () => void
   onShowData: () => void
@@ -47,7 +51,6 @@ interface AppToolbarProps {
 
 function AppToolbar({
   title,
-  contextLabel,
   enabled,
   onOpenContext,
   onShowData
@@ -62,7 +65,7 @@ function AppToolbar({
           variant="ghost"
           size="icon"
           className="size-8 text-muted-foreground"
-          aria-label={`Open ${contextLabel} context`}
+          aria-label="Open context drawer"
           title="Open contextual inspector"
           disabled={!enabled}
           onClick={onOpenContext}
@@ -183,43 +186,65 @@ function AppSidebar({
 }
 
 interface HomeViewProps {
-  contextTitle: string
+  value: HomeExample
+  contextDrawer: ContextDrawerControl
+  onChange: (value: HomeExample) => void
   onOpenContext: () => void
 }
 
-function HomeView({ contextTitle, onOpenContext }: HomeViewProps): React.JSX.Element {
-  return (
-    <main className="min-w-0 flex-1 overflow-auto bg-background" aria-labelledby="home-heading">
-      <section className="mx-auto w-full max-w-5xl p-8 sm:p-10">
-        <h1 id="home-heading" className="text-2xl font-semibold tracking-[-0.025em]">
-          Home
-        </h1>
-        <p className="mt-1.5 text-sm text-muted-foreground">
-          This view is intentionally open for future items.
-        </p>
+function HomeView({
+  value,
+  contextDrawer,
+  onChange,
+  onOpenContext
+}: HomeViewProps): React.JSX.Element {
+  const contextDrawerAdapter: ContextDrawerAdapter = {
+    id: 'home:example',
+    render: ({ width, onClose }) => (
+      <HomeContextPanel
+        value={value}
+        width={width}
+        onChange={onChange}
+        onClose={onClose}
+      />
+    )
+  }
 
-        <button
-          type="button"
-          className="group mt-10 flex w-full max-w-md items-center gap-3 rounded-xl border border-border/80 bg-card/45 p-3.5 text-left shadow-xs outline-none transition-colors hover:border-primary/65 hover:bg-primary/10 focus-visible:ring-2 focus-visible:ring-ring/55"
-          aria-label="Edit Example home item"
-          onClick={onOpenContext}
-        >
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/25 text-sidebar-primary-foreground">
-            <House className="size-4" aria-hidden="true" />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-medium">{contextTitle}</span>
-            <span className="mt-0.5 block text-xs text-muted-foreground">
-              Select to inspect and edit context
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+      <main className="min-w-0 flex-1 overflow-auto bg-background" aria-labelledby="home-heading">
+        <section className="mx-auto w-full max-w-5xl p-8 sm:p-10">
+          <h1 id="home-heading" className="text-2xl font-semibold tracking-[-0.025em]">
+            Home
+          </h1>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            This view is intentionally open for future items.
+          </p>
+
+          <button
+            type="button"
+            className="group mt-10 flex w-full max-w-md items-center gap-3 rounded-xl border border-border/80 bg-card/45 p-3.5 text-left shadow-xs outline-none transition-colors hover:border-primary/65 hover:bg-primary/10 focus-visible:ring-2 focus-visible:ring-ring/55"
+            aria-label="Edit Example home item"
+            onClick={onOpenContext}
+          >
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/25 text-sidebar-primary-foreground">
+              <House className="size-4" aria-hidden="true" />
             </span>
-          </span>
-          <ChevronRight
-            className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5"
-            aria-hidden="true"
-          />
-        </button>
-      </section>
-    </main>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium">{value.title}</span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                Select to inspect and edit context
+              </span>
+            </span>
+            <ChevronRight
+              className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+              aria-hidden="true"
+            />
+          </button>
+        </section>
+      </main>
+      <ContextDrawerOutlet adapter={contextDrawerAdapter} {...contextDrawer} />
+    </div>
   )
 }
 
@@ -303,6 +328,7 @@ export function App(): React.JSX.Element {
   const [focuses, setFocuses] = useState<FocusSnapshot[]>([])
   const [newFocusOpen, setNewFocusOpen] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
+  const [contextOverride, setContextOverride] = useState<ContextDrawerAdapter | null>(null)
   const [sidebarWidth, setSidebarWidth] = useState(248)
   const [drawerWidth, setDrawerWidth] = useState(336)
   const [homeExample, setHomeExample] = useState<HomeExample>({
@@ -333,25 +359,41 @@ export function App(): React.JSX.Element {
       : (focuses.find((focus) => focus.id === selectedFocusId && isVisibleFocus(focus)) ?? null)
   const enabled = Boolean(state)
   const toolbarTitle = selectedFocus?.title ?? 'Home'
-  const contextLabel = selectedFocus ? 'Focus' : 'Home'
+  const contextDrawer = {
+    open: contextOpen,
+    overrideAdapter: contextOverride,
+    width: drawerWidth,
+    minWidth: DRAWER_MIN,
+    maxWidth: DRAWER_MAX,
+    onWidthChange: setDrawerWidth,
+    onClose: () => {
+      setContextOpen(false)
+      setContextOverride(null)
+    },
+    onOverride: (adapter: ContextDrawerAdapter) => {
+      setContextOverride(adapter)
+      setContextOpen(true)
+    },
+    onClearOverride: () => setContextOverride(null)
+  } satisfies ContextDrawerControl
 
   function goHome(): void {
+    setContextOverride(null)
     setSelectedFocusId(null)
-    setContextOpen(false)
   }
 
   function selectFocus(focusId: number): void {
     const focus = focuses.find((candidate) => candidate.id === focusId)
     if (!focus || !isVisibleFocus(focus)) return
+    setContextOverride(null)
     setSelectedFocusId(focusId)
-    setContextOpen(false)
   }
 
   async function createFocus(input: CreateFocusInput): Promise<void> {
     const focus = await window.onmove.domain.createFocus(input)
     setFocuses((current) => [...current, focus])
+    setContextOverride(null)
     setSelectedFocusId(focus.id)
-    setContextOpen(false)
   }
 
   async function updateFocus(focusId: number, input: UpdateFocusInput): Promise<void> {
@@ -360,8 +402,8 @@ export function App(): React.JSX.Element {
       current.map((focus) => (focus.id === updated.id ? updated : focus))
     )
     if (!isVisibleFocus(updated)) {
+      setContextOverride(null)
       setSelectedFocusId(null)
-      setContextOpen(false)
     }
   }
 
@@ -369,15 +411,14 @@ export function App(): React.JSX.Element {
     const deleted = await window.onmove.domain.deleteFocus(focusId)
     if (!deleted) throw new Error('Focus no longer exists')
     setFocuses((current) => current.filter((focus) => focus.id !== focusId))
+    setContextOverride(null)
     setSelectedFocusId(null)
-    setContextOpen(false)
   }
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       <AppToolbar
         title={toolbarTitle}
-        contextLabel={contextLabel}
         enabled={enabled}
         onOpenContext={() => setContextOpen(true)}
         onShowData={() => void window.onmove.showDataFolder()}
@@ -407,11 +448,15 @@ export function App(): React.JSX.Element {
             <FocusWorkspace
               key={selectedFocus.id}
               focus={selectedFocus}
+              contextDrawer={contextDrawer}
               onUpdateFocus={(input) => updateFocus(selectedFocus.id, input)}
+              onDeleteFocus={() => deleteFocus(selectedFocus.id)}
             />
           ) : (
             <HomeView
-              contextTitle={homeExample.title}
+              value={homeExample}
+              contextDrawer={contextDrawer}
+              onChange={setHomeExample}
               onOpenContext={() => setContextOpen(true)}
             />
           )
@@ -430,35 +475,6 @@ export function App(): React.JSX.Element {
           <LoadingView />
         )}
 
-        {state && contextOpen && (
-          <>
-            <ResizeHandle
-              label="Resize context drawer"
-              value={drawerWidth}
-              min={DRAWER_MIN}
-              max={DRAWER_MAX}
-              direction={-1}
-              onChange={setDrawerWidth}
-            />
-            {selectedFocus ? (
-              <FocusContextPanel
-                key={selectedFocus.id}
-                focus={selectedFocus}
-                width={drawerWidth}
-                onClose={() => setContextOpen(false)}
-                onSave={(input) => updateFocus(selectedFocus.id, input)}
-                onDelete={() => deleteFocus(selectedFocus.id)}
-              />
-            ) : (
-              <HomeContextPanel
-                value={homeExample}
-                width={drawerWidth}
-                onChange={setHomeExample}
-                onClose={() => setContextOpen(false)}
-              />
-            )}
-          </>
-        )}
       </div>
 
       {newFocusOpen && (

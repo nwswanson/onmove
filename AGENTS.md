@@ -31,6 +31,13 @@
 - Build contextual inspectors with the shared `ContextDrawer` primitives. Every drawer must have a
   visible close button, a descriptive accessible label, and view-specific content composed inside
   the common shell.
+- Drive the right drawer through a screen-owned `ContextDrawerAdapter` and the shared persistent
+  `ContextDrawerOutlet`. The application shell must not switch on domain entity types. Navigating
+  must replace the active adapter without closing the drawer or resetting its width; use the shared
+  empty state when a screen has no contextual settings.
+- Use the drawer controller's generic adapter override to inspect an item without changing the main
+  view or contextual-sidebar selection. Reuse the selected item's normal adapter, expose the shared
+  return-to-current-selection control, and clear overrides when ordinary navigation resumes.
 
 ## Color system
 
