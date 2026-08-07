@@ -18,8 +18,8 @@ function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1120,
     height: 760,
-    minWidth: 760,
-    minHeight: 520,
+    minWidth: 1040,
+    minHeight: 600,
     show: false,
     backgroundColor: '#f7f7f5',
     titleBarStyle: 'hiddenInset',

@@ -80,6 +80,42 @@ function SidebarMenuButton({
   )
 }
 
+function SidebarMenuSub({ className, ...props }: React.ComponentProps<'ul'>): React.JSX.Element {
+  return (
+    <ul
+      data-slot="sidebar-menu-sub"
+      className={cn('mt-1 ml-3 flex flex-col gap-1 border-l border-sidebar-border pl-2', className)}
+      {...props}
+    />
+  )
+}
+
+function SidebarMenuSubItem({ className, ...props }: React.ComponentProps<'li'>): React.JSX.Element {
+  return <li data-slot="sidebar-menu-sub-item" className={cn('relative', className)} {...props} />
+}
+
+function SidebarMenuSubButton({
+  className,
+  isActive = false,
+  ...props
+}: React.ComponentProps<'button'> & { isActive?: boolean }): React.JSX.Element {
+  return (
+    <button
+      data-slot="sidebar-menu-sub-button"
+      data-active={isActive}
+      className={cn(
+        'flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs font-medium outline-none transition-colors',
+        'text-sidebar-foreground/72 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/55',
+        'disabled:pointer-events-none disabled:opacity-40',
+        'data-[active=true]:bg-primary/30 data-[active=true]:text-sidebar-primary-foreground data-[active=true]:ring-1 data-[active=true]:ring-primary/40',
+        '[&_svg]:size-3.5 [&_svg]:shrink-0',
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
 export {
   Sidebar,
   SidebarContent,
@@ -89,5 +125,8 @@ export {
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
-  SidebarMenuItem
+  SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem
 }

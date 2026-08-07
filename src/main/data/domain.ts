@@ -14,6 +14,8 @@ import {
   ModelValidationError
 } from './model'
 import type { SqliteAdapter } from './sqlite-adapter'
+import { FocusRepository } from './focus'
+import { CommitmentRepository, ThreadRepository, UpdateRepository } from './work-model'
 
 type RelationRecord = RelationSnapshot
 
@@ -521,9 +523,17 @@ export class ItemRepository extends BaseRepository<ItemRecord, ItemModel> {
 export class DomainStore {
   readonly relations: RelationRepository
   readonly items: ItemRepository
+  readonly focuses: FocusRepository
+  readonly threads: ThreadRepository
+  readonly commitments: CommitmentRepository
+  readonly updates: UpdateRepository
 
   constructor(database: SqliteAdapter) {
     this.relations = new RelationRepository(database)
     this.items = new ItemRepository(database)
+    this.focuses = new FocusRepository(database)
+    this.threads = new ThreadRepository(database)
+    this.commitments = new CommitmentRepository(database)
+    this.updates = new UpdateRepository(database)
   }
 }

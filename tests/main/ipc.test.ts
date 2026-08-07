@@ -38,6 +38,22 @@ describe('registerAppIpc', () => {
             }))
           })),
           statusHistory: vi.fn(() => [{ id: 1, from: 'bad', to: 'good' }])
+        },
+        focuses: {
+          list: vi.fn(() => [{ id: 12, title: 'Launch', status: 'active' }]),
+          create: vi.fn(() => ({
+            toSnapshot: () => ({ id: 13, title: 'New focus', status: 'active' })
+          })),
+          requireModel: vi.fn(() => ({
+            update: vi.fn(() => ({
+              toSnapshot: () => ({ id: 12, title: 'Updated', status: 'active' })
+            })),
+            setStatus: vi.fn(() => ({
+              toSnapshot: () => ({ id: 12, title: 'Launch', status: 'paused' })
+            }))
+          })),
+          delete: vi.fn(() => true),
+          statusHistory: vi.fn(() => [{ id: 1, from: null, to: 'active' }])
         }
       }
     }
@@ -64,6 +80,22 @@ describe('registerAppIpc', () => {
     })).toMatchObject({ status: { current: 'good' } })
     expect(await handlers.get(IPC_CHANNELS.getItemStatusHistory)?.(undefined, 8)).toEqual([
       { id: 1, from: 'bad', to: 'good' }
+    ])
+    expect(await handlers.get(IPC_CHANNELS.listFocuses)?.()).toEqual([
+      { id: 12, title: 'Launch', status: 'active' }
+    ])
+    expect(await handlers.get(IPC_CHANNELS.createFocus)?.(undefined, {
+      title: 'New focus'
+    })).toMatchObject({ id: 13, status: 'active' })
+    expect(await handlers.get(IPC_CHANNELS.updateFocus)?.(undefined, 12, {
+      title: 'Updated'
+    })).toMatchObject({ title: 'Updated' })
+    expect(await handlers.get(IPC_CHANNELS.setFocusStatus)?.(undefined, 12, 'paused')).toMatchObject({
+      status: 'paused'
+    })
+    expect(await handlers.get(IPC_CHANNELS.deleteFocus)?.(undefined, 12)).toBe(true)
+    expect(await handlers.get(IPC_CHANNELS.getFocusStatusHistory)?.(undefined, 12)).toEqual([
+      { id: 1, from: null, to: 'active' }
     ])
 
     cleanup()

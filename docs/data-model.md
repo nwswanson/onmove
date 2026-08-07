@@ -18,6 +18,8 @@ relations 1 ─────── 0..n items         ON DELETE SET NULL
                             └── 0..n child items             ON DELETE CASCADE
 
 items     1 ─────── 0..n status_transitions                 ON DELETE CASCADE
+
+focuses   1 ─────── 0..n focus_status_transitions           ON DELETE CASCADE
 ```
 
 - An item can have one parent and any number of children.
@@ -26,6 +28,30 @@ items     1 ─────── 0..n status_transitions                 ON DEL
 - Deleting a relation preserves the item and changes its `relationId` to `null`.
 - Repository reparenting rejects self-parenting and descendant cycles before writing.
 - `meta` and status-event `meta` must be JSON objects. Their contents remain application-defined.
+
+## Focuses
+
+Focuses are top-level portfolio objects rather than hierarchy children. Their initial model is:
+
+```ts
+{
+  kind: 'generic',
+  title: string,
+  description: string | null,
+  status: 'active' | 'paused' | 'cancelled' | 'done'
+}
+```
+
+Titles are required but intentionally not unique. Status is materialized on the `focuses` row and
+every actual change is appended by SQLite triggers to `focus_status_transitions`. Active and paused
+records appear in sidebar navigation; paused records are visually muted. Cancelled and done records
+remain durable and queryable but are omitted from navigation.
+
+`FocusModel` supplies update, status, history, refresh, and deletion helpers. The renderer reaches
+these operations only through named Focus IPC methods.
+
+The model beneath Focus—Threads, Commitments, dated Updates, health, reviews, and cadence—is detailed
+in [`focus-thread-commitment-model.md`](focus-thread-commitment-model.md).
 
 ## Status is state plus history
 

@@ -16,7 +16,15 @@ const api: OnMoveApi = {
       ipcRenderer.invoke(IPC_CHANNELS.setItemRelation, id, relationId),
     setItemStatus: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.setItemStatus, id, input),
     getItemStatusHistory: (id) =>
-      ipcRenderer.invoke(IPC_CHANNELS.getItemStatusHistory, id)
+      ipcRenderer.invoke(IPC_CHANNELS.getItemStatusHistory, id),
+    listFocuses: () => ipcRenderer.invoke(IPC_CHANNELS.listFocuses),
+    createFocus: (input) => ipcRenderer.invoke(IPC_CHANNELS.createFocus, input),
+    updateFocus: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateFocus, id, input),
+    setFocusStatus: (id, status) =>
+      ipcRenderer.invoke(IPC_CHANNELS.setFocusStatus, id, status),
+    deleteFocus: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteFocus, id),
+    getFocusStatusHistory: (id) =>
+      ipcRenderer.invoke(IPC_CHANNELS.getFocusStatusHistory, id)
   }
 }
 

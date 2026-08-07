@@ -3,8 +3,13 @@
 ## Product shell
 
 - The macOS application uses a persistent sidebar and a selection-driven main view.
-- Put primary item destinations at the top of the sidebar. The initial destinations are `Home` and
-  `Portfolio`.
+- Keep one macOS-style toolbar across the full window, with the sidebar and main workspace beneath
+  it. Do not add view-level breadcrumb bars above the main canvas.
+- Put primary item destinations at the top of the sidebar. `Home` is selectable; `Focuses` is a
+  section label with focus records and the `New focus` action exposed directly beneath it.
+- Focus records with `active` or `paused` status appear in the selector. Paused focuses remain
+  selectable but visually muted; `cancelled` and `done` focuses remain in SQLite but are filtered
+  from navigation.
 - Put workspace utilities such as Settings, help, and data/storage actions at the bottom of the
   sidebar.
 - Build sidebar primitives and other interface elements using the local shadcn/ui conventions in
@@ -14,6 +19,11 @@
   visible keyboard focus state.
 - Preserve the native macOS inset title bar and draggable regions. Interactive controls must remain
   outside draggable hit targets.
+- The sidebar is resizable. Contextual editing belongs in the resizable right-side drawer, which
+  participates in layout and shrinks the main canvas instead of overlaying it.
+- Build contextual inspectors with the shared `ContextDrawer` primitives. Every drawer must have a
+  visible close button, a descriptive accessible label, and view-specific content composed inside
+  the common shell.
 
 ## Color system
 
@@ -40,6 +50,10 @@ and do not rely on color alone to communicate selection or status.
 - Add schema changes as new numbered migrations; never edit a migration already released to users.
 - Preserve hierarchy cascades, relation `SET NULL` behavior, and automatic status-transition
   auditing.
+- Treat Thread health, review dates, Commitment state, and cadence deadlines as model projections.
+  Do not add writable columns or UI mutations for those derived values.
+- A Commitment must have exactly one Focus or Thread parent. An Update must have exactly one Focus,
+  Thread, or Commitment parent. Preserve these SQLite constraints and cascades.
 - Return UI-ready snapshots through named IPC methods. Do not expose generic SQL or arbitrary model
   dispatch to the renderer.
 

@@ -1,9 +1,12 @@
 import type { IpcMain, Shell } from 'electron'
 import {
   IPC_CHANNELS,
+  type CreateFocusInput,
   type CreateItemInput,
   type CreateRelationInput,
-  type SetItemStatusInput
+  type FocusStatus,
+  type SetItemStatusInput,
+  type UpdateFocusInput
 } from '../shared/contracts'
 import type { AppDatabase } from './database'
 
@@ -46,6 +49,22 @@ export function registerAppIpc(
   )
   ipcMain.handle(IPC_CHANNELS.getItemStatusHistory, (_event, id: number) =>
     database.domain.items.statusHistory(id)
+  )
+  ipcMain.handle(IPC_CHANNELS.listFocuses, () => database.domain.focuses.list())
+  ipcMain.handle(IPC_CHANNELS.createFocus, (_event, input: CreateFocusInput) =>
+    database.domain.focuses.create(input).toSnapshot()
+  )
+  ipcMain.handle(IPC_CHANNELS.updateFocus, (_event, id: number, input: UpdateFocusInput) =>
+    database.domain.focuses.requireModel(id).update(input).toSnapshot()
+  )
+  ipcMain.handle(IPC_CHANNELS.setFocusStatus, (_event, id: number, status: FocusStatus) =>
+    database.domain.focuses.requireModel(id).setStatus(status).toSnapshot()
+  )
+  ipcMain.handle(IPC_CHANNELS.deleteFocus, (_event, id: number) =>
+    database.domain.focuses.delete(id)
+  )
+  ipcMain.handle(IPC_CHANNELS.getFocusStatusHistory, (_event, id: number) =>
+    database.domain.focuses.statusHistory(id)
   )
 
   return () => {

@@ -8,14 +8,20 @@ sandboxed from Node.js.
 
 - A native-feeling macOS window with inset traffic lights, light/dark appearance support, and a
   conventional application menu.
-- A shadcn/ui-based application shell with Home and Portfolio views, active navigation, and
-  bottom-anchored workspace utilities.
+- A shadcn/ui-based application shell with Home and a direct Focuses list, active navigation,
+  and bottom-anchored workspace utilities.
+- A full-width macOS-style toolbar, resizable sidebar, flexible main canvas, and composable,
+  resizable contextual drawer that participates in layout rather than covering content.
 - A semantic product palette using Cerulean for primary selection, Tigerlily for alerts, and
   Greenery for healthy states.
 - A real SQLite database using Electron's bundled `node:sqlite` implementation and WAL mode.
 - Versioned, transactional migrations and a typed, subclassable domain-model layer.
 - Recursive parent/child items, nullable relation references, JSON metadata, and materialized status
   state backed by an immutable transition log.
+- Persistent top-level Focus records with duplicate-title support, audited status changes, creation
+  and editing UI, filtering, and confirmed deletion.
+- Model-only Thread, Commitment, and dated Update foundations with derived health, review dates,
+  cadence deadlines, lifecycle histories, and strict polymorphic parents.
 - A persistent hello counter and app launch counter.
 - A narrow, typed IPC bridge; `nodeIntegration` is off, `contextIsolation` and Chromium sandboxing
   are on.
@@ -62,6 +68,9 @@ recursive snapshots without exposing SQLite to the renderer.
 
 See [`docs/data-model.md`](docs/data-model.md) for the schema, invariants, extension points, and API
 examples.
+
+See [`docs/focus-thread-commitment-model.md`](docs/focus-thread-commitment-model.md) for the detailed
+work-model rules and a Project execution → Sprint execution → Improve ticket quality walkthrough.
 
 ## Distribution note
 

@@ -120,12 +120,6 @@ button {
   -webkit-app-region: drag;
 }
 
-.view-atmosphere {
-  background:
-    radial-gradient(circle at 78% 8%, color-mix(in srgb, var(--cerulean) 22%, transparent), transparent 36%),
-    radial-gradient(circle at 12% 90%, color-mix(in srgb, var(--greenery) 8%, transparent), transparent 32%);
-}
-
 @media (max-width: 720px) {
   [data-slot='sidebar'] {
     width: 13rem;
