@@ -1,0 +1,83 @@
+{
+  "name": "onmove",
+  "version": "0.1.0",
+  "description": "A fast, native-feeling macOS Electron app with durable SQLite storage.",
+  "main": "out/main/index.js",
+  "type": "module",
+  "author": "OnMove",
+  "license": "UNLICENSED",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.renderer.json",
+    "lint": "eslint . --max-warnings=0",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "pnpm build && playwright test",
+    "check": "pnpm typecheck && pnpm lint && pnpm test",
+    "dist:mac": "pnpm check && electron-vite build && electron-builder --mac dir",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "@radix-ui/react-slot": "1.2.3",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "lucide-react": "0.542.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "tailwind-merge": "3.3.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.55.0",
+    "@tailwindcss/vite": "4.1.13",
+    "@testing-library/jest-dom": "6.8.0",
+    "@testing-library/react": "16.3.0",
+    "@testing-library/user-event": "14.6.1",
+    "@types/node": "24.3.1",
+    "@types/react": "19.1.12",
+    "@types/react-dom": "19.1.9",
+    "@vitejs/plugin-react": "5.0.2",
+    "electron": "43.3.0",
+    "electron-builder": "26.15.3",
+    "electron-vite": "5.0.0",
+    "eslint": "10.8.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-refresh": "0.5.3",
+    "globals": "16.3.0",
+    "jsdom": "26.1.0",
+    "tailwindcss": "4.1.13",
+    "typescript": "5.9.2",
+    "typescript-eslint": "8.66.0",
+    "vite": "7.1.3",
+    "vitest": "3.2.4"
+  },
+  "build": {
+    "appId": "com.onmove.desktop",
+    "productName": "OnMove",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.png",
+      "electronLanguages": [
+        "en"
+      ],
+      "target": [
+        "dir"
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "darkModeSupport": true
+    }
+  },
+  "engines": {
+    "node": ">=20.19"
+  }
+}
