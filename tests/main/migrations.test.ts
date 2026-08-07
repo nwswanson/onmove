@@ -66,4 +66,43 @@ describe('database migrations', () => {
 
     expect(() => new AppDatabase(databasePath)).toThrow(/newer than supported/)
   })
+
+  it('adds an empty goal to focuses created before the goal migration', () => {
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at TEXT NOT NULL
+      ) STRICT;
+      INSERT INTO schema_migrations VALUES
+        (1, '2026-01-01T00:00:00.000Z'),
+        (2, '2026-01-01T00:00:00.000Z'),
+        (3, '2026-01-01T00:00:00.000Z'),
+        (4, '2026-01-01T00:00:00.000Z'),
+        (5, '2026-01-01T00:00:00.000Z');
+      CREATE TABLE focuses (
+        id INTEGER PRIMARY KEY,
+        kind TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL,
+        status_changed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+      INSERT INTO focuses (
+        kind, title, description, status, status_changed_at, created_at, updated_at
+      ) VALUES (
+        'generic', 'Existing focus', NULL, 'active', NULL,
+        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+      );
+    `)
+    legacy.close()
+
+    const database = new AppDatabase(databasePath)
+    expect(database.domain.focuses.list()).toMatchObject([
+      { title: 'Existing focus', goal: '' }
+    ])
+    database.close()
+  })
 })

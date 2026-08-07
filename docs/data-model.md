@@ -5,7 +5,7 @@ The data layer is intentionally split into four pieces:
 1. `SqliteAdapter` owns the connection, prepared execution, and nested transactions.
 2. The migration runner evolves the durable schema one transaction at a time.
 3. `BaseModel` and `BaseRepository` provide subclassable lifecycle and persistence helpers.
-4. `DomainStore` exposes typed `items` and `relations` repositories to the Electron main process.
+4. `DomainStore` exposes typed repositories to the Electron main process.
 
 The renderer never receives a database connection. Its typed, sandboxed IPC API returns snapshots
 made only from JSON-compatible values.
@@ -38,9 +38,12 @@ Focuses are top-level portfolio objects rather than hierarchy children. Their in
   kind: 'generic',
   title: string,
   description: string | null,
+  goal: string,
   status: 'active' | 'paused' | 'cancelled' | 'done'
 }
 ```
+
+`goal` is durable plain text and defaults to an empty string for new and migrated Focus records.
 
 Titles are required but intentionally not unique. Status is materialized on the `focuses` row and
 every actual change is appended by SQLite triggers to `focus_status_transitions`. Active and paused
@@ -48,7 +51,8 @@ records appear in sidebar navigation; paused records are visually muted. Cancell
 remain durable and queryable but are omitted from navigation.
 
 `FocusModel` supplies update, status, history, refresh, and deletion helpers. The renderer reaches
-these operations only through named Focus IPC methods.
+these operations only through named IPC methods. Threads and Commitments likewise use named list
+and create methods; repository dispatch and SQL remain unavailable to the renderer.
 
 The model beneath Focus—Threads, Commitments, dated Updates, health, reviews, and cadence—is detailed
 in [`focus-thread-commitment-model.md`](focus-thread-commitment-model.md).

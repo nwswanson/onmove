@@ -18,6 +18,7 @@ interface FocusRow {
   kind: string
   title: string
   description: string | null
+  goal: string
   status: string
   status_changed_at: string
   created_at: string
@@ -48,6 +49,14 @@ function normalizeDescription(value: string | null | undefined): string | null {
   return value.trim()
 }
 
+function normalizeGoal(value: string | undefined): string {
+  if (value === undefined) return ''
+  if (typeof value !== 'string') {
+    throw new ModelValidationError('focus goal must be text')
+  }
+  return value.trim()
+}
+
 function assertId(id: number): void {
   if (!Number.isSafeInteger(id) || id <= 0) {
     throw new ModelValidationError('focus id must be a positive integer')
@@ -74,6 +83,7 @@ function focusFromRow(row: FocusRow): FocusRecord {
     kind: row.kind as FocusKind,
     title: row.title,
     description: row.description,
+    goal: row.goal,
     status: row.status as FocusStatus,
     statusChangedAt: row.status_changed_at,
     createdAt: row.created_at,
@@ -111,6 +121,10 @@ export class FocusModel extends BaseModel<FocusRecord> {
     return this.record.description
   }
 
+  get goal(): string {
+    return this.record.goal
+  }
+
   get status(): FocusStatus {
     return this.record.status
   }
@@ -145,12 +159,13 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
     const now = timestamp()
     const result = this.database.run(
       `INSERT INTO focuses (
-         kind, title, description, status, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?)`,
+         kind, title, description, goal, status, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         normalizeKind(input.kind),
         normalizeTitle(input.title),
         normalizeDescription(input.description),
+        normalizeGoal(input.goal),
         normalizeStatus(input.status),
         now,
         now
@@ -162,7 +177,7 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
   find(id: number): FocusRecord | null {
     assertId(id)
     const row = this.database.get<FocusRow>(
-      `SELECT id, kind, title, description, status, status_changed_at, created_at, updated_at
+      `SELECT id, kind, title, description, goal, status, status_changed_at, created_at, updated_at
        FROM focuses WHERE id = ?`,
       [id]
     )
@@ -172,7 +187,7 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
   list(): FocusSnapshot[] {
     return this.database
       .all<FocusRow>(
-        `SELECT id, kind, title, description, status, status_changed_at, created_at, updated_at
+        `SELECT id, kind, title, description, goal, status, status_changed_at, created_at, updated_at
          FROM focuses ORDER BY id`
       )
       .map(focusFromRow)
@@ -184,13 +199,14 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
 
     this.database.run(
       `UPDATE focuses
-       SET title = ?, description = ?, status = ?, updated_at = ?
+       SET title = ?, description = ?, goal = ?, status = ?, updated_at = ?
        WHERE id = ?`,
       [
         input.title === undefined ? current.title : normalizeTitle(input.title),
         input.description === undefined
           ? current.description
           : normalizeDescription(input.description),
+        input.goal === undefined ? current.goal : normalizeGoal(input.goal),
         input.status === undefined ? current.status : normalizeStatus(input.status),
         timestamp(),
         id

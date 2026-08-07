@@ -191,7 +191,8 @@ Thread and Commitment may remain active because they are evidence and dimensions
 
 ## Deliberate boundaries in this iteration
 
-- No UI or IPC surface has been added for these entities yet.
+- The current UI and named IPC surface list and create Threads plus Focus-level Commitments. Thread
+  detail, Commitment attributes beyond title, and Updates remain later UI work.
 - Health is implemented only for Threads; a later Focus-level rollup can compose Thread health and
   direct Focus evidence.
 - Cadence currently reports when an Update is due. Notification scheduling is a later concern.

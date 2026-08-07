@@ -398,6 +398,16 @@ const migrations: readonly Migration[] = [
         END;
       `)
     }
+  },
+  {
+    version: 6,
+    name: 'focus_goal',
+    up(database) {
+      database.exec(`
+        ALTER TABLE focuses
+        ADD COLUMN goal TEXT NOT NULL DEFAULT '';
+      `)
+    }
   }
 ]
 

@@ -10,18 +10,20 @@ sandboxed from Node.js.
   conventional application menu.
 - A shadcn/ui-based application shell with Home and a direct Focuses list, active navigation,
   and bottom-anchored workspace utilities.
-- A full-width macOS-style toolbar, resizable sidebar, flexible main canvas, and composable,
-  resizable contextual drawer that participates in layout rather than covering content.
+- A full-width macOS-style toolbar, resizable primary and contextual sidebars, flexible main canvas,
+  and composable, resizable contextual drawer that participates in layout rather than covering
+  content.
 - A semantic product palette using Cerulean for primary selection, Tigerlily for alerts, and
   Greenery for healthy states.
 - A real SQLite database using Electron's bundled `node:sqlite` implementation and WAL mode.
 - Versioned, transactional migrations and a typed, subclassable domain-model layer.
 - Recursive parent/child items, nullable relation references, JSON metadata, and materialized status
   state backed by an immutable transition log.
-- Persistent top-level Focus records with duplicate-title support, audited status changes, creation
-  and editing UI, filtering, and confirmed deletion.
-- Model-only Thread, Commitment, and dated Update foundations with derived health, review dates,
-  cadence deadlines, lifecycle histories, and strict polymorphic parents.
+- Persistent top-level Focus records with goals, duplicate-title support, audited status changes,
+  creation and editing UI, filtering, and confirmed deletion.
+- Persistent Thread and Focus-level Commitment creation and progressive contextual navigation,
+  backed by the broader dated Update model, derived health, review dates, cadence deadlines,
+  lifecycle histories, and strict polymorphic parents.
 - A persistent hello counter and app launch counter.
 - A narrow, typed IPC bridge; `nodeIntegration` is off, `contextIsolation` and Chromium sandboxing
   are on.

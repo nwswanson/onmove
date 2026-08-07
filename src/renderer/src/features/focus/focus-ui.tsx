@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
 import { Circle, PauseCircle, Plus } from 'lucide-react'
 import type {
   CreateFocusInput,
@@ -17,7 +17,6 @@ import {
 } from '@/components/ui/sidebar'
 import { Textarea } from '@/components/ui/textarea'
 import { isVisibleFocus } from '@/features/focus/focus-utils'
-import { FocusWorkspace } from '@/features/focus/focus-workspace'
 
 interface FocusListProps {
   focuses: FocusSnapshot[]
@@ -146,17 +145,6 @@ export function NewFocusDialog({ onClose, onCreate }: NewFocusDialogProps): Reac
         )}
       </form>
     </Dialog>
-  )
-}
-
-interface FocusViewProps {
-  focus: FocusSnapshot
-  toolbar: ReactNode
-}
-
-export function FocusView({ focus, toolbar }: FocusViewProps): React.JSX.Element {
-  return (
-    <FocusWorkspace focus={focus} toolbar={toolbar} />
   )
 }
 

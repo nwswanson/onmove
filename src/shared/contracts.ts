@@ -16,7 +16,11 @@ export const IPC_CHANNELS = {
   updateFocus: 'domain:update-focus',
   setFocusStatus: 'domain:set-focus-status',
   deleteFocus: 'domain:delete-focus',
-  getFocusStatusHistory: 'domain:get-focus-status-history'
+  getFocusStatusHistory: 'domain:get-focus-status-history',
+  listThreads: 'domain:list-threads',
+  createThread: 'domain:create-thread',
+  listCommitments: 'domain:list-commitments',
+  createCommitment: 'domain:create-commitment'
 } as const
 
 export type JsonPrimitive = string | number | boolean | null
@@ -97,6 +101,7 @@ export interface FocusSnapshot {
   kind: FocusKind
   title: string
   description: string | null
+  goal: string
   status: FocusStatus
   statusChangedAt: string
   createdAt: string
@@ -115,12 +120,14 @@ export interface CreateFocusInput {
   kind?: FocusKind
   title: string
   description?: string | null
+  goal?: string
   status?: FocusStatus
 }
 
 export interface UpdateFocusInput {
   title?: string
   description?: string | null
+  goal?: string
   status?: FocusStatus
 }
 
@@ -250,6 +257,10 @@ export interface DomainApi {
   setFocusStatus: (id: number, status: FocusStatus) => Promise<FocusSnapshot>
   deleteFocus: (id: number) => Promise<boolean>
   getFocusStatusHistory: (id: number) => Promise<FocusStatusTransition[]>
+  listThreads: (focusId: number) => Promise<ThreadSnapshot[]>
+  createThread: (input: CreateThreadInput) => Promise<ThreadSnapshot>
+  listCommitments: (parent: CommitmentParent) => Promise<CommitmentSnapshot[]>
+  createCommitment: (input: CreateCommitmentInput) => Promise<CommitmentSnapshot>
 }
 
 export interface AppState {

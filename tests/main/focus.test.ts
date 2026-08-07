@@ -30,6 +30,7 @@ describe('Focus models', () => {
       kind: 'generic',
       title: 'Ship the first version',
       description: null,
+      goal: '',
       status: 'active',
       statusChangedAt: expect.any(String)
     })
@@ -50,12 +51,18 @@ describe('Focus models', () => {
   it('edits details and records every directional status transition once', () => {
     const focus = database!.domain.focuses.create({ title: 'Original' })
 
-    focus.update({ title: 'Updated', description: 'Notes', status: 'paused' })
+    focus.update({
+      title: 'Updated',
+      description: 'Notes',
+      goal: 'Deliver predictable value',
+      status: 'paused'
+    })
     focus.setStatus('active').setStatus('done').setStatus('done')
 
     expect(focus.toSnapshot()).toMatchObject({
       title: 'Updated',
       description: 'Notes',
+      goal: 'Deliver predictable value',
       status: 'done'
     })
     expect(focus.statusHistory()).toMatchObject([
@@ -67,9 +74,17 @@ describe('Focus models', () => {
   })
 
   it('normalizes optional notes and validates titles and enum values', () => {
-    const focus = database!.domain.focuses.create({ title: '  Valid  ', description: '   ' })
+    const focus = database!.domain.focuses.create({
+      title: '  Valid  ',
+      description: '   ',
+      goal: '  Make progress  '
+    })
 
-    expect(focus.toSnapshot()).toMatchObject({ title: 'Valid', description: null })
+    expect(focus.toSnapshot()).toMatchObject({
+      title: 'Valid',
+      description: null,
+      goal: 'Make progress'
+    })
     expect(() => database!.domain.focuses.create({ title: '   ' })).toThrow(ModelValidationError)
     expect(() => database!.domain.focuses.create({ title: 'Invalid', kind: 'other' as never })).toThrow(
       ModelValidationError
@@ -116,7 +131,8 @@ describe('Focus models', () => {
   it('retains details and status history after reopening', () => {
     const focus = database!.domain.focuses.create({
       title: 'Persistent',
-      description: 'Stored in SQLite'
+      description: 'Stored in SQLite',
+      goal: 'Retain the goal too'
     })
     focus.setStatus('paused')
     const id = focus.id
@@ -128,6 +144,7 @@ describe('Focus models', () => {
     expect(reopened.toSnapshot()).toMatchObject({
       title: 'Persistent',
       description: 'Stored in SQLite',
+      goal: 'Retain the goal too',
       status: 'paused'
     })
     expect(reopened.statusHistory()).toHaveLength(2)

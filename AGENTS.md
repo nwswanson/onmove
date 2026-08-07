@@ -21,6 +21,13 @@
   outside draggable hit targets.
 - The sidebar is resizable. Contextual editing belongs in the resizable right-side drawer, which
   participates in layout and shrinks the main canvas instead of overlaying it.
+- Use “contextual sidebar” for the secondary left-side hierarchy pane and “context drawer” for the
+  right-side inspector. Build progressive hierarchy navigation with the shared
+  `ContextualSidebarLevel`, `ContextualSidebarNavigation`, and `ContextualSidebar` primitives.
+  Every non-root contextual level must assert its parent level and parent item; the shared sidebar
+  owns Back navigation and restores the selection previously held by each parent level.
+- Declare ordinary level-local creation through a contextual level's optional `newItem` action;
+  do not hard-code New Thread or New Commitment footer markup in domain adapters.
 - Build contextual inspectors with the shared `ContextDrawer` primitives. Every drawer must have a
   visible close button, a descriptive accessible label, and view-specific content composed inside
   the common shell.

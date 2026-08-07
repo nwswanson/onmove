@@ -22,9 +22,9 @@ import { Toolbar, ToolbarGroup } from '@/components/ui/toolbar'
 import {
   FocusContextPanel,
   FocusList,
-  FocusView,
   NewFocusDialog
 } from '@/features/focus/focus-ui'
+import { FocusWorkspace } from '@/features/focus/focus-workspace'
 import { isVisibleFocus } from '@/features/focus/focus-utils'
 
 interface HomeExample {
@@ -38,6 +38,7 @@ const DRAWER_MIN = 280
 const DRAWER_MAX = 384
 
 interface AppToolbarProps {
+  title: string
   contextLabel: string
   enabled: boolean
   onOpenContext: () => void
@@ -45,6 +46,7 @@ interface AppToolbarProps {
 }
 
 function AppToolbar({
+  title,
   contextLabel,
   enabled,
   onOpenContext,
@@ -52,6 +54,8 @@ function AppToolbar({
 }: AppToolbarProps): React.JSX.Element {
   return (
     <Toolbar aria-label="Application toolbar">
+      <div className="w-17 shrink-0" aria-hidden="true" />
+      <p className="max-w-72 truncate text-xs font-semibold tracking-tight">{title}</p>
       <ToolbarGroup className="ml-auto">
         <Button
           type="button"
@@ -107,7 +111,7 @@ function AppSidebar({
 
   return (
     <Sidebar aria-label="Primary sidebar" style={{ width }}>
-      <SidebarHeader className="p-3 pb-4 pt-14">
+      <SidebarHeader className="p-3 pb-4">
         <div className="rounded-xl border border-primary/35 bg-primary/12 p-3.5 shadow-xs">
           <div className="flex items-center justify-between gap-2">
             <p className="text-[0.625rem] font-semibold tracking-[0.1em] text-muted-foreground uppercase">
@@ -328,15 +332,8 @@ export function App(): React.JSX.Element {
       ? null
       : (focuses.find((focus) => focus.id === selectedFocusId && isVisibleFocus(focus)) ?? null)
   const enabled = Boolean(state)
+  const toolbarTitle = selectedFocus?.title ?? 'Home'
   const contextLabel = selectedFocus ? 'Focus' : 'Home'
-  const toolbar = (
-    <AppToolbar
-      contextLabel={contextLabel}
-      enabled={enabled}
-      onOpenContext={() => setContextOpen(true)}
-      onShowData={() => void window.onmove.showDataFolder()}
-    />
-  )
 
   function goHome(): void {
     setSelectedFocusId(null)
@@ -377,45 +374,48 @@ export function App(): React.JSX.Element {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background text-foreground">
-      <AppSidebar
-        focuses={focuses}
-        selectedFocusId={selectedFocus?.id ?? null}
+    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+      <AppToolbar
+        title={toolbarTitle}
+        contextLabel={contextLabel}
         enabled={enabled}
-        width={sidebarWidth}
-        onHome={goHome}
-        onSelectFocus={selectFocus}
-        onNewFocus={() => setNewFocusOpen(true)}
+        onOpenContext={() => setContextOpen(true)}
         onShowData={() => void window.onmove.showDataFolder()}
       />
-      <ResizeHandle
-        label="Resize sidebar"
-        value={sidebarWidth}
-        min={SIDEBAR_MIN}
-        max={SIDEBAR_MAX}
-        direction={1}
-        onChange={setSidebarWidth}
-      />
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <AppSidebar
+          focuses={focuses}
+          selectedFocusId={selectedFocus?.id ?? null}
+          enabled={enabled}
+          width={sidebarWidth}
+          onHome={goHome}
+          onSelectFocus={selectFocus}
+          onNewFocus={() => setNewFocusOpen(true)}
+          onShowData={() => void window.onmove.showDataFolder()}
+        />
+        <ResizeHandle
+          label="Resize sidebar"
+          value={sidebarWidth}
+          min={SIDEBAR_MIN}
+          max={SIDEBAR_MAX}
+          direction={1}
+          onChange={setSidebarWidth}
+        />
 
-      {state ? (
-        selectedFocus ? (
-          <FocusView
-            key={`${selectedFocus.id}-${selectedFocus.updatedAt}`}
-            focus={selectedFocus}
-            toolbar={toolbar}
-          />
-        ) : (
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            {toolbar}
+        {state ? (
+          selectedFocus ? (
+            <FocusWorkspace
+              key={selectedFocus.id}
+              focus={selectedFocus}
+              onUpdateFocus={(input) => updateFocus(selectedFocus.id, input)}
+            />
+          ) : (
             <HomeView
               contextTitle={homeExample.title}
               onOpenContext={() => setContextOpen(true)}
             />
-          </div>
-        )
-      ) : error ? (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {toolbar}
+          )
+        ) : error ? (
           <main className="flex min-w-0 flex-1 items-center justify-center p-8">
             <div className="max-w-sm text-center">
               <div className="mx-auto mb-4 flex size-11 items-center justify-center rounded-full bg-destructive/15 text-destructive">
@@ -426,43 +426,40 @@ export function App(): React.JSX.Element {
               </p>
             </div>
           </main>
-        </div>
-      ) : (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {toolbar}
+        ) : (
           <LoadingView />
-        </div>
-      )}
+        )}
 
-      {state && contextOpen && (
-        <>
-          <ResizeHandle
-            label="Resize context drawer"
-            value={drawerWidth}
-            min={DRAWER_MIN}
-            max={DRAWER_MAX}
-            direction={-1}
-            onChange={setDrawerWidth}
-          />
-          {selectedFocus ? (
-            <FocusContextPanel
-              key={selectedFocus.id}
-              focus={selectedFocus}
-              width={drawerWidth}
-              onClose={() => setContextOpen(false)}
-              onSave={(input) => updateFocus(selectedFocus.id, input)}
-              onDelete={() => deleteFocus(selectedFocus.id)}
+        {state && contextOpen && (
+          <>
+            <ResizeHandle
+              label="Resize context drawer"
+              value={drawerWidth}
+              min={DRAWER_MIN}
+              max={DRAWER_MAX}
+              direction={-1}
+              onChange={setDrawerWidth}
             />
-          ) : (
-            <HomeContextPanel
-              value={homeExample}
-              width={drawerWidth}
-              onChange={setHomeExample}
-              onClose={() => setContextOpen(false)}
-            />
-          )}
-        </>
-      )}
+            {selectedFocus ? (
+              <FocusContextPanel
+                key={selectedFocus.id}
+                focus={selectedFocus}
+                width={drawerWidth}
+                onClose={() => setContextOpen(false)}
+                onSave={(input) => updateFocus(selectedFocus.id, input)}
+                onDelete={() => deleteFocus(selectedFocus.id)}
+              />
+            ) : (
+              <HomeContextPanel
+                value={homeExample}
+                width={drawerWidth}
+                onChange={setHomeExample}
+                onClose={() => setContextOpen(false)}
+              />
+            )}
+          </>
+        )}
+      </div>
 
       {newFocusOpen && (
         <NewFocusDialog onClose={() => setNewFocusOpen(false)} onCreate={createFocus} />

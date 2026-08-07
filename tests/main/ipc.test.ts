@@ -54,6 +54,23 @@ describe('registerAppIpc', () => {
           })),
           delete: vi.fn(() => true),
           statusHistory: vi.fn(() => [{ id: 1, from: null, to: 'active' }])
+        },
+        threads: {
+          listForFocus: vi.fn(() => [{ id: 21, focusId: 12, title: 'Sprint execution' }]),
+          create: vi.fn(() => ({
+            snapshot: () => ({ id: 22, focusId: 12, title: 'Team health' })
+          }))
+        },
+        commitments: {
+          listForFocus: vi.fn(() => [
+            { id: 31, parent: { type: 'focus', id: 12 }, title: 'Ship safely' }
+          ]),
+          listForThread: vi.fn(() => [
+            { id: 32, parent: { type: 'thread', id: 21 }, title: 'Refine weekly' }
+          ]),
+          create: vi.fn(() => ({
+            snapshot: () => ({ id: 33, title: 'Align sponsors' })
+          }))
         }
       }
     }
@@ -97,6 +114,27 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.getFocusStatusHistory)?.(undefined, 12)).toEqual([
       { id: 1, from: null, to: 'active' }
     ])
+    expect(await handlers.get(IPC_CHANNELS.listThreads)?.(undefined, 12)).toMatchObject([
+      { id: 21, title: 'Sprint execution' }
+    ])
+    expect(await handlers.get(IPC_CHANNELS.createThread)?.(undefined, {
+      focusId: 12,
+      title: 'Team health',
+      reviewFrequencyDays: 7
+    })).toMatchObject({ id: 22, title: 'Team health' })
+    expect(await handlers.get(IPC_CHANNELS.listCommitments)?.(undefined, {
+      type: 'focus',
+      id: 12
+    })).toMatchObject([{ id: 31, title: 'Ship safely' }])
+    expect(await handlers.get(IPC_CHANNELS.listCommitments)?.(undefined, {
+      type: 'thread',
+      id: 21
+    })).toMatchObject([{ id: 32, title: 'Refine weekly' }])
+    expect(await handlers.get(IPC_CHANNELS.createCommitment)?.(undefined, {
+      parent: { type: 'focus', id: 12 },
+      type: 'ongoing',
+      title: 'Align sponsors'
+    })).toMatchObject({ id: 33, title: 'Align sponsors' })
 
     cleanup()
     expect(ipcMain.removeHandler).toHaveBeenCalledTimes(Object.keys(IPC_CHANNELS).length)

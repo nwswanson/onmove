@@ -1,641 +1,500 @@
-import { useState, type ReactNode } from 'react'
-import { CalendarDays, ChevronRight, Layers3, Plus, X } from 'lucide-react'
-import type { FocusSnapshot } from '../../../../shared/contracts'
+import { useEffect, useState } from 'react'
+import {
+  ChevronRight,
+  Circle,
+  Layers3,
+  PauseCircle
+} from 'lucide-react'
+import type {
+  CommitmentSnapshot,
+  CreateCommitmentInput,
+  CreateThreadInput,
+  FocusSnapshot,
+  ThreadSnapshot,
+  UpdateFocusInput
+} from '../../../../shared/contracts'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  ContextualSidebar,
+  ContextualSidebarLevel,
+  ContextualSidebarNavigation,
+  useContextualSidebarNavigation
+} from '@/components/ui/contextual-sidebar'
+import { Dialog, DialogField } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { ResizeHandle } from '@/components/ui/resize-handle'
 import { Textarea } from '@/components/ui/textarea'
-import { cn } from '@/lib/utils'
 
-type Health = 'on-track' | 'at-risk' | 'off-track' | 'unknown'
-type CommitmentStatus = 'active' | 'paused' | 'done' | 'cancelled'
-type CommitmentType = 'action' | 'ongoing'
-type UpdateState = 'red' | 'yellow' | 'green' | 'none'
+const CONTEXTUAL_SIDEBAR_MIN = 220
+const CONTEXTUAL_SIDEBAR_MAX = 320
 
-interface PrototypeCommitment {
-  id: string
-  statement: string
-  type: CommitmentType
-  dueDate: string
-  status: CommitmentStatus
+type FocusContextItem =
+  | { id: 'overall'; kind: 'overall'; title: 'Overall' }
+  | { id: string; kind: 'thread'; thread: ThreadSnapshot }
+
+function focusContextItems(threads: readonly ThreadSnapshot[]): FocusContextItem[] {
+  return [
+    { id: 'overall', kind: 'overall', title: 'Overall' },
+    ...threads.map((thread) => ({
+      id: `thread:${thread.id}`,
+      kind: 'thread' as const,
+      thread
+    }))
+  ]
 }
 
-interface PrototypeUpdate {
-  id: string
-  observation: string
-  date: string
-  state: UpdateState
+interface NewThreadDialogProps {
+  focusId: number
+  onClose: () => void
+  onCreate: (input: CreateThreadInput) => Promise<void>
 }
 
-interface PrototypeRecord {
-  description: string
-  goal: string
-  commitments: PrototypeCommitment[]
-  updates: PrototypeUpdate[]
-}
+function NewThreadDialog({
+  focusId,
+  onClose,
+  onCreate
+}: NewThreadDialogProps): React.JSX.Element {
+  const [title, setTitle] = useState('')
+  const [reviewFrequencyDays, setReviewFrequencyDays] = useState(7)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-interface PrototypeThread {
-  id: string
-  title: string
-  health: Health
-  dueDate: string | null
-  nextReview: string
-}
-
-const CHILD_SIDEBAR_MIN = 220
-const CHILD_SIDEBAR_MAX = 320
-
-const HEALTH_LABELS: Record<Health, string> = {
-  'on-track': 'On track',
-  'at-risk': 'At risk',
-  'off-track': 'Off track',
-  unknown: 'Unknown'
-}
-
-const PROTOTYPE_THREADS: PrototypeThread[] = [
-  {
-    id: 'sprint-execution',
-    title: 'Sprint execution',
-    health: 'at-risk',
-    dueDate: null,
-    nextReview: 'Aug 14'
-  },
-  {
-    id: 'team-health',
-    title: 'Team health',
-    health: 'on-track',
-    dueDate: null,
-    nextReview: 'Aug 21'
-  },
-  {
-    id: 'project-clarity',
-    title: 'Project clarity',
-    health: 'unknown',
-    dueDate: 'Aug 31',
-    nextReview: 'Aug 17'
+  async function submit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault()
+    if (title.trim().length === 0 || reviewFrequencyDays <= 0) return
+    setSaving(true)
+    setError(null)
+    try {
+      await onCreate({
+        focusId,
+        title,
+        reviewFrequencyDays
+      })
+      onClose()
+    } catch {
+      setError('The thread could not be created. Please try again.')
+    } finally {
+      setSaving(false)
+    }
   }
-]
 
-const PROTOTYPE_RECORDS: Record<string, PrototypeRecord> = {
-  overall: {
-    description: 'Coordinate a predictable launch without trading away team health.',
-    goal: 'Deliver Project Atlas with the intended customer value and a sustainable operating rhythm.',
-    commitments: [
-      {
-        id: 'overall-risk-review',
-        statement: 'Hold a cross-team risk review every Friday',
-        type: 'ongoing',
-        dueDate: '',
-        status: 'active'
-      },
-      {
-        id: 'overall-sponsor-decision',
-        statement: 'Confirm the release boundary with sponsors',
-        type: 'action',
-        dueDate: '2026-08-17',
-        status: 'active'
-      }
-    ],
-    updates: [
-      {
-        id: 'overall-release-update',
-        observation: 'Sponsors accepted the release sequence; reliability scope remains open.',
-        date: '2026-08-07',
-        state: 'yellow'
-      },
-      {
-        id: 'overall-team-update',
-        observation: 'The team reports sustainable workload for the current release slice.',
-        date: '2026-08-06',
-        state: 'green'
-      }
-    ]
-  },
-  'sprint-execution': {
-    description: 'Keep sprint planning clear, timely, and predictable.',
-    goal: 'Each sprint begins with understood work and finishes without preventable carryover.',
-    commitments: [
-      {
-        id: 'ticket-quality',
-        statement: 'Improve ticket quality before sprint planning',
-        type: 'ongoing',
-        dueDate: '',
-        status: 'active'
-      },
-      {
-        id: 'scope-review',
-        statement: 'Surface scope changes before the planning cutoff',
-        type: 'action',
-        dueDate: '2026-08-13',
-        status: 'active'
-      }
-    ],
-    updates: [
-      {
-        id: 'ticket-review',
-        observation: 'Four of twelve tickets still needed acceptance criteria clarified in planning.',
-        date: '2026-08-07',
-        state: 'yellow'
-      },
-      {
-        id: 'sprint-close',
-        observation: 'The sprint closed with two items carried over and no unresolved blockers.',
-        date: '2026-08-05',
-        state: 'green'
-      }
-    ]
-  },
-  'team-health': {
-    description: 'Protect sustainable delivery and a candid working environment.',
-    goal: 'The team can sustain delivery without hidden overload or eroding trust.',
-    commitments: [
-      {
-        id: 'ownership-map',
-        statement: 'Publish a clear ownership map for the next release slice',
-        type: 'action',
-        dueDate: '2026-08-12',
-        status: 'active'
-      }
-    ],
-    updates: [
-      {
-        id: 'team-retro',
-        observation: 'The team described workload as sustainable and asked for one owner per release risk.',
-        date: '2026-08-06',
-        state: 'green'
-      }
-    ]
-  },
-  'project-clarity': {
-    description: 'Keep boundaries, tradeoffs, and decisions easy to find.',
-    goal: 'The team and sponsors share the same definition of success and release boundaries.',
-    commitments: [
-      {
-        id: 'sponsor-review',
-        statement: 'Review the project decision record with sponsors',
-        type: 'action',
-        dueDate: '2026-08-17',
-        status: 'active'
-      }
-    ],
-    updates: [
-      {
-        id: 'decision-record',
-        observation: 'The draft captures scope boundaries and the open reliability tradeoff.',
-        date: '2026-08-04',
-        state: 'none'
-      }
-    ]
-  }
-}
-
-function HealthMark({ health }: { health: Health }): React.JSX.Element {
   return (
-    <span
-      className={cn(
-        'size-2 shrink-0 rounded-full',
-        health === 'on-track' && 'bg-success',
-        (health === 'at-risk' || health === 'off-track') && 'bg-destructive',
-        health === 'unknown' && 'bg-muted-foreground/55'
-      )}
-      aria-hidden="true"
-    />
-  )
-}
-
-function HealthBadge({ health }: { health: Health }): React.JSX.Element {
-  return (
-    <Badge
-      variant="outline"
-      className={cn(
-        'gap-1.5 px-2 py-0.5 text-[0.6875rem]',
-        health === 'on-track' && 'border-success/35 bg-success/12',
-        (health === 'at-risk' || health === 'off-track') &&
-          'border-destructive/35 bg-destructive/10',
-        health === 'unknown' && 'bg-muted/55 text-muted-foreground'
-      )}
+    <Dialog
+      open
+      title="New thread"
+      description="Add another dimension for judging this focus."
+      onClose={onClose}
+      footer={
+        <>
+          <Button type="button" variant="ghost" disabled={saving} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            form="new-thread-form"
+            disabled={saving || title.trim().length === 0 || reviewFrequencyDays <= 0}
+          >
+            {saving ? 'Creating…' : 'Create thread'}
+          </Button>
+        </>
+      }
     >
-      <HealthMark health={health} />
-      {HEALTH_LABELS[health]}
-    </Badge>
+      <form id="new-thread-form" className="space-y-4" onSubmit={submit}>
+        <DialogField>
+          <label htmlFor="new-thread-title" className="text-xs font-medium">
+            Title <span className="text-destructive">*</span>
+          </label>
+          <Input
+            id="new-thread-title"
+            autoFocus
+            required
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+          />
+        </DialogField>
+        <DialogField>
+          <label htmlFor="new-thread-frequency" className="text-xs font-medium">
+            Review every (days)
+          </label>
+          <Input
+            id="new-thread-frequency"
+            type="number"
+            min={1}
+            step={1}
+            required
+            value={reviewFrequencyDays}
+            onChange={(event) => setReviewFrequencyDays(Number(event.target.value))}
+          />
+        </DialogField>
+        {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+      </form>
+    </Dialog>
   )
 }
 
-const inlineControlClass =
-  'h-8 rounded-md border-0 bg-transparent px-2 text-xs shadow-none hover:bg-background/75 focus-visible:bg-background focus-visible:ring-1'
+interface NewCommitmentDialogProps {
+  focusId: number
+  onClose: () => void
+  onCreate: (input: CreateCommitmentInput) => Promise<void>
+}
+
+function NewCommitmentDialog({
+  focusId,
+  onClose,
+  onCreate
+}: NewCommitmentDialogProps): React.JSX.Element {
+  const [title, setTitle] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function submit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault()
+    if (title.trim().length === 0) return
+    setSaving(true)
+    setError(null)
+    try {
+      await onCreate({
+        parent: { type: 'focus', id: focusId },
+        type: 'ongoing',
+        title
+      })
+      onClose()
+    } catch {
+      setError('The commitment could not be created. Please try again.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog
+      open
+      title="New commitment"
+      description="Add a focus-level commitment."
+      onClose={onClose}
+      footer={
+        <>
+          <Button type="button" variant="ghost" disabled={saving} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            form="new-commitment-form"
+            disabled={saving || title.trim().length === 0}
+          >
+            {saving ? 'Creating…' : 'Create commitment'}
+          </Button>
+        </>
+      }
+    >
+      <form id="new-commitment-form" onSubmit={submit}>
+        <DialogField>
+          <label htmlFor="new-commitment-title" className="text-xs font-medium">
+            Title <span className="text-destructive">*</span>
+          </label>
+          <Input
+            id="new-commitment-title"
+            autoFocus
+            required
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+          />
+        </DialogField>
+        {error && <p role="alert" className="mt-4 text-xs text-destructive">{error}</p>}
+      </form>
+    </Dialog>
+  )
+}
 
 interface FocusWorkspaceProps {
   focus: FocusSnapshot
-  toolbar: ReactNode
+  onUpdateFocus: (input: UpdateFocusInput) => Promise<void>
 }
 
-export function FocusWorkspace({ focus, toolbar }: FocusWorkspaceProps): React.JSX.Element {
-  const [selectedSourceId, setSelectedSourceId] = useState('overall')
-  const [childSidebarWidth, setChildSidebarWidth] = useState(252)
-  const [records, setRecords] = useState<Record<string, PrototypeRecord>>(() => ({
-    ...PROTOTYPE_RECORDS,
-    overall: {
-      ...PROTOTYPE_RECORDS.overall,
-      description: focus.description ?? PROTOTYPE_RECORDS.overall.description
+export function FocusWorkspace({
+  focus,
+  onUpdateFocus
+}: FocusWorkspaceProps): React.JSX.Element {
+  const [goal, setGoal] = useState(focus.goal)
+  const [goalSaving, setGoalSaving] = useState(false)
+  const [goalError, setGoalError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [newThreadOpen, setNewThreadOpen] = useState(false)
+  const [newCommitmentOpen, setNewCommitmentOpen] = useState(false)
+  const [contextualSidebarWidth, setContextualSidebarWidth] = useState(252)
+
+  const [focusLevel] = useState(
+    () =>
+      new ContextualSidebarLevel<FocusContextItem>({
+        id: `focus:${focus.id}`,
+        title: 'Focus',
+        ariaLabel: 'Focus sections',
+        items: focusContextItems([]),
+        getItemId: (item) => item.id,
+        getItemAriaLabel: (item) =>
+          item.kind === 'overall'
+            ? item.title
+            : `${item.thread.title}${item.thread.status === 'paused' ? ', paused' : ''}`,
+        getItemGroup: (item) =>
+          item.kind === 'overall'
+            ? { id: 'focus', label: 'Focus' }
+            : { id: 'threads', label: 'Threads' },
+        getItemClassName: (item) =>
+          item.kind === 'thread' && item.thread.status === 'paused'
+            ? 'text-muted-foreground opacity-55'
+            : undefined,
+        renderItem: (item) =>
+          item.kind === 'overall' ? (
+            <>
+              <Layers3 aria-hidden="true" />
+              <span className="truncate">{item.title}</span>
+            </>
+          ) : (
+            <>
+              {item.thread.status === 'paused' ? (
+                <PauseCircle aria-hidden="true" />
+              ) : (
+                <Circle aria-hidden="true" />
+              )}
+              <span className="truncate">{item.thread.title}</span>
+            </>
+          ),
+        newItem: {
+          label: 'New thread',
+          onCreate: () => setNewThreadOpen(true)
+        }
+      })
+  )
+
+  const [commitmentsLevel] = useState(
+    () =>
+      new ContextualSidebarLevel<CommitmentSnapshot>({
+        id: `focus:${focus.id}:commitments`,
+        title: 'Commitments',
+        ariaLabel: 'Focus commitments',
+        parent: focusLevel,
+        parentItemId: 'overall',
+        items: [],
+        getItemId: (commitment) => String(commitment.id),
+        getItemAriaLabel: (commitment) => commitment.title,
+        getItemClassName: () => 'h-auto min-h-9 py-2',
+        newItem: {
+          label: 'New commitment',
+          onCreate: () => setNewCommitmentOpen(true)
+        },
+        renderItem: (commitment) => (
+          <>
+            <span className="min-w-0 flex-1 line-clamp-2">{commitment.title}</span>
+            <ChevronRight className="ml-auto" aria-hidden="true" />
+          </>
+        )
+      })
+  )
+
+  const [navigation] = useState(
+    () => new ContextualSidebarNavigation(focusLevel)
+  )
+  const navigationSnapshot = useContextualSidebarNavigation(navigation)
+
+  useEffect(() => {
+    let active = true
+    Promise.all([
+      window.onmove.domain.listThreads(focus.id),
+      window.onmove.domain.listCommitments({ type: 'focus', id: focus.id })
+    ]).then(
+      ([nextThreads, nextCommitments]) => {
+        if (!active) return
+        focusLevel.setItems(focusContextItems(nextThreads))
+        commitmentsLevel.setItems(nextCommitments)
+        navigation.refresh()
+      },
+      () => active && setLoadError('The focus workspace could not be loaded.')
+    )
+    return () => {
+      active = false
     }
-  }))
-  const [nextLocalId, setNextLocalId] = useState(1)
+  }, [commitmentsLevel, focus.id, focusLevel, navigation])
 
-  const selectedThread = PROTOTYPE_THREADS.find((thread) => thread.id === selectedSourceId)
-  const selectedRecord = records[selectedSourceId] ?? records.overall
-  const selectedTitle = selectedThread?.title ?? focus.title
-  const selectedHealth = selectedThread?.health ?? 'at-risk'
-  const selectedStatus = selectedThread ? 'Active' : focus.status === 'paused' ? 'Paused' : 'Active'
+  const commitments = commitmentsLevel.items
 
-  function updateRecord(change: (record: PrototypeRecord) => PrototypeRecord): void {
-    setRecords((current) => ({
-      ...current,
-      [selectedSourceId]: change(current[selectedSourceId] ?? current.overall)
-    }))
+  const selectedFocusItem =
+    navigationSnapshot.level === focusLevel && navigationSnapshot.selectedItemId
+      ? focusLevel.getItem(navigationSnapshot.selectedItemId)
+      : undefined
+  const selectedCommitment =
+    navigationSnapshot.level === commitmentsLevel && navigationSnapshot.selectedItemId
+      ? commitmentsLevel.getItem(navigationSnapshot.selectedItemId)
+      : undefined
+
+  async function saveGoal(): Promise<void> {
+    const normalizedGoal = goal.trim()
+    if (normalizedGoal === focus.goal) return
+    setGoal(normalizedGoal)
+    setGoalSaving(true)
+    setGoalError(null)
+    try {
+      await onUpdateFocus({ goal: normalizedGoal })
+    } catch {
+      setGoalError('The goal could not be saved.')
+    } finally {
+      setGoalSaving(false)
+    }
   }
 
-  function addCommitment(): void {
-    const id = `local-commitment-${nextLocalId}`
-    setNextLocalId((current) => current + 1)
-    updateRecord((record) => ({
-      ...record,
-      commitments: [
-        ...record.commitments,
-        { id, statement: '', type: 'action', dueDate: '', status: 'active' }
-      ]
-    }))
+  async function createThread(input: CreateThreadInput): Promise<void> {
+    const created = await window.onmove.domain.createThread(input)
+    const existingThreads = focusLevel.items.flatMap((item) =>
+      item.kind === 'thread' ? [item.thread] : []
+    )
+    focusLevel.setItems(focusContextItems([...existingThreads, created]))
+    navigation.refresh()
   }
 
-  function updateCommitment(id: string, change: Partial<PrototypeCommitment>): void {
-    updateRecord((record) => ({
-      ...record,
-      commitments: record.commitments.map((commitment) =>
-        commitment.id === id ? { ...commitment, ...change } : commitment
-      )
-    }))
+  async function createCommitment(input: CreateCommitmentInput): Promise<void> {
+    const created = await window.onmove.domain.createCommitment(input)
+    commitmentsLevel.setItems([...commitmentsLevel.items, created])
+    navigation.refresh()
+    if (navigation.getSnapshot().level === commitmentsLevel) {
+      navigation.select(String(created.id))
+    }
   }
 
-  function deleteCommitment(id: string): void {
-    updateRecord((record) => ({
-      ...record,
-      commitments: record.commitments.filter((commitment) => commitment.id !== id)
-    }))
-  }
-
-  function addUpdate(): void {
-    const id = `local-update-${nextLocalId}`
-    setNextLocalId((current) => current + 1)
-    updateRecord((record) => ({
-      ...record,
-      updates: [
-        { id, observation: '', date: '2026-08-07', state: 'none' },
-        ...record.updates
-      ]
-    }))
-  }
-
-  function updateUpdate(id: string, change: Partial<PrototypeUpdate>): void {
-    updateRecord((record) => ({
-      ...record,
-      updates: record.updates.map((update) =>
-        update.id === id ? { ...update, ...change } : update
-      )
-    }))
-  }
-
-  function deleteUpdate(id: string): void {
-    updateRecord((record) => ({
-      ...record,
-      updates: record.updates.filter((update) => update.id !== id)
-    }))
+  function openCommitments(commitmentId?: number): void {
+    navigation.navigateTo(commitmentsLevel)
+    if (commitmentId !== undefined) navigation.select(String(commitmentId))
   }
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden">
-      <aside
-        className="flex h-full shrink-0 flex-col border-r border-border/80 bg-muted/28"
-        aria-label="Focus sidebar"
-        style={{ width: childSidebarWidth }}
-      >
-        <div className="drag-region flex h-13 shrink-0 items-center border-b border-border/75 px-3.5">
-          <p className="text-xs font-semibold tracking-tight">Threads</p>
-        </div>
-
-        <div role="tablist" aria-label="Focus sections" className="min-h-0 flex-1 overflow-y-auto p-2">
-          <p className="px-2 pb-1 pt-1 text-[0.625rem] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
-            Focus
-          </p>
-          <button
-            id="focus-source-overall"
-            type="button"
-            role="tab"
-            aria-selected={selectedSourceId === 'overall'}
-            aria-controls="focus-source-panel"
-            className={cn(
-              'mb-4 flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-xs font-medium outline-none transition-colors',
-              'hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/55',
-              selectedSourceId === 'overall' && 'bg-primary/30 ring-1 ring-primary/40'
-            )}
-            onClick={() => setSelectedSourceId('overall')}
-          >
-            <Layers3 className="size-4 text-muted-foreground" aria-hidden="true" />
-            <span className="min-w-0 flex-1 truncate">Overall</span>
-            <ChevronRight className="size-3.5 text-muted-foreground/60" aria-hidden="true" />
-          </button>
-
-          <p className="px-2 pb-1 text-[0.625rem] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
-            Threads
-          </p>
-          {PROTOTYPE_THREADS.map((thread) => {
-            const selected = thread.id === selectedSourceId
-            return (
-              <button
-                key={thread.id}
-                id={`focus-source-${thread.id}`}
-                type="button"
-                role="tab"
-                aria-selected={selected}
-                aria-controls="focus-source-panel"
-                aria-label={`${thread.title}, ${HEALTH_LABELS[thread.health]}`}
-                className={cn(
-                  'mb-1 flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2.5 text-left outline-none transition-colors',
-                  'hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/55',
-                  selected && 'bg-primary/30 ring-1 ring-primary/40'
-                )}
-                onClick={() => setSelectedSourceId(thread.id)}
-              >
-                <HealthMark health={thread.health} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs font-medium">{thread.title}</span>
-                  <span className="mt-1 flex items-center gap-1.5 text-[0.625rem] text-muted-foreground">
-                    <CalendarDays className="size-3" aria-hidden="true" />
-                    {thread.dueDate ? `Due ${thread.dueDate}` : `Review ${thread.nextReview}`}
-                  </span>
-                </span>
-                <ChevronRight
-                  className={cn(
-                    'mt-0.5 size-3.5 shrink-0 text-muted-foreground/60',
-                    selected && 'text-foreground'
-                  )}
-                  aria-hidden="true"
-                />
-              </button>
-            )
-          })}
-        </div>
-      </aside>
-
+    <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+      <ContextualSidebar
+        navigation={navigation}
+        style={{ width: contextualSidebarWidth }}
+      />
       <ResizeHandle
-        label="Resize Focus sidebar"
-        value={childSidebarWidth}
-        min={CHILD_SIDEBAR_MIN}
-        max={CHILD_SIDEBAR_MAX}
+        label="Resize contextual sidebar"
+        value={contextualSidebarWidth}
+        min={CONTEXTUAL_SIDEBAR_MIN}
+        max={CONTEXTUAL_SIDEBAR_MAX}
         direction={1}
-        onChange={setChildSidebarWidth}
+        onChange={setContextualSidebarWidth}
       />
 
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-background" aria-labelledby="focus-heading">
-        {toolbar}
-        <header className="shrink-0 border-b border-border/75 bg-card/45 px-5 py-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 id="focus-heading" className="mr-1 text-xl font-semibold tracking-[-0.025em]">
-              {selectedTitle}
+      <main className="min-w-0 flex-1 overflow-auto bg-background">
+        {navigationSnapshot.level === commitmentsLevel ? (
+          <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="commitment-heading">
+            {selectedCommitment ? (
+              <>
+                <p className="mb-2 text-[0.6875rem] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
+                  Commitment
+                </p>
+                <h1 id="commitment-heading" className="text-2xl font-semibold tracking-[-0.025em]">
+                  {selectedCommitment.title}
+                </h1>
+              </>
+            ) : (
+              <>
+                <h1 id="commitment-heading" className="text-2xl font-semibold tracking-[-0.025em]">
+                  Commitments
+                </h1>
+                <p className="mt-2 text-sm text-muted-foreground">No commitments yet.</p>
+              </>
+            )}
+          </section>
+        ) : selectedFocusItem?.kind === 'thread' ? (
+          <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="thread-heading">
+            <h1 id="thread-heading" className="text-2xl font-semibold tracking-[-0.025em]">
+              {selectedFocusItem.thread.title}
             </h1>
-            <Badge variant="outline" className="px-2 py-0.5 text-[0.6875rem]">
-              {selectedStatus}
-            </Badge>
-            <HealthBadge health={selectedHealth} />
-          </div>
-          <label htmlFor="focus-description" className="sr-only">
-            Description
-          </label>
-          <Textarea
-            key={`${selectedSourceId}-description`}
-            id="focus-description"
-            aria-label={`${selectedTitle} description`}
-            className="mt-2 min-h-12 resize-none border-0 bg-transparent px-0 py-1 text-xs leading-5 shadow-none focus-visible:bg-background/70 focus-visible:px-2 focus-visible:ring-1"
-            value={selectedRecord.description}
-            onChange={(event) =>
-              updateRecord((record) => ({ ...record, description: event.target.value }))
-            }
-          />
-        </header>
-
-        <div
-          id="focus-source-panel"
-          role="tabpanel"
-          aria-labelledby={`focus-source-${selectedSourceId}`}
-          className="min-h-0 flex-1 overflow-y-auto"
-        >
-          <div className="space-y-5 p-5">
-            <div>
-              <label htmlFor="focus-goal" className="mb-1.5 block text-xs font-semibold">
-                Goal
-              </label>
-              <Textarea
-                key={`${selectedSourceId}-goal`}
-                id="focus-goal"
-                className="min-h-16 resize-none text-xs leading-5"
-                value={selectedRecord.goal}
-                onChange={(event) =>
-                  updateRecord((record) => ({ ...record, goal: event.target.value }))
-                }
-              />
+          </section>
+        ) : (
+          <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="focus-heading">
+            <div className="flex items-start gap-3 border-b border-border/70 pb-6">
+              <div className="min-w-0 flex-1">
+                <h1 id="focus-heading" className="truncate text-2xl font-semibold tracking-[-0.025em]">
+                  {focus.title}
+                </h1>
+                <p className="mt-1.5 max-w-2xl whitespace-pre-wrap text-sm text-muted-foreground">
+                  {focus.description ?? 'No description or notes.'}
+                </p>
+              </div>
+              <Badge variant="outline" className="capitalize">{focus.status}</Badge>
             </div>
 
-            <section aria-labelledby="commitments-heading">
+            <div className="mt-6">
+              <div className="mb-1.5 flex items-center justify-between gap-3">
+                <label htmlFor="focus-goal" className="text-xs font-semibold">Goal</label>
+                {goalSaving && <span className="text-xs text-muted-foreground">Saving…</span>}
+              </div>
+              <Textarea
+                id="focus-goal"
+                aria-label="Goal"
+                className="min-h-20"
+                placeholder="What should this focus accomplish?"
+                value={goal}
+                onChange={(event) => setGoal(event.target.value)}
+                onBlur={() => void saveGoal()}
+              />
+              {goalError && <p role="alert" className="mt-2 text-xs text-destructive">{goalError}</p>}
+            </div>
+
+            <section className="mt-8" aria-labelledby="focus-commitments-heading">
               <div className="mb-2 flex items-center justify-between gap-3">
-                <h2 id="commitments-heading" className="text-xs font-semibold">
-                  Commitments
+                <h2 id="focus-commitments-heading" className="text-sm font-semibold">
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 rounded-md px-1 py-1 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/55"
+                    onClick={() => openCommitments()}
+                  >
+                    Commitments
+                    <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
+                  </button>
                 </h2>
-                <Button type="button" variant="outline" size="sm" onClick={addCommitment}>
-                  <Plus aria-hidden="true" />
-                  New commitment
-                </Button>
               </div>
 
-              <div className="overflow-x-auto rounded-lg border border-border/80 bg-card/45">
-                <table className="w-full min-w-[30rem] table-fixed text-left text-xs">
-                  <thead className="border-b border-border/75 bg-muted/50 text-[0.625rem] font-semibold tracking-wide text-muted-foreground uppercase">
-                    <tr>
-                      <th scope="col" className="w-auto px-3 py-2">Commitment</th>
-                      <th scope="col" className="w-20 px-2 py-2">Type</th>
-                      <th scope="col" className="w-32 px-2 py-2">Due</th>
-                      <th scope="col" className="w-20 px-2 py-2">Status</th>
-                      <th scope="col" className="w-9"><span className="sr-only">Actions</span></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedRecord.commitments.map((commitment) => (
-                      <tr key={commitment.id} className="border-b border-border/65 last:border-b-0">
-                        <td className="p-1.5">
-                          <Input
-                            aria-label={`Commitment: ${commitment.statement || 'Untitled'}`}
-                            placeholder="Describe the commitment…"
-                            className={inlineControlClass}
-                            value={commitment.statement}
-                            onChange={(event) =>
-                              updateCommitment(commitment.id, { statement: event.target.value })
-                            }
-                          />
-                        </td>
-                        <td className="p-1.5">
-                          <select
-                            aria-label={`Type for ${commitment.statement || 'new commitment'}`}
-                            className={cn(inlineControlClass, 'w-full outline-none')}
-                            value={commitment.type}
-                            onChange={(event) =>
-                              updateCommitment(commitment.id, {
-                                type: event.target.value as CommitmentType
-                              })
-                            }
-                          >
-                            <option value="action">Action</option>
-                            <option value="ongoing">Ongoing</option>
-                          </select>
-                        </td>
-                        <td className="p-1.5">
-                          <Input
-                            type="date"
-                            aria-label={`Due date for ${commitment.statement || 'new commitment'}`}
-                            className={inlineControlClass}
-                            value={commitment.dueDate}
-                            onChange={(event) =>
-                              updateCommitment(commitment.id, { dueDate: event.target.value })
-                            }
-                          />
-                        </td>
-                        <td className="p-1.5">
-                          <select
-                            aria-label={`Status for ${commitment.statement || 'new commitment'}`}
-                            className={cn(inlineControlClass, 'w-full outline-none')}
-                            value={commitment.status}
-                            onChange={(event) =>
-                              updateCommitment(commitment.id, {
-                                status: event.target.value as CommitmentStatus
-                              })
-                            }
-                          >
-                            <option value="active">Active</option>
-                            <option value="paused">Paused</option>
-                            <option value="done">Done</option>
-                            <option value="cancelled">Cancelled</option>
-                          </select>
-                        </td>
-                        <td className="p-1">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="size-7 text-muted-foreground hover:text-destructive"
-                            aria-label={`Delete commitment ${commitment.statement || 'Untitled'}`}
-                            onClick={() => deleteCommitment(commitment.id)}
-                          >
-                            <X aria-hidden="true" />
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                    {selectedRecord.commitments.length === 0 && (
-                      <tr><td colSpan={5} className="px-3 py-5 text-center text-xs text-muted-foreground">No commitments</td></tr>
-                    )}
-                  </tbody>
-                </table>
+              <div className="overflow-hidden rounded-xl border border-border/80 bg-card/45">
+                <div role="list" aria-label="Focus commitments">
+                  {commitments.map((commitment) => (
+                    <div key={commitment.id} role="listitem" className="border-b border-border/65 last:border-b-0">
+                      <button
+                        type="button"
+                        className="flex min-h-11 w-full items-center gap-3 px-3 text-left text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/55"
+                        aria-label={`Open commitment ${commitment.title}`}
+                        onClick={() => openCommitments(commitment.id)}
+                      >
+                        <span className="min-w-0 flex-1 truncate">{commitment.title}</span>
+                        <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
+                      </button>
+                    </div>
+                  ))}
+                  {commitments.length === 0 && (
+                    <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+                      No commitments
+                    </p>
+                  )}
+                </div>
               </div>
             </section>
 
-            <section aria-labelledby="updates-heading">
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <h2 id="updates-heading" className="text-xs font-semibold">
-                  Updates
-                </h2>
-                <Button type="button" variant="outline" size="sm" onClick={addUpdate}>
-                  <Plus aria-hidden="true" />
-                  New update
-                </Button>
-              </div>
-
-              <div className="overflow-x-auto rounded-lg border border-border/80 bg-card/45">
-                <table className="w-full min-w-[28rem] table-fixed text-left text-xs">
-                  <thead className="border-b border-border/75 bg-muted/50 text-[0.625rem] font-semibold tracking-wide text-muted-foreground uppercase">
-                    <tr>
-                      <th scope="col" className="w-auto px-3 py-2">Update</th>
-                      <th scope="col" className="w-32 px-2 py-2">Date</th>
-                      <th scope="col" className="w-20 px-2 py-2">State</th>
-                      <th scope="col" className="w-9"><span className="sr-only">Actions</span></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedRecord.updates.map((update) => (
-                      <tr key={update.id} className="border-b border-border/65 last:border-b-0">
-                        <td className="p-1.5">
-                          <Input
-                            aria-label={`Update: ${update.observation || 'Untitled'}`}
-                            placeholder="Write an update…"
-                            className={inlineControlClass}
-                            value={update.observation}
-                            onChange={(event) =>
-                              updateUpdate(update.id, { observation: event.target.value })
-                            }
-                          />
-                        </td>
-                        <td className="p-1.5">
-                          <Input
-                            type="date"
-                            aria-label={`Date for ${update.observation || 'new update'}`}
-                            className={inlineControlClass}
-                            value={update.date}
-                            onChange={(event) =>
-                              updateUpdate(update.id, { date: event.target.value })
-                            }
-                          />
-                        </td>
-                        <td className="p-1.5">
-                          <select
-                            aria-label={`State for ${update.observation || 'new update'}`}
-                            className={cn(
-                              inlineControlClass,
-                              'w-full outline-none',
-                              update.state === 'green' && 'text-success',
-                              (update.state === 'yellow' || update.state === 'red') &&
-                                'text-destructive'
-                            )}
-                            value={update.state}
-                            onChange={(event) =>
-                              updateUpdate(update.id, { state: event.target.value as UpdateState })
-                            }
-                          >
-                            <option value="none">None</option>
-                            <option value="green">Green</option>
-                            <option value="yellow">Yellow</option>
-                            <option value="red">Red</option>
-                          </select>
-                        </td>
-                        <td className="p-1">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="size-7 text-muted-foreground hover:text-destructive"
-                            aria-label={`Delete update ${update.observation || 'Untitled'}`}
-                            onClick={() => deleteUpdate(update.id)}
-                          >
-                            <X aria-hidden="true" />
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                    {selectedRecord.updates.length === 0 && (
-                      <tr><td colSpan={4} className="px-3 py-5 text-center text-xs text-muted-foreground">No updates</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          </div>
-        </div>
+            {loadError && <p role="alert" className="mt-5 text-sm text-destructive">{loadError}</p>}
+          </section>
+        )}
       </main>
+
+      {newThreadOpen && (
+        <NewThreadDialog
+          focusId={focus.id}
+          onClose={() => setNewThreadOpen(false)}
+          onCreate={createThread}
+        />
+      )}
+      {newCommitmentOpen && (
+        <NewCommitmentDialog
+          focusId={focus.id}
+          onClose={() => setNewCommitmentOpen(false)}
+          onCreate={createCommitment}
+        />
+      )}
     </div>
   )
 }
