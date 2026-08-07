@@ -1,6 +1,6 @@
-import { useEffect, useReducer, useState } from 'react'
+import { useReducer, useState } from 'react'
 import { AlertTriangle, ChevronRight, FolderOpen, House, Info, Settings } from 'lucide-react'
-import type { AppState, CreateFocusInput, FocusSnapshot, UpdateFocusInput } from '../../shared/contracts'
+import type { FocusSnapshot } from '../../shared/contracts'
 import { Button } from '@/components/ui/button'
 import {
   ContextDrawer,
@@ -12,7 +12,6 @@ import {
   type ContextDrawerControl
 } from '@/components/ui/context-drawer'
 import { Input } from '@/components/ui/input'
-import { ResizeHandle } from '@/components/ui/resize-handle'
 import { Separator } from '@/components/ui/separator'
 import {
   Sidebar,
@@ -27,12 +26,13 @@ import {
 } from '@/components/ui/sidebar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Toolbar, ToolbarGroup } from '@/components/ui/toolbar'
+import { ApplicationShell, WorkspaceShell } from '@/components/ui/workspace-shell'
+import { useApplicationModel } from '@/features/application/use-application-model'
 import {
   FocusList,
   NewFocusDialog
 } from '@/features/focus/focus-ui'
 import { FocusWorkspace } from '@/features/focus/focus-workspace'
-import { isVisibleFocus } from '@/features/focus/focus-utils'
 
 interface HomeExample {
   title: string
@@ -217,8 +217,8 @@ function HomeView({
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-      <main className="min-w-0 flex-1 overflow-auto bg-background" aria-labelledby="home-heading">
+    <WorkspaceShell
+      main={<main className="min-w-0 flex-1 overflow-auto bg-background" aria-labelledby="home-heading">
         <section className="mx-auto w-full max-w-5xl p-8 sm:p-10">
           <h1 id="home-heading" className="text-2xl font-semibold tracking-[-0.025em]">
             Home
@@ -248,9 +248,9 @@ function HomeView({
             />
           </button>
         </section>
-      </main>
-      <ContextDrawerOutlet adapter={contextDrawerAdapter} {...contextDrawer} />
-    </div>
+      </main>}
+      drawer={<ContextDrawerOutlet adapter={contextDrawerAdapter} {...contextDrawer} />}
+    />
   )
 }
 
@@ -330,8 +330,7 @@ function LoadingView(): React.JSX.Element {
 }
 
 export function App(): React.JSX.Element {
-  const [selectedFocusId, setSelectedFocusId] = useState<number | null>(null)
-  const [focuses, setFocuses] = useState<FocusSnapshot[]>([])
+  const application = useApplicationModel()
   const [newFocusOpen, setNewFocusOpen] = useState(false)
   const [contextDrawerState, dispatchContextDrawer] = useReducer(
     contextDrawerReducer,
@@ -343,29 +342,7 @@ export function App(): React.JSX.Element {
     title: 'Example home item',
     status: 'good'
   })
-  const [state, setState] = useState<AppState | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let active = true
-    Promise.all([window.onmove.getAppState(), window.onmove.domain.listFocuses()]).then(
-      ([nextState, nextFocuses]) => {
-        if (!active) return
-        setState(nextState)
-        setFocuses(nextFocuses)
-      },
-      () => active && setError('The local database could not be opened.')
-    )
-    return () => {
-      active = false
-    }
-  }, [])
-
-  const selectedFocus =
-    selectedFocusId === null
-      ? null
-      : (focuses.find((focus) => focus.id === selectedFocusId && isVisibleFocus(focus)) ?? null)
-  const enabled = Boolean(state)
+  const selectedFocus = application.selectedFocus
   const toolbarTitle = selectedFocus?.title ?? 'Home'
   const contextDrawer = {
     open: contextDrawerState.open,
@@ -382,76 +359,52 @@ export function App(): React.JSX.Element {
       dispatchContextDrawer({ type: 'invalidate', keys })
   } satisfies ContextDrawerControl
 
-  function goHome(): void {
-    setSelectedFocusId(null)
-  }
-
-  function selectFocus(focusId: number): void {
-    const focus = focuses.find((candidate) => candidate.id === focusId)
-    if (!focus || !isVisibleFocus(focus)) return
-    setSelectedFocusId(focusId)
-  }
-
-  async function createFocus(input: CreateFocusInput): Promise<void> {
-    const focus = await window.onmove.domain.createFocus(input)
-    setFocuses((current) => [...current, focus])
-    setSelectedFocusId(focus.id)
-  }
-
-  async function updateFocus(focusId: number, input: UpdateFocusInput): Promise<void> {
-    const updated = await window.onmove.domain.updateFocus(focusId, input)
-    setFocuses((current) =>
-      current.map((focus) => (focus.id === updated.id ? updated : focus))
-    )
-    if (!isVisibleFocus(updated)) {
-      setSelectedFocusId(null)
-    }
-  }
-
   async function deleteFocus(focusId: number): Promise<void> {
-    const deleted = await window.onmove.domain.deleteFocus(focusId)
-    if (!deleted) throw new Error('Focus no longer exists')
+    await application.deleteFocus(focusId)
     contextDrawer.onInvalidate([`focus:${focusId}`])
-    setFocuses((current) => current.filter((focus) => focus.id !== focusId))
-    setSelectedFocusId(null)
   }
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
-      <AppToolbar
-        title={toolbarTitle}
-        contextOpen={contextDrawerState.open}
-        enabled={enabled}
-        onToggleContext={() => dispatchContextDrawer({ type: 'toggle' })}
-        onShowData={() => void window.onmove.showDataFolder()}
-      />
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <AppSidebar
-          focuses={focuses}
-          selectedFocusId={selectedFocus?.id ?? null}
-          enabled={enabled}
-          width={sidebarWidth}
-          onHome={goHome}
-          onSelectFocus={selectFocus}
-          onNewFocus={() => setNewFocusOpen(true)}
-          onShowData={() => void window.onmove.showDataFolder()}
-        />
-        <ResizeHandle
-          label="Resize sidebar"
-          value={sidebarWidth}
-          min={SIDEBAR_MIN}
-          max={SIDEBAR_MAX}
-          direction={1}
-          onChange={setSidebarWidth}
-        />
+    <>
+      <ApplicationShell
+        toolbar={
+          <AppToolbar
+            title={toolbarTitle}
+            contextOpen={contextDrawerState.open}
+            enabled={application.enabled}
+            onToggleContext={() => dispatchContextDrawer({ type: 'toggle' })}
+            onShowData={() => void application.showDataFolder()}
+          />
+        }
+        primarySidebar={
+          <AppSidebar
+            focuses={application.focuses}
+            selectedFocusId={selectedFocus?.id ?? null}
+            enabled={application.enabled}
+            width={sidebarWidth}
+            onHome={application.goHome}
+            onSelectFocus={application.selectFocus}
+            onNewFocus={() => setNewFocusOpen(true)}
+            onShowData={() => void application.showDataFolder()}
+          />
+        }
+        primarySidebarResize={{
+          label: 'Resize sidebar',
+          value: sidebarWidth,
+          min: SIDEBAR_MIN,
+          max: SIDEBAR_MAX,
+          direction: 1,
+          onChange: setSidebarWidth
+        }}
+      >
 
-        {state ? (
+        {application.state ? (
           selectedFocus ? (
             <FocusWorkspace
               key={selectedFocus.id}
               focus={selectedFocus}
               contextDrawer={contextDrawer}
-              onUpdateFocus={(input) => updateFocus(selectedFocus.id, input)}
+              onUpdateFocus={(input) => application.updateFocus(selectedFocus.id, input)}
               onDeleteFocus={() => deleteFocus(selectedFocus.id)}
             />
           ) : (
@@ -462,26 +415,32 @@ export function App(): React.JSX.Element {
               onOpenContext={() => dispatchContextDrawer({ type: 'open' })}
             />
           )
-        ) : error ? (
-          <main className="flex min-w-0 flex-1 items-center justify-center p-8">
-            <div className="max-w-sm text-center">
-              <div className="mx-auto mb-4 flex size-11 items-center justify-center rounded-full bg-destructive/15 text-destructive">
-                <AlertTriangle className="size-5" aria-hidden="true" />
-              </div>
-              <p role="alert" className="text-sm font-medium text-destructive">
-                {error}
-              </p>
-            </div>
-          </main>
+        ) : application.error ? (
+          <WorkspaceShell
+            main={
+              <main className="flex min-w-0 flex-1 items-center justify-center p-8">
+                <div className="max-w-sm text-center">
+                  <div className="mx-auto mb-4 flex size-11 items-center justify-center rounded-full bg-destructive/15 text-destructive">
+                    <AlertTriangle className="size-5" aria-hidden="true" />
+                  </div>
+                  <p role="alert" className="text-sm font-medium text-destructive">
+                    {application.error}
+                  </p>
+                </div>
+              </main>
+            }
+          />
         ) : (
-          <LoadingView />
+          <WorkspaceShell main={<LoadingView />} />
         )}
-
-      </div>
+      </ApplicationShell>
 
       {newFocusOpen && (
-        <NewFocusDialog onClose={() => setNewFocusOpen(false)} onCreate={createFocus} />
+        <NewFocusDialog
+          onClose={() => setNewFocusOpen(false)}
+          onCreate={application.createFocus}
+        />
       )}
-    </div>
+    </>
   )
 }

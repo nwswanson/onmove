@@ -29,13 +29,14 @@ import {
 } from '@/components/ui/contextual-sidebar'
 import { Dialog, DialogField } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { ResizeHandle } from '@/components/ui/resize-handle'
 import { Textarea } from '@/components/ui/textarea'
+import { WorkspaceShell } from '@/components/ui/workspace-shell'
 import {
   CommitmentContextPanel,
   FocusContextPanel,
   ThreadContextPanel
 } from '@/features/focus/focus-ui'
+import { useFocusWorkspaceModel } from '@/features/focus/use-focus-workspace-model'
 
 const CONTEXTUAL_SIDEBAR_MIN = 220
 const CONTEXTUAL_SIDEBAR_MAX = 320
@@ -260,10 +261,7 @@ export function FocusWorkspace({
   onUpdateFocus,
   onDeleteFocus
 }: FocusWorkspaceProps): React.JSX.Element {
-  const [goal, setGoal] = useState(focus.goal)
-  const [goalSaving, setGoalSaving] = useState(false)
-  const [goalError, setGoalError] = useState<string | null>(null)
-  const [loadError, setLoadError] = useState<string | null>(null)
+  const model = useFocusWorkspaceModel({ focus, onUpdateFocus })
   const [newThreadOpen, setNewThreadOpen] = useState(false)
   const [newCommitmentOpen, setNewCommitmentOpen] = useState(false)
   const [contextualSidebarWidth, setContextualSidebarWidth] = useState(252)
@@ -342,25 +340,10 @@ export function FocusWorkspace({
   const navigationSnapshot = useContextualSidebarNavigation(navigation)
 
   useEffect(() => {
-    let active = true
-    Promise.all([
-      window.onmove.domain.listThreads(focus.id),
-      window.onmove.domain.listCommitments({ type: 'focus', id: focus.id })
-    ]).then(
-      ([nextThreads, nextCommitments]) => {
-        if (!active) return
-        focusLevel.setItems(focusContextItems(nextThreads))
-        commitmentsLevel.setItems(nextCommitments)
-        navigation.refresh()
-      },
-      () => active && setLoadError('The focus workspace could not be loaded.')
-    )
-    return () => {
-      active = false
-    }
-  }, [commitmentsLevel, focus.id, focusLevel, navigation])
-
-  const commitments = commitmentsLevel.items
+    focusLevel.setItems(focusContextItems(model.threads))
+    commitmentsLevel.setItems(model.commitments)
+    navigation.refresh()
+  }, [commitmentsLevel, focusLevel, model.commitments, model.threads, navigation])
 
   const selectedFocusItem =
     navigationSnapshot.level === focusLevel && navigationSnapshot.selectedItemId
@@ -391,32 +374,12 @@ export function FocusWorkspace({
             )
           }
 
-  async function saveGoal(): Promise<void> {
-    const normalizedGoal = goal.trim()
-    if (normalizedGoal === focus.goal) return
-    setGoal(normalizedGoal)
-    setGoalSaving(true)
-    setGoalError(null)
-    try {
-      await onUpdateFocus({ goal: normalizedGoal })
-    } catch {
-      setGoalError('The goal could not be saved.')
-    } finally {
-      setGoalSaving(false)
-    }
-  }
-
   async function createThread(input: CreateThreadInput): Promise<void> {
-    const created = await window.onmove.domain.createThread(input)
-    const existingThreads = focusLevel.items.flatMap((item) =>
-      item.kind === 'thread' ? [item.thread] : []
-    )
-    focusLevel.setItems(focusContextItems([...existingThreads, created]))
-    navigation.refresh()
+    await model.createThread(input)
   }
 
   async function createCommitment(input: CreateCommitmentInput): Promise<void> {
-    const created = await window.onmove.domain.createCommitment(input)
+    const created = await model.createCommitment(input)
     commitmentsLevel.setItems([...commitmentsLevel.items, created])
     navigation.refresh()
     if (navigation.getSnapshot().level === commitmentsLevel) {
@@ -429,22 +392,8 @@ export function FocusWorkspace({
     if (commitmentId !== undefined) navigation.select(String(commitmentId))
   }
 
-  return (
-    <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-      <ContextualSidebar
-        navigation={navigation}
-        style={{ width: contextualSidebarWidth }}
-      />
-      <ResizeHandle
-        label="Resize contextual sidebar"
-        value={contextualSidebarWidth}
-        min={CONTEXTUAL_SIDEBAR_MIN}
-        max={CONTEXTUAL_SIDEBAR_MAX}
-        direction={1}
-        onChange={setContextualSidebarWidth}
-      />
-
-      <main className="min-w-0 flex-1 overflow-auto bg-background">
+  const main = (
+    <main className="min-w-0 flex-1 overflow-auto bg-background">
         {navigationSnapshot.level === commitmentsLevel ? (
           <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="commitment-heading">
             {selectedCommitment ? (
@@ -488,18 +437,18 @@ export function FocusWorkspace({
             <div className="mt-6">
               <div className="mb-1.5 flex items-center justify-between gap-3">
                 <label htmlFor="focus-goal" className="text-xs font-semibold">Goal</label>
-                {goalSaving && <span className="text-xs text-muted-foreground">Saving…</span>}
+                {model.goalSaving && <span className="text-xs text-muted-foreground">Saving…</span>}
               </div>
               <Textarea
                 id="focus-goal"
                 aria-label="Goal"
                 className="min-h-20"
                 placeholder="What should this focus accomplish?"
-                value={goal}
-                onChange={(event) => setGoal(event.target.value)}
-                onBlur={() => void saveGoal()}
+                value={model.goal}
+                onChange={(event) => model.setGoal(event.target.value)}
+                onBlur={() => void model.saveGoal()}
               />
-              {goalError && <p role="alert" className="mt-2 text-xs text-destructive">{goalError}</p>}
+              {model.goalError && <p role="alert" className="mt-2 text-xs text-destructive">{model.goalError}</p>}
             </div>
 
             <section className="mt-8" aria-labelledby="focus-commitments-heading">
@@ -518,7 +467,7 @@ export function FocusWorkspace({
 
               <div className="overflow-hidden rounded-xl border border-border/80 bg-card/45">
                 <div role="list" aria-label="Focus commitments">
-                  {commitments.map((commitment) => (
+                  {model.commitments.map((commitment) => (
                     <div
                       key={commitment.id}
                       role="listitem"
@@ -550,7 +499,7 @@ export function FocusWorkspace({
                       </Button>
                     </div>
                   ))}
-                  {commitments.length === 0 && (
+                  {model.commitments.length === 0 && (
                     <p className="px-3 py-6 text-center text-xs text-muted-foreground">
                       No commitments
                     </p>
@@ -559,13 +508,32 @@ export function FocusWorkspace({
               </div>
             </section>
 
-            {loadError && <p role="alert" className="mt-5 text-sm text-destructive">{loadError}</p>}
+            {model.loadError && <p role="alert" className="mt-5 text-sm text-destructive">{model.loadError}</p>}
           </section>
         )}
-      </main>
+    </main>
+  )
 
-      <ContextDrawerOutlet adapter={contextDrawerAdapter} {...contextDrawer} />
-
+  return (
+    <>
+      <WorkspaceShell
+        contextualSidebar={
+          <ContextualSidebar
+            navigation={navigation}
+            style={{ width: contextualSidebarWidth }}
+          />
+        }
+        contextualSidebarResize={{
+          label: 'Resize contextual sidebar',
+          value: contextualSidebarWidth,
+          min: CONTEXTUAL_SIDEBAR_MIN,
+          max: CONTEXTUAL_SIDEBAR_MAX,
+          direction: 1,
+          onChange: setContextualSidebarWidth
+        }}
+        main={main}
+        drawer={<ContextDrawerOutlet adapter={contextDrawerAdapter} {...contextDrawer} />}
+      />
       {newThreadOpen && (
         <NewThreadDialog
           focusId={focus.id}
@@ -580,6 +548,6 @@ export function FocusWorkspace({
           onCreate={createCommitment}
         />
       )}
-    </div>
+    </>
   )
 }
