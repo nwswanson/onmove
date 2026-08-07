@@ -85,7 +85,10 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await window.getByLabel(/Description \/ notes/).fill('Stored notes')
     await window.getByRole('button', { name: 'Create focus' }).click()
     await expect(window.getByRole('heading', { name: 'Persistent focus' })).toBeVisible()
-    await window.getByRole('button', { name: 'Open context drawer' }).click()
+    const drawerToggle = window.getByRole('button', { name: 'Toggle context drawer' })
+    await expect(drawerToggle).toHaveAttribute('aria-pressed', 'false')
+    await drawerToggle.click()
+    await expect(drawerToggle).toHaveAttribute('aria-pressed', 'true')
     await expect(window.getByRole('complementary', { name: 'Focus context drawer' })).toBeVisible()
     await window.getByLabel('Goal').fill('Deliver predictable customer value')
     await window.getByLabel('Goal').blur()
@@ -122,7 +125,9 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await window.getByRole('button', { name: 'Back to Focus sections' }).click()
     await expect(window.getByRole('complementary', { name: 'Focus context drawer' })).toBeVisible()
     await window
-      .getByRole('button', { name: 'Inspect commitment Keep sponsors aligned' })
+      .getByRole('button', {
+        name: 'Pin commitment Keep sponsors aligned in context drawer'
+      })
       .click()
     await expect(
       window.getByRole('complementary', { name: 'Commitment context drawer' })
@@ -132,7 +137,26 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       'page'
     )
     await expect(window.getByRole('heading', { name: 'Persistent focus' })).toBeVisible()
-    await window.getByRole('button', { name: 'Return drawer to current selection' }).click()
+    await window.getByRole('button', { name: 'Home' }).click()
+    await expect(window.getByRole('heading', { name: 'Home', exact: true })).toBeVisible()
+    await expect(
+      window.getByRole('complementary', { name: 'Commitment context drawer' })
+    ).toBeVisible()
+    await window.getByRole('button', { name: 'Persistent focus' }).click()
+    await expect(window.getByRole('heading', { name: 'Persistent focus' })).toBeVisible()
+    await expect(
+      window.getByRole('complementary', { name: 'Commitment context drawer' })
+    ).toBeVisible()
+    await drawerToggle.click()
+    await expect(drawerToggle).toHaveAttribute('aria-pressed', 'false')
+    await expect(
+      window.getByRole('complementary', { name: 'Commitment context drawer' })
+    ).toBeHidden()
+    await drawerToggle.click()
+    await expect(
+      window.getByRole('complementary', { name: 'Commitment context drawer' })
+    ).toBeVisible()
+    await window.getByRole('button', { name: 'Unpin drawer and follow current selection' }).click()
     await expect(window.getByRole('complementary', { name: 'Focus context drawer' })).toBeVisible()
     await window.getByLabel('Status').selectOption('paused')
     await window.getByRole('button', { name: 'Save changes' }).click()
@@ -161,7 +185,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(
       window.getByRole('button', { name: 'Open commitment Keep sponsors aligned' })
     ).toBeVisible()
-    await window.getByRole('button', { name: 'Open context drawer' }).click()
+    await window.getByRole('button', { name: 'Toggle context drawer' }).click()
     await expect(window.getByLabel('Description / notes')).toHaveValue('Stored notes')
     await window.getByRole('button', { name: 'Delete' }).click()
     await expect(window.getByRole('dialog', { name: 'Delete focus?' })).toBeVisible()

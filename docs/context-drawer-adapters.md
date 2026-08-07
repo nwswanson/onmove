@@ -31,30 +31,52 @@ const adapter: ContextDrawerAdapter | null = selectedCommitment
 return <ContextDrawerOutlet adapter={adapter} {...persistentDrawerState} />
 ```
 
+The toolbar information button toggles `open` and reports that state through `aria-pressed`.
+Closing and reopening the drawer does not discard a pinned adapter or reset its width.
+
 Adapter identifiers must include the entity kind and stable identifier. Changing adapters replaces
 the rendered inspector state, but never closes the outlet or resets its width. Navigating Back or
 to another primary destination therefore immediately shows that screen's adapter in the already
 open drawer.
 
-## Inspection overrides
+## Pinned inspections
 
 An item may be inspected without becoming the main or contextual-sidebar selection. Call the
-shared controller's `onOverride(adapter)` with that item's normal drawer adapter. This opens the
-drawer if needed and temporarily gives the supplied adapter precedence over the active screen:
+shared controller's `onPin(adapter)` with that item's normal drawer adapter. This opens the drawer
+if needed and gives the supplied adapter precedence over the active screen:
 
 ```tsx
 <Button
-  aria-label={`Inspect commitment ${commitment.title}`}
-  onClick={() => contextDrawer.onOverride(commitmentDrawerAdapter(commitment))}
+  aria-label={`Pin commitment ${commitment.title} in context drawer`}
+  onClick={() => contextDrawer.onPin(commitmentDrawerAdapter(commitment))}
 >
-  Inspect
+  Pin
 </Button>
 ```
 
-The outlet provides a global “Current selection” action while overridden. Selecting another main
-or contextual item clears the override automatically. Do not modify the main view selection or
-contextual navigation merely to inspect an item, and reuse the same adapter factory for ordinary
-selection and override rendering so their drawer representations cannot diverge.
+The pinned adapter survives main-view navigation, contextual navigation, and temporarily closing
+the drawer. The outlet provides a global “Follow current selection” action to unpin it. Do not
+modify the main view selection or contextual navigation merely to inspect an item, and reuse the
+same adapter factory for ordinary selection and pinned rendering so their representations cannot
+diverge.
+
+## Deletion lifecycle
+
+Every adapter declares `invalidationKeys` for its own entity and any owning ancestors. For example,
+a Focus-level Commitment declares both `focus:1` and `commitment:2`. After a successful model
+deletion, call `contextDrawer.onInvalidate(deletedKeys)`.
+
+The shared reducer applies these defaults:
+
+- An unrelated deletion leaves the pin unchanged.
+- Deleting the pinned entity or an owning ancestor clears the pin.
+- Invalidation never closes the drawer; it immediately resumes the active screen adapter or the
+  shared empty state.
+- Hiding and reopening the drawer does not affect a valid pin.
+- A failed deletion does not invalidate anything, change selection, or close the drawer.
+
+These rules are centralized in `contextDrawerReducer`; domain screens should report successful
+deletions rather than recreating lifecycle behavior locally.
 
 Use `null` when the active screen or collection does not expose contextual settings. The outlet
 keeps its close button and displays the shared “No settings here” state. Domain components should

@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react'
 import {
   ChevronRight,
   Circle,
+  Info,
   Layers3,
-  PanelRightOpen,
   PauseCircle
 } from 'lucide-react'
 import type {
@@ -58,15 +58,26 @@ function focusContextItems(threads: readonly ThreadSnapshot[]): FocusContextItem
 function threadDrawerAdapter(thread: ThreadSnapshot): ContextDrawerAdapter {
   return {
     id: `thread:${thread.id}`,
+    invalidationKeys: [`focus:${thread.focusId}`, `thread:${thread.id}`],
     render: ({ width, onClose }) => (
       <ThreadContextPanel thread={thread} width={width} onClose={onClose} />
     )
   }
 }
 
-function commitmentDrawerAdapter(commitment: CommitmentSnapshot): ContextDrawerAdapter {
+function commitmentDrawerAdapter(
+  commitment: CommitmentSnapshot,
+  ancestorKeys: readonly string[] = []
+): ContextDrawerAdapter {
   return {
     id: `commitment:${commitment.id}`,
+    invalidationKeys: [
+      ...new Set([
+        ...ancestorKeys,
+        `${commitment.parent.type}:${commitment.parent.id}`,
+        `commitment:${commitment.id}`
+      ])
+    ],
     render: ({ width, onClose }) => (
       <CommitmentContextPanel commitment={commitment} width={width} onClose={onClose} />
     )
@@ -296,8 +307,7 @@ export function FocusWorkspace({
         newItem: {
           label: 'New thread',
           onCreate: () => setNewThreadOpen(true)
-        },
-        onSelect: () => contextDrawer.onClearOverride()
+        }
       })
   )
 
@@ -317,7 +327,6 @@ export function FocusWorkspace({
           label: 'New commitment',
           onCreate: () => setNewCommitmentOpen(true)
         },
-        onSelect: () => contextDrawer.onClearOverride(),
         renderItem: (commitment) => (
           <>
             <span className="min-w-0 flex-1 line-clamp-2">{commitment.title}</span>
@@ -363,13 +372,14 @@ export function FocusWorkspace({
       : undefined
 
   const contextDrawerAdapter: ContextDrawerAdapter | null = selectedCommitment
-    ? commitmentDrawerAdapter(selectedCommitment)
+    ? commitmentDrawerAdapter(selectedCommitment, [`focus:${focus.id}`])
     : navigationSnapshot.level === commitmentsLevel
       ? null
       : selectedFocusItem?.kind === 'thread'
         ? threadDrawerAdapter(selectedFocusItem.thread)
         : {
             id: `focus:${focus.id}`,
+            invalidationKeys: [`focus:${focus.id}`],
             render: ({ width, onClose }) => (
               <FocusContextPanel
                 focus={focus}
@@ -415,7 +425,6 @@ export function FocusWorkspace({
   }
 
   function openCommitments(commitmentId?: number): void {
-    contextDrawer.onClearOverride()
     navigation.navigateTo(commitmentsLevel)
     if (commitmentId !== undefined) navigation.select(String(commitmentId))
   }
@@ -529,11 +538,15 @@ export function FocusWorkspace({
                         variant="ghost"
                         size="icon"
                         className="mr-1 size-8 text-muted-foreground"
-                        aria-label={`Inspect commitment ${commitment.title}`}
-                        title="Inspect in context drawer"
-                        onClick={() => contextDrawer.onOverride(commitmentDrawerAdapter(commitment))}
+                        aria-label={`Pin commitment ${commitment.title} in context drawer`}
+                        title="Pin in context drawer"
+                        onClick={() =>
+                          contextDrawer.onPin(
+                            commitmentDrawerAdapter(commitment, [`focus:${focus.id}`])
+                          )
+                        }
                       >
-                        <PanelRightOpen aria-hidden="true" />
+                        <Info aria-hidden="true" />
                       </Button>
                     </div>
                   ))}

@@ -246,6 +246,101 @@ describe('ContextualSidebarNavigation', () => {
     expect(navigation.getSnapshot().selectedItemId).toBeNull()
   })
 
+  it('keeps a valid level open when its selected leaf is deleted', () => {
+    const root = level('focus:1', 'Focus', [{ id: 'overall', label: 'Overall' }])
+    let commitmentsItems: TestItem[] = [
+      { id: 'quality', label: 'Improve ticket quality' },
+      { id: 'review', label: 'Hold weekly refinement' }
+    ]
+    const commitments = level('focus:1:commitments', 'Commitments', () => commitmentsItems, {
+      parent: root,
+      parentItemId: 'overall'
+    })
+    const navigation = new ContextualSidebarNavigation(root)
+
+    navigation.navigateTo(commitments)
+    navigation.select('review')
+    commitmentsItems = [{ id: 'quality', label: 'Improve ticket quality' }]
+    navigation.refresh()
+    expect(navigation.getSnapshot()).toMatchObject({
+      level: commitments,
+      canGoBack: true,
+      selectedItemId: 'quality'
+    })
+
+    commitmentsItems = []
+    navigation.refresh()
+    expect(navigation.getSnapshot()).toMatchObject({
+      level: commitments,
+      canGoBack: true,
+      selectedItemId: null
+    })
+  })
+
+  it('bubbles to the nearest reachable ancestor when a viewed parent is deleted', () => {
+    const root = level('focus:1', 'Focus', [{ id: 'overall', label: 'Overall' }])
+    let commitmentsItems: TestItem[] = [
+      { id: 'quality', label: 'Improve ticket quality' },
+      { id: 'review', label: 'Hold weekly refinement' }
+    ]
+    const commitments = level('focus:1:commitments', 'Commitments', () => commitmentsItems, {
+      parent: root,
+      parentItemId: 'overall'
+    })
+    const updates = level(
+      'commitment:quality:updates',
+      'Updates',
+      [{ id: 'latest', label: 'Latest observation' }],
+      { parent: commitments, parentItemId: 'quality' }
+    )
+    const navigation = new ContextualSidebarNavigation(root)
+
+    navigation.navigateTo(commitments)
+    navigation.navigateTo(updates)
+    commitmentsItems = [{ id: 'review', label: 'Hold weekly refinement' }]
+    navigation.refresh()
+
+    expect(navigation.getSnapshot()).toMatchObject({
+      level: commitments,
+      parent: root,
+      canGoBack: true,
+      selectedItemId: 'review'
+    })
+  })
+
+  it('bubbles through multiple invalid ancestor levels after a deletion cascade', () => {
+    let threadItems: TestItem[] = [
+      { id: 'sprint', label: 'Sprint execution' },
+      { id: 'health', label: 'Team health' }
+    ]
+    const root = level('focus:1', 'Threads', () => threadItems)
+    const commitments = level(
+      'thread:sprint:commitments',
+      'Commitments',
+      [{ id: 'quality', label: 'Improve ticket quality' }],
+      { parent: root, parentItemId: 'sprint' }
+    )
+    const updates = level(
+      'commitment:quality:updates',
+      'Updates',
+      [{ id: 'latest', label: 'Latest observation' }],
+      { parent: commitments, parentItemId: 'quality' }
+    )
+    const navigation = new ContextualSidebarNavigation(root)
+
+    navigation.navigateTo(commitments)
+    navigation.navigateTo(updates)
+    threadItems = [{ id: 'health', label: 'Team health' }]
+    navigation.refresh()
+
+    expect(navigation.getSnapshot()).toMatchObject({
+      level: root,
+      parent: null,
+      canGoBack: false,
+      selectedItemId: 'health'
+    })
+  })
+
   it('does not select disabled items and reports missing selections', () => {
     const root = level('focus:1', 'Threads', [
       { id: 'sprint', label: 'Sprint execution' },

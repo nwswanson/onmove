@@ -311,7 +311,7 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Publish the launch boundary' })).toBeInTheDocument()
   })
 
-  it('inspects a commitment in the drawer without changing the main or contextual selection', async () => {
+  it('pins a commitment in the drawer across navigation without changing contextual selection', async () => {
     const current = focus({ title: 'Project Atlas' })
     const focusCommitment = commitment()
     installApi({
@@ -323,7 +323,9 @@ describe('App', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
     await user.click(
-      await screen.findByRole('button', { name: 'Inspect commitment Keep sponsors aligned' })
+      await screen.findByRole('button', {
+        name: 'Pin commitment Keep sponsors aligned in context drawer'
+      })
     )
 
     const commitmentDrawer = screen.getByRole('complementary', {
@@ -338,9 +340,12 @@ describe('App', () => {
     expect(screen.getByRole('navigation', { name: 'Focus sections' })).toBeInTheDocument()
     expect(screen.queryByRole('navigation', { name: 'Focus commitments' })).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: 'Return drawer to current selection' }))
-    expect(screen.getByRole('complementary', { name: 'Focus context drawer' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Project Atlas' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Home' }))
+    expect(screen.getByRole('heading', { name: 'Home' })).toBeInTheDocument()
+    expect(screen.getByRole('complementary', { name: 'Commitment context drawer' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Unpin drawer and follow current selection' }))
+    expect(screen.getByRole('complementary', { name: 'Home item context drawer' })).toBeInTheDocument()
   })
 
   it('keeps the drawer open and replaces its adapter across Focus, Thread, Commitment, and Home', async () => {
@@ -356,7 +361,7 @@ describe('App', () => {
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
-    await user.click(screen.getByRole('button', { name: 'Open context drawer' }))
+    await user.click(screen.getByRole('button', { name: 'Toggle context drawer' }))
     expect(screen.getByRole('complementary', { name: 'Focus context drawer' })).toBeInTheDocument()
 
     await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
@@ -391,7 +396,7 @@ describe('App', () => {
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: 'Quarterly plan' }))
-    await user.click(screen.getByRole('button', { name: 'Open context drawer' }))
+    await user.click(screen.getByRole('button', { name: 'Toggle context drawer' }))
     expect(screen.getByRole('complementary', { name: 'Focus context drawer' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Close context drawer' })).toBeInTheDocument()
 
@@ -421,7 +426,7 @@ describe('App', () => {
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: 'Quarterly plan' }))
-    await user.click(screen.getByRole('button', { name: 'Open context drawer' }))
+    await user.click(screen.getByRole('button', { name: 'Toggle context drawer' }))
     await user.selectOptions(screen.getByLabelText('Status'), 'done')
     await user.click(screen.getByRole('button', { name: 'Save changes' }))
 
@@ -439,7 +444,7 @@ describe('App', () => {
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: 'Delete me' }))
-    await user.click(screen.getByRole('button', { name: 'Open context drawer' }))
+    await user.click(screen.getByRole('button', { name: 'Toggle context drawer' }))
     await user.click(screen.getByRole('button', { name: 'Delete' }))
 
     expect(screen.getByRole('dialog', { name: 'Delete focus?' })).toBeInTheDocument()
@@ -450,6 +455,30 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Delete me' })).not.toBeInTheDocument()
     expect(screen.getByRole('complementary', { name: 'Home item context drawer' })).toBeInTheDocument()
+  })
+
+  it('keeps the active view and drawer intact when deletion fails', async () => {
+    const current = focus({ title: 'Still here' })
+    const deleteFocus = vi.fn().mockResolvedValue(false)
+    installApi({ listFocuses: vi.fn().mockResolvedValue([current]), deleteFocus })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Still here' }))
+    await user.click(screen.getByRole('button', { name: 'Toggle context drawer' }))
+    await user.click(screen.getByRole('button', { name: 'Delete' }))
+    await user.click(screen.getByRole('button', { name: 'Delete focus' }))
+
+    expect(deleteFocus).toHaveBeenCalledWith(1)
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The focus could not be deleted. Please try again.'
+    )
+    expect(screen.getByRole('heading', { name: 'Still here' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Still here' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    expect(screen.getByRole('complementary', { name: 'Focus context drawer' })).toBeInTheDocument()
   })
 
   it('keeps sidebar and contextual drawer resizing keyboard accessible', async () => {
@@ -463,12 +492,24 @@ describe('App', () => {
     fireEvent.keyDown(sidebarHandle, { key: 'ArrowRight' })
     expect(sidebar).toHaveStyle({ width: '264px' })
 
-    await user.click(await screen.findByRole('button', { name: 'Open context drawer' }))
+    const drawerToggle = await screen.findByRole('button', { name: 'Toggle context drawer' })
+    expect(drawerToggle).toHaveAttribute('aria-pressed', 'false')
+    await user.click(drawerToggle)
+    expect(drawerToggle).toHaveAttribute('aria-pressed', 'true')
     const drawer = screen.getByRole('complementary', { name: 'Home item context drawer' })
     const drawerHandle = screen.getByRole('separator', { name: 'Resize context drawer' })
     expect(drawer).toHaveStyle({ width: '336px' })
     fireEvent.keyDown(drawerHandle, { key: 'ArrowLeft' })
     expect(drawer).toHaveStyle({ width: '352px' })
+    await user.click(drawerToggle)
+    expect(drawerToggle).toHaveAttribute('aria-pressed', 'false')
+    expect(
+      screen.queryByRole('complementary', { name: 'Home item context drawer' })
+    ).not.toBeInTheDocument()
+    await user.click(drawerToggle)
+    expect(screen.getByRole('complementary', { name: 'Home item context drawer' })).toHaveStyle({
+      width: '352px'
+    })
   })
 
   it('keeps Settings and data actions in the footer', async () => {

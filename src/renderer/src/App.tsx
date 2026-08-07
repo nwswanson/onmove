@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react'
-import { AlertTriangle, ChevronRight, FolderOpen, House, PanelRightOpen, Settings } from 'lucide-react'
+import { useEffect, useReducer, useState } from 'react'
+import { AlertTriangle, ChevronRight, FolderOpen, House, Info, Settings } from 'lucide-react'
 import type { AppState, CreateFocusInput, FocusSnapshot, UpdateFocusInput } from '../../shared/contracts'
 import { Button } from '@/components/ui/button'
 import {
   ContextDrawer,
   ContextDrawerOutlet,
   ContextDrawerSection,
+  contextDrawerReducer,
+  initialContextDrawerState,
   type ContextDrawerAdapter,
   type ContextDrawerControl
 } from '@/components/ui/context-drawer'
@@ -44,15 +46,17 @@ const DRAWER_MAX = 384
 
 interface AppToolbarProps {
   title: string
+  contextOpen: boolean
   enabled: boolean
-  onOpenContext: () => void
+  onToggleContext: () => void
   onShowData: () => void
 }
 
 function AppToolbar({
   title,
+  contextOpen,
   enabled,
-  onOpenContext,
+  onToggleContext,
   onShowData
 }: AppToolbarProps): React.JSX.Element {
   return (
@@ -65,12 +69,13 @@ function AppToolbar({
           variant="ghost"
           size="icon"
           className="size-8 text-muted-foreground"
-          aria-label="Open context drawer"
-          title="Open contextual inspector"
+          aria-label="Toggle context drawer"
+          aria-pressed={contextOpen}
+          title={contextOpen ? 'Hide contextual inspector' : 'Show contextual inspector'}
           disabled={!enabled}
-          onClick={onOpenContext}
+          onClick={onToggleContext}
         >
-          <PanelRightOpen aria-hidden="true" />
+          <Info aria-hidden="true" />
         </Button>
         <Button
           type="button"
@@ -200,6 +205,7 @@ function HomeView({
 }: HomeViewProps): React.JSX.Element {
   const contextDrawerAdapter: ContextDrawerAdapter = {
     id: 'home:example',
+    invalidationKeys: [],
     render: ({ width, onClose }) => (
       <HomeContextPanel
         value={value}
@@ -327,8 +333,10 @@ export function App(): React.JSX.Element {
   const [selectedFocusId, setSelectedFocusId] = useState<number | null>(null)
   const [focuses, setFocuses] = useState<FocusSnapshot[]>([])
   const [newFocusOpen, setNewFocusOpen] = useState(false)
-  const [contextOpen, setContextOpen] = useState(false)
-  const [contextOverride, setContextOverride] = useState<ContextDrawerAdapter | null>(null)
+  const [contextDrawerState, dispatchContextDrawer] = useReducer(
+    contextDrawerReducer,
+    initialContextDrawerState
+  )
   const [sidebarWidth, setSidebarWidth] = useState(248)
   const [drawerWidth, setDrawerWidth] = useState(336)
   const [homeExample, setHomeExample] = useState<HomeExample>({
@@ -360,39 +368,33 @@ export function App(): React.JSX.Element {
   const enabled = Boolean(state)
   const toolbarTitle = selectedFocus?.title ?? 'Home'
   const contextDrawer = {
-    open: contextOpen,
-    overrideAdapter: contextOverride,
+    open: contextDrawerState.open,
+    pinnedAdapter: contextDrawerState.pinnedAdapter,
     width: drawerWidth,
     minWidth: DRAWER_MIN,
     maxWidth: DRAWER_MAX,
     onWidthChange: setDrawerWidth,
-    onClose: () => {
-      setContextOpen(false)
-      setContextOverride(null)
-    },
-    onOverride: (adapter: ContextDrawerAdapter) => {
-      setContextOverride(adapter)
-      setContextOpen(true)
-    },
-    onClearOverride: () => setContextOverride(null)
+    onClose: () => dispatchContextDrawer({ type: 'close' }),
+    onPin: (adapter: ContextDrawerAdapter) =>
+      dispatchContextDrawer({ type: 'pin', adapter }),
+    onUnpin: () => dispatchContextDrawer({ type: 'unpin' }),
+    onInvalidate: (keys: readonly string[]) =>
+      dispatchContextDrawer({ type: 'invalidate', keys })
   } satisfies ContextDrawerControl
 
   function goHome(): void {
-    setContextOverride(null)
     setSelectedFocusId(null)
   }
 
   function selectFocus(focusId: number): void {
     const focus = focuses.find((candidate) => candidate.id === focusId)
     if (!focus || !isVisibleFocus(focus)) return
-    setContextOverride(null)
     setSelectedFocusId(focusId)
   }
 
   async function createFocus(input: CreateFocusInput): Promise<void> {
     const focus = await window.onmove.domain.createFocus(input)
     setFocuses((current) => [...current, focus])
-    setContextOverride(null)
     setSelectedFocusId(focus.id)
   }
 
@@ -402,7 +404,6 @@ export function App(): React.JSX.Element {
       current.map((focus) => (focus.id === updated.id ? updated : focus))
     )
     if (!isVisibleFocus(updated)) {
-      setContextOverride(null)
       setSelectedFocusId(null)
     }
   }
@@ -410,8 +411,8 @@ export function App(): React.JSX.Element {
   async function deleteFocus(focusId: number): Promise<void> {
     const deleted = await window.onmove.domain.deleteFocus(focusId)
     if (!deleted) throw new Error('Focus no longer exists')
+    contextDrawer.onInvalidate([`focus:${focusId}`])
     setFocuses((current) => current.filter((focus) => focus.id !== focusId))
-    setContextOverride(null)
     setSelectedFocusId(null)
   }
 
@@ -419,8 +420,9 @@ export function App(): React.JSX.Element {
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       <AppToolbar
         title={toolbarTitle}
+        contextOpen={contextDrawerState.open}
         enabled={enabled}
-        onOpenContext={() => setContextOpen(true)}
+        onToggleContext={() => dispatchContextDrawer({ type: 'toggle' })}
         onShowData={() => void window.onmove.showDataFolder()}
       />
       <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -457,7 +459,7 @@ export function App(): React.JSX.Element {
               value={homeExample}
               contextDrawer={contextDrawer}
               onChange={setHomeExample}
-              onOpenContext={() => setContextOpen(true)}
+              onOpenContext={() => dispatchContextDrawer({ type: 'open' })}
             />
           )
         ) : error ? (

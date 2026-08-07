@@ -35,9 +35,13 @@
   `ContextDrawerOutlet`. The application shell must not switch on domain entity types. Navigating
   must replace the active adapter without closing the drawer or resetting its width; use the shared
   empty state when a screen has no contextual settings.
-- Use the drawer controller's generic adapter override to inspect an item without changing the main
-  view or contextual-sidebar selection. Reuse the selected item's normal adapter, expose the shared
-  return-to-current-selection control, and clear overrides when ordinary navigation resumes.
+- Use the drawer controller's generic adapter pin to inspect an item without changing the main view
+  or contextual-sidebar selection. Reuse the selected item's normal adapter. Pins take precedence
+  across navigation and drawer visibility changes until the shared follow-current-selection action
+  explicitly clears them.
+- Give each drawer adapter invalidation keys for itself and its owning ancestors. Report successful
+  deletions through the shared drawer controller: invalidated pins clear without closing the drawer,
+  while unrelated or failed deletions preserve drawer and selection state.
 
 ## Color system
 

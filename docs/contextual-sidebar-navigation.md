@@ -86,6 +86,12 @@ selection.
 If the selected record disappeared, the controller selects the first remaining record or `null`
 when the level is empty.
 
+Deletion reconciliation keeps the deepest still-valid level. Removing a selected leaf selects the
+first surviving peer and leaves the level open; removing the final leaf leaves that valid collection
+open with no selection. If a level's asserted parent item was deleted, `navigation.refresh()` walks
+up the full parent chain to the nearest reachable ancestor and reconciles that ancestor's selection.
+This also handles cascades that invalidate multiple nested levels in one mutation.
+
 Item identifiers must be non-empty and unique within a level. Level identifiers cannot repeat in
 their own parent chain. `renderItem` supplies domain-specific row content, while
 `getItemClassName` can opt a level into taller or multi-line rows without replacing the shared

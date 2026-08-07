@@ -342,8 +342,21 @@ export class ContextualSidebarNavigation {
 
   /** Reconciles selections after a level's item provider changes. */
   refresh(): void {
+    this.currentLevel = this.resolveReachableLevel(this.currentLevel)
     this.snapshot = this.createSnapshot()
     this.emit()
+  }
+
+  private resolveReachableLevel(
+    level: ContextualSidebarLevelBase
+  ): ContextualSidebarLevelBase {
+    let reachable = level
+    for (let descendant = level; descendant.parent; descendant = descendant.parent) {
+      const parent = descendant.parent
+      const parentItemId = descendant.parentItemId
+      if (!parentItemId || !parent.hasItem(parentItemId)) reachable = parent
+    }
+    return reachable
   }
 
   private createSnapshot(): ContextualSidebarNavigationSnapshot {

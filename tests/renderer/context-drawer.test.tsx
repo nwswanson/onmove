@@ -6,12 +6,15 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   ContextDrawer,
   ContextDrawerOutlet,
+  contextDrawerReducer,
+  initialContextDrawerState,
   type ContextDrawerAdapter
 } from '../../src/renderer/src/components/ui/context-drawer'
 
 function adapter(id: string, title: string): ContextDrawerAdapter {
   return {
     id,
+    invalidationKeys: [id],
     render: ({ width, onClose }) => (
       <ContextDrawer
         title={title}
@@ -34,13 +37,13 @@ describe('ContextDrawerOutlet', () => {
       <ContextDrawerOutlet
         open
         adapter={null}
-        overrideAdapter={null}
+        pinnedAdapter={null}
         width={320}
         minWidth={280}
         maxWidth={384}
         onWidthChange={onWidthChange}
         onClose={onClose}
-        onClearOverride={vi.fn()}
+        onUnpin={vi.fn()}
       />
     )
 
@@ -64,8 +67,8 @@ describe('ContextDrawerOutlet', () => {
       maxWidth: 384,
       onWidthChange: vi.fn(),
       onClose: vi.fn(),
-      overrideAdapter: null,
-      onClearOverride: vi.fn()
+      pinnedAdapter: null,
+      onUnpin: vi.fn()
     }
     const { rerender } = render(
       <ContextDrawerOutlet adapter={adapter('focus:1', 'Focus')} {...sharedProps} />
@@ -85,13 +88,13 @@ describe('ContextDrawerOutlet', () => {
       <ContextDrawerOutlet
         open={false}
         adapter={adapter('focus:1', 'Focus')}
-        overrideAdapter={null}
+        pinnedAdapter={null}
         width={336}
         minWidth={280}
         maxWidth={384}
         onWidthChange={vi.fn()}
         onClose={vi.fn()}
-        onClearOverride={vi.fn()}
+        onUnpin={vi.fn()}
       />
     )
 
@@ -99,26 +102,26 @@ describe('ContextDrawerOutlet', () => {
     expect(screen.queryByRole('separator')).not.toBeInTheDocument()
   })
 
-  it('temporarily renders an override and can return to the active screen adapter', async () => {
-    const onClearOverride = vi.fn()
+  it('keeps a pinned adapter across active-screen changes until explicitly unpinned', async () => {
+    const onUnpin = vi.fn()
     const user = userEvent.setup()
     const props = {
       open: true,
       adapter: adapter('focus:1', 'Focus'),
-      overrideAdapter: adapter('commitment:2', 'Commitment'),
+      pinnedAdapter: adapter('commitment:2', 'Commitment'),
       width: 336,
       minWidth: 280,
       maxWidth: 384,
       onWidthChange: vi.fn(),
       onClose: vi.fn(),
-      onClearOverride
+      onUnpin
     }
     const { rerender } = render(<ContextDrawerOutlet {...props} />)
 
     expect(screen.getByRole('complementary', { name: 'Commitment drawer' })).toBeInTheDocument()
     expect(screen.queryByRole('complementary', { name: 'Focus drawer' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Return drawer to current selection' }))
-    expect(onClearOverride).toHaveBeenCalledOnce()
+    await user.click(screen.getByRole('button', { name: 'Unpin drawer and follow current selection' }))
+    expect(onUnpin).toHaveBeenCalledOnce()
 
     rerender(
       <ContextDrawerOutlet
@@ -126,6 +129,47 @@ describe('ContextDrawerOutlet', () => {
         adapter={adapter('thread:3', 'Thread')}
       />
     )
-    expect(onClearOverride).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('complementary', { name: 'Commitment drawer' })).toBeInTheDocument()
+    expect(screen.queryByRole('complementary', { name: 'Thread drawer' })).not.toBeInTheDocument()
+    expect(onUnpin).toHaveBeenCalledOnce()
+  })
+})
+
+describe('contextDrawerReducer deletion lifecycle', () => {
+  it('preserves a pin while hidden or navigating and releases it only when unpinned', () => {
+    const pinned = adapter('commitment:2', 'Commitment')
+    const pinnedState = contextDrawerReducer(initialContextDrawerState, {
+      type: 'pin',
+      adapter: pinned
+    })
+    const closedState = contextDrawerReducer(pinnedState, { type: 'close' })
+
+    expect(closedState).toEqual({ open: false, pinnedAdapter: pinned })
+    expect(contextDrawerReducer(closedState, { type: 'toggle' })).toEqual({
+      open: true,
+      pinnedAdapter: pinned
+    })
+    expect(contextDrawerReducer(pinnedState, { type: 'unpin' })).toEqual({
+      open: true,
+      pinnedAdapter: null
+    })
+  })
+
+  it('keeps unrelated pins but unpins a deleted target or owning ancestor without closing', () => {
+    const pinned: ContextDrawerAdapter = {
+      ...adapter('commitment:2', 'Commitment'),
+      invalidationKeys: ['focus:1', 'thread:4', 'commitment:2']
+    }
+    const pinnedState = { open: true, pinnedAdapter: pinned }
+
+    expect(
+      contextDrawerReducer(pinnedState, { type: 'invalidate', keys: ['focus:99'] })
+    ).toBe(pinnedState)
+    expect(
+      contextDrawerReducer(pinnedState, { type: 'invalidate', keys: ['commitment:2'] })
+    ).toEqual({ open: true, pinnedAdapter: null })
+    expect(
+      contextDrawerReducer(pinnedState, { type: 'invalidate', keys: ['focus:1'] })
+    ).toEqual({ open: true, pinnedAdapter: null })
   })
 })

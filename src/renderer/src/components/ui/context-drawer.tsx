@@ -1,4 +1,4 @@
-import { Fragment, useLayoutEffect, useRef } from 'react'
+import { Fragment } from 'react'
 import { Undo2, X } from 'lucide-react'
 import type * as React from 'react'
 import { Button } from '@/components/ui/button'
@@ -23,23 +23,73 @@ export interface ContextDrawerRenderProps {
  */
 export interface ContextDrawerAdapter {
   id: string
+  /** Entity/ancestor keys whose deletion makes this representation invalid. */
+  invalidationKeys: readonly string[]
   render: (props: ContextDrawerRenderProps) => React.ReactNode
+}
+
+export interface ContextDrawerState {
+  open: boolean
+  pinnedAdapter: ContextDrawerAdapter | null
+}
+
+export type ContextDrawerAction =
+  | { type: 'toggle' }
+  | { type: 'open' }
+  | { type: 'close' }
+  | { type: 'pin'; adapter: ContextDrawerAdapter }
+  | { type: 'unpin' }
+  | { type: 'invalidate'; keys: readonly string[] }
+
+export const initialContextDrawerState: ContextDrawerState = {
+  open: false,
+  pinnedAdapter: null
+}
+
+/**
+ * Centralizes visibility, pinning, and deletion invalidation so domain screens
+ * can evolve without duplicating drawer lifecycle rules.
+ */
+export function contextDrawerReducer(
+  state: ContextDrawerState,
+  action: ContextDrawerAction
+): ContextDrawerState {
+  switch (action.type) {
+    case 'toggle':
+      return { ...state, open: !state.open }
+    case 'open':
+      return state.open ? state : { ...state, open: true }
+    case 'close':
+      return state.open ? { ...state, open: false } : state
+    case 'pin':
+      return { open: true, pinnedAdapter: action.adapter }
+    case 'unpin':
+      return state.pinnedAdapter ? { ...state, pinnedAdapter: null } : state
+    case 'invalidate': {
+      if (!state.pinnedAdapter || action.keys.length === 0) return state
+      const invalidated = new Set(action.keys)
+      return state.pinnedAdapter.invalidationKeys.some((key) => invalidated.has(key))
+        ? { ...state, pinnedAdapter: null }
+        : state
+    }
+  }
 }
 
 export interface ContextDrawerControl {
   open: boolean
-  overrideAdapter: ContextDrawerAdapter | null
+  pinnedAdapter: ContextDrawerAdapter | null
   width: number
   minWidth: number
   maxWidth: number
   onWidthChange: (width: number) => void
   onClose: () => void
-  onOverride: (adapter: ContextDrawerAdapter) => void
-  onClearOverride: () => void
+  onPin: (adapter: ContextDrawerAdapter) => void
+  onUnpin: () => void
+  onInvalidate: (keys: readonly string[]) => void
 }
 
 export interface ContextDrawerOutletProps
-  extends Omit<ContextDrawerControl, 'onOverride'> {
+  extends Omit<ContextDrawerControl, 'onPin' | 'onInvalidate'> {
   adapter?: ContextDrawerAdapter | null
 }
 
@@ -118,26 +168,17 @@ function ContextDrawerSection({
 function ContextDrawerOutlet({
   open,
   adapter,
-  overrideAdapter,
+  pinnedAdapter,
   width,
   minWidth,
   maxWidth,
   onWidthChange,
   onClose,
-  onClearOverride
+  onUnpin
 }: ContextDrawerOutletProps): React.JSX.Element | null {
-  const baseAdapterId = adapter?.id ?? null
-  const previousBaseAdapterId = useRef(baseAdapterId)
-
-  useLayoutEffect(() => {
-    if (previousBaseAdapterId.current === baseAdapterId) return
-    previousBaseAdapterId.current = baseAdapterId
-    if (overrideAdapter) onClearOverride()
-  }, [baseAdapterId, onClearOverride, overrideAdapter])
-
   if (!open) return null
 
-  const renderedAdapter = overrideAdapter ?? adapter
+  const renderedAdapter = pinnedAdapter ?? adapter
 
   return (
     <>
@@ -154,18 +195,18 @@ function ContextDrawerOutlet({
         className="flex h-full shrink-0 flex-col overflow-hidden"
         style={{ width }}
       >
-        {overrideAdapter && (
+        {pinnedAdapter && (
           <div className="shrink-0 border-b border-l border-border/70 bg-card/82 p-1 backdrop-blur-xl">
             <Button
               type="button"
               variant="ghost"
               size="sm"
               className="h-7 w-full justify-start text-muted-foreground"
-              aria-label="Return drawer to current selection"
-              onClick={onClearOverride}
+              aria-label="Unpin drawer and follow current selection"
+              onClick={onUnpin}
             >
               <Undo2 aria-hidden="true" />
-              <span>Current selection</span>
+              <span>Follow current selection</span>
             </Button>
           </div>
         )}
