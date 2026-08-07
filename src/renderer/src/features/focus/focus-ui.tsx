@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { CreateFocusInput } from '../../../../shared/contracts'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogField } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
+import { RichTextEditor } from '@/components/ui/rich-text-editor'
 
 interface NewFocusDialogProps {
   onClose: () => void
@@ -13,6 +13,7 @@ interface NewFocusDialogProps {
 export function NewFocusDialog({ onClose, onCreate }: NewFocusDialogProps): React.JSX.Element {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
+  const descriptionRef = useRef('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -24,7 +25,8 @@ export function NewFocusDialog({ onClose, onCreate }: NewFocusDialogProps): Reac
     try {
       await onCreate({
         title,
-        description: description.trim().length === 0 ? null : description
+        description:
+          descriptionRef.current.trim().length === 0 ? null : descriptionRef.current
       })
       onClose()
     } catch {
@@ -68,10 +70,14 @@ export function NewFocusDialog({ onClose, onCreate }: NewFocusDialogProps): Reac
           <label htmlFor="new-focus-description" className="text-xs font-medium">
             Description / notes <span className="text-muted-foreground">(optional)</span>
           </label>
-          <Textarea
+          <RichTextEditor
             id="new-focus-description"
+            ariaLabel="Description / notes"
             value={description}
-            onChange={(event) => setDescription(event.target.value)}
+            onChange={(value) => {
+              descriptionRef.current = value
+              setDescription(value)
+            }}
           />
         </DialogField>
         {error && (

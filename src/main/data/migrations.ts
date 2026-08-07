@@ -408,6 +408,55 @@ const migrations: readonly Migration[] = [
         ADD COLUMN goal TEXT NOT NULL DEFAULT '';
       `)
     }
+  },
+  {
+    version: 7,
+    name: 'optional_update_observation',
+    up(database) {
+      const updatesTable = database.get<{ found: number }>(
+        "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = 'updates'"
+      )
+      if (!updatesTable) return
+
+      database.exec(`
+        ALTER TABLE updates RENAME TO updates_with_required_observation;
+
+        CREATE TABLE updates (
+          id INTEGER PRIMARY KEY,
+          focus_id INTEGER REFERENCES focuses(id) ON DELETE CASCADE,
+          thread_id INTEGER REFERENCES threads(id) ON DELETE CASCADE,
+          commitment_id INTEGER REFERENCES commitments(id) ON DELETE CASCADE,
+          recorded_on TEXT NOT NULL CHECK (
+            length(recorded_on) = 10 AND recorded_on = date(recorded_on)
+          ),
+          observation TEXT NOT NULL DEFAULT '',
+          state TEXT NOT NULL DEFAULT 'none'
+            CHECK (state IN ('red', 'yellow', 'green', 'none')),
+          created_at TEXT NOT NULL,
+          CHECK (
+            (focus_id IS NOT NULL AND thread_id IS NULL AND commitment_id IS NULL) OR
+            (focus_id IS NULL AND thread_id IS NOT NULL AND commitment_id IS NULL) OR
+            (focus_id IS NULL AND thread_id IS NULL AND commitment_id IS NOT NULL)
+          )
+        ) STRICT;
+
+        INSERT INTO updates (
+          id, focus_id, thread_id, commitment_id, recorded_on, observation, state, created_at
+        )
+        SELECT
+          id, focus_id, thread_id, commitment_id, recorded_on, observation, state, created_at
+        FROM updates_with_required_observation;
+
+        DROP TABLE updates_with_required_observation;
+
+        CREATE INDEX updates_focus_date_index
+          ON updates(focus_id, recorded_on DESC, id DESC);
+        CREATE INDEX updates_thread_date_index
+          ON updates(thread_id, recorded_on DESC, id DESC);
+        CREATE INDEX updates_commitment_date_index
+          ON updates(commitment_id, recorded_on DESC, id DESC);
+      `)
+    }
   }
 ]
 

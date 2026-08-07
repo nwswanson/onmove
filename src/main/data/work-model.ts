@@ -10,6 +10,7 @@ import {
   type CreateCommitmentInput,
   type CreateThreadInput,
   type CreateUpdateInput,
+  type EditUpdateInput,
   type HealthState,
   type ThreadSnapshot,
   type ThreadStatus,
@@ -101,11 +102,11 @@ function normalizeTitle(value: string, modelName: string): string {
   return value.trim()
 }
 
-function normalizeObservation(value: string): string {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new ModelValidationError('update observation cannot be empty')
+function normalizeObservation(value: string | undefined): string {
+  if (value !== undefined && typeof value !== 'string') {
+    throw new ModelValidationError('update observation must be text')
   }
-  return value.trim()
+  return value?.trim() ?? ''
 }
 
 function normalizeStatus<T extends ThreadStatus | CommitmentStatus>(status: T | undefined): T {
@@ -586,12 +587,26 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
 }
 
 export class UpdateModel extends BaseModel<UpdateRecord> {
-  constructor(repository: UpdateRepository, record: UpdateRecord) {
+  constructor(
+    private readonly repository: UpdateRepository,
+    record: UpdateRecord
+  ) {
     super(repository, record)
   }
 
   toSnapshot(): UpdateSnapshot {
     return structuredClone(this.record)
+  }
+
+  update(input: EditUpdateInput): this {
+    this.assertPersisted()
+    const next = {
+      date: normalizeDate(input.date ?? this.record.date, 'update date'),
+      observation: normalizeObservation(input.observation ?? this.record.observation),
+      state: normalizeState(input.state ?? this.record.state)
+    }
+    this.repository.updateRecord(this.id, next)
+    return this.refresh()
   }
 }
 
@@ -645,6 +660,15 @@ export class UpdateRepository extends BaseRepository<UpdateRecord, UpdateModel> 
 
   listForCommitment(commitmentId: number): UpdateSnapshot[] {
     return this.listFor('commitment_id', commitmentId)
+  }
+
+  updateRecord(id: number, input: Required<EditUpdateInput>): void {
+    assertId(id, 'update')
+    const result = this.database.run(
+      `UPDATE updates SET recorded_on = ?, observation = ?, state = ? WHERE id = ?`,
+      [input.date, input.observation, input.state, id]
+    )
+    if (result.changes === 0) throw new ModelNotFoundError('Update', id)
   }
 
   delete(id: number): boolean {

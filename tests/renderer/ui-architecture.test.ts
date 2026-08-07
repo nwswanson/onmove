@@ -24,6 +24,7 @@ const featureComponentFiles = [
   join(rendererRoot, 'App.tsx'),
   ...featureFiles.filter((path) => extname(path) === '.tsx')
 ]
+const featureReceiverFiles = featureFiles.filter((path) => /update-table\.tsx$/.test(path))
 
 describe('renderer architecture boundaries', () => {
   it.each(sourceFiles(uiRoot))('%s remains domain and persistence agnostic', (path) => {
@@ -57,6 +58,13 @@ describe('renderer architecture boundaries', () => {
     const source = readFileSync(path, 'utf8')
 
     expect(source).not.toMatch(/<ContextDrawer(?:\s|>)/)
+  })
+
+  it.each(featureReceiverFiles)('%s remains business-model and persistence agnostic', (path) => {
+    const source = readFileSync(path, 'utf8')
+
+    expect(source).not.toContain('shared/contracts')
+    expect(source).not.toContain('window.onmove')
   })
 
   it('keeps model-driven receiver contracts free of caller render hooks', () => {

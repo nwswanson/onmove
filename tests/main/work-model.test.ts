@@ -136,6 +136,38 @@ describe('Thread, Commitment, and Update models', () => {
     expect(database!.domain.updates.listForCommitment(commitment.id)[0].date).toBe('2027-01-01')
   })
 
+  it('edits and deletes persisted updates without changing their parent', () => {
+    const focus = database!.domain.focuses.create({ title: 'Project execution' })
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'focus', id: focus.id },
+      type: 'ongoing',
+      title: 'Improve ticket quality'
+    })
+    const update = database!.domain.updates.create({
+      parent: { type: 'commitment', id: commitment.id },
+      date: '2026-01-10',
+      observation: 'Ticket quality is uneven',
+      state: 'yellow'
+    })
+
+    update.update({
+      date: '2026-01-11',
+      observation: 'Acceptance criteria are now consistent',
+      state: 'green'
+    })
+
+    expect(update.toSnapshot()).toMatchObject({
+      parent: { type: 'commitment', id: commitment.id },
+      date: '2026-01-11',
+      observation: 'Acceptance criteria are now consistent',
+      state: 'green'
+    })
+    expect(commitment.snapshot('2026-01-11').state).toBe('green')
+    expect(update.delete()).toBe(true)
+    expect(database!.domain.updates.listForCommitment(commitment.id)).toEqual([])
+    expect(() => update.update({ state: 'red' })).toThrow('has been deleted')
+  })
+
   it('derives thread health from the latest direct update and active commitment states', () => {
     const focus = database!.domain.focuses.create({ title: 'Project execution' })
     const thread = database!.domain.threads.create({
@@ -380,12 +412,6 @@ describe('Thread, Commitment, and Update models', () => {
     ).toThrow(ModelValidationError)
     expect(() =>
       database!.domain.updates.create({
-        parent: { type: 'focus', id: focus.id },
-        observation: '   '
-      })
-    ).toThrow(ModelValidationError)
-    expect(() =>
-      database!.domain.updates.create({
         parent: { type: 'commitment', id: 999 },
         observation: 'Missing parent'
       })
@@ -397,6 +423,28 @@ describe('Thread, Commitment, and Update models', () => {
         state: 'blue' as never
       })
     ).toThrow(ModelValidationError)
+  })
+
+  it('persists a state-only update and materializes it on its Commitment', () => {
+    const focus = database!.domain.focuses.create({ title: 'Project execution' })
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'focus', id: focus.id },
+      type: 'ongoing',
+      title: 'Keep sponsors aligned'
+    })
+
+    const update = database!.domain.updates.create({
+      parent: { type: 'commitment', id: commitment.id },
+      date: '2026-08-07',
+      state: 'red'
+    })
+
+    expect(update.toSnapshot()).toMatchObject({ observation: '', state: 'red' })
+    expect(database!.domain.commitments.listForFocus(focus.id, '2026-08-07')[0]).toMatchObject({
+      id: commitment.id,
+      state: 'red',
+      lastUpdateDate: '2026-08-07'
+    })
   })
 
   it('enforces exactly one parent at the SQLite layer', () => {

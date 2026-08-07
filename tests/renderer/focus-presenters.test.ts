@@ -11,6 +11,7 @@ import {
   focusDrawerAdapter,
   focusPrimaryNavigationItems
 } from '../../src/renderer/src/features/focus/focus-presenters'
+import { healthStateLabel } from '../../src/renderer/src/features/shared/state-presenters'
 
 const focus: FocusSnapshot = {
   id: 1,
@@ -93,9 +94,17 @@ describe('Focus presentation adapters', () => {
         id: '20',
         label: 'Improve ticket quality',
         lines: 2,
+        stateLabel: { label: 'Green', tone: 'success' },
         accessory: 'disclosure'
       }
     ])
+  })
+
+  it('maps every model health state into a labeled semantic receiver tone', () => {
+    expect(healthStateLabel('red')).toEqual({ label: 'Red', tone: 'danger' })
+    expect(healthStateLabel('yellow')).toEqual({ label: 'Yellow', tone: 'warning' })
+    expect(healthStateLabel('green')).toEqual({ label: 'Green', tone: 'success' })
+    expect(healthStateLabel('none')).toEqual({ label: 'None', tone: 'neutral' })
   })
 
   it('describes Focus editing in the drawer contract and delegates typed actions', async () => {
@@ -107,6 +116,11 @@ describe('Focus presentation adapters', () => {
     expect(adapter.model.sections[0]?.fields).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ kind: 'text', id: 'title', value: 'Project Atlas' }),
+        expect.objectContaining({
+          kind: 'rich-text',
+          id: 'description',
+          value: 'Launch notes'
+        }),
         expect.objectContaining({ kind: 'select', id: 'status', value: 'active' }),
         expect.objectContaining({ kind: 'static', id: 'kind', value: 'generic' })
       ])

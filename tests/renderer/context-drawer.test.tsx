@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -10,6 +10,11 @@ import {
   validateContextDrawerModel,
   type ContextDrawerAdapter
 } from '../../src/renderer/src/components/ui/context-drawer'
+import {
+  isRichText,
+  richTextPlainText
+} from '../../src/renderer/src/components/ui/rich-text-editor'
+import { TEXT_AUTOSAVE_INTERVAL_MS } from '../../src/renderer/src/lib/use-throttled-autosave'
 
 function adapter(id: string, title: string): ContextDrawerAdapter {
   return {
@@ -60,6 +65,12 @@ describe('ContextDrawerOutlet', () => {
                 fields: [
                   { kind: 'text', id: 'title', label: 'Title', value: 'Initial', required: true },
                   {
+                    kind: 'rich-text',
+                    id: 'notes',
+                    label: 'Notes',
+                    value: 'Existing notes'
+                  },
+                  {
                     kind: 'select',
                     id: 'status',
                     label: 'Status',
@@ -99,10 +110,65 @@ describe('ContextDrawerOutlet', () => {
     await user.clear(title)
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
     await user.type(title, 'Revised')
+    await user.type(screen.getByLabelText('Notes'), ' updated')
     await user.selectOptions(screen.getByLabelText('Status'), 'paused')
     await user.click(screen.getByRole('button', { name: 'Save' }))
 
-    expect(save).toHaveBeenCalledWith({ title: 'Revised', status: 'paused' })
+    expect(save).toHaveBeenCalledOnce()
+    const values = save.mock.calls[0][0]
+    expect(values).toMatchObject({ title: 'Revised', status: 'paused' })
+    expect(isRichText(values.notes)).toBe(true)
+    expect(richTextPlainText(values.notes)).toBe(' updatedExisting notes')
+  })
+
+  it('applies the receiver-owned autosave contract to declared text fields', async () => {
+    vi.useFakeTimers()
+    const autosave = vi.fn().mockResolvedValue(undefined)
+    try {
+      render(
+        <ContextDrawerOutlet
+          open
+          adapter={{
+            id: 'focus:1',
+            invalidationKeys: ['focus:1'],
+            model: {
+              title: 'Focus',
+              ariaLabel: 'Focus drawer',
+              sections: [
+                {
+                  id: 'details',
+                  fields: [
+                    { kind: 'text', id: 'title', label: 'Title', value: 'Initial', required: true }
+                  ]
+                }
+              ],
+              autosave: {
+                fieldIds: ['title'],
+                errorMessage: 'Could not autosave.',
+                onInvoke: autosave
+              }
+            }
+          }}
+          pinnedAdapter={null}
+          width={320}
+          minWidth={280}
+          maxWidth={384}
+          onWidthChange={vi.fn()}
+          onClose={vi.fn()}
+          onUnpin={vi.fn()}
+        />
+      )
+
+      fireEvent.change(screen.getByLabelText(/^Title/), { target: { value: 'Revised' } })
+      act(() => vi.advanceTimersByTime(TEXT_AUTOSAVE_INTERVAL_MS - 1))
+      expect(autosave).not.toHaveBeenCalled()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      expect(autosave).toHaveBeenCalledWith({ title: 'Revised' })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('renders the shared empty representation when an active screen has no adapter', async () => {

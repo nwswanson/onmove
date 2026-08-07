@@ -11,6 +11,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem
 } from '@/components/ui/sidebar'
+import { StateLabel, type StateLabelModel } from '@/components/ui/state-label'
 import { cn } from '@/lib/utils'
 
 export interface ContextualSidebarItemGroup {
@@ -30,6 +31,7 @@ export interface ContextualSidebarItemModel {
   group?: ContextualSidebarItemGroup
   icon?: 'overview' | 'item' | 'paused'
   accessory?: 'disclosure'
+  stateLabel?: StateLabelModel
   tone?: 'default' | 'muted'
   lines?: 1 | 2
   disabled?: boolean
@@ -462,6 +464,9 @@ export function ContextualSidebar({
                         <span className={cn('min-w-0 flex-1', item.lines === 2 ? 'line-clamp-2' : 'truncate')}>
                           {item.label}
                         </span>
+                        {item.stateLabel && (
+                          <StateLabel model={item.stateLabel} size="compact" />
+                        )}
                         {item.accessory === 'disclosure' && (
                           <ChevronRight className="ml-auto" aria-hidden="true" />
                         )}

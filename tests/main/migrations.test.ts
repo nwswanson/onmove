@@ -105,4 +105,82 @@ describe('database migrations', () => {
     ])
     database.close()
   })
+
+  it('preserves existing updates while allowing state-only updates', () => {
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at TEXT NOT NULL
+      ) STRICT;
+      INSERT INTO schema_migrations VALUES
+        (1, '2026-01-01T00:00:00.000Z'),
+        (2, '2026-01-01T00:00:00.000Z'),
+        (3, '2026-01-01T00:00:00.000Z'),
+        (4, '2026-01-01T00:00:00.000Z'),
+        (5, '2026-01-01T00:00:00.000Z'),
+        (6, '2026-01-01T00:00:00.000Z');
+      CREATE TABLE focuses (
+        id INTEGER PRIMARY KEY,
+        title TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE threads (
+        id INTEGER PRIMARY KEY,
+        focus_id INTEGER NOT NULL REFERENCES focuses(id) ON DELETE CASCADE
+      ) STRICT;
+      CREATE TABLE commitments (
+        id INTEGER PRIMARY KEY,
+        focus_id INTEGER REFERENCES focuses(id) ON DELETE CASCADE,
+        thread_id INTEGER REFERENCES threads(id) ON DELETE CASCADE
+      ) STRICT;
+      CREATE TABLE updates (
+        id INTEGER PRIMARY KEY,
+        focus_id INTEGER REFERENCES focuses(id) ON DELETE CASCADE,
+        thread_id INTEGER REFERENCES threads(id) ON DELETE CASCADE,
+        commitment_id INTEGER REFERENCES commitments(id) ON DELETE CASCADE,
+        recorded_on TEXT NOT NULL,
+        observation TEXT NOT NULL CHECK (length(trim(observation)) > 0),
+        state TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX updates_focus_date_index
+        ON updates(focus_id, recorded_on DESC, id DESC);
+      CREATE INDEX updates_thread_date_index
+        ON updates(thread_id, recorded_on DESC, id DESC);
+      CREATE INDEX updates_commitment_date_index
+        ON updates(commitment_id, recorded_on DESC, id DESC);
+      INSERT INTO focuses (id, title) VALUES (1, 'Existing focus');
+      INSERT INTO commitments (id, focus_id, thread_id) VALUES (2, 1, NULL);
+      INSERT INTO updates (
+        id, focus_id, thread_id, commitment_id, recorded_on, observation, state, created_at
+      ) VALUES (
+        3, NULL, NULL, 2, '2026-08-06', 'Existing observation', 'green',
+        '2026-08-06T12:00:00.000Z'
+      );
+    `)
+    legacy.close()
+
+    const database = new AppDatabase(databasePath)
+    database.close()
+
+    const migrated = new DatabaseSync(databasePath)
+    const existing = migrated.prepare('SELECT observation, state FROM updates WHERE id = 3').get()
+    migrated
+      .prepare(
+        `INSERT INTO updates (
+           focus_id, thread_id, commitment_id, recorded_on, observation, state, created_at
+         ) VALUES (NULL, NULL, 2, '2026-08-07', '', 'red', '2026-08-07T12:00:00.000Z')`
+      )
+      .run()
+    const stateOnly = migrated
+      .prepare("SELECT observation, state FROM updates WHERE state = 'red'")
+      .get()
+    const foreignKeyViolations = migrated.prepare('PRAGMA foreign_key_check').all()
+    migrated.close()
+
+    expect(existing).toMatchObject({ observation: 'Existing observation', state: 'green' })
+    expect(stateOnly).toMatchObject({ observation: '', state: 'red' })
+    expect(foreignKeyViolations).toEqual([])
+  })
 })

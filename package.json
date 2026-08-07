@@ -20,9 +20,14 @@
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
+    "@lexical/list": "0.49.0",
+    "@lexical/react": "0.49.0",
+    "@lexical/selection": "0.49.0",
+    "@lexical/utils": "0.49.0",
     "@radix-ui/react-slot": "1.2.3",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
+    "lexical": "0.49.0",
     "lucide-react": "0.542.0",
     "react": "19.2.0",
     "react-dom": "19.2.0",

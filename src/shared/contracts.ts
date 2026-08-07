@@ -20,7 +20,11 @@ export const IPC_CHANNELS = {
   listThreads: 'domain:list-threads',
   createThread: 'domain:create-thread',
   listCommitments: 'domain:list-commitments',
-  createCommitment: 'domain:create-commitment'
+  createCommitment: 'domain:create-commitment',
+  listUpdates: 'domain:list-updates',
+  createUpdate: 'domain:create-update',
+  updateUpdate: 'domain:update-update',
+  deleteUpdate: 'domain:delete-update'
 } as const
 
 export type JsonPrimitive = string | number | boolean | null
@@ -221,7 +225,13 @@ export interface UpdateSnapshot {
 export interface CreateUpdateInput {
   parent: UpdateParent
   date?: string
-  observation: string
+  observation?: string
+  state?: HealthState
+}
+
+export interface EditUpdateInput {
+  date?: string
+  observation?: string
   state?: HealthState
 }
 
@@ -261,6 +271,10 @@ export interface DomainApi {
   createThread: (input: CreateThreadInput) => Promise<ThreadSnapshot>
   listCommitments: (parent: CommitmentParent) => Promise<CommitmentSnapshot[]>
   createCommitment: (input: CreateCommitmentInput) => Promise<CommitmentSnapshot>
+  listUpdates: (parent: UpdateParent) => Promise<UpdateSnapshot[]>
+  createUpdate: (input: CreateUpdateInput) => Promise<UpdateSnapshot>
+  updateUpdate: (id: number, input: EditUpdateInput) => Promise<UpdateSnapshot>
+  deleteUpdate: (id: number) => Promise<boolean>
 }
 
 export interface AppState {

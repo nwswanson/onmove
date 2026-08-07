@@ -71,6 +71,20 @@ describe('registerAppIpc', () => {
           create: vi.fn(() => ({
             snapshot: () => ({ id: 33, title: 'Align sponsors' })
           }))
+        },
+        updates: {
+          listForFocus: vi.fn(() => [{ id: 41, observation: 'Focus update' }]),
+          listForThread: vi.fn(() => [{ id: 42, observation: 'Thread update' }]),
+          listForCommitment: vi.fn(() => [{ id: 43, observation: 'Commitment update' }]),
+          create: vi.fn(() => ({
+            toSnapshot: () => ({ id: 44, observation: 'Created update', state: 'green' })
+          })),
+          requireModel: vi.fn(() => ({
+            update: vi.fn(() => ({
+              toSnapshot: () => ({ id: 43, observation: 'Edited update', state: 'yellow' })
+            }))
+          })),
+          delete: vi.fn(() => true)
         }
       }
     }
@@ -135,6 +149,20 @@ describe('registerAppIpc', () => {
       type: 'ongoing',
       title: 'Align sponsors'
     })).toMatchObject({ id: 33, title: 'Align sponsors' })
+    expect(await handlers.get(IPC_CHANNELS.listUpdates)?.(undefined, {
+      type: 'commitment',
+      id: 31
+    })).toMatchObject([{ id: 43, observation: 'Commitment update' }])
+    expect(await handlers.get(IPC_CHANNELS.createUpdate)?.(undefined, {
+      parent: { type: 'commitment', id: 31 },
+      observation: 'Created update',
+      state: 'green'
+    })).toMatchObject({ id: 44, state: 'green' })
+    expect(await handlers.get(IPC_CHANNELS.updateUpdate)?.(undefined, 43, {
+      observation: 'Edited update',
+      state: 'yellow'
+    })).toMatchObject({ id: 43, observation: 'Edited update', state: 'yellow' })
+    expect(await handlers.get(IPC_CHANNELS.deleteUpdate)?.(undefined, 43)).toBe(true)
 
     cleanup()
     expect(ipcMain.removeHandler).toHaveBeenCalledTimes(Object.keys(IPC_CHANNELS).length)

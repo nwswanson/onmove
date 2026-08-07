@@ -1,12 +1,13 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Undo2, X } from 'lucide-react'
 import type * as React from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { RichTextEditor } from '@/components/ui/rich-text-editor'
 import { ResizeHandle } from '@/components/ui/resize-handle'
-import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { useThrottledAutosave } from '@/lib/use-throttled-autosave'
 
 export interface ContextDrawerProps extends Omit<React.ComponentProps<'aside'>, 'title'> {
   title: React.ReactNode
@@ -27,7 +28,14 @@ export type ContextDrawerFieldModel =
       label: string
       value: string
       required?: boolean
-      multiline?: boolean
+      placeholder?: string
+    }
+  | {
+      kind: 'rich-text'
+      id: string
+      label: string
+      value: string
+      required?: boolean
       placeholder?: string
     }
   | {
@@ -54,6 +62,12 @@ export interface ContextDrawerSectionModel {
 
 export type ContextDrawerValues = Readonly<Record<string, string>>
 
+export interface ContextDrawerAutosaveModel {
+  fieldIds: readonly string[]
+  errorMessage: string
+  onInvoke: (values: ContextDrawerValues) => void | Promise<void>
+}
+
 export interface ContextDrawerConfirmationModel {
   title: string
   description: string
@@ -69,6 +83,8 @@ export interface ContextDrawerActionModel {
   align?: 'start' | 'end'
   requiresValidFields?: boolean
   disabled?: boolean | ((values: ContextDrawerValues) => boolean)
+  /** The action persists every autosaved field itself, so a pending timer can be coalesced into it. */
+  includesAutosaveFields?: boolean
   confirmation?: ContextDrawerConfirmationModel
   errorMessage: string
   onInvoke: (values: ContextDrawerValues) => void | Promise<void>
@@ -80,6 +96,7 @@ export interface ContextDrawerModel {
   description?: string
   ariaLabel: string
   sections: readonly ContextDrawerSectionModel[]
+  autosave?: ContextDrawerAutosaveModel
   actions?: readonly ContextDrawerActionModel[]
 }
 
@@ -277,6 +294,43 @@ export function validateContextDrawerModel(model: ContextDrawerModel): void {
     }
     actionIds.add(actionId)
   }
+
+  if (model.autosave) {
+    const autosaveIds = new Set(model.autosave.fieldIds)
+    if (
+      autosaveIds.size === 0 ||
+      autosaveIds.size !== model.autosave.fieldIds.length ||
+      !model.autosave.errorMessage.trim()
+    ) {
+      throw new Error('Context drawer autosave requires unique fields and an error message.')
+    }
+    for (const fieldId of autosaveIds) {
+      const field = model.sections.flatMap((section) => section.fields).find(
+        (candidate) => candidate.id === fieldId
+      )
+      if (!field || (field.kind !== 'text' && field.kind !== 'rich-text')) {
+        throw new Error(`Context drawer autosave field "${fieldId}" must be editable text.`)
+      }
+    }
+  }
+}
+
+function drawerValuesEqual(left: ContextDrawerValues, right: ContextDrawerValues): boolean {
+  const leftEntries = Object.entries(left)
+  const rightEntries = Object.entries(right)
+  return (
+    leftEntries.length === rightEntries.length &&
+    leftEntries.every(([key, value]) => right[key] === value)
+  )
+}
+
+function autosaveValues(
+  model: ContextDrawerModel,
+  values: ContextDrawerValues
+): ContextDrawerValues {
+  return Object.fromEntries(
+    (model.autosave?.fieldIds ?? []).map((fieldId) => [fieldId, values[fieldId] ?? ''])
+  )
 }
 
 function ContextDrawerInspector({
@@ -292,6 +346,7 @@ function ContextDrawerInspector({
 }): React.JSX.Element {
   validateContextDrawerModel(model)
   const [values, setValues] = useState<Record<string, string>>(() => initialDrawerValues(model))
+  const valuesRef = useRef(values)
   const [pendingActionId, setPendingActionId] = useState<string | null>(null)
   const [confirmingAction, setConfirmingAction] = useState<ContextDrawerActionModel | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -302,9 +357,48 @@ function ContextDrawerInspector({
         field.kind === 'static' || !field.required || (values[field.id] ?? '').trim().length > 0
     )
   )
+  const autosave = useThrottledAutosave({
+    initialValue: autosaveValues(model, values),
+    isEqual: drawerValuesEqual,
+    onSave: (nextValues) => model.autosave?.onInvoke(nextValues)
+  })
+
+  function autosaveFieldsValid(nextValues: ContextDrawerValues): boolean {
+    const autosaveIds = new Set(model.autosave?.fieldIds ?? [])
+    return model.sections.every((section) =>
+      section.fields.every(
+        (field) =>
+          !autosaveIds.has(field.id) ||
+          field.kind === 'static' ||
+          !field.required ||
+          (nextValues[field.id] ?? '').trim().length > 0
+      )
+    )
+  }
 
   function updateValue(fieldId: string, value: string): void {
-    setValues((current) => ({ ...current, [fieldId]: value }))
+    const nextValues = { ...valuesRef.current, [fieldId]: value }
+    valuesRef.current = nextValues
+    setValues(nextValues)
+    if (!model.autosave?.fieldIds.includes(fieldId)) return
+    if (!autosaveFieldsValid(nextValues)) {
+      autosave.cancelPending()
+      return
+    }
+    autosave.schedule(autosaveValues(model, nextValues))
+  }
+
+  function flushAutosave(): void {
+    if (!model.autosave) return
+    if (!autosaveFieldsValid(valuesRef.current)) return
+    void autosave.flush(autosaveValues(model, valuesRef.current))
+  }
+
+  async function closeDrawer(): Promise<void> {
+    if (model.autosave && autosaveFieldsValid(valuesRef.current)) {
+      await autosave.flush(autosaveValues(model, valuesRef.current))
+    }
+    onClose()
   }
 
   function actionDisabled(action: ContextDrawerActionModel): boolean {
@@ -319,7 +413,9 @@ function ContextDrawerInspector({
     setPendingActionId(action.id)
     setError(null)
     try {
-      await action.onInvoke(values)
+      if (action.includesAutosaveFields) autosave.cancelPending()
+      else await autosave.flush()
+      await action.onInvoke(valuesRef.current)
       setConfirmingAction(null)
     } catch {
       setError(action.errorMessage)
@@ -344,7 +440,10 @@ function ContextDrawerInspector({
         description={model.description}
         aria-label={model.ariaLabel}
         style={{ width }}
-        onClose={onClose}
+        onClose={() => void closeDrawer()}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) flushAutosave()
+        }}
         footer={
           actions.length > 0 ? (
             <>
@@ -412,13 +511,14 @@ function ContextDrawerInspector({
                             </option>
                           ))}
                         </select>
-                      ) : field.multiline ? (
-                        <Textarea
+                      ) : field.kind === 'rich-text' ? (
+                        <RichTextEditor
                           id={inputId}
-                          required={field.required}
+                          ariaLabel={field.label}
                           placeholder={field.placeholder}
                           value={values[field.id] ?? ''}
-                          onChange={(event) => updateValue(field.id, event.target.value)}
+                          onChange={(value) => updateValue(field.id, value)}
+                          compact
                         />
                       ) : (
                         <Input
@@ -437,9 +537,14 @@ function ContextDrawerInspector({
                 )}
               </ContextDrawerSection>
             ))}
-            {error && (
+            {autosave.saving && (
+              <p role="status" className="px-1 text-xs text-muted-foreground">
+                Saving…
+              </p>
+            )}
+            {(error !== null || autosave.error !== null) && (
               <p role="alert" className="px-1 text-xs text-destructive">
-                {error}
+                {error ?? model.autosave?.errorMessage}
               </p>
             )}
           </div>

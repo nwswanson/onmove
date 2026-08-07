@@ -24,7 +24,8 @@ import {
 } from '@/components/ui/contextual-sidebar'
 import { Dialog, DialogField } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
+import { RichTextContent, RichTextEditor } from '@/components/ui/rich-text-editor'
+import { StateLabel } from '@/components/ui/state-label'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
 import {
   commitmentContextSidebarItems,
@@ -35,6 +36,8 @@ import {
   threadSidebarItemId
 } from '@/features/focus/focus-presenters'
 import { useFocusWorkspaceModel } from '@/features/focus/use-focus-workspace-model'
+import { healthStateLabel } from '@/features/shared/state-presenters'
+import { CommitmentUpdates } from '@/features/updates/commitment-updates'
 
 const CONTEXTUAL_SIDEBAR_MIN = 220
 const CONTEXTUAL_SIDEBAR_MAX = 320
@@ -314,6 +317,11 @@ export function FocusWorkspace({
                 <h1 id="commitment-heading" className="text-2xl font-semibold tracking-[-0.025em]">
                   {selectedCommitment.title}
                 </h1>
+                <CommitmentUpdates
+                  key={selectedCommitment.id}
+                  commitmentId={selectedCommitment.id}
+                  onUpdatesChanged={model.refreshCommitments}
+                />
               </>
             ) : (
               <>
@@ -337,9 +345,17 @@ export function FocusWorkspace({
                 <h1 id="focus-heading" className="truncate text-2xl font-semibold tracking-[-0.025em]">
                   {focus.title}
                 </h1>
-                <p className="mt-1.5 max-w-2xl whitespace-pre-wrap text-sm text-muted-foreground">
-                  {focus.description ?? 'No description or notes.'}
-                </p>
+                {focus.description ? (
+                  <RichTextContent
+                    value={focus.description}
+                    ariaLabel="Focus description"
+                    className="mt-1.5 max-w-2xl text-muted-foreground"
+                  />
+                ) : (
+                  <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
+                    No description or notes.
+                  </p>
+                )}
               </div>
               <Badge variant="outline" className="capitalize">{focus.status}</Badge>
             </div>
@@ -349,14 +365,13 @@ export function FocusWorkspace({
                 <label htmlFor="focus-goal" className="text-xs font-semibold">Goal</label>
                 {model.goalSaving && <span className="text-xs text-muted-foreground">Saving…</span>}
               </div>
-              <Textarea
+              <RichTextEditor
                 id="focus-goal"
-                aria-label="Goal"
-                className="min-h-20"
+                ariaLabel="Goal"
                 placeholder="What should this focus accomplish?"
                 value={model.goal}
-                onChange={(event) => model.setGoal(event.target.value)}
-                onBlur={() => void model.saveGoal()}
+                onChange={model.setGoal}
+                onBlur={(value) => void model.saveGoal(value)}
               />
               {model.goalError && <p role="alert" className="mt-2 text-xs text-destructive">{model.goalError}</p>}
             </div>
@@ -390,6 +405,7 @@ export function FocusWorkspace({
                         onClick={() => openCommitments(commitment.id)}
                       >
                         <span className="min-w-0 flex-1 truncate">{commitment.title}</span>
+                        <StateLabel model={healthStateLabel(commitment.state)} size="compact" />
                         <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
                       </button>
                       <Button

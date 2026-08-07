@@ -10,11 +10,13 @@ import {
   type ContextualSidebarNewItemAction,
   useContextualSidebarNavigation
 } from '../../src/renderer/src/components/ui/contextual-sidebar'
+import type { StateLabelModel } from '../../src/renderer/src/components/ui/state-label'
 
 interface TestItem {
   id: string
   label: string
   disabled?: boolean
+  stateLabel?: StateLabelModel
 }
 
 function level(
@@ -108,6 +110,22 @@ describe('ContextualSidebarNavigation', () => {
     expect(screen.getByText('Threads', { selector: '[data-slot="sidebar-group-label"]' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'New thread' }))
     expect(onNewThread).toHaveBeenCalledOnce()
+  })
+
+  it('renders an item state through the sidebar-owned state-label receiver', () => {
+    const root = level('commitments', 'Commitments', [
+      {
+        id: 'quality',
+        label: 'Improve ticket quality',
+        stateLabel: { label: 'Red', tone: 'danger' }
+      }
+    ])
+    render(<ContextualSidebar navigation={new ContextualSidebarNavigation(root)} />)
+
+    const item = screen.getByRole('button', { name: 'Improve ticket quality' })
+    expect(within(item).getByText('Red', { selector: '[data-tone="danger"]' })).toHaveClass(
+      'bg-destructive'
+    )
   })
 
   it('replaces levels, retains each parent selection, and navigates back globally', async () => {

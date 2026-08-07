@@ -1,8 +1,7 @@
 # Focus, Thread, Commitment, and Update model
 
-This document describes the first model-only implementation of work tracking beneath a Focus. It
-does not add renderer UI. The model is designed around observations and commitments rather than a
-todo list.
+This document describes the durable work model beneath a Focus and its current Commitment-update
+UI surface. The model is designed around observations and commitments rather than a todo list.
 
 ## Shape of the model
 
@@ -72,12 +71,16 @@ require every Commitment or Thread to be closed first.
 | --- | --- |
 | `parent` | Exactly one Focus, Thread, or Commitment. |
 | `date` | Effective calendar date. Defaults to the local current day but accepts past or future dates. |
-| `observation` | Required freeform text describing what was observed. |
+| `observation` | Optional freeform text describing what was observed. A state-only Update is valid. |
 | `state` | `red`, `yellow`, `green`, or `none`. Defaults to `none`. |
 
 Update order is determined by effective `date`, then insertion order for two Updates on the same
 day. A future-dated Update is stored immediately but does not affect health, state, review, or
 cadence projections before its date.
+
+Date, observation, and state are editable without changing the Update's parent or identity. An
+Update can also be deleted. Every edit or deletion immediately changes any derived Commitment state,
+Thread health, review date, or cadence projection that depends on the affected observation.
 
 ## Naive Thread health rule
 
@@ -189,10 +192,17 @@ Thread and Commitment may remain active because they are evidence and dimensions
   not create a duplicate event.
 - All derived values are rebuilt from durable Updates when SQLite is reopened.
 
-## Deliberate boundaries in this iteration
+## Current UI boundary
 
-- The current UI and named IPC surface list and create Threads plus Focus-level Commitments. Thread
-  detail, Commitment attributes beyond title, and Updates remain later UI work.
+- The named IPC surface lists, creates, edits, and deletes Updates without exposing repository
+  dispatch or SQL. The Commitment page presents its direct Updates in an inline editable table.
+- Focus and contextual-sidebar Commitment rows show `CommitmentSnapshot.state` as a labeled
+  semantic badge. The renderer consumes that model projection directly rather than recomputing the
+  latest Update.
+- Update rows use a receiver-owned table contract. Domain snapshots are translated into date,
+  observation, and state fields; the table owns editors, state labels, colors, validation, and row
+  actions. Observation uses the shared lightweight rich-text editor and remains optional.
+- Updates on Focuses and Threads are supported by the model but do not yet have UI surfaces.
 - Health is implemented only for Threads; a later Focus-level rollup can compose Thread health and
   direct Focus evidence.
 - Cadence currently reports when an Update is due. Notification scheduling is a later concern.

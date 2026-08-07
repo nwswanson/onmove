@@ -7,6 +7,7 @@ import type {
   ThreadSnapshot,
   UpdateFocusInput
 } from '../../../../shared/contracts'
+import { useThrottledAutosave } from '@/lib/use-throttled-autosave'
 
 interface FocusWorkspaceModelOptions {
   focus: FocusSnapshot
@@ -21,9 +22,10 @@ export interface FocusWorkspaceModel {
   loadError: string | null
   threads: ThreadSnapshot[]
   commitments: CommitmentSnapshot[]
-  saveGoal: () => Promise<void>
+  saveGoal: (goal?: string) => Promise<void>
   createThread: (input: CreateThreadInput) => Promise<ThreadSnapshot>
   createCommitment: (input: CreateCommitmentInput) => Promise<CommitmentSnapshot>
+  refreshCommitments: () => Promise<void>
 }
 
 /** Persistence-backed state and operations for a Focus workspace. */
@@ -32,11 +34,13 @@ export function useFocusWorkspaceModel({
   onUpdateFocus
 }: FocusWorkspaceModelOptions): FocusWorkspaceModel {
   const [goal, setGoal] = useState(focus.goal)
-  const [goalSaving, setGoalSaving] = useState(false)
-  const [goalError, setGoalError] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [threads, setThreads] = useState<ThreadSnapshot[]>([])
   const [commitments, setCommitments] = useState<CommitmentSnapshot[]>([])
+  const goalAutosave = useThrottledAutosave({
+    initialValue: focus.goal,
+    onSave: (nextGoal: string) => onUpdateFocus({ goal: nextGoal })
+  })
 
   useEffect(() => {
     let active = true
@@ -58,20 +62,16 @@ export function useFocusWorkspaceModel({
     }
   }, [focus.id])
 
-  async function saveGoal(): Promise<void> {
-    const normalizedGoal = goal.trim()
-    if (normalizedGoal === focus.goal) return
-
+  function changeGoal(nextGoal: string): void {
+    const normalizedGoal = nextGoal.trim()
     setGoal(normalizedGoal)
-    setGoalSaving(true)
-    setGoalError(null)
-    try {
-      await onUpdateFocus({ goal: normalizedGoal })
-    } catch {
-      setGoalError('The goal could not be saved.')
-    } finally {
-      setGoalSaving(false)
-    }
+    goalAutosave.schedule(normalizedGoal)
+  }
+
+  async function saveGoal(nextGoal = goal): Promise<void> {
+    const normalizedGoal = nextGoal.trim()
+    setGoal(normalizedGoal)
+    await goalAutosave.flush(normalizedGoal)
   }
 
   async function createThread(input: CreateThreadInput): Promise<ThreadSnapshot> {
@@ -88,16 +88,25 @@ export function useFocusWorkspaceModel({
     return created
   }
 
+  async function refreshCommitments(): Promise<void> {
+    const nextCommitments = await window.onmove.domain.listCommitments({
+      type: 'focus',
+      id: focus.id
+    })
+    setCommitments(nextCommitments)
+  }
+
   return {
     goal,
-    setGoal,
-    goalSaving,
-    goalError,
+    setGoal: changeGoal,
+    goalSaving: goalAutosave.saving,
+    goalError: goalAutosave.error ? 'The goal could not be saved.' : null,
     loadError,
     threads,
     commitments,
     saveGoal,
     createThread,
-    createCommitment
+    createCommitment,
+    refreshCommitments
   }
 }

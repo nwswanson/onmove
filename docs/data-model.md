@@ -51,8 +51,9 @@ records appear in sidebar navigation; paused records are visually muted. Cancell
 remain durable and queryable but are omitted from navigation.
 
 `FocusModel` supplies update, status, history, refresh, and deletion helpers. The renderer reaches
-these operations only through named IPC methods. Threads and Commitments likewise use named list
-and create methods; repository dispatch and SQL remain unavailable to the renderer.
+these operations only through named IPC methods. Threads and Commitments use named list and create
+methods; Updates use named list, create, edit, and delete methods. Repository dispatch and SQL
+remain unavailable to the renderer.
 
 The model beneath Focus—Threads, Commitments, dated Updates, health, reviews, and cadence—is detailed
 in [`focus-thread-commitment-model.md`](focus-thread-commitment-model.md).

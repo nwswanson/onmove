@@ -8,6 +8,7 @@ import type {
 import type { ContextDrawerAdapter } from '@/components/ui/context-drawer'
 import type { ContextualSidebarItemModel } from '@/components/ui/contextual-sidebar'
 import type { SidebarNavigationItemModel } from '@/components/ui/sidebar-navigation'
+import { healthStateLabel } from '@/features/shared/state-presenters'
 
 const FOCUS_STATUS_OPTIONS = [
   { value: 'active', label: 'Active' },
@@ -63,6 +64,7 @@ export function commitmentContextSidebarItems(
     id: String(commitment.id),
     label: commitment.title,
     lines: 2,
+    stateLabel: healthStateLabel(commitment.state),
     accessory: 'disclosure'
   }))
 }
@@ -95,11 +97,10 @@ export function focusDrawerAdapter({
               required: true
             },
             {
-              kind: 'text',
+              kind: 'rich-text',
               id: 'description',
               label: 'Description / notes',
-              value: focus.description ?? '',
-              multiline: true
+              value: focus.description ?? ''
             },
             {
               kind: 'select',
@@ -112,6 +113,15 @@ export function focusDrawerAdapter({
           ]
         }
       ],
+      autosave: {
+        fieldIds: ['title', 'description'],
+        errorMessage: 'The focus text could not be saved. Please try again.',
+        onInvoke: (values) =>
+          onSave({
+            title: values.title,
+            description: values.description.trim().length === 0 ? null : values.description
+          })
+      },
       actions: [
         {
           id: 'delete',
@@ -133,6 +143,7 @@ export function focusDrawerAdapter({
           label: 'Save changes',
           pendingLabel: 'Saving…',
           requiresValidFields: true,
+          includesAutosaveFields: true,
           errorMessage: 'The focus could not be updated. Please try again.',
           onInvoke: (values) =>
             onSave({
