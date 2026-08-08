@@ -183,7 +183,9 @@ describe('database migrations', () => {
     database.close()
 
     const migrated = new DatabaseSync(databasePath)
-    const existing = migrated.prepare('SELECT observation, state FROM updates WHERE id = 3').get()
+    const existing = migrated
+      .prepare('SELECT observation, state, scope_id, subject_id FROM updates WHERE id = 3')
+      .get()
     migrated
       .prepare(
         `INSERT INTO updates (
@@ -195,10 +197,73 @@ describe('database migrations', () => {
       .prepare("SELECT observation, state FROM updates WHERE state = 'red'")
       .get()
     const foreignKeyViolations = migrated.prepare('PRAGMA foreign_key_check').all()
+    const focusScope = migrated
+      .prepare('SELECT mode, scope_id FROM focus_scope_applications WHERE focus_id = 1')
+      .get()
+    const commitmentScope = migrated
+      .prepare(
+        'SELECT mode, scope_id FROM commitment_scope_applications WHERE commitment_id = 2'
+      )
+      .get()
     migrated.close()
 
-    expect(existing).toMatchObject({ observation: 'Existing observation', state: 'green' })
+    expect(existing).toMatchObject({
+      observation: 'Existing observation',
+      state: 'green',
+      scope_id: null,
+      subject_id: null
+    })
     expect(stateOnly).toMatchObject({ observation: '', state: 'red' })
+    expect(focusScope).toMatchObject({ mode: 'open', scope_id: null })
+    expect(commitmentScope).toMatchObject({ mode: 'open', scope_id: null })
     expect(foreignKeyViolations).toEqual([])
+  })
+
+  it('enforces Scope ownership and complete scoped Update cells at the SQLite boundary', () => {
+    const database = new AppDatabase(databasePath)
+    const firstFocus = database.domain.focuses.create({ title: 'First' })
+    const secondFocus = database.domain.focuses.create({ title: 'Second' })
+    const subject = database.domain.subjects.create({ name: 'Alex' })
+    const firstScope = database.domain.scopes.create({
+      focusId: firstFocus.id,
+      name: 'First Scope',
+      dimension: 'people'
+    })
+    const secondScope = database.domain.scopes.create({
+      focusId: secondFocus.id,
+      name: 'Second Scope',
+      dimension: 'people'
+    })
+    const commitment = database.domain.commitments.create({
+      parent: { type: 'focus', id: firstFocus.id },
+      type: 'ongoing',
+      title: 'Hold a conversation'
+    })
+    database.close()
+
+    const raw = new DatabaseSync(databasePath)
+    raw.exec('PRAGMA foreign_keys = ON;')
+    expect(() => raw.prepare(
+      `UPDATE commitment_scope_applications
+       SET mode = 'explicit', scope_id = ? WHERE commitment_id = ?`
+    ).run(secondScope.id, commitment.id)).toThrow(/matching scope owned by its focus/)
+    expect(() => raw.prepare(
+      `INSERT INTO updates (
+         focus_id, thread_id, commitment_id, scope_id, subject_id,
+         recorded_on, observation, state, sensitive, created_at
+       ) VALUES (NULL, NULL, ?, ?, NULL, '2026-08-08', '', 'none', 0, ?)`
+    ).run(commitment.id, firstScope.id, '2026-08-08T12:00:00.000Z')).toThrow()
+    expect(() => raw.prepare(
+      `INSERT INTO updates (
+         focus_id, thread_id, commitment_id, scope_id, subject_id,
+         recorded_on, observation, state, sensitive, created_at
+       ) VALUES (NULL, NULL, ?, ?, ?, '2026-08-08', '', 'none', 0, ?)`
+    ).run(
+      commitment.id,
+      secondScope.id,
+      subject.id,
+      '2026-08-08T12:00:00.000Z'
+    )).toThrow(/scope owned by its parent focus/)
+    raw.close()
   })
 })

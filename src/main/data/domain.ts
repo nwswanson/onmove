@@ -15,6 +15,12 @@ import {
 } from './model'
 import type { SqliteAdapter } from './sqlite-adapter'
 import { FocusRepository } from './focus'
+import {
+  ScopeApplicationRepository,
+  ScopeMembershipRepository,
+  ScopeRepository,
+  SubjectRepository
+} from './scope-model'
 import { CommitmentRepository, ThreadRepository, UpdateRepository } from './work-model'
 
 type RelationRecord = RelationSnapshot
@@ -524,6 +530,10 @@ export class DomainStore {
   readonly relations: RelationRepository
   readonly items: ItemRepository
   readonly focuses: FocusRepository
+  readonly subjects: SubjectRepository
+  readonly scopes: ScopeRepository
+  readonly scopeMemberships: ScopeMembershipRepository
+  readonly scopeApplications: ScopeApplicationRepository
   readonly threads: ThreadRepository
   readonly commitments: CommitmentRepository
   readonly updates: UpdateRepository
@@ -532,6 +542,10 @@ export class DomainStore {
     this.relations = new RelationRepository(database)
     this.items = new ItemRepository(database)
     this.focuses = new FocusRepository(database)
+    this.subjects = new SubjectRepository(database)
+    this.scopes = new ScopeRepository(database)
+    this.scopeMemberships = new ScopeMembershipRepository(database)
+    this.scopeApplications = new ScopeApplicationRepository(database)
     this.threads = new ThreadRepository(database)
     this.commitments = new CommitmentRepository(database)
     this.updates = new UpdateRepository(database)

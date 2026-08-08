@@ -490,6 +490,374 @@ const migrations: readonly Migration[] = [
         `)
       }
     }
+  },
+  {
+    version: 10,
+    name: 'focus_scopes_and_scoped_updates',
+    up(database) {
+      database.exec(`
+        CREATE TABLE subjects (
+          id INTEGER PRIMARY KEY,
+          kind TEXT NOT NULL DEFAULT 'generic' CHECK (length(trim(kind)) > 0),
+          name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+          description TEXT,
+          external_key TEXT UNIQUE CHECK (
+            external_key IS NULL OR length(trim(external_key)) > 0
+          ),
+          sensitive INTEGER NOT NULL DEFAULT 0 CHECK (sensitive IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT;
+
+        CREATE TABLE scopes (
+          id INTEGER PRIMARY KEY,
+          focus_id INTEGER NOT NULL REFERENCES focuses(id) ON DELETE CASCADE,
+          name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+          dimension TEXT NOT NULL CHECK (length(trim(dimension)) > 0),
+          source_type TEXT NOT NULL DEFAULT 'explicit'
+            CHECK (source_type IN ('explicit', 'derived')),
+          base_scope_id INTEGER REFERENCES scopes(id)
+            ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED,
+          derived_relationship TEXT,
+          context_subject_id INTEGER REFERENCES subjects(id) ON DELETE NO ACTION,
+          sensitive INTEGER NOT NULL DEFAULT 0 CHECK (sensitive IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          CHECK (base_scope_id IS NULL OR base_scope_id <> id),
+          CHECK (
+            (source_type = 'explicit' AND derived_relationship IS NULL AND context_subject_id IS NULL) OR
+            (source_type = 'derived' AND length(trim(derived_relationship)) > 0 AND context_subject_id IS NOT NULL)
+          )
+        ) STRICT;
+
+        CREATE TABLE scope_memberships (
+          id INTEGER PRIMARY KEY,
+          scope_id INTEGER NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
+          subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE NO ACTION,
+          effect TEXT NOT NULL DEFAULT 'include' CHECK (effect IN ('include', 'exclude')),
+          effective_from TEXT NOT NULL CHECK (
+            length(effective_from) = 10 AND effective_from = date(effective_from)
+          ),
+          effective_until TEXT CHECK (
+            effective_until IS NULL OR
+            (length(effective_until) = 10 AND effective_until = date(effective_until))
+          ),
+          created_at TEXT NOT NULL,
+          CHECK (effective_until IS NULL OR effective_until > effective_from),
+          UNIQUE (scope_id, subject_id, effect, effective_from)
+        ) STRICT;
+
+        CREATE TABLE focus_scope_applications (
+          focus_id INTEGER PRIMARY KEY REFERENCES focuses(id) ON DELETE CASCADE,
+          mode TEXT NOT NULL DEFAULT 'open'
+            CHECK (mode IN ('open', 'explicit', 'derived')),
+          scope_id INTEGER REFERENCES scopes(id) ON DELETE CASCADE,
+          updated_at TEXT NOT NULL,
+          CHECK (
+            (mode = 'open' AND scope_id IS NULL) OR
+            (mode IN ('explicit', 'derived') AND scope_id IS NOT NULL)
+          )
+        ) STRICT;
+
+        CREATE TABLE thread_scope_applications (
+          thread_id INTEGER PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+          mode TEXT NOT NULL DEFAULT 'open'
+            CHECK (mode IN ('open', 'inherited', 'explicit', 'derived')),
+          scope_id INTEGER REFERENCES scopes(id) ON DELETE CASCADE,
+          updated_at TEXT NOT NULL,
+          CHECK (
+            (mode IN ('open', 'inherited') AND scope_id IS NULL) OR
+            (mode IN ('explicit', 'derived') AND scope_id IS NOT NULL)
+          )
+        ) STRICT;
+
+        CREATE TABLE commitment_scope_applications (
+          commitment_id INTEGER PRIMARY KEY REFERENCES commitments(id) ON DELETE CASCADE,
+          mode TEXT NOT NULL DEFAULT 'open'
+            CHECK (mode IN ('open', 'inherited', 'explicit', 'derived')),
+          scope_id INTEGER REFERENCES scopes(id) ON DELETE CASCADE,
+          updated_at TEXT NOT NULL,
+          CHECK (
+            (mode IN ('open', 'inherited') AND scope_id IS NULL) OR
+            (mode IN ('explicit', 'derived') AND scope_id IS NOT NULL)
+          )
+        ) STRICT;
+
+        CREATE INDEX subjects_kind_name_index ON subjects(kind, name, id);
+        CREATE INDEX scopes_focus_dimension_index ON scopes(focus_id, dimension, id);
+        CREATE INDEX scopes_base_scope_id_index ON scopes(base_scope_id);
+        CREATE INDEX scope_memberships_effective_index
+          ON scope_memberships(scope_id, effective_from, effective_until, subject_id);
+
+        INSERT INTO focus_scope_applications (focus_id, mode, scope_id, updated_at)
+        SELECT id, 'open', NULL, strftime('%Y-%m-%dT%H:%M:%fZ', 'now') FROM focuses;
+
+        CREATE TRIGGER focuses_create_scope_application
+        AFTER INSERT ON focuses
+        BEGIN
+          INSERT INTO focus_scope_applications (focus_id, mode, scope_id, updated_at)
+          VALUES (NEW.id, 'open', NULL, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+        END;
+
+        CREATE TRIGGER focus_scope_application_matches_scope_insert
+        BEFORE INSERT ON focus_scope_applications
+        WHEN NEW.scope_id IS NOT NULL AND NOT EXISTS (
+          SELECT 1 FROM scopes
+          WHERE id = NEW.scope_id AND focus_id = NEW.focus_id AND source_type = NEW.mode
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'focus scope application must use a matching scope owned by the focus');
+        END;
+
+        CREATE TRIGGER focus_scope_application_matches_scope_update
+        BEFORE UPDATE OF mode, scope_id ON focus_scope_applications
+        WHEN NEW.scope_id IS NOT NULL AND NOT EXISTS (
+          SELECT 1 FROM scopes
+          WHERE id = NEW.scope_id AND focus_id = NEW.focus_id AND source_type = NEW.mode
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'focus scope application must use a matching scope owned by the focus');
+        END;
+
+        CREATE TRIGGER focus_scope_application_is_required
+        AFTER DELETE ON focus_scope_applications
+        WHEN EXISTS (SELECT 1 FROM focuses WHERE id = OLD.focus_id)
+        BEGIN
+          INSERT INTO focus_scope_applications (focus_id, mode, scope_id, updated_at)
+          VALUES (OLD.focus_id, 'open', NULL, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+        END;
+      `)
+
+      const threadColumns = database.all<{ name: string }>('PRAGMA table_info(threads)')
+      const hasCompleteThreads = threadColumns.some(({ name }) => name === 'focus_id')
+      if (hasCompleteThreads) {
+        database.exec(`
+          INSERT INTO thread_scope_applications (thread_id, mode, scope_id, updated_at)
+          SELECT id, 'open', NULL, strftime('%Y-%m-%dT%H:%M:%fZ', 'now') FROM threads;
+
+          CREATE TRIGGER threads_create_scope_application
+          AFTER INSERT ON threads
+          BEGIN
+            INSERT INTO thread_scope_applications (thread_id, mode, scope_id, updated_at)
+            SELECT
+              NEW.id,
+              CASE WHEN parent.mode = 'open' THEN 'open' ELSE 'inherited' END,
+              NULL,
+              strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            FROM focus_scope_applications parent
+            WHERE parent.focus_id = NEW.focus_id;
+          END;
+
+          CREATE TRIGGER thread_scope_application_matches_scope_insert
+          BEFORE INSERT ON thread_scope_applications
+          WHEN NEW.scope_id IS NOT NULL AND NOT EXISTS (
+            SELECT 1
+            FROM scopes scope
+            JOIN threads thread ON thread.id = NEW.thread_id
+            WHERE scope.id = NEW.scope_id
+              AND scope.focus_id = thread.focus_id
+              AND scope.source_type = NEW.mode
+          )
+          BEGIN
+            SELECT RAISE(ABORT, 'thread scope application must use a matching scope owned by its focus');
+          END;
+
+          CREATE TRIGGER thread_scope_application_matches_scope_update
+          BEFORE UPDATE OF mode, scope_id ON thread_scope_applications
+          WHEN NEW.scope_id IS NOT NULL AND NOT EXISTS (
+            SELECT 1
+            FROM scopes scope
+            JOIN threads thread ON thread.id = NEW.thread_id
+            WHERE scope.id = NEW.scope_id
+              AND scope.focus_id = thread.focus_id
+              AND scope.source_type = NEW.mode
+          )
+          BEGIN
+            SELECT RAISE(ABORT, 'thread scope application must use a matching scope owned by its focus');
+          END;
+
+          CREATE TRIGGER thread_scope_application_is_required
+          AFTER DELETE ON thread_scope_applications
+          WHEN EXISTS (SELECT 1 FROM threads WHERE id = OLD.thread_id)
+          BEGIN
+            INSERT INTO thread_scope_applications (thread_id, mode, scope_id, updated_at)
+            VALUES (OLD.thread_id, 'open', NULL, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+          END;
+        `)
+      }
+
+      const commitmentColumns = database.all<{ name: string }>('PRAGMA table_info(commitments)')
+      const hasCompleteCommitments = commitmentColumns.some(({ name }) => name === 'focus_id')
+      if (hasCompleteCommitments) {
+        database.exec(`
+          INSERT INTO commitment_scope_applications (
+            commitment_id, mode, scope_id, updated_at
+          )
+          SELECT id, 'open', NULL, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          FROM commitments;
+
+          CREATE TRIGGER commitments_create_scope_application
+          AFTER INSERT ON commitments
+          BEGIN
+            INSERT INTO commitment_scope_applications (
+              commitment_id, mode, scope_id, updated_at
+            )
+            VALUES (
+              NEW.id,
+              CASE
+                WHEN NEW.focus_id IS NOT NULL THEN
+                  CASE WHEN (
+                    SELECT mode FROM focus_scope_applications WHERE focus_id = NEW.focus_id
+                  ) = 'open' THEN 'open' ELSE 'inherited' END
+                ELSE
+                  CASE WHEN (
+                    SELECT mode FROM thread_scope_applications WHERE thread_id = NEW.thread_id
+                  ) = 'open' THEN 'open' ELSE 'inherited' END
+              END,
+              NULL,
+              strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            );
+          END;
+
+          CREATE TRIGGER commitment_scope_application_matches_scope_insert
+          BEFORE INSERT ON commitment_scope_applications
+          WHEN NEW.scope_id IS NOT NULL AND NOT EXISTS (
+            SELECT 1
+            FROM scopes scope
+            JOIN commitments commitment ON commitment.id = NEW.commitment_id
+            LEFT JOIN threads thread ON thread.id = commitment.thread_id
+            WHERE scope.id = NEW.scope_id
+              AND scope.focus_id = COALESCE(commitment.focus_id, thread.focus_id)
+              AND scope.source_type = NEW.mode
+          )
+          BEGIN
+            SELECT RAISE(ABORT, 'commitment scope application must use a matching scope owned by its focus');
+          END;
+
+          CREATE TRIGGER commitment_scope_application_matches_scope_update
+          BEFORE UPDATE OF mode, scope_id ON commitment_scope_applications
+          WHEN NEW.scope_id IS NOT NULL AND NOT EXISTS (
+            SELECT 1
+            FROM scopes scope
+            JOIN commitments commitment ON commitment.id = NEW.commitment_id
+            LEFT JOIN threads thread ON thread.id = commitment.thread_id
+            WHERE scope.id = NEW.scope_id
+              AND scope.focus_id = COALESCE(commitment.focus_id, thread.focus_id)
+              AND scope.source_type = NEW.mode
+          )
+          BEGIN
+            SELECT RAISE(ABORT, 'commitment scope application must use a matching scope owned by its focus');
+          END;
+
+          CREATE TRIGGER commitment_scope_application_is_required
+          AFTER DELETE ON commitment_scope_applications
+          WHEN EXISTS (SELECT 1 FROM commitments WHERE id = OLD.commitment_id)
+          BEGIN
+            INSERT INTO commitment_scope_applications (
+              commitment_id, mode, scope_id, updated_at
+            ) VALUES (
+              OLD.commitment_id, 'open', NULL, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            );
+          END;
+        `)
+      }
+
+      const updateColumns = database.all<{ name: string }>('PRAGMA table_info(updates)')
+      const hasCompleteUpdates = ['focus_id', 'thread_id', 'commitment_id', 'sensitive'].every(
+        (column) => updateColumns.some(({ name }) => name === column)
+      )
+      if (hasCompleteUpdates) {
+        database.exec(`
+          ALTER TABLE updates RENAME TO updates_without_scope;
+
+          CREATE TABLE updates (
+            id INTEGER PRIMARY KEY,
+            focus_id INTEGER REFERENCES focuses(id) ON DELETE CASCADE,
+            thread_id INTEGER REFERENCES threads(id) ON DELETE CASCADE,
+            commitment_id INTEGER REFERENCES commitments(id) ON DELETE CASCADE,
+            scope_id INTEGER REFERENCES scopes(id)
+              ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED,
+            subject_id INTEGER REFERENCES subjects(id)
+              ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED,
+            recorded_on TEXT NOT NULL CHECK (
+              length(recorded_on) = 10 AND recorded_on = date(recorded_on)
+            ),
+            observation TEXT NOT NULL DEFAULT '',
+            state TEXT NOT NULL DEFAULT 'none'
+              CHECK (state IN ('red', 'yellow', 'green', 'none')),
+            sensitive INTEGER NOT NULL DEFAULT 0 CHECK (sensitive IN (0, 1)),
+            created_at TEXT NOT NULL,
+            CHECK (
+              (focus_id IS NOT NULL AND thread_id IS NULL AND commitment_id IS NULL) OR
+              (focus_id IS NULL AND thread_id IS NOT NULL AND commitment_id IS NULL) OR
+              (focus_id IS NULL AND thread_id IS NULL AND commitment_id IS NOT NULL)
+            ),
+            CHECK (
+              (scope_id IS NULL AND subject_id IS NULL) OR
+              (scope_id IS NOT NULL AND subject_id IS NOT NULL AND focus_id IS NULL)
+            )
+          ) STRICT;
+
+          INSERT INTO updates (
+            id, focus_id, thread_id, commitment_id, scope_id, subject_id,
+            recorded_on, observation, state, sensitive, created_at
+          )
+          SELECT
+            id, focus_id, thread_id, commitment_id, NULL, NULL,
+            recorded_on, observation, state, sensitive, created_at
+          FROM updates_without_scope;
+
+          DROP TABLE updates_without_scope;
+
+          CREATE INDEX updates_focus_date_index
+            ON updates(focus_id, recorded_on DESC, id DESC);
+          CREATE INDEX updates_thread_date_index
+            ON updates(thread_id, recorded_on DESC, id DESC);
+          CREATE INDEX updates_commitment_date_index
+            ON updates(commitment_id, recorded_on DESC, id DESC);
+          CREATE INDEX updates_scope_cell_date_index
+            ON updates(scope_id, subject_id, recorded_on DESC, id DESC);
+
+          CREATE TRIGGER updates_scope_matches_parent_focus_insert
+          BEFORE INSERT ON updates
+          WHEN NEW.scope_id IS NOT NULL AND NOT EXISTS (
+            SELECT 1
+            FROM scopes scope
+            LEFT JOIN threads thread ON thread.id = NEW.thread_id
+            LEFT JOIN commitments commitment ON commitment.id = NEW.commitment_id
+            LEFT JOIN threads commitment_thread ON commitment_thread.id = commitment.thread_id
+            WHERE scope.id = NEW.scope_id
+              AND scope.focus_id = COALESCE(
+                thread.focus_id,
+                commitment.focus_id,
+                commitment_thread.focus_id
+              )
+          )
+          BEGIN
+            SELECT RAISE(ABORT, 'scoped update must use a scope owned by its parent focus');
+          END;
+
+          CREATE TRIGGER updates_scope_matches_parent_focus_update
+          BEFORE UPDATE OF focus_id, thread_id, commitment_id, scope_id ON updates
+          WHEN NEW.scope_id IS NOT NULL AND NOT EXISTS (
+            SELECT 1
+            FROM scopes scope
+            LEFT JOIN threads thread ON thread.id = NEW.thread_id
+            LEFT JOIN commitments commitment ON commitment.id = NEW.commitment_id
+            LEFT JOIN threads commitment_thread ON commitment_thread.id = commitment.thread_id
+            WHERE scope.id = NEW.scope_id
+              AND scope.focus_id = COALESCE(
+                thread.focus_id,
+                commitment.focus_id,
+                commitment_thread.focus_id
+              )
+          )
+          BEGIN
+            SELECT RAISE(ABORT, 'scoped update must use a scope owned by its parent focus');
+          END;
+        `)
+      }
+    }
   }
 ]
 

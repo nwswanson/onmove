@@ -20,6 +20,15 @@ relations 1 ─────── 0..n items         ON DELETE SET NULL
 items     1 ─────── 0..n status_transitions                 ON DELETE CASCADE
 
 focuses   1 ─────── 0..n focus_status_transitions           ON DELETE CASCADE
+
+subjects  n ─────── n scopes (effective-dated membership)
+
+focuses   1 ─────── 0..n scopes                             ON DELETE CASCADE
+scopes    1 ─────── 0..n scope membership overlays          ON DELETE CASCADE
+
+focus/thread/commitment ── exactly one Scope application
+
+scoped Update ── exactly one Scope + Subject cell
 ```
 
 - An item can have one parent and any number of children.
@@ -45,7 +54,8 @@ Focuses are top-level portfolio objects rather than hierarchy children. Their in
 }
 ```
 
-`goal` is durable plain text and defaults to an empty string for new and migrated Focus records.
+`goal` is durable rich-text-compatible content and defaults to an empty string for new and migrated
+Focus records.
 
 Titles are required but intentionally not unique. Status is materialized on the `focuses` row and
 every actual change is appended by SQLite triggers to `focus_status_transitions`. Active and paused
@@ -59,8 +69,25 @@ these operations only through named IPC methods. Threads and Commitments use nam
 and update methods; Updates use named list, create, edit, and delete methods. Repository dispatch and SQL
 remain unavailable to the renderer.
 
-The model beneath Focus—Threads, Commitments, dated Updates, health, reviews, and cadence—is detailed
-in [`focus-thread-commitment-model.md`](focus-thread-commitment-model.md).
+The model beneath Focus—Subjects, Focus-owned Scopes, Threads, Commitments, dated Updates, health,
+reviews, and cadence—is specified as a unified whole in
+[`focus-thread-commitment-model.md`](focus-thread-commitment-model.md). The schema and repository work
+introduced for Scope is summarized separately in
+[`scope-data-model-addition.md`](scope-data-model-addition.md).
+
+## Subjects, Scopes, and exact Update cells
+
+Subjects are global canonical records for anything managed or observed. A Scope is a named,
+Focus-owned applicability expression resolving to Subjects on a given date. Membership intervals
+are effective-dated, so changing populations does not rewrite historical meaning.
+
+Focuses, Threads, and Commitments each have an explicit Scope application. `open` means no boundary;
+Threads and Commitments may use `inherited`; `explicit` and `derived` select a Scope owned by the
+same Focus. A bounded Thread or Commitment Update must store the exact effective Scope and Subject
+cell. Direct Focus Updates remain aggregate and unscoped.
+
+Scope is applicability, not tagging or current attention. Current exception sets can later be
+derived from cell state without pretending that healthy Subjects have left the Scope.
 
 ## Status is state plus history
 

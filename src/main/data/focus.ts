@@ -6,9 +6,12 @@ import {
   type FocusSnapshot,
   type FocusStatus,
   type FocusStatusTransition,
+  type ScopeApplicationSnapshot,
+  type SetScopeApplicationInput,
   type UpdateFocusInput
 } from '../../shared/contracts'
 import { BaseModel, BaseRepository, ModelNotFoundError, ModelValidationError } from './model'
+import { ScopeApplicationRepository } from './scope-model'
 import type { SqliteAdapter } from './sqlite-adapter'
 
 type FocusRecord = FocusSnapshot
@@ -185,6 +188,15 @@ export class FocusModel extends BaseModel<FocusRecord> {
     return this.repository.statusHistory(this.id)
   }
 
+  scopeApplication(): ScopeApplicationSnapshot {
+    return this.repository.scopeApplication(this.id)
+  }
+
+  setScope(input: SetScopeApplicationInput): this {
+    this.repository.setScope(this.id, input)
+    return this.refresh()
+  }
+
   snapshot(asOf?: string): FocusSnapshot {
     return asOf === undefined ? this.toSnapshot() : this.repository.materialize(this.id, asOf)
   }
@@ -195,8 +207,11 @@ export class FocusModel extends BaseModel<FocusRecord> {
 }
 
 export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
+  private readonly scopeApplications: ScopeApplicationRepository
+
   constructor(private readonly database: SqliteAdapter) {
     super()
+    this.scopeApplications = new ScopeApplicationRepository(database)
   }
 
   protected instantiate(record: FocusRecord): FocusModel {
@@ -309,5 +324,13 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
         [id]
       )
       .map(transitionFromRow)
+  }
+
+  scopeApplication(id: number): ScopeApplicationSnapshot {
+    return this.scopeApplications.get({ type: 'focus', id })
+  }
+
+  setScope(id: number, input: SetScopeApplicationInput): ScopeApplicationSnapshot {
+    return this.scopeApplications.set({ type: 'focus', id }, input)
   }
 }

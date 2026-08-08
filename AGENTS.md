@@ -17,6 +17,11 @@
   markup.
 - Every selected destination must update the main view, use `aria-current="page"`, and retain a
   visible keyboard focus state.
+- Use the shared 24px semantic `Sunflower` for active Focus and Thread sidebar destinations instead
+  of generic circle icons. The center seed represents the newest direct Update; subsequent seeds
+  represent every active Commitment (including Thread-parented Commitments in a Focus rollup).
+  Map green to Greenery, red/yellow to Tigerlily, and missing/`none` state to gray, with Cerulean as
+  the boundary. Keep the textual summary available as SVG/hover text; never rely on seed color alone.
 - Preserve the native macOS inset title bar and draggable regions. Interactive controls must remain
   outside draggable hit targets.
 - The sidebar is resizable. Contextual editing belongs in the resizable right-side drawer, which
@@ -28,6 +33,20 @@
   owns Back navigation and restores the selection previously held by each parent level.
 - Declare ordinary level-local creation through a contextual level's optional `newItem` action;
   do not hard-code New Thread or New Commitment footer markup in domain adapters.
+- Give each Focus and Thread its own parent-asserting Commitment level. Opening Commitments from the
+  parent screen's collection heading replaces the contextual sidebar, selects the first owned
+  Commitment, and returns through the shared Back behavior; never mix Focus-owned Commitments into
+  a Thread level.
+- At the top level, render each Focus Overall or Thread item's direct Commitments as a nested tree.
+  Nested Commitment rows use the receiver-owned semantic state dot, never a Sunflower. Selecting a
+  nested Commitment changes the main route while preserving the top-level sidebar. Give every tree
+  scope a generic child-collection action that presents `Add commitment`; it opens creation for that
+  scope and never enters the filtered Commitment level. Do not render a Commitments drilldown in the
+  contextual tree.
+- Route programmatic hierarchy destinations through `ContextualSidebarNavigation.navigateToPath`.
+  The navigation owner must resolve asserted ancestor selections and the optional leaf selection
+  atomically; feature screens must not manually sequence parent selection, level entry, and leaf
+  selection for creation results or deep links.
 - Describe contextual inspectors with the shared `ContextDrawerModel` contract and render them only
   through `ContextDrawerOutlet`. The receiver guarantees a visible close button and requires a
   descriptive accessible label; feature code must not compose the low-level drawer shell directly.
@@ -88,9 +107,10 @@ and do not rely on color alone to communicate selection or status.
 - Keep domain-to-UI translation in plain feature presenter `.ts` modules. Presenters may import
   domain types and UI contract types but must not render React. Domain snapshots and model hooks
   must not expose UI fields, icons, styling, or render methods.
-- Render direct Focus and Commitment Updates through the receiver-owned `UpdateList` contract.
-  Focus Updates belong in Overall and Commitment Updates stay in the selected Commitment view;
-  neither list includes descendant Updates. Give every Update its own responsive card: observation
+- Render direct Focus, Thread, and Commitment Updates through the receiver-owned `UpdateList`
+  contract. Focus Updates belong in Overall, Thread Updates in the selected Thread, and Commitment
+  Updates in the selected Commitment view; none of these lists includes descendant Updates. Give
+  every Update its own responsive card: observation
   uses the full card width while date, state, and actions occupy a wrapping metadata header. Do not
   reintroduce tabular columns. Updates must expose editable date, optional multi-line observation,
   and state plus add/delete actions. `Add update` must immediately persist a blank Update using the
@@ -103,16 +123,37 @@ and do not rely on color alone to communicate selection or status.
   recorded date (including a future date); do not sort or inspect Updates again in the renderer.
   Show the snapshot's `lastUpdateDate` with a visible `Never` fallback in Commitment screens,
   drawers, contextual rows, and main-view lists.
-- Show Commitment lifecycle status as a receiver-owned, read-only label in lists. Edit it only from
-  the selected Commitment's compact detail-header selector, and persist changes through the named
-  `updateCommitment` IPC method so SQLite transition auditing remains intact.
+- Show Commitment lifecycle status as a receiver-owned, read-only label in lists. Render the shared
+  feature-level `WorkStatusSelect` in Focus, Thread, and selected Commitment detail headers; it owns
+  the common `active`, `paused`, `done`, and `cancelled` vocabulary while the low-level UI primitive
+  owns select markup. Each screen must persist through its typed mutation so SQLite transition
+  auditing remains intact.
 - Build all Commitment collections through the pure feature view-model projection. Order Active
   Commitments by state (`red`, `yellow`, `green`, `none`), followed by Paused, followed by the
   combined Done / Cancelled group; preserve repository order within equal priorities. The main view
   exposes Current (separate Active and Paused sections) and Done / Cancelled lists, while the
   contextual sidebar uses the same ordered groups.
+- Render Focus- and Thread-owned collections through the same `CommitmentCollection` receiver.
+  Presenters must translate the business projection into its receiver-owned item contract; the
+  receiver owns row markup and the visible `Add commitment` action, and emits only creation
+  requests or Commitment ids for open, pin, and completion actions. Successful parent-page
+  creation must select the new nested Commitment route without entering the filtered Commitment
+  level; creation from an already-filtered level remains in that level.
+- New Commitments expose `ongoing` and `action` types and default to `ongoing`; their optional due
+  date must be visible in the selected Commitment screen. Render the one-way completion checkbox
+  only on Action Commitment list rows. Checking an active or paused Action sends `status: done`
+  through the existing typed mutation so transition auditing remains intact; closed Actions cannot
+  be reopened through the checkbox, and Ongoing rows never expose it.
 - Keep view identifiers and navigation definitions typed. Add tests whenever a destination or
   sidebar action is introduced.
+- Persist `sensitive` independently on Focus, Thread, Commitment, and Update records. The native
+  View-menu checkbox defaults to showing content and broadcasts one application-wide visibility
+  state to every renderer window. When hiding is enabled, filter sensitive records from collection
+  boundaries instead of redacting their view models. Sensitivity cascades down the hierarchy, so a
+  sensitive ancestor removes all descendants from lists regardless of each descendant's own flag.
+  If the current route becomes hidden, resolve to the nearest visible parent; a hidden Focus resolves
+  to Home. Pinned drawer adapters remain complete and continue to follow the pin-across-navigation
+  contract because they are selected view models, not list membership.
 - Prefer small view components and shared shadcn/ui primitives over a monolithic application shell.
 
 ## Data model
@@ -129,6 +170,20 @@ and do not rely on color alone to communicate selection or status.
   derived `reviewDue` projection.
 - A Commitment must have exactly one Focus or Thread parent. An Update must have exactly one Focus,
   Thread, or Commitment parent. Preserve these SQLite constraints and cascades.
+- Treat Subject, Scope, and Scope application as distinct model concepts. Subjects are canonical and
+  generic; Scopes are Focus-owned applicability expressions; applications state whether a Focus,
+  Thread, or Commitment is Open, inherited, explicit, or derived.
+- Keep Scope membership effective-dated with half-open `[effectiveFrom, effectiveUntil)` intervals.
+  Resolve effective membership as same-dimension base plus includes minus excludes, and never rewrite
+  historical membership to describe a current population.
+- Keep context, Scope, and attention separate. Scope is the complete applicability set, not a tag or
+  a filtered list of current exceptions; attention can be derived later without narrowing Scope.
+- Require every bounded Thread or Commitment Update to store its exact effective Scope and Subject
+  cell. Direct Focus Updates and Updates on Open parents remain unscoped. Preserve cell attribution
+  when applications or membership later change.
+- Store `sensitive` as a strict non-null boolean flag that defaults to false on every Focus, Thread,
+  Commitment, and Update. Visibility is a presentation preference, not a database filter or a
+  lifecycle state.
 - Return UI-ready snapshots through named IPC methods. Do not expose generic SQL or arbitrary model
   dispatch to the renderer.
 

@@ -158,6 +158,130 @@ export type HealthState = (typeof HEALTH_STATES)[number]
 export const COMMITMENT_TYPES = ['action', 'ongoing'] as const
 export type CommitmentType = (typeof COMMITMENT_TYPES)[number]
 
+export const SCOPE_SOURCE_TYPES = ['explicit', 'derived'] as const
+export type ScopeSourceType = (typeof SCOPE_SOURCE_TYPES)[number]
+
+export const SCOPE_MODES = ['open', 'inherited', 'explicit', 'derived'] as const
+export type ScopeMode = (typeof SCOPE_MODES)[number]
+
+export const SCOPE_MEMBERSHIP_EFFECTS = ['include', 'exclude'] as const
+export type ScopeMembershipEffect = (typeof SCOPE_MEMBERSHIP_EFFECTS)[number]
+
+export interface SubjectSnapshot {
+  id: number
+  kind: string
+  name: string
+  description: string | null
+  externalKey: string | null
+  sensitive: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateSubjectInput {
+  kind?: string
+  name: string
+  description?: string | null
+  externalKey?: string | null
+  sensitive?: boolean
+}
+
+export interface UpdateSubjectInput {
+  kind?: string
+  name?: string
+  description?: string | null
+  externalKey?: string | null
+  sensitive?: boolean
+}
+
+export interface ScopeSnapshot {
+  id: number
+  focusId: number
+  name: string
+  dimension: string
+  sourceType: ScopeSourceType
+  baseScopeId: number | null
+  derivedRelationship: string | null
+  contextSubjectId: number | null
+  sensitive: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateScopeInput {
+  focusId: number
+  name: string
+  dimension: string
+  sourceType?: ScopeSourceType
+  baseScopeId?: number | null
+  derivedRelationship?: string | null
+  contextSubjectId?: number | null
+  sensitive?: boolean
+}
+
+export interface UpdateScopeInput {
+  name?: string
+  dimension?: string
+  baseScopeId?: number | null
+  derivedRelationship?: string | null
+  contextSubjectId?: number | null
+  sensitive?: boolean
+}
+
+export interface ScopeMembershipSnapshot {
+  id: number
+  scopeId: number
+  subjectId: number
+  effect: ScopeMembershipEffect
+  effectiveFrom: string
+  effectiveUntil: string | null
+  createdAt: string
+}
+
+export interface CreateScopeMembershipInput {
+  scopeId: number
+  subjectId: number
+  effect?: ScopeMembershipEffect
+  effectiveFrom?: string
+  effectiveUntil?: string | null
+}
+
+export interface EndScopeMembershipInput {
+  effectiveUntil: string
+}
+
+export type ScopeOwner =
+  | { type: 'focus'; id: number }
+  | { type: 'thread'; id: number }
+  | { type: 'commitment'; id: number }
+
+export interface SetScopeApplicationInput {
+  mode: ScopeMode
+  scopeId?: number | null
+}
+
+export interface ScopeApplicationSnapshot {
+  owner: ScopeOwner
+  mode: ScopeMode
+  declaredScopeId: number | null
+  effectiveScopeId: number | null
+  inheritedFrom: ScopeOwner | null
+  updatedAt: string
+}
+
+export interface UpdateScopeCell {
+  scopeId: number
+  subjectId: number
+}
+
+export interface CommitmentScopeCellSnapshot extends UpdateScopeCell {
+  subject: SubjectSnapshot
+  state: HealthState
+  lastUpdateDate: string | null
+  nextUpdateDate: string | null
+  needsUpdate: boolean
+}
+
 export interface ThreadSnapshot {
   id: number
   focusId: number
@@ -181,6 +305,7 @@ export interface CreateThreadInput {
   reviewFrequencyDays: number
   needsReview?: boolean
   sensitive?: boolean
+  scope?: SetScopeApplicationInput
 }
 
 export interface UpdateThreadInput {
@@ -220,6 +345,7 @@ export interface CreateCommitmentInput {
   dueDate?: string | null
   cadenceDays?: number | null
   sensitive?: boolean
+  scope?: SetScopeApplicationInput
 }
 
 export interface UpdateCommitmentInput {
@@ -243,6 +369,7 @@ export interface UpdateSnapshot {
   observation: string
   state: HealthState
   sensitive: boolean
+  scope: UpdateScopeCell | null
   createdAt: string
 }
 
@@ -252,6 +379,7 @@ export interface CreateUpdateInput {
   observation?: string
   state?: HealthState
   sensitive?: boolean
+  scope?: UpdateScopeCell | null
 }
 
 export interface EditUpdateInput {
