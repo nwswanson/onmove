@@ -34,6 +34,7 @@ describe('Focus models', () => {
       status: 'active',
       lastReviewDate: null,
       needsReview: true,
+      sensitive: false,
       statusChangedAt: expect.any(String)
     })
     expect(focus.statusHistory()).toMatchObject([{ from: null, to: 'active' }])
@@ -151,9 +152,26 @@ describe('Focus models', () => {
       description: 'Stored in SQLite',
       goal: 'Retain the goal too',
       status: 'paused',
-      needsReview: false
+      needsReview: false,
+      sensitive: false
     })
     expect(reopened.statusHistory()).toHaveLength(2)
+  })
+
+  it('persists and validates the sensitive flag independently of lifecycle state', () => {
+    const focus = database!.domain.focuses.create({
+      title: 'Confidential launch',
+      sensitive: true
+    })
+
+    expect(focus.sensitive).toBe(true)
+    focus.update({ sensitive: false })
+    expect(focus.toSnapshot()).toMatchObject({
+      title: 'Confidential launch',
+      sensitive: false,
+      status: 'active'
+    })
+    expect(() => focus.update({ sensitive: 'yes' as never })).toThrow(ModelValidationError)
   })
 
   it('derives last review from only the latest effective direct Focus update', () => {

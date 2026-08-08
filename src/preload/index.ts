@@ -1,8 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC_CHANNELS, type OnMoveApi } from '../shared/contracts'
+import { IPC_CHANNELS, IPC_EVENTS, type OnMoveApi } from '../shared/contracts'
 
 const api: OnMoveApi = {
   getAppState: () => ipcRenderer.invoke(IPC_CHANNELS.getAppState),
+  getSensitiveContentHidden: () => ipcRenderer.invoke(IPC_CHANNELS.getSensitiveContentHidden),
+  onSensitiveContentVisibilityChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, hidden: boolean): void => listener(hidden)
+    ipcRenderer.on(IPC_EVENTS.sensitiveContentVisibilityChanged, handler)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.sensitiveContentVisibilityChanged, handler)
+  },
   recordGreeting: () => ipcRenderer.invoke(IPC_CHANNELS.recordGreeting),
   showDataFolder: () => ipcRenderer.invoke(IPC_CHANNELS.showDataFolder),
   domain: {

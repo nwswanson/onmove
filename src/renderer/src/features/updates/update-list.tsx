@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { RichTextEditor } from '@/components/ui/rich-text-editor'
 import { StateLabel } from '@/components/ui/state-label'
+import { SensitivityToggle } from '@/features/shared/sensitivity-toggle'
 import {
   validateUpdateListModel,
   type UpdateListDraft,
@@ -17,7 +18,8 @@ function updateDraftsEqual(left: UpdateListDraft, right: UpdateListDraft): boole
   return (
     left.date === right.date &&
     left.observation === right.observation &&
-    left.state === right.state
+    left.state === right.state &&
+    left.sensitive === right.sensitive
   )
 }
 
@@ -35,7 +37,8 @@ function UpdateEditorCard({
   const initialDraft: UpdateListDraft = {
     date: item.date,
     observation: item.observation,
-    state: item.state
+    state: item.state,
+    sensitive: item.sensitive
   }
   const [draft, setDraft] = useState<UpdateListDraft>(initialDraft)
   const draftRef = useRef(initialDraft)
@@ -121,6 +124,11 @@ function UpdateEditorCard({
         </div>
 
         <div className="ml-auto flex shrink-0 items-center justify-end gap-1">
+          <SensitivityToggle
+            checked={draft.sensitive}
+            disabled={autosave.saving || deleting}
+            onCheckedChange={(sensitive) => updateDraft({ sensitive })}
+          />
           <Button
             type="button"
             variant="ghost"
@@ -188,7 +196,12 @@ export function UpdateList({
     setAdding(true)
     setCreateError(null)
     try {
-      await onCreate({ date: defaultDate, observation: '', state: defaultState })
+      await onCreate({
+        date: defaultDate,
+        observation: '',
+        state: defaultState,
+        sensitive: false
+      })
     } catch {
       setCreateError('The update could not be added.')
     } finally {

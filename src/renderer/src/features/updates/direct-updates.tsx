@@ -6,6 +6,7 @@ import {
   updateListItems
 } from '@/features/updates/updates-presenters'
 import { useUpdatesModel } from '@/features/updates/use-updates-model'
+import { visibleSensitiveRecords } from '@/features/shared/sensitivity'
 
 function today(): string {
   const now = new Date()
@@ -22,9 +23,13 @@ function parentLabel(parent: UpdateParent): string {
 
 export function DirectUpdates({
   parent,
+  hideSensitiveContent = false,
+  ancestorSensitive = false,
   onUpdatesChanged
 }: {
   parent: UpdateParent
+  hideSensitiveContent?: boolean
+  ancestorSensitive?: boolean
   onUpdatesChanged?: () => void | Promise<void>
 }): React.JSX.Element {
   const model = useUpdatesModel(parent)
@@ -36,7 +41,13 @@ export function DirectUpdates({
   return (
     <UpdateList
       ariaLabel={`${parentLabel(parent)} updates`}
-      items={updateListItems(model.updates)}
+      items={updateListItems(
+        visibleSensitiveRecords(
+          model.updates,
+          hideSensitiveContent,
+          ancestorSensitive
+        )
+      )}
       stateOptions={UPDATE_LIST_STATE_OPTIONS}
       defaultDate={today()}
       defaultState="none"
@@ -46,7 +57,8 @@ export function DirectUpdates({
         await model.createUpdate({
           date: draft.date,
           observation: draft.observation,
-          state: draft.state as HealthState
+          state: draft.state as HealthState,
+          sensitive: draft.sensitive
         })
         await changed()
       }}
@@ -54,7 +66,8 @@ export function DirectUpdates({
         await model.editUpdate(Number(rowId), {
           date: draft.date,
           observation: draft.observation,
-          state: draft.state as HealthState
+          state: draft.state as HealthState,
+          sensitive: draft.sensitive
         })
         await changed()
       }}

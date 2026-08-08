@@ -1,5 +1,5 @@
 import { useSyncExternalStore, type ComponentProps } from 'react'
-import { ChevronLeft, ChevronRight, Circle, Layers3, PauseCircle, Plus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Layers3, PauseCircle, Plus } from 'lucide-react'
 import {
   Sidebar,
   SidebarContent,
@@ -11,12 +11,41 @@ import {
   SidebarMenuButton,
   SidebarMenuItem
 } from '@/components/ui/sidebar'
-import { StateLabel, type StateLabelModel } from '@/components/ui/state-label'
+import {
+  StateDot,
+  StateLabel,
+  type StateLabelModel
+} from '@/components/ui/state-label'
+import { SemanticSunflower, type SemanticSunflowerModel } from '@/components/ui/sunflower'
 import { cn } from '@/lib/utils'
 
 export interface ContextualSidebarItemGroup {
   id: string
   label: string
+}
+
+export interface ContextualSidebarChildItemModel {
+  id: string
+  label: string
+  ariaLabel?: string
+  state?: StateLabelModel
+  tone?: 'default' | 'muted'
+  disabled?: boolean
+}
+
+export interface ContextualSidebarChildCollectionActionModel {
+  id: string
+  label: string
+  ariaLabel?: string
+  disabled?: boolean
+}
+
+export interface ContextualSidebarChildCollectionModel {
+  id: string
+  label: string
+  emptyState?: string
+  items: readonly ContextualSidebarChildItemModel[]
+  action?: ContextualSidebarChildCollectionActionModel
 }
 
 /**
@@ -30,12 +59,14 @@ export interface ContextualSidebarItemModel {
   description?: string
   ariaLabel?: string
   group?: ContextualSidebarItemGroup
-  icon?: 'overview' | 'item' | 'paused'
+  icon?: 'overview' | 'sunflower' | 'paused'
+  sunflower?: SemanticSunflowerModel
   accessory?: 'disclosure'
   stateLabel?: StateLabelModel
   tone?: 'default' | 'muted'
   lines?: 1 | 2
   disabled?: boolean
+  childCollection?: ContextualSidebarChildCollectionModel
 }
 
 export interface ContextualSidebarNewItemAction {
@@ -64,6 +95,16 @@ export interface ContextualSidebarLevelOptions extends ContextualSidebarLevelBas
     | readonly ContextualSidebarItemModel[]
     | (() => readonly ContextualSidebarItemModel[])
   onSelect?: (itemId: string) => void
+  onSelectChild?: (
+    parentItemId: string,
+    collectionId: string,
+    childItemId: string
+  ) => void
+  onChildCollectionAction?: (
+    parentItemId: string,
+    collectionId: string,
+    actionId: string
+  ) => void
 }
 
 /**
@@ -132,6 +173,21 @@ export abstract class ContextualSidebarLevelBase {
   abstract getItem(itemId: string): ContextualSidebarItemModel | undefined
   abstract hasItem(itemId: string): boolean
   abstract notifySelection(itemId: string): void
+  abstract getChildItem(
+    parentItemId: string,
+    collectionId: string,
+    childItemId: string
+  ): ContextualSidebarChildItemModel | undefined
+  abstract notifyChildSelection(
+    parentItemId: string,
+    collectionId: string,
+    childItemId: string
+  ): void
+  abstract notifyChildCollectionAction(
+    parentItemId: string,
+    collectionId: string,
+    actionId: string
+  ): void
 
   getNewItem(): ContextualSidebarNewItemAction | null {
     const action = this.resolveNewItem()
@@ -153,11 +209,15 @@ export abstract class ContextualSidebarLevelBase {
 export class ContextualSidebarLevel extends ContextualSidebarLevelBase {
   private itemSource: ContextualSidebarLevelOptions['items']
   private readonly onItemSelect?: ContextualSidebarLevelOptions['onSelect']
+  private readonly onChildItemSelect?: ContextualSidebarLevelOptions['onSelectChild']
+  private readonly onCollectionAction?: ContextualSidebarLevelOptions['onChildCollectionAction']
 
   constructor(options: ContextualSidebarLevelOptions) {
     super(options)
     this.itemSource = options.items
     this.onItemSelect = options.onSelect
+    this.onChildItemSelect = options.onSelectChild
+    this.onCollectionAction = options.onChildCollectionAction
     this.readEntries()
   }
 
@@ -187,6 +247,52 @@ export class ContextualSidebarLevel extends ContextualSidebarLevelBase {
     this.onItemSelect?.(itemId)
   }
 
+  getChildItem(
+    parentItemId: string,
+    collectionId: string,
+    childItemId: string
+  ): ContextualSidebarChildItemModel | undefined {
+    const collection = this.requireItem(parentItemId).childCollection
+    if (!collection || collection.id !== collectionId) return undefined
+    return collection.items.find((item) => item.id === childItemId)
+  }
+
+  notifyChildSelection(
+    parentItemId: string,
+    collectionId: string,
+    childItemId: string
+  ): void {
+    const child = this.getChildItem(parentItemId, collectionId, childItemId)
+    if (!child) {
+      throw new Error(
+        `Contextual sidebar item "${parentItemId}" does not contain child "${childItemId}" in collection "${collectionId}".`
+      )
+    }
+    this.onChildItemSelect?.(parentItemId, collectionId, childItemId)
+  }
+
+  notifyChildCollectionAction(
+    parentItemId: string,
+    collectionId: string,
+    actionId: string
+  ): void {
+    const collection = this.requireItem(parentItemId).childCollection
+    if (!collection || collection.id !== collectionId) {
+      throw new Error(
+        `Contextual sidebar item "${parentItemId}" does not contain collection "${collectionId}".`
+      )
+    }
+    const action = collection.action
+    if (!action || action.id !== actionId) {
+      throw new Error(
+        `Contextual sidebar collection "${collectionId}" does not contain action "${actionId}".`
+      )
+    }
+    if (!action.disabled) {
+      this.onCollectionAction?.(parentItemId, collectionId, actionId)
+    }
+  }
+
   private readEntries(): Array<{ id: string; item: ContextualSidebarItemModel }> {
     const ids = new Set<string>()
     return this.items.map((item) => {
@@ -204,6 +310,11 @@ export class ContextualSidebarLevel extends ContextualSidebarLevelBase {
           `Contextual sidebar level "${this.id}" contains item "${id}" with an empty description.`
         )
       }
+      if ((item.icon === 'sunflower') !== (item.sunflower !== undefined)) {
+        throw new Error(
+          `Contextual sidebar level "${this.id}" contains item "${id}" with an invalid Sunflower model.`
+        )
+      }
       if (ids.has(id)) {
         throw new Error(`Contextual sidebar level "${this.id}" contains duplicate item id "${id}".`)
       }
@@ -214,6 +325,31 @@ export class ContextualSidebarLevel extends ContextualSidebarLevelBase {
         throw new Error(
           `Contextual sidebar level "${this.id}" contains item group "${item.group.id}" without a label.`
         )
+      }
+      if (item.childCollection) {
+        const collection = item.childCollection
+        if (!collection.id.trim() || !collection.label.trim()) {
+          throw new Error(
+            `Contextual sidebar level "${this.id}" contains item "${id}" with an invalid child collection.`
+          )
+        }
+        if (
+          collection.action &&
+          (!collection.action.id.trim() || !collection.action.label.trim())
+        ) {
+          throw new Error(
+            `Contextual sidebar item "${id}" contains an invalid child collection action.`
+          )
+        }
+        const childIds = new Set<string>()
+        for (const child of collection.items) {
+          if (!child.id.trim() || !child.label.trim() || childIds.has(child.id)) {
+            throw new Error(
+              `Contextual sidebar item "${id}" contains an invalid child "${child.id}".`
+            )
+          }
+          childIds.add(child.id)
+        }
       }
       ids.add(id)
       return { id, item }
@@ -234,6 +370,13 @@ export interface ContextualSidebarNavigationSnapshot {
   parent: ContextualSidebarLevelBase | null
   canGoBack: boolean
   selectedItemId: string | null
+  selectedChild: ContextualSidebarChildSelection | null
+}
+
+export interface ContextualSidebarChildSelection {
+  parentItemId: string
+  collectionId: string
+  childItemId: string
 }
 
 /**
@@ -245,6 +388,10 @@ export class ContextualSidebarNavigation {
 
   private currentLevel: ContextualSidebarLevelBase
   private readonly selections = new Map<ContextualSidebarLevelBase, string | null>()
+  private readonly childSelections = new Map<
+    ContextualSidebarLevelBase,
+    ContextualSidebarChildSelection
+  >()
   private readonly listeners = new Set<() => void>()
   private snapshot: ContextualSidebarNavigationSnapshot
 
@@ -275,20 +422,87 @@ export class ContextualSidebarNavigation {
         `Contextual sidebar level "${level.id}" asserts parent item "${level.parentItemId}", but "${this.snapshot.selectedItemId}" is selected.`
       )
     }
+    this.childSelections.delete(this.currentLevel)
     this.currentLevel = level
     this.publish()
+  }
+
+  /**
+   * Opens any descendant level as one atomic deep link. The asserted parent
+   * path and optional leaf selection are resolved by the navigation owner, so
+   * callers never have to coordinate intermediate sidebar selections.
+   */
+  navigateToPath(
+    level: ContextualSidebarLevelBase,
+    selectedItemId?: string
+  ): boolean {
+    const path: ContextualSidebarLevelBase[] = []
+    for (let candidate: ContextualSidebarLevelBase | null = level; candidate; candidate = candidate.parent) {
+      path.unshift(candidate)
+    }
+    if (path[0] !== this.root) {
+      throw new Error(
+        `Contextual sidebar level "${level.id}" does not belong to navigation root "${this.root.id}".`
+      )
+    }
+
+    const assertedSelections = path.slice(1).map((child) => {
+      const parent = child.parent
+      const parentItemId = child.parentItemId
+      if (!parent || !parentItemId || !parent.hasItem(parentItemId)) {
+        throw new Error(
+          `Contextual sidebar level "${child.id}" asserts missing parent item "${parentItemId ?? ''}".`
+        )
+      }
+      return { level: parent, itemId: parentItemId }
+    })
+    if (assertedSelections.some(({ level: parent, itemId }) => parent.getItem(itemId)?.disabled)) {
+      return false
+    }
+
+    if (selectedItemId !== undefined) {
+      if (!level.hasItem(selectedItemId)) {
+        throw new Error(
+          `Cannot deep link to missing item "${selectedItemId}" in contextual sidebar level "${level.id}".`
+        )
+      }
+      if (level.getItem(selectedItemId)?.disabled) return false
+    }
+
+    for (const asserted of assertedSelections) {
+      this.childSelections.delete(asserted.level)
+      if (this.selections.get(asserted.level) === asserted.itemId) continue
+      this.selections.set(asserted.level, asserted.itemId)
+      asserted.level.notifySelection(asserted.itemId)
+    }
+    if (
+      selectedItemId !== undefined &&
+      this.selections.get(level) !== selectedItemId
+    ) {
+      this.selections.set(level, selectedItemId)
+      this.childSelections.delete(level)
+      level.notifySelection(selectedItemId)
+    }
+    this.currentLevel = level
+    this.publish()
+    return true
   }
 
   back(): boolean {
     const parent = this.currentLevel.parent
     if (!parent) return false
+    this.childSelections.delete(parent)
     this.currentLevel = parent
     this.publish()
     return true
   }
 
   reset(): void {
-    if (this.currentLevel === this.root) return
+    this.childSelections.delete(this.root)
+    if (this.currentLevel === this.root) {
+      this.publish()
+      return
+    }
     this.currentLevel = this.root
     this.publish()
   }
@@ -301,13 +515,55 @@ export class ContextualSidebarNavigation {
     }
     if (this.currentLevel.getItem(itemId)?.disabled) return false
     this.selections.set(this.currentLevel, itemId)
+    this.childSelections.delete(this.currentLevel)
     this.currentLevel.notifySelection(itemId)
+    this.publish()
+    return true
+  }
+
+  /** Select a nested route without replacing the currently visible sidebar level. */
+  selectChild(
+    parentItemId: string,
+    collectionId: string,
+    childItemId: string
+  ): boolean {
+    const parent = this.currentLevel.getItem(parentItemId)
+    const child = this.currentLevel.getChildItem(
+      parentItemId,
+      collectionId,
+      childItemId
+    )
+    if (!parent || !child) {
+      throw new Error(
+        `Cannot select missing child "${childItemId}" from contextual sidebar item "${parentItemId}".`
+      )
+    }
+    if (parent.disabled || child.disabled) return false
+
+    this.selections.set(this.currentLevel, parentItemId)
+    this.currentLevel.notifySelection(parentItemId)
+    this.childSelections.set(this.currentLevel, {
+      parentItemId,
+      collectionId,
+      childItemId
+    })
+    this.currentLevel.notifyChildSelection(
+      parentItemId,
+      collectionId,
+      childItemId
+    )
     this.publish()
     return true
   }
 
   getSelection(level: ContextualSidebarLevelBase): string | null {
     return this.resolveSelection(level)
+  }
+
+  getChildSelection(
+    level: ContextualSidebarLevelBase
+  ): ContextualSidebarChildSelection | null {
+    return this.resolveChildSelection(level)
   }
 
   /** Reconciles selections after a level's item provider changes. */
@@ -334,8 +590,28 @@ export class ContextualSidebarNavigation {
       level: this.currentLevel,
       parent: this.currentLevel.parent,
       canGoBack: this.currentLevel.parent !== null,
-      selectedItemId: this.resolveSelection(this.currentLevel)
+      selectedItemId: this.resolveSelection(this.currentLevel),
+      selectedChild: this.resolveChildSelection(this.currentLevel)
     }
+  }
+
+  private resolveChildSelection(
+    level: ContextualSidebarLevelBase
+  ): ContextualSidebarChildSelection | null {
+    const current = this.childSelections.get(level)
+    if (
+      current &&
+      this.resolveSelection(level) === current.parentItemId &&
+      level.getChildItem(
+        current.parentItemId,
+        current.collectionId,
+        current.childItemId
+      )
+    ) {
+      return current
+    }
+    this.childSelections.delete(level)
+    return null
   }
 
   private resolveSelection(level: ContextualSidebarLevelBase): string | null {
@@ -391,7 +667,7 @@ export function ContextualSidebar({
   ...props
 }: ContextualSidebarProps): React.JSX.Element {
   const snapshot = useContextualSidebarNavigation(navigation)
-  const { level, parent, selectedItemId } = snapshot
+  const { level, parent, selectedItemId, selectedChild } = snapshot
   const itemIds = level.getItemIds()
   const groups = itemIds.reduce<Array<{ group: ContextualSidebarItemGroup | null; itemIds: string[] }>>(
     (result, itemId) => {
@@ -446,13 +722,19 @@ export function ContextualSidebar({
                   const selected = itemId === selectedItemId
                   const item = level.getItem(itemId)
                   if (!item) return null
+                  const childCollection = item.childCollection
+                  const selectedChildBelongsToItem =
+                    selectedChild?.parentItemId === itemId
                   return (
                     <SidebarMenuItem key={itemId}>
                       <SidebarMenuButton
                         type="button"
                         isActive={selected}
-                        aria-current={selected ? 'page' : undefined}
+                        aria-current={
+                          selected && !selectedChildBelongsToItem ? 'page' : undefined
+                        }
                         aria-label={item.ariaLabel ?? item.label}
+                        title={item.sunflower?.ariaLabel}
                         disabled={item.disabled}
                         className={cn(
                           item.tone === 'muted' && 'text-muted-foreground opacity-55',
@@ -464,8 +746,8 @@ export function ContextualSidebar({
                           <Layers3 aria-hidden="true" />
                         ) : item.icon === 'paused' ? (
                           <PauseCircle aria-hidden="true" />
-                        ) : item.icon === 'item' ? (
-                          <Circle aria-hidden="true" />
+                        ) : item.icon === 'sunflower' && item.sunflower ? (
+                          <SemanticSunflower className="!size-6" model={item.sunflower} />
                         ) : null}
                         <span className="min-w-0 flex-1">
                           <span
@@ -493,6 +775,82 @@ export function ContextualSidebar({
                           <ChevronRight className="ml-auto" aria-hidden="true" />
                         )}
                       </SidebarMenuButton>
+                      {childCollection && (
+                        <div
+                          className="ml-4 border-l border-sidebar-border/80 pl-2"
+                          data-child-collection-id={childCollection.id}
+                        >
+                          {childCollection.action && (
+                            <button
+                              type="button"
+                              className="flex min-h-7 w-full items-center gap-1 rounded-md px-2 text-left text-[0.6875rem] font-semibold text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring/55 disabled:pointer-events-none disabled:opacity-50"
+                              aria-label={
+                                childCollection.action.ariaLabel ??
+                                childCollection.action.label
+                              }
+                              disabled={childCollection.action.disabled}
+                              onClick={() =>
+                                level.notifyChildCollectionAction(
+                                  itemId,
+                                  childCollection.id,
+                                  childCollection.action!.id
+                                )
+                              }
+                            >
+                              <Plus className="size-3.5" aria-hidden="true" />
+                              <span className="truncate">
+                                {childCollection.action.label}
+                              </span>
+                            </button>
+                          )}
+                          <ul
+                            role="list"
+                            aria-label={`${item.label} ${childCollection.label}`}
+                            className="pb-1"
+                          >
+                            {childCollection.items.map((child) => {
+                              const childSelected =
+                                selectedChildBelongsToItem &&
+                                selectedChild.collectionId === childCollection.id &&
+                                selectedChild.childItemId === child.id
+                              return (
+                                <li key={child.id}>
+                                  <button
+                                    type="button"
+                                    aria-current={childSelected ? 'page' : undefined}
+                                    aria-label={child.ariaLabel ?? child.label}
+                                    disabled={child.disabled}
+                                    className={cn(
+                                      'flex min-h-7 w-full items-center gap-2 rounded-md px-2 text-left text-xs outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring/55 disabled:pointer-events-none disabled:opacity-50',
+                                      childSelected &&
+                                        'bg-sidebar-accent text-sidebar-accent-foreground',
+                                      child.tone === 'muted' &&
+                                        'text-muted-foreground opacity-55'
+                                    )}
+                                    onClick={() =>
+                                      navigation.selectChild(
+                                        itemId,
+                                        childCollection.id,
+                                        child.id
+                                      )
+                                    }
+                                  >
+                                    {child.state && <StateDot model={child.state} />}
+                                    <span className="min-w-0 flex-1 truncate">
+                                      {child.label}
+                                    </span>
+                                  </button>
+                                </li>
+                              )
+                            })}
+                            {childCollection.items.length === 0 && (
+                              <li className="px-2 py-1 text-[0.6875rem] text-muted-foreground">
+                                {childCollection.emptyState ?? 'No items'}
+                              </li>
+                            )}
+                          </ul>
+                        </div>
+                      )}
                     </SidebarMenuItem>
                   )
                 })}

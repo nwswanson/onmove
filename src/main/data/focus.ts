@@ -22,6 +22,7 @@ interface FocusRow {
   status: string
   status_changed_at: string
   needs_review: number
+  sensitive: number
   last_review_date: string | null
   created_at: string
   updated_at: string
@@ -87,6 +88,14 @@ function normalizeNeedsReview(value: boolean | undefined): boolean {
   return value
 }
 
+function normalizeSensitive(value: boolean | undefined): boolean {
+  if (value === undefined) return false
+  if (typeof value !== 'boolean') {
+    throw new ModelValidationError('focus sensitive must be a boolean')
+  }
+  return value
+}
+
 function normalizeDate(value: string, field: string): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     throw new ModelValidationError(`${field} must use YYYY-MM-DD`)
@@ -116,6 +125,7 @@ function focusFromRow(row: FocusRow): FocusRecord {
     statusChangedAt: row.status_changed_at,
     lastReviewDate: row.last_review_date,
     needsReview: Boolean(row.needs_review),
+    sensitive: Boolean(row.sensitive),
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
@@ -159,6 +169,10 @@ export class FocusModel extends BaseModel<FocusRecord> {
     return this.record.status
   }
 
+  get sensitive(): boolean {
+    return this.record.sensitive
+  }
+
   update(input: UpdateFocusInput): this {
     return this.replace(this.repository.update(this.id, input))
   }
@@ -193,8 +207,8 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
     const now = timestamp()
     const result = this.database.run(
       `INSERT INTO focuses (
-         kind, title, description, goal, status, needs_review, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         kind, title, description, goal, status, needs_review, sensitive, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         normalizeKind(input.kind),
         normalizeTitle(input.title),
@@ -202,6 +216,7 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
         normalizeGoal(input.goal),
         normalizeStatus(input.status),
         normalizeNeedsReview(input.needsReview) ? 1 : 0,
+        normalizeSensitive(input.sensitive) ? 1 : 0,
         now,
         now
       ]
@@ -222,7 +237,7 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
   private materializeOrNull(id: number, asOf: string): FocusRecord | null {
     assertId(id)
     const row = this.database.get<FocusRow>(
-      `SELECT id, kind, title, description, goal, status, status_changed_at, needs_review,
+      `SELECT id, kind, title, description, goal, status, status_changed_at, needs_review, sensitive,
               created_at, updated_at,
               (SELECT recorded_on FROM updates
                WHERE focus_id = focuses.id AND recorded_on <= ?
@@ -237,7 +252,7 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
     const date = normalizeDate(asOf, 'asOf')
     return this.database
       .all<FocusRow>(
-        `SELECT id, kind, title, description, goal, status, status_changed_at, needs_review,
+        `SELECT id, kind, title, description, goal, status, status_changed_at, needs_review, sensitive,
                 created_at, updated_at,
                 (SELECT recorded_on FROM updates
                  WHERE focus_id = focuses.id AND recorded_on <= ?
@@ -254,7 +269,7 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
 
     this.database.run(
       `UPDATE focuses
-       SET title = ?, description = ?, goal = ?, status = ?, needs_review = ?, updated_at = ?
+       SET title = ?, description = ?, goal = ?, status = ?, needs_review = ?, sensitive = ?, updated_at = ?
        WHERE id = ?`,
       [
         input.title === undefined ? current.title : normalizeTitle(input.title),
@@ -266,6 +281,9 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
         input.needsReview === undefined
           ? (current.needsReview ? 1 : 0)
           : (normalizeNeedsReview(input.needsReview) ? 1 : 0),
+        input.sensitive === undefined
+          ? (current.sensitive ? 1 : 0)
+          : (normalizeSensitive(input.sensitive) ? 1 : 0),
         timestamp(),
         id
       ]

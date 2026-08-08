@@ -13,6 +13,7 @@ describe('Update presenters', () => {
       date: '2026-08-07',
       observation: 'Ticket quality improved',
       state: 'green',
+      sensitive: false,
       createdAt: '2026-08-07T12:00:00.000Z'
     }
 
@@ -21,7 +22,8 @@ describe('Update presenters', () => {
         id: '8',
         date: '2026-08-07',
         observation: 'Ticket quality improved',
-        state: 'green'
+        state: 'green',
+        sensitive: false
       }
     ])
     expect(UPDATE_LIST_STATE_OPTIONS).toEqual([

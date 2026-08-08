@@ -15,6 +15,12 @@ export interface CommitmentListModel {
   groups: readonly CommitmentListGroup[]
 }
 
+export interface CommitmentCompletionModel {
+  visible: boolean
+  checked: boolean
+  disabled: boolean
+}
+
 const STATUS_ORDER: Readonly<Record<CommitmentStatus, number>> = {
   active: 0,
   paused: 1,
@@ -33,6 +39,21 @@ function groupId(status: CommitmentStatus): CommitmentListGroupId {
   if (status === 'active') return 'active'
   if (status === 'paused') return 'paused'
   return 'closed'
+}
+
+/** One-way list affordance for closing finite Action commitments through audited status updates. */
+export function commitmentCompletionModel(
+  commitment: Pick<CommitmentSnapshot, 'type' | 'status'>
+): CommitmentCompletionModel {
+  if (commitment.type !== 'action') {
+    return { visible: false, checked: false, disabled: true }
+  }
+
+  return {
+    visible: true,
+    checked: commitment.status === 'done',
+    disabled: commitment.status === 'done' || commitment.status === 'cancelled'
+  }
 }
 
 /**

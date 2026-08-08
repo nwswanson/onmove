@@ -472,6 +472,24 @@ const migrations: readonly Migration[] = [
           CHECK (needs_review IN (0, 1));
       `)
     }
+  },
+  {
+    version: 9,
+    name: 'sensitive_content_flags',
+    up(database) {
+      for (const table of ['focuses', 'threads', 'commitments', 'updates']) {
+        const exists = database.get<{ found: number }>(
+          "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?",
+          [table]
+        )
+        if (!exists) continue
+        database.exec(`
+          ALTER TABLE ${table}
+          ADD COLUMN sensitive INTEGER NOT NULL DEFAULT 0
+            CHECK (sensitive IN (0, 1));
+        `)
+      }
+    }
   }
 ]
 

@@ -114,6 +114,8 @@ export interface ContextDrawerModel {
  */
 export interface ContextDrawerAdapter {
   id: string
+  /** Changes when the same entity needs a fresh receiver draft or presentation mode. */
+  revision?: string
   /** Entity/ancestor keys whose deletion makes this representation invalid. */
   invalidationKeys: readonly string[]
   model: ContextDrawerModel
@@ -690,7 +692,11 @@ function ContextDrawerOutlet({
         )}
         <div className="min-h-0 flex-1">
           <ContextDrawerInspector
-            key={renderedAdapter?.id ?? 'context:empty'}
+            key={
+              renderedAdapter
+                ? `${renderedAdapter.id}:${renderedAdapter.revision ?? 'current'}`
+                : 'context:empty'
+            }
             adapterId={renderedAdapter?.id ?? 'context-empty'}
             model={
               renderedAdapter?.model ?? {

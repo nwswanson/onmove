@@ -19,15 +19,15 @@ describe('UpdateList', () => {
     expect(() =>
       validateUpdateListModel(
         [
-          { id: '1', date: '2026-08-07', observation: 'One', state: 'green' },
-          { id: '1', date: '2026-08-08', observation: 'Two', state: 'green' }
+          { id: '1', date: '2026-08-07', observation: 'One', state: 'green', sensitive: false },
+          { id: '1', date: '2026-08-08', observation: 'Two', state: 'green', sensitive: false }
         ],
         states
       )
     ).toThrow('invalid item "1"')
     expect(() =>
       validateUpdateListModel(
-        [{ id: '1', date: '2026-08-07', observation: 'One', state: 'purple' }],
+        [{ id: '1', date: '2026-08-07', observation: 'One', state: 'purple', sensitive: false }],
         states
       )
     ).toThrow('invalid item "1"')
@@ -46,7 +46,8 @@ describe('UpdateList', () => {
             id: '20',
             date: '2026-08-01',
             observation: 'Ticket quality is uneven',
-            state: 'yellow'
+            state: 'yellow',
+            sensitive: false
           }
         ]}
         stateOptions={states}
@@ -80,7 +81,8 @@ describe('UpdateList', () => {
     expect(onCreate).toHaveBeenCalledWith({
       date: '2026-08-07',
       observation: '',
-      state: 'none'
+      state: 'none',
+      sensitive: false
     })
     expect(screen.queryByRole('button', { name: 'Create update' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Cancel new update' })).not.toBeInTheDocument()
@@ -122,12 +124,53 @@ describe('UpdateList', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Updates could not be loaded.')
   })
 
+  it('renders a complete sensitive Update model and autosaves its sensitivity flag', async () => {
+    const onUpdate = vi.fn().mockResolvedValue(undefined)
+    const user = userEvent.setup()
+    render(
+      <UpdateList
+        ariaLabel="Sensitive updates"
+        items={[
+          {
+            id: '20',
+            date: '2026-08-01',
+            observation: 'Confidential acquisition detail',
+            state: 'red',
+            sensitive: true
+          }
+        ]}
+        stateOptions={states}
+        defaultDate="2026-08-07"
+        defaultState="none"
+        onCreate={vi.fn()}
+        onUpdate={onUpdate}
+        onDelete={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('Confidential acquisition detail')).toBeVisible()
+    expect(screen.getByLabelText('Update observation')).toBeInTheDocument()
+    expect(screen.getByLabelText('Update date')).toHaveValue('2026-08-01')
+    expect(screen.getByLabelText('Update state')).toHaveValue('red')
+
+    await user.click(screen.getByRole('checkbox', { name: 'Sensitive' }))
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledOnce(), { timeout: 2_000 })
+    expect(onUpdate).toHaveBeenCalledWith(
+      '20',
+      expect.objectContaining({ sensitive: false })
+    )
+    expect(richTextPlainText(onUpdate.mock.calls[0][1].observation)).toBe(
+      'Confidential acquisition detail'
+    )
+  })
+
   it('renders a long history as independent full-width editor cards', () => {
     const items = Array.from({ length: 12 }, (_, index) => ({
       id: String(index + 1),
       date: `2026-07-${String(index + 1).padStart(2, '0')}`,
       observation: `Narrative update ${index + 1}`,
-      state: index % 2 === 0 ? 'green' : 'none'
+      state: index % 2 === 0 ? 'green' : 'none',
+      sensitive: false
     }))
     render(
       <UpdateList
@@ -160,7 +203,8 @@ describe('UpdateList', () => {
             id: '20',
             date: '2026-08-01',
             observation: 'Initial signal',
-            state: 'yellow'
+            state: 'yellow',
+            sensitive: false
           }
         ]}
         stateOptions={states}
@@ -189,7 +233,8 @@ describe('UpdateList', () => {
             id: '20',
             date: '2026-08-01',
             observation: 'Initial signal',
-            state: 'yellow'
+            state: 'yellow',
+            sensitive: false
           }
         ]}
         stateOptions={states}
@@ -233,7 +278,8 @@ describe('UpdateList', () => {
     await waitFor(() => expect(onCreate).toHaveBeenCalledWith({
       date: '2026-08-07',
       observation: '',
-      state: 'none'
+      state: 'none',
+      sensitive: false
     }))
     expect(screen.queryByLabelText('New update date')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Create update' })).not.toBeInTheDocument()

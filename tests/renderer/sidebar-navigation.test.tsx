@@ -13,7 +13,18 @@ describe('SidebarNavigation', () => {
     render(
       <SidebarNavigation
         items={[
-          { id: '1', label: 'Active focus', icon: 'item' },
+          {
+            id: '1',
+            label: 'Active focus',
+            icon: 'sunflower',
+            sunflower: {
+              ariaLabel: 'Overall Green; one active commitment Red',
+              seeds: [
+                { id: 'overall', label: 'Overall: Green', tone: 'success' },
+                { id: 'commitment:1', label: 'Blocked work: Red', tone: 'danger' }
+              ]
+            }
+          },
           {
             id: '2',
             label: 'Paused focus',
@@ -31,6 +42,20 @@ describe('SidebarNavigation', () => {
     expect(screen.getByRole('button', { name: 'Active focus' })).toHaveAttribute(
       'aria-current',
       'page'
+    )
+    const sunflower = screen.getByRole('img', {
+      name: 'Overall Green; one active commitment Red'
+    })
+    expect(sunflower).toHaveAttribute('width', '24')
+    expect(sunflower).toHaveAttribute('height', '24')
+    expect(sunflower.querySelectorAll('[data-seed-index]')).toHaveLength(2)
+    expect(sunflower.querySelector('[data-seed-index="0"]')).toHaveAttribute(
+      'fill',
+      'var(--success)'
+    )
+    expect(sunflower.querySelector('[data-seed-index="1"]')).toHaveAttribute(
+      'fill',
+      'var(--destructive)'
     )
     expect(screen.getByRole('button', { name: 'Paused focus, paused' })).toHaveClass('opacity-55')
     await user.click(screen.getByRole('button', { name: 'Paused focus, paused' }))

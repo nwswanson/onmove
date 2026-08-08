@@ -1,5 +1,6 @@
 export const IPC_CHANNELS = {
   getAppState: 'app:get-state',
+  getSensitiveContentHidden: 'app:get-sensitive-content-hidden',
   recordGreeting: 'app:record-greeting',
   showDataFolder: 'app:show-data-folder',
   createRelation: 'domain:create-relation',
@@ -27,6 +28,10 @@ export const IPC_CHANNELS = {
   createUpdate: 'domain:create-update',
   updateUpdate: 'domain:update-update',
   deleteUpdate: 'domain:delete-update'
+} as const
+
+export const IPC_EVENTS = {
+  sensitiveContentVisibilityChanged: 'app:sensitive-content-visibility-changed'
 } as const
 
 export type JsonPrimitive = string | number | boolean | null
@@ -112,6 +117,7 @@ export interface FocusSnapshot {
   statusChangedAt: string
   lastReviewDate: string | null
   needsReview: boolean
+  sensitive: boolean
   createdAt: string
   updatedAt: string
 }
@@ -131,6 +137,7 @@ export interface CreateFocusInput {
   goal?: string
   status?: FocusStatus
   needsReview?: boolean
+  sensitive?: boolean
 }
 
 export interface UpdateFocusInput {
@@ -139,6 +146,7 @@ export interface UpdateFocusInput {
   goal?: string
   status?: FocusStatus
   needsReview?: boolean
+  sensitive?: boolean
 }
 
 export type ThreadStatus = FocusStatus
@@ -161,6 +169,7 @@ export interface ThreadSnapshot {
   nextReviewDate: string
   needsReview: boolean
   reviewDue: boolean
+  sensitive: boolean
   createdAt: string
   updatedAt: string
 }
@@ -171,6 +180,7 @@ export interface CreateThreadInput {
   status?: ThreadStatus
   reviewFrequencyDays: number
   needsReview?: boolean
+  sensitive?: boolean
 }
 
 export interface UpdateThreadInput {
@@ -178,6 +188,7 @@ export interface UpdateThreadInput {
   status?: ThreadStatus
   reviewFrequencyDays?: number
   needsReview?: boolean
+  sensitive?: boolean
 }
 
 export type CommitmentParent =
@@ -196,6 +207,7 @@ export interface CommitmentSnapshot {
   lastUpdateDate: string | null
   nextUpdateDate: string | null
   needsUpdate: boolean
+  sensitive: boolean
   createdAt: string
   updatedAt: string
 }
@@ -207,6 +219,7 @@ export interface CreateCommitmentInput {
   status?: CommitmentStatus
   dueDate?: string | null
   cadenceDays?: number | null
+  sensitive?: boolean
 }
 
 export interface UpdateCommitmentInput {
@@ -215,6 +228,7 @@ export interface UpdateCommitmentInput {
   status?: CommitmentStatus
   dueDate?: string | null
   cadenceDays?: number | null
+  sensitive?: boolean
 }
 
 export type UpdateParent =
@@ -228,6 +242,7 @@ export interface UpdateSnapshot {
   date: string
   observation: string
   state: HealthState
+  sensitive: boolean
   createdAt: string
 }
 
@@ -236,12 +251,14 @@ export interface CreateUpdateInput {
   date?: string
   observation?: string
   state?: HealthState
+  sensitive?: boolean
 }
 
 export interface EditUpdateInput {
   date?: string
   observation?: string
   state?: HealthState
+  sensitive?: boolean
 }
 
 export interface ThreadStatusTransition {
@@ -298,6 +315,8 @@ export interface AppState {
 
 export interface OnMoveApi {
   getAppState: () => Promise<AppState>
+  getSensitiveContentHidden: () => Promise<boolean>
+  onSensitiveContentVisibilityChanged: (listener: (hidden: boolean) => void) => () => void
   recordGreeting: () => Promise<AppState>
   showDataFolder: () => Promise<void>
   domain: DomainApi

@@ -24,9 +24,11 @@ type FolderOpener = Pick<Shell, 'showItemInFolder'>
 export function registerAppIpc(
   ipcMain: IpcRegistrar,
   database: AppDatabase,
-  shell: FolderOpener
+  shell: FolderOpener,
+  getSensitiveContentHidden: () => boolean = () => false
 ): () => void {
   ipcMain.handle(IPC_CHANNELS.getAppState, () => database.getState())
+  ipcMain.handle(IPC_CHANNELS.getSensitiveContentHidden, getSensitiveContentHidden)
   ipcMain.handle(IPC_CHANNELS.recordGreeting, () => database.recordGreeting())
   ipcMain.handle(IPC_CHANNELS.showDataFolder, () => shell.showItemInFolder(database.getState().databasePath))
   ipcMain.handle(IPC_CHANNELS.createRelation, (_event, input: CreateRelationInput) =>

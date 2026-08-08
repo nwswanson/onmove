@@ -100,10 +100,16 @@ describe('registerAppIpc', () => {
     }
     const shell = { showItemInFolder: vi.fn() }
 
-    const cleanup = registerAppIpc(ipcMain as never, database as never, shell as never)
+    const cleanup = registerAppIpc(
+      ipcMain as never,
+      database as never,
+      shell as never,
+      () => true
+    )
 
     expect(ipcMain.handle).toHaveBeenCalledTimes(Object.keys(IPC_CHANNELS).length)
     expect(await handlers.get(IPC_CHANNELS.getAppState)?.()).toEqual(state)
+    expect(await handlers.get(IPC_CHANNELS.getSensitiveContentHidden)?.()).toBe(true)
     expect(await handlers.get(IPC_CHANNELS.recordGreeting)?.()).toMatchObject({ greetingCount: 3 })
     await handlers.get(IPC_CHANNELS.showDataFolder)?.()
     expect(shell.showItemInFolder).toHaveBeenCalledWith('/tmp/onmove.sqlite3')

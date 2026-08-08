@@ -115,6 +115,12 @@ describe('database migrations', () => {
     expect(migrated.prepare('SELECT needs_review FROM threads').get()).toMatchObject({
       needs_review: 1
     })
+    expect(migrated.prepare('SELECT sensitive FROM focuses').get()).toMatchObject({
+      sensitive: 0
+    })
+    expect(migrated.prepare('SELECT sensitive FROM threads').get()).toMatchObject({
+      sensitive: 0
+    })
     migrated.close()
   })
 

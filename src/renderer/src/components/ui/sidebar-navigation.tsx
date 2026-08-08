@@ -1,17 +1,19 @@
-import { Circle, House, PauseCircle, Plus } from 'lucide-react'
+import { House, PauseCircle, Plus } from 'lucide-react'
 import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem
 } from '@/components/ui/sidebar'
 import { cn } from '@/lib/utils'
+import { SemanticSunflower, type SemanticSunflowerModel } from '@/components/ui/sunflower'
 
 /** Receiver-owned row contract for primary sidebar navigation. */
 export interface SidebarNavigationItemModel {
   id: string
   label: string
   ariaLabel?: string
-  icon?: 'home' | 'item' | 'paused'
+  icon?: 'home' | 'sunflower' | 'paused'
+  sunflower?: SemanticSunflowerModel
   tone?: 'default' | 'muted'
   disabled?: boolean
 }
@@ -47,6 +49,9 @@ export function SidebarNavigation({
     if (!id || itemIds.has(id) || item.label.trim().length === 0) {
       throw new Error(`Primary sidebar contains an invalid navigation item "${item.id}".`)
     }
+    if ((item.icon === 'sunflower') !== (item.sunflower !== undefined)) {
+      throw new Error(`Primary sidebar item "${item.id}" has an invalid Sunflower model.`)
+    }
     itemIds.add(id)
   }
   if (action && (!action.id.trim() || !action.label.trim())) {
@@ -67,6 +72,7 @@ export function SidebarNavigation({
                 isActive={selected}
                 aria-current={selected ? 'page' : undefined}
                 aria-label={item.ariaLabel ?? item.label}
+                title={item.sunflower?.ariaLabel}
                 className={cn(item.tone === 'muted' && 'text-muted-foreground opacity-55')}
                 disabled={item.disabled}
                 onClick={() => onSelect(item.id)}
@@ -75,8 +81,8 @@ export function SidebarNavigation({
                   <House aria-hidden="true" />
                 ) : item.icon === 'paused' ? (
                   <PauseCircle aria-hidden="true" />
-                ) : item.icon === 'item' ? (
-                  <Circle aria-hidden="true" />
+                ) : item.icon === 'sunflower' && item.sunflower ? (
+                  <SemanticSunflower className="!size-6" model={item.sunflower} />
                 ) : null}
                 <span className="truncate">{item.label}</span>
               </SidebarMenuButton>

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { CommitmentSnapshot } from '../../src/shared/contracts'
-import { buildCommitmentListModel } from '../../src/renderer/src/features/focus/commitment-list-model'
+import {
+  buildCommitmentListModel,
+  commitmentCompletionModel
+} from '../../src/renderer/src/features/focus/commitment-list-model'
 
 function commitment(
   id: number,
@@ -19,6 +22,7 @@ function commitment(
     lastUpdateDate: null,
     nextUpdateDate: null,
     needsUpdate: false,
+    sensitive: false,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z'
   }
@@ -73,5 +77,33 @@ describe('buildCommitmentListModel', () => {
     buildCommitmentListModel(input)
 
     expect(input).toEqual([first, second])
+  })
+
+  it('exposes a one-way completion affordance only for Action commitments', () => {
+    expect(commitmentCompletionModel({ type: 'ongoing', status: 'active' })).toEqual({
+      visible: false,
+      checked: false,
+      disabled: true
+    })
+    expect(commitmentCompletionModel({ type: 'action', status: 'active' })).toEqual({
+      visible: true,
+      checked: false,
+      disabled: false
+    })
+    expect(commitmentCompletionModel({ type: 'action', status: 'paused' })).toEqual({
+      visible: true,
+      checked: false,
+      disabled: false
+    })
+    expect(commitmentCompletionModel({ type: 'action', status: 'done' })).toEqual({
+      visible: true,
+      checked: true,
+      disabled: true
+    })
+    expect(commitmentCompletionModel({ type: 'action', status: 'cancelled' })).toEqual({
+      visible: true,
+      checked: false,
+      disabled: true
+    })
   })
 })

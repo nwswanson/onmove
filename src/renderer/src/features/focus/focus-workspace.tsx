@@ -1,17 +1,15 @@
-import { Fragment, useEffect, useState } from 'react'
-import {
-  ChevronRight,
-  Info
-} from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import type {
+  CommitmentParent,
   CommitmentSnapshot,
-  CommitmentStatus,
   CreateCommitmentInput,
   CreateThreadInput,
   FocusSnapshot,
-  UpdateFocusInput
+  ThreadSnapshot,
+  UpdateCommitmentInput,
+  UpdateFocusInput,
+  UpdateThreadInput
 } from '../../../../shared/contracts'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   ContextDrawerOutlet,
@@ -26,18 +24,19 @@ import {
 } from '@/components/ui/contextual-sidebar'
 import { Dialog, DialogField } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import {
-  LifecycleStatusLabel,
-  LifecycleStatusSelect
-} from '@/components/ui/lifecycle-status'
 import { RichTextContent, RichTextEditor } from '@/components/ui/rich-text-editor'
-import { StateLabel } from '@/components/ui/state-label'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
 import {
-  COMMITMENT_STATUS_OPTIONS,
+  CommitmentCollection,
+  NewCommitmentDialog
+} from '@/features/focus/commitment-ui'
+import { buildCommitmentListModel } from '@/features/focus/commitment-list-model'
+import {
+  commitmentCollectionModel,
   commitmentContextSidebarItems,
+  commitmentDueDateLabel,
   commitmentDrawerAdapter,
-  commitmentStatusLabel,
+  commitmentTypeLabel,
   dateOrNeverLabel,
   focusContextSidebarItems,
   focusDrawerAdapter,
@@ -45,11 +44,29 @@ import {
   threadSidebarItemId
 } from '@/features/focus/focus-presenters'
 import { useFocusWorkspaceModel } from '@/features/focus/use-focus-workspace-model'
-import { healthStateLabel } from '@/features/shared/state-presenters'
+import { WorkStatusSelect } from '@/features/shared/work-status-select'
+import { visibleSensitiveRecords } from '@/features/shared/sensitivity'
+import { SensitivityToggle } from '@/features/shared/sensitivity-toggle'
 import { DirectUpdates } from '@/features/updates/direct-updates'
 
 const CONTEXTUAL_SIDEBAR_MIN = 220
 const CONTEXTUAL_SIDEBAR_MAX = 320
+
+function contextItemIdForCommitmentParent(parent: CommitmentParent): string {
+  return parent.type === 'focus' ? 'overall' : threadSidebarItemId(parent.id)
+}
+
+function commitmentParentForContextItem(
+  itemId: string,
+  focusId: number
+): CommitmentParent | null {
+  if (itemId === 'overall') return { type: 'focus', id: focusId }
+  if (!itemId.startsWith('thread:')) return null
+  const threadId = Number(itemId.slice('thread:'.length))
+  return Number.isInteger(threadId) && threadId > 0
+    ? { type: 'thread', id: threadId }
+    : null
+}
 
 interface NewThreadDialogProps {
   focusId: number
@@ -140,86 +157,14 @@ function NewThreadDialog({
   )
 }
 
-interface NewCommitmentDialogProps {
-  focusId: number
-  onClose: () => void
-  onCreate: (input: CreateCommitmentInput) => Promise<void>
-}
-
-function NewCommitmentDialog({
-  focusId,
-  onClose,
-  onCreate
-}: NewCommitmentDialogProps): React.JSX.Element {
-  const [title, setTitle] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function submit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault()
-    if (title.trim().length === 0) return
-    setSaving(true)
-    setError(null)
-    try {
-      await onCreate({
-        parent: { type: 'focus', id: focusId },
-        type: 'ongoing',
-        title
-      })
-      onClose()
-    } catch {
-      setError('The commitment could not be created. Please try again.')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <Dialog
-      open
-      title="New commitment"
-      description="Add a focus-level commitment."
-      onClose={onClose}
-      footer={
-        <>
-          <Button type="button" variant="ghost" disabled={saving} onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            form="new-commitment-form"
-            disabled={saving || title.trim().length === 0}
-          >
-            {saving ? 'Creating…' : 'Create commitment'}
-          </Button>
-        </>
-      }
-    >
-      <form id="new-commitment-form" onSubmit={submit}>
-        <DialogField>
-          <label htmlFor="new-commitment-title" className="text-xs font-medium">
-            Title <span className="text-destructive">*</span>
-          </label>
-          <Input
-            id="new-commitment-title"
-            autoFocus
-            required
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-          />
-        </DialogField>
-        {error && <p role="alert" className="mt-4 text-xs text-destructive">{error}</p>}
-      </form>
-    </Dialog>
-  )
-}
-
 interface FocusWorkspaceProps {
   focus: FocusSnapshot
   contextDrawer: ContextDrawerControl
   onUpdateFocus: (input: UpdateFocusInput) => Promise<void>
   onRefreshFocus: () => Promise<FocusSnapshot>
+  onRefreshStatusSummary: () => Promise<void>
   onDeleteFocus: () => Promise<void>
+  hideSensitiveContent?: boolean
 }
 
 export function FocusWorkspace({
@@ -227,25 +172,37 @@ export function FocusWorkspace({
   contextDrawer,
   onUpdateFocus,
   onRefreshFocus,
-  onDeleteFocus
+  onRefreshStatusSummary,
+  onDeleteFocus,
+  hideSensitiveContent = false
 }: FocusWorkspaceProps): React.JSX.Element {
   const model = useFocusWorkspaceModel({ focus, onUpdateFocus })
   const [newThreadOpen, setNewThreadOpen] = useState(false)
-  const [newCommitmentOpen, setNewCommitmentOpen] = useState(false)
+  const [newCommitmentParent, setNewCommitmentParent] =
+    useState<CommitmentParent | null>(null)
   const [contextualSidebarWidth, setContextualSidebarWidth] = useState(252)
   const [commitmentStatusSavingId, setCommitmentStatusSavingId] = useState<number | null>(null)
   const [commitmentStatusError, setCommitmentStatusError] = useState<{
     id: number
     message: string
   } | null>(null)
-
+  const [workspaceStatusSavingKey, setWorkspaceStatusSavingKey] = useState<string | null>(null)
+  const [workspaceStatusError, setWorkspaceStatusError] = useState<{
+    key: string
+    message: string
+  } | null>(null)
   const [focusLevel] = useState(
     () =>
       new ContextualSidebarLevel({
         id: `focus:${focus.id}`,
         title: 'Focus',
         ariaLabel: 'Focus sections',
-        items: focusContextSidebarItems([]),
+        items: focusContextSidebarItems([], {}, false, { overall: [] }),
+        onChildCollectionAction: (parentItemId, collectionId, actionId) => {
+          if (collectionId !== 'commitments' || actionId !== 'add') return
+          const parent = commitmentParentForContextItem(parentItemId, focus.id)
+          if (parent) setNewCommitmentParent(parent)
+        },
         newItem: {
           label: 'New thread',
           onCreate: () => setNewThreadOpen(true)
@@ -253,7 +210,7 @@ export function FocusWorkspace({
       })
   )
 
-  const [commitmentsLevel] = useState(
+  const [focusCommitmentsLevel] = useState(
     () =>
       new ContextualSidebarLevel({
         id: `focus:${focus.id}:commitments`,
@@ -264,9 +221,12 @@ export function FocusWorkspace({
         items: [],
         newItem: {
           label: 'New commitment',
-          onCreate: () => setNewCommitmentOpen(true)
+          onCreate: () => setNewCommitmentParent({ type: 'focus', id: focus.id })
         }
       })
+  )
+  const [threadCommitmentLevels] = useState(
+    () => new Map<number, ContextualSidebarLevel>()
   )
 
   const [navigation] = useState(
@@ -274,34 +234,266 @@ export function FocusWorkspace({
   )
   const navigationSnapshot = useContextualSidebarNavigation(navigation)
 
-  useEffect(() => {
-    focusLevel.setItems(focusContextSidebarItems(model.threads))
-    commitmentsLevel.setItems(commitmentContextSidebarItems(model.commitments))
-    navigation.refresh()
-  }, [commitmentsLevel, focusLevel, model.commitments, model.threads, navigation])
+  const visibleThreadRecords = useMemo<readonly ThreadSnapshot[]>(
+    () => visibleSensitiveRecords(
+      model.threads,
+      hideSensitiveContent,
+      focus.sensitive
+    ),
+    [focus.sensitive, hideSensitiveContent, model.threads]
+  )
+  const visibleFocusCommitments = useMemo(
+    () => visibleSensitiveRecords(
+      model.commitments,
+      hideSensitiveContent,
+      focus.sensitive
+    ),
+    [focus.sensitive, hideSensitiveContent, model.commitments]
+  )
+  const visibleThreadCommitments = useMemo(
+    () => Object.fromEntries(
+      Object.entries(model.threadCommitments).map(([threadId, commitments]) => {
+        const threadSensitive =
+          model.threads.find((thread) => thread.id === Number(threadId))?.sensitive ?? true
+        return [
+          threadId,
+          visibleSensitiveRecords(
+            commitments ?? [],
+            hideSensitiveContent,
+            focus.sensitive || threadSensitive
+          )
+        ]
+      })
+    ) as Readonly<Record<number, readonly CommitmentSnapshot[] | undefined>>,
+    [focus.sensitive, hideSensitiveContent, model.threadCommitments, model.threads]
+  )
+  const commitmentsByContextItemId = useMemo(
+    () => ({
+      overall: visibleFocusCommitments,
+      ...Object.fromEntries(
+        visibleThreadRecords.map((thread) => [
+          threadSidebarItemId(thread.id),
+          visibleThreadCommitments[thread.id] ?? []
+        ])
+      )
+    }),
+    [visibleFocusCommitments, visibleThreadCommitments, visibleThreadRecords]
+  )
 
-  const selectedThread =
+  function parentIsSensitive(parent: CommitmentParent): boolean {
+    if (focus.sensitive) return true
+    if (parent.type === 'focus') return false
+    return model.threads.find((thread) => thread.id === parent.id)?.sensitive ?? true
+  }
+
+  function visibleCommitmentsFor(
+    parent: CommitmentParent
+  ): readonly CommitmentSnapshot[] {
+    return parent.type === 'focus'
+      ? visibleFocusCommitments
+      : (visibleThreadCommitments[parent.id] ?? [])
+  }
+
+  function commitmentsLevelFor(parent: CommitmentParent): ContextualSidebarLevel {
+    if (parent.type === 'focus') return focusCommitmentsLevel
+
+    const existing = threadCommitmentLevels.get(parent.id)
+    if (existing) return existing
+
+    const created = new ContextualSidebarLevel({
+      id: `thread:${parent.id}:commitments`,
+      title: 'Commitments',
+      ariaLabel: 'Thread commitments',
+      parent: focusLevel,
+      parentItemId: threadSidebarItemId(parent.id),
+      items: commitmentContextSidebarItems(visibleCommitmentsFor(parent)),
+      newItem: {
+        label: 'New commitment',
+        onCreate: () => setNewCommitmentParent(parent)
+      }
+    })
+    threadCommitmentLevels.set(parent.id, created)
+    return created
+  }
+
+  function commitmentParentForLevel(
+    level: ContextualSidebarLevel
+  ): CommitmentParent | null {
+    if (level === focusCommitmentsLevel) return { type: 'focus', id: focus.id }
+    for (const [threadId, candidate] of threadCommitmentLevels) {
+      if (candidate === level) return { type: 'thread', id: threadId }
+    }
+    return null
+  }
+
+  useEffect(() => {
+    focusLevel.setItems(
+      focusContextSidebarItems(
+        visibleThreadRecords,
+        model.threadStatusSummaries,
+        hideSensitiveContent,
+        commitmentsByContextItemId
+      )
+    )
+    focusCommitmentsLevel.setItems(
+      commitmentContextSidebarItems(
+        visibleFocusCommitments
+      )
+    )
+    for (const [threadId, level] of threadCommitmentLevels) {
+      level.setItems(
+        commitmentContextSidebarItems(
+          visibleThreadCommitments[threadId] ?? []
+        )
+      )
+    }
+    navigation.refresh()
+  }, [
+    focusCommitmentsLevel,
+    focusLevel,
+    model.commitments,
+    model.threadCommitments,
+    model.threads,
+    model.threadStatusSummaries,
+    commitmentsByContextItemId,
+    visibleFocusCommitments,
+    visibleThreadCommitments,
+    visibleThreadRecords,
+    hideSensitiveContent,
+    navigation,
+    threadCommitmentLevels
+  ])
+
+  const rawSelectedThread =
     navigationSnapshot.level === focusLevel && navigationSnapshot.selectedItemId
       ? model.threads.find(
           (thread) => threadSidebarItemId(thread.id) === navigationSnapshot.selectedItemId
         )
       : undefined
-  const selectedCommitment =
-    navigationSnapshot.level === commitmentsLevel && navigationSnapshot.selectedItemId
-      ? model.commitments.find(
-          (commitment) => String(commitment.id) === navigationSnapshot.selectedItemId
+  const selectedThread = rawSelectedThread &&
+    visibleThreadRecords.some((thread) => thread.id === rawSelectedThread.id)
+      ? rawSelectedThread
+      : undefined
+  const levelCommitmentParent = commitmentParentForLevel(
+    navigationSnapshot.level as ContextualSidebarLevel
+  )
+  const childCommitmentParent =
+    navigationSnapshot.level === focusLevel && navigationSnapshot.selectedChild
+      ? commitmentParentForContextItem(
+          navigationSnapshot.selectedChild.parentItemId,
+          focus.id
+        )
+      : null
+  const activeCommitmentParent = childCommitmentParent ?? levelCommitmentParent
+  const commitmentRouteFromChild = childCommitmentParent !== null
+  const rawActiveCommitments = activeCommitmentParent
+    ? model.commitmentsFor(activeCommitmentParent)
+    : []
+  const activeCommitments = activeCommitmentParent
+    ? visibleCommitmentsFor(activeCommitmentParent)
+    : []
+  const routedCommitmentId = commitmentRouteFromChild
+    ? navigationSnapshot.selectedChild?.childItemId
+    : navigationSnapshot.selectedItemId
+  const rawSelectedCommitment =
+    activeCommitmentParent && routedCommitmentId
+      ? rawActiveCommitments.find(
+          (commitment) => String(commitment.id) === routedCommitmentId
         )
       : undefined
+  const selectedCommitment = rawSelectedCommitment &&
+    activeCommitments.some((commitment) => commitment.id === rawSelectedCommitment.id)
+      ? rawSelectedCommitment
+      : undefined
+  const activeParentThread = activeCommitmentParent?.type === 'thread'
+    ? model.threads.find((thread) => thread.id === activeCommitmentParent.id)
+    : undefined
+  const commitmentRouteHiddenByAncestor =
+    hideSensitiveContent && parentIsSensitive(activeCommitmentParent ?? { type: 'focus', id: focus.id })
+  const commitmentRouteHiddenBySelection =
+    hideSensitiveContent && rawSelectedCommitment?.sensitive === true
+  const commitmentRouteHidden =
+    activeCommitmentParent !== null &&
+    (commitmentRouteHiddenByAncestor || commitmentRouteHiddenBySelection)
+  const displayedThread = selectedThread ?? (
+    commitmentRouteHiddenBySelection && !commitmentRouteHiddenByAncestor
+      ? activeParentThread
+      : undefined
+  )
+  const focusTitle = focus.title
+
+  useEffect(() => {
+    if (!hideSensitiveContent) return
+    if (commitmentRouteHiddenByAncestor) {
+      if (commitmentRouteFromChild && activeCommitmentParent) {
+        const parentItemId = contextItemIdForCommitmentParent(activeCommitmentParent)
+        navigation.select(
+          activeCommitmentParent.type === 'thread' && activeParentThread?.sensitive
+            ? 'overall'
+            : parentItemId
+        )
+      } else {
+        navigation.reset()
+      }
+      return
+    }
+    if (commitmentRouteHiddenBySelection) {
+      if (commitmentRouteFromChild && activeCommitmentParent) {
+        navigation.select(contextItemIdForCommitmentParent(activeCommitmentParent))
+      } else {
+        navigation.back()
+      }
+      return
+    }
+    if (rawSelectedThread?.sensitive) navigation.select('overall')
+  }, [
+    commitmentRouteHiddenByAncestor,
+    commitmentRouteHiddenBySelection,
+    commitmentRouteFromChild,
+    hideSensitiveContent,
+    navigation,
+    rawSelectedThread,
+    activeCommitmentParent,
+    activeParentThread
+  ])
+
+  function adapterForCommitment(
+    commitment: CommitmentSnapshot
+  ): ContextDrawerAdapter {
+    if (commitment.parent.type === 'focus') {
+      return commitmentDrawerAdapter({
+        commitment,
+        parentTitle: focusTitle,
+        ancestorKeys: [`focus:${focus.id}`],
+        onSave: (input) => model.updateCommitment(commitment.id, input).then(() => undefined)
+      })
+    }
+    const thread = model.threads.find(
+      (candidate) => candidate.id === commitment.parent.id
+    )
+    return commitmentDrawerAdapter({
+      commitment,
+      parentTitle: thread?.title ?? 'Thread',
+      ancestorKeys: [`focus:${focus.id}`, `thread:${commitment.parent.id}`],
+      onSave: (input) => model.updateCommitment(commitment.id, input).then(() => undefined)
+    })
+  }
 
   const contextDrawerAdapter: ContextDrawerAdapter | null = selectedCommitment
-    ? commitmentDrawerAdapter(selectedCommitment, focus.title, [`focus:${focus.id}`])
-    : navigationSnapshot.level === commitmentsLevel
+    ? adapterForCommitment(selectedCommitment)
+    : activeCommitmentParent
       ? null
       : selectedThread
-        ? threadDrawerAdapter(selectedThread, focus.title, (input) =>
-            model.updateThread(selectedThread.id, input).then(() => undefined)
+        ? threadDrawerAdapter(
+            selectedThread,
+            focusTitle,
+            (input) => model.updateThread(selectedThread.id, input).then(() => undefined)
           )
-        : focusDrawerAdapter({ focus, onSave: onUpdateFocus, onDelete: onDeleteFocus })
+        : focusDrawerAdapter({
+            focus,
+            onSave: onUpdateFocus,
+            onDelete: onDeleteFocus
+          })
 
   async function createThread(input: CreateThreadInput): Promise<void> {
     await model.createThread(input)
@@ -309,32 +501,101 @@ export function FocusWorkspace({
 
   async function createCommitment(input: CreateCommitmentInput): Promise<void> {
     const created = await model.createCommitment(input)
-    commitmentsLevel.setItems(
-      commitmentContextSidebarItems([...model.commitments, created])
+    await onRefreshStatusSummary()
+    const level = commitmentsLevelFor(created.parent)
+    const nextCommitments = visibleSensitiveRecords(
+      [...model.commitmentsFor(created.parent), created],
+      hideSensitiveContent,
+      parentIsSensitive(created.parent)
     )
-    navigation.refresh()
-    if (navigation.getSnapshot().level === commitmentsLevel) {
-      navigation.select(String(created.id))
+    level.setItems(
+      commitmentContextSidebarItems(
+        nextCommitments
+      )
+    )
+    focusLevel.setItems(
+      focusContextSidebarItems(
+        visibleThreadRecords,
+        model.threadStatusSummaries,
+        hideSensitiveContent,
+        {
+          ...commitmentsByContextItemId,
+          [contextItemIdForCommitmentParent(created.parent)]: nextCommitments
+        }
+      )
+    )
+    if (navigation.getSnapshot().level === level) {
+      navigation.navigateToPath(level, String(created.id))
+    } else {
+      navigation.reset()
+      navigation.selectChild(
+        contextItemIdForCommitmentParent(created.parent),
+        'commitments',
+        String(created.id)
+      )
     }
   }
 
-  async function updateCommitmentStatus(
+  async function updateFocusDetails(input: UpdateFocusInput): Promise<void> {
+    const key = `focus:${focus.id}`
+    setWorkspaceStatusSavingKey(key)
+    setWorkspaceStatusError(null)
+    try {
+      await onUpdateFocus(input)
+    } catch {
+      setWorkspaceStatusError({
+        key,
+        message: 'The Focus could not be updated. Please try again.'
+      })
+    } finally {
+      setWorkspaceStatusSavingKey(null)
+    }
+  }
+
+  async function updateThreadDetails(
+    threadId: number,
+    input: UpdateThreadInput
+  ): Promise<void> {
+    const key = `thread:${threadId}`
+    setWorkspaceStatusSavingKey(key)
+    setWorkspaceStatusError(null)
+    try {
+      const updated = await model.updateThread(threadId, input)
+      if (contextDrawer.pinnedAdapter?.id === key) {
+        contextDrawer.onPin(
+          threadDrawerAdapter(
+            updated,
+            focusTitle,
+            (nextInput) => model.updateThread(threadId, nextInput).then(() => undefined)
+          )
+        )
+      }
+    } catch {
+      setWorkspaceStatusError({
+        key,
+        message: 'The Thread could not be updated. Please try again.'
+      })
+    } finally {
+      setWorkspaceStatusSavingKey(null)
+    }
+  }
+
+  async function updateCommitmentDetails(
     commitmentId: number,
-    status: CommitmentStatus
+    input: UpdateCommitmentInput
   ): Promise<void> {
     setCommitmentStatusSavingId(commitmentId)
     setCommitmentStatusError(null)
     try {
-      const updated = await model.updateCommitment(commitmentId, { status })
+      const updated = await model.updateCommitment(commitmentId, input)
+      await onRefreshStatusSummary()
       if (contextDrawer.pinnedAdapter?.id === `commitment:${commitmentId}`) {
-        contextDrawer.onPin(
-          commitmentDrawerAdapter(updated, focus.title, [`focus:${focus.id}`])
-        )
+        contextDrawer.onPin(adapterForCommitment(updated))
       }
     } catch {
       setCommitmentStatusError({
         id: commitmentId,
-        message: 'The commitment status could not be updated. Please try again.'
+        message: 'The commitment could not be updated. Please try again.'
       })
     } finally {
       setCommitmentStatusSavingId(null)
@@ -354,73 +615,60 @@ export function FocusWorkspace({
     }
   }
 
-  function openCommitments(commitmentId?: number): void {
-    navigation.navigateTo(commitmentsLevel)
-    if (commitmentId !== undefined) navigation.select(String(commitmentId))
+  async function refreshCommitmentsAfterUpdates(
+    parent: CommitmentParent
+  ): Promise<void> {
+    await model.refreshCommitments(parent)
+    await onRefreshStatusSummary()
   }
 
-  function renderCommitmentRow(commitment: CommitmentSnapshot): React.JSX.Element {
-    return (
-      <div
-        key={commitment.id}
-        role="listitem"
-        className="flex items-center border-b border-border/65 last:border-b-0"
-      >
-        <button
-          type="button"
-          className="flex min-h-11 min-w-0 flex-1 items-center gap-3 px-3 text-left text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/55"
-          aria-label={`Open commitment ${commitment.title}`}
-          aria-describedby={`commitment-${commitment.id}-last-updated`}
-          onClick={() => openCommitments(commitment.id)}
-        >
-          <span className="min-w-0 flex-1">
-            <span className="block truncate">{commitment.title}</span>
-            <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-              <LifecycleStatusLabel
-                model={commitmentStatusLabel(commitment.status)}
-                size="compact"
-              />
-              <span
-                id={`commitment-${commitment.id}-last-updated`}
-                className="min-w-0 truncate text-xs text-muted-foreground"
-              >
-                Last updated · {dateOrNeverLabel(commitment.lastUpdateDate)}
-              </span>
-            </span>
-          </span>
-          <StateLabel model={healthStateLabel(commitment.state)} size="compact" />
-          <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
-        </button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="mr-1 size-8 text-muted-foreground"
-          aria-label={`Pin commitment ${commitment.title} in context drawer`}
-          title="Pin in context drawer"
-          onClick={() =>
-            contextDrawer.onPin(
-              commitmentDrawerAdapter(
-                commitment,
-                focus.title,
-                [`focus:${focus.id}`]
-              )
-            )
-          }
-        >
-          <Info aria-hidden="true" />
-        </Button>
-      </div>
+  async function refreshThreadAfterUpdates(threadId: number): Promise<void> {
+    const updated = await model.refreshThread(threadId)
+    if (contextDrawer.pinnedAdapter?.id === `thread:${threadId}`) {
+      contextDrawer.onPin(
+        threadDrawerAdapter(
+          updated,
+          focusTitle,
+          (input) => model.updateThread(threadId, input).then(() => undefined)
+        )
+      )
+    }
+  }
+
+  function drillIntoCommitments(parent: CommitmentParent): void {
+    const level = commitmentsLevelFor(parent)
+    level.setItems(
+      commitmentContextSidebarItems(visibleCommitmentsFor(parent))
     )
+    navigation.navigateToPath(level)
+  }
+
+  function openCommitment(
+    parent: CommitmentParent,
+    commitmentId: number
+  ): void {
+    navigation.reset()
+    navigation.selectChild(
+      contextItemIdForCommitmentParent(parent),
+      'commitments',
+      String(commitmentId)
+    )
+  }
+
+  function pinCommitment(parent: CommitmentParent, commitmentId: number): void {
+    const commitment = visibleCommitmentsFor(parent).find(
+      (candidate) => candidate.id === commitmentId
+    )
+    if (commitment) contextDrawer.onPin(adapterForCommitment(commitment))
   }
 
   const main = (
     <main className="min-w-0 flex-1 overflow-auto bg-background">
-        {navigationSnapshot.level === commitmentsLevel ? (
+        {activeCommitmentParent && !commitmentRouteHidden ? (
           <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="commitment-heading">
             {selectedCommitment ? (
               <>
-                <div className="flex items-start justify-between gap-4 border-b border-border/70 pb-5">
+                <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border/70 pb-5">
                   <div className="min-w-0 flex-1">
                     <p className="mb-2 text-[0.6875rem] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
                       Commitment
@@ -428,26 +676,38 @@ export function FocusWorkspace({
                     <h1 id="commitment-heading" className="text-2xl font-semibold tracking-[-0.025em]">
                       {selectedCommitment.title}
                     </h1>
-                    <p
-                      aria-label="Commitment last updated"
-                      className="mt-2 text-xs text-muted-foreground"
-                    >
-                      <span className="font-medium text-foreground/80">Last updated</span>
-                      {' · '}{dateOrNeverLabel(selectedCommitment.lastUpdateDate)}
-                    </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                      <p aria-label="Commitment type">
+                        <span className="font-medium text-foreground/80">Type</span>
+                        {' · '}{commitmentTypeLabel(selectedCommitment.type)}
+                      </p>
+                      <p aria-label="Commitment due date">
+                        <span className="font-medium text-foreground/80">Due date</span>
+                        {' · '}{commitmentDueDateLabel(selectedCommitment.dueDate)}
+                      </p>
+                      <p aria-label="Commitment last updated">
+                        <span className="font-medium text-foreground/80">Last updated</span>
+                        {' · '}{dateOrNeverLabel(selectedCommitment.lastUpdateDate)}
+                      </p>
+                    </div>
                   </div>
-                  <LifecycleStatusSelect
-                    aria-label="Commitment status"
-                    value={selectedCommitment.status}
-                    options={COMMITMENT_STATUS_OPTIONS}
-                    disabled={commitmentStatusSavingId === selectedCommitment.id}
-                    onValueChange={(status) =>
-                      void updateCommitmentStatus(
-                        selectedCommitment.id,
-                        status as CommitmentStatus
-                      )
-                    }
-                  />
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                    <SensitivityToggle
+                      checked={selectedCommitment.sensitive}
+                      disabled={commitmentStatusSavingId === selectedCommitment.id}
+                      onCheckedChange={(sensitive) =>
+                        void updateCommitmentDetails(selectedCommitment.id, { sensitive })
+                      }
+                    />
+                    <WorkStatusSelect
+                      aria-label="Commitment status"
+                      value={selectedCommitment.status}
+                      disabled={commitmentStatusSavingId === selectedCommitment.id}
+                      onValueChange={(status) =>
+                        void updateCommitmentDetails(selectedCommitment.id, { status })
+                      }
+                    />
+                  </div>
                 </div>
                 {commitmentStatusError?.id === selectedCommitment.id && (
                   <p role="alert" className="mt-3 text-xs text-destructive">
@@ -457,7 +717,18 @@ export function FocusWorkspace({
                 <DirectUpdates
                   key={selectedCommitment.id}
                   parent={{ type: 'commitment', id: selectedCommitment.id }}
-                  onUpdatesChanged={model.refreshCommitments}
+                  hideSensitiveContent={hideSensitiveContent}
+                  ancestorSensitive={
+                    focus.sensitive ||
+                    selectedCommitment.sensitive ||
+                    (selectedCommitment.parent.type === 'thread' &&
+                      (model.threads.find(
+                        (thread) => thread.id === selectedCommitment.parent.id
+                      )?.sensitive ?? true))
+                  }
+                  onUpdatesChanged={() =>
+                    refreshCommitmentsAfterUpdates(selectedCommitment.parent)
+                  }
                 />
               </>
             ) : (
@@ -469,25 +740,89 @@ export function FocusWorkspace({
               </>
             )}
           </section>
-        ) : selectedThread ? (
+        ) : displayedThread ? (
           <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="thread-heading">
-            <h1 id="thread-heading" className="text-2xl font-semibold tracking-[-0.025em]">
-              {selectedThread.title}
-            </h1>
-            <p
-              aria-label="Thread last reviewed"
-              className="mt-2 text-xs text-muted-foreground"
-            >
-              <span className="font-medium text-foreground/80">Last reviewed</span>
-              {' · '}{dateOrNeverLabel(selectedThread.lastReviewDate)}
-            </p>
+            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border/70 pb-5">
+              <div className="min-w-0 flex-1">
+                <h1 id="thread-heading" className="text-2xl font-semibold tracking-[-0.025em]">
+                  {displayedThread.title}
+                </h1>
+                <p
+                  aria-label="Thread last reviewed"
+                  className="mt-2 text-xs text-muted-foreground"
+                >
+                  <span className="font-medium text-foreground/80">Last reviewed</span>
+                  {' · '}{dateOrNeverLabel(displayedThread.lastReviewDate)}
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                <SensitivityToggle
+                  checked={displayedThread.sensitive}
+                  disabled={workspaceStatusSavingKey === `thread:${displayedThread.id}`}
+                  onCheckedChange={(sensitive) =>
+                    void updateThreadDetails(displayedThread.id, { sensitive })
+                  }
+                />
+                <WorkStatusSelect
+                  aria-label="Thread status"
+                  value={displayedThread.status}
+                  disabled={workspaceStatusSavingKey === `thread:${displayedThread.id}`}
+                  onValueChange={(status) =>
+                    void updateThreadDetails(displayedThread.id, { status })
+                  }
+                />
+              </div>
+            </div>
+            {workspaceStatusError?.key === `thread:${displayedThread.id}` && (
+              <p role="alert" className="mt-3 text-xs text-destructive">
+                {workspaceStatusError.message}
+              </p>
+            )}
+            <CommitmentCollection
+              idPrefix={`thread-${displayedThread.id}`}
+              model={commitmentCollectionModel(
+                buildCommitmentListModel(
+                  visibleCommitmentsFor({ type: 'thread', id: displayedThread.id })
+                )
+              )}
+              statusSavingId={commitmentStatusSavingId}
+              statusError={commitmentStatusError}
+              onCreate={() =>
+                setNewCommitmentParent({ type: 'thread', id: displayedThread.id })
+              }
+              onOpenCollection={() =>
+                drillIntoCommitments({ type: 'thread', id: displayedThread.id })
+              }
+              onOpen={(commitmentId) =>
+                openCommitment(
+                  { type: 'thread', id: displayedThread.id },
+                  commitmentId
+                )
+              }
+              onPin={(commitmentId) =>
+                pinCommitment(
+                  { type: 'thread', id: displayedThread.id },
+                  commitmentId
+                )
+              }
+              onComplete={(commitmentId) =>
+                void updateCommitmentDetails(commitmentId, { status: 'done' })
+              }
+            />
+            <DirectUpdates
+              key={`thread-updates:${displayedThread.id}`}
+              parent={{ type: 'thread', id: displayedThread.id }}
+              hideSensitiveContent={hideSensitiveContent}
+              ancestorSensitive={focus.sensitive || displayedThread.sensitive}
+              onUpdatesChanged={() => refreshThreadAfterUpdates(displayedThread.id)}
+            />
           </section>
         ) : (
           <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="focus-heading">
-            <div className="flex items-start gap-3 border-b border-border/70 pb-6">
+            <div className="flex flex-wrap items-start gap-3 border-b border-border/70 pb-6">
               <div className="min-w-0 flex-1">
                 <h1 id="focus-heading" className="truncate text-2xl font-semibold tracking-[-0.025em]">
-                  {focus.title}
+                  {focusTitle}
                 </h1>
                 <p
                   aria-label="Focus last reviewed"
@@ -508,8 +843,28 @@ export function FocusWorkspace({
                   </p>
                 )}
               </div>
-              <Badge variant="outline" className="capitalize">{focus.status}</Badge>
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                <SensitivityToggle
+                  checked={focus.sensitive}
+                  disabled={workspaceStatusSavingKey === `focus:${focus.id}`}
+                  onCheckedChange={(sensitive) =>
+                    void updateFocusDetails({ sensitive })
+                  }
+                />
+                <WorkStatusSelect
+                  aria-label="Focus status"
+                  value={focus.status}
+                  disabled={workspaceStatusSavingKey === `focus:${focus.id}`}
+                  onValueChange={(status) => void updateFocusDetails({ status })}
+                />
+              </div>
             </div>
+
+            {workspaceStatusError?.key === `focus:${focus.id}` && (
+              <p role="alert" className="mt-3 text-xs text-destructive">
+                {workspaceStatusError.message}
+              </p>
+            )}
 
             <div className="mt-6">
               <div className="mb-1.5 flex items-center justify-between gap-3">
@@ -527,80 +882,40 @@ export function FocusWorkspace({
               {model.goalError && <p role="alert" className="mt-2 text-xs text-destructive">{model.goalError}</p>}
             </div>
 
-            <section className="mt-8" aria-labelledby="focus-commitments-heading">
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <h2 id="focus-commitments-heading" className="text-sm font-semibold">
-                  <button
-                    type="button"
-                    className="flex items-center gap-1 rounded-md px-1 py-1 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/55"
-                    onClick={() => openCommitments()}
-                  >
-                    Commitments
-                    <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
-                  </button>
-                </h2>
-              </div>
-
-              <div className="space-y-5">
-                <section aria-labelledby="current-commitments-heading">
-                  <h3
-                    id="current-commitments-heading"
-                    className="mb-2 text-xs font-semibold text-muted-foreground"
-                  >
-                    Current
-                  </h3>
-                  <div
-                    role="list"
-                    aria-label="Current commitments"
-                    className="overflow-hidden rounded-xl border border-border/80 bg-card/45"
-                  >
-                    {model.commitmentList.groups.slice(0, 2).map((group) =>
-                      group.commitments.length > 0 ? (
-                        <Fragment key={group.id}>
-                          <div
-                            role="presentation"
-                            className="border-b border-border/65 bg-muted/35 px-3 py-1.5 text-[0.6875rem] font-semibold tracking-[0.06em] text-muted-foreground uppercase"
-                          >
-                            {group.label}
-                          </div>
-                          {group.commitments.map(renderCommitmentRow)}
-                        </Fragment>
-                      ) : null
-                    )}
-                    {model.commitmentList.current.length === 0 && (
-                      <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                        No active or paused commitments
-                      </p>
-                    )}
-                  </div>
-                </section>
-
-                <section aria-labelledby="closed-commitments-heading">
-                  <h3
-                    id="closed-commitments-heading"
-                    className="mb-2 text-xs font-semibold text-muted-foreground"
-                  >
-                    Done / Cancelled
-                  </h3>
-                  <div
-                    role="list"
-                    aria-label="Done and cancelled commitments"
-                    className="overflow-hidden rounded-xl border border-border/80 bg-card/45"
-                  >
-                    {model.commitmentList.closed.map(renderCommitmentRow)}
-                    {model.commitmentList.closed.length === 0 && (
-                      <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                        No done or cancelled commitments
-                      </p>
-                    )}
-                  </div>
-                </section>
-              </div>
-            </section>
+            <CommitmentCollection
+              idPrefix={`focus-${focus.id}`}
+              model={commitmentCollectionModel(
+                buildCommitmentListModel(
+                  visibleCommitmentsFor({ type: 'focus', id: focus.id })
+                )
+              )}
+              statusSavingId={commitmentStatusSavingId}
+              statusError={commitmentStatusError}
+              onCreate={() =>
+                setNewCommitmentParent({ type: 'focus', id: focus.id })
+              }
+              onOpenCollection={() =>
+                drillIntoCommitments({ type: 'focus', id: focus.id })
+              }
+              onOpen={(commitmentId) =>
+                openCommitment(
+                  { type: 'focus', id: focus.id },
+                  commitmentId
+                )
+              }
+              onPin={(commitmentId) =>
+                pinCommitment({ type: 'focus', id: focus.id }, commitmentId)
+              }
+              onComplete={(commitmentId) =>
+                void updateCommitmentDetails(commitmentId, { status: 'done' })
+              }
+            />
 
             <DirectUpdates
               key={`focus-updates:${focus.id}`}
               parent={{ type: 'focus', id: focus.id }}
+              hideSensitiveContent={hideSensitiveContent}
+              ancestorSensitive={focus.sensitive}
               onUpdatesChanged={refreshFocusAfterUpdates}
             />
 
@@ -637,10 +952,10 @@ export function FocusWorkspace({
           onCreate={createThread}
         />
       )}
-      {newCommitmentOpen && (
+      {newCommitmentParent && (
         <NewCommitmentDialog
-          focusId={focus.id}
-          onClose={() => setNewCommitmentOpen(false)}
+          parent={newCommitmentParent}
+          onClose={() => setNewCommitmentParent(null)}
           onCreate={createCommitment}
         />
       )}

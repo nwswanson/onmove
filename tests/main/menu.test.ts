@@ -6,10 +6,20 @@ function submenuItems(item: MenuItemConstructorOptions): MenuItemConstructorOpti
   return item.submenu as MenuItemConstructorOptions[]
 }
 
+function actions(overrides: Partial<Parameters<typeof createMenuTemplate>[0]> = {}) {
+  return {
+    createWindow: vi.fn(),
+    showDataFolder: vi.fn(),
+    sensitiveContentHidden: false,
+    setSensitiveContentHidden: vi.fn(),
+    ...overrides
+  }
+}
+
 describe('createMenuTemplate', () => {
   it('creates the conventional macOS application menu first', () => {
     const template = createMenuTemplate(
-      { createWindow: vi.fn(), showDataFolder: vi.fn() },
+      actions(),
       true
     )
 
@@ -21,7 +31,7 @@ describe('createMenuTemplate', () => {
 
   it('omits the application menu on non-macOS platforms', () => {
     const template = createMenuTemplate(
-      { createWindow: vi.fn(), showDataFolder: vi.fn() },
+      actions(),
       false
     )
 
@@ -32,7 +42,7 @@ describe('createMenuTemplate', () => {
   it('connects New Window and Show Data File actions', () => {
     const createWindow = vi.fn()
     const showDataFolder = vi.fn()
-    const template = createMenuTemplate({ createWindow, showDataFolder }, true)
+    const template = createMenuTemplate(actions({ createWindow, showDataFolder }), true)
     const fileMenu = template.find((item) => item.label === 'File')!
     const helpMenu = template.find((item) => item.role === 'help')!
 
@@ -43,5 +53,19 @@ describe('createMenuTemplate', () => {
 
     expect(createWindow).toHaveBeenCalledOnce()
     expect(showDataFolder).toHaveBeenCalledOnce()
+  })
+
+  it('shows sensitive content by default and forwards the View checkbox state', () => {
+    const setSensitiveContentHidden = vi.fn()
+    const template = createMenuTemplate(actions({ setSensitiveContentHidden }), true)
+    const viewMenu = template.find((item) => item.label === 'View')!
+    const hideItem = submenuItems(viewMenu).find(
+      (item) => item.label === 'Hide Sensitive Content'
+    )!
+
+    expect(hideItem).toMatchObject({ type: 'checkbox', checked: false })
+    hideItem.click?.({ checked: true } as never, {} as never, {} as never)
+
+    expect(setSensitiveContentHidden).toHaveBeenCalledWith(true)
   })
 })

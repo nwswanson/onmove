@@ -4,6 +4,7 @@ import { AppDatabase } from './database'
 import { registerAppIpc } from './ipc'
 import { createMenuTemplate } from './menu'
 import { resolveDatabasePath } from './paths'
+import { IPC_EVENTS } from '../shared/contracts'
 
 app.setName('OnMove')
 
@@ -13,6 +14,7 @@ if (process.env.ONMOVE_USER_DATA_DIR) {
 
 let database: AppDatabase | undefined
 let unregisterIpc: (() => void) | undefined
+let sensitiveContentHidden = false
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -51,16 +53,25 @@ function showDataFolder(): void {
   }
 }
 
+function setSensitiveContentHidden(hidden: boolean): void {
+  sensitiveContentHidden = hidden
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send(IPC_EVENTS.sensitiveContentVisibilityChanged, hidden)
+  }
+}
+
 app.whenReady().then(() => {
   database = new AppDatabase(resolveDatabasePath(app.getPath('userData')))
   database.recordLaunch()
-  unregisterIpc = registerAppIpc(ipcMain, database, shell)
+  unregisterIpc = registerAppIpc(ipcMain, database, shell, () => sensitiveContentHidden)
 
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(
       createMenuTemplate({
         createWindow,
-        showDataFolder
+        showDataFolder,
+        sensitiveContentHidden,
+        setSensitiveContentHidden
       })
     )
   )

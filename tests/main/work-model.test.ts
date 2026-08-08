@@ -637,4 +637,48 @@ describe('Thread, Commitment, and Update models', () => {
     })
     expect(database.domain.updates.listForCommitment(commitmentId)).toHaveLength(1)
   })
+
+  it('persists independently editable sensitive flags on Threads, Commitments, and Updates', () => {
+    const focus = database!.domain.focuses.create({ title: 'Project execution' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Acquisition planning',
+      reviewFrequencyDays: 7,
+      sensitive: true
+    })
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Complete diligence',
+      sensitive: true
+    })
+    const update = database!.domain.updates.create({
+      parent: { type: 'commitment', id: commitment.id },
+      observation: 'Private counterparty detail',
+      sensitive: true
+    })
+
+    expect(thread.snapshot()).toMatchObject({ sensitive: true })
+    expect(commitment.snapshot()).toMatchObject({ sensitive: true })
+    expect(update.toSnapshot()).toMatchObject({ sensitive: true })
+
+    thread.update({ sensitive: false })
+    commitment.update({ sensitive: false })
+    update.update({ sensitive: false })
+    database!.close()
+    database = new AppDatabase(databasePath)
+
+    expect(database.domain.threads.requireModel(thread.id).snapshot()).toMatchObject({
+      sensitive: false
+    })
+    expect(database.domain.commitments.requireModel(commitment.id).snapshot()).toMatchObject({
+      sensitive: false
+    })
+    expect(database.domain.updates.requireModel(update.id).toSnapshot()).toMatchObject({
+      sensitive: false
+    })
+    expect(() =>
+      database!.domain.threads.requireModel(thread.id).update({ sensitive: 'yes' as never })
+    ).toThrow(ModelValidationError)
+  })
 })

@@ -34,13 +34,14 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     goal: string
     status: string
     needsReview: number
+    sensitive: number
   } | undefined {
     const database = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
       readOnly: true
     })
     const row = database
       .prepare(
-        'SELECT title, description, goal, status, needs_review AS needsReview FROM focuses ORDER BY id LIMIT 1'
+        'SELECT title, description, goal, status, needs_review AS needsReview, sensitive FROM focuses ORDER BY id LIMIT 1'
       )
       .get() as {
         title: string
@@ -48,6 +49,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
         goal: string
         status: string
         needsReview: number
+        sensitive: number
       } | undefined
     database.close()
     return row
@@ -57,26 +59,92 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     title: string
     reviewFrequencyDays: number
     needsReview: number
+    status: string
   } | undefined {
     const database = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
       readOnly: true
     })
     const row = database
       .prepare(
-        'SELECT title, review_frequency_days AS reviewFrequencyDays, needs_review AS needsReview FROM threads ORDER BY id LIMIT 1'
+        'SELECT title, review_frequency_days AS reviewFrequencyDays, needs_review AS needsReview, status FROM threads ORDER BY id LIMIT 1'
       )
-      .get() as { title: string; reviewFrequencyDays: number; needsReview: number } | undefined
+      .get() as {
+        title: string
+        reviewFrequencyDays: number
+        needsReview: number
+        status: string
+      } | undefined
     database.close()
     return row
   }
 
-  function storedCommitment(): { title: string; focusId: number; status: string } | undefined {
+  function storedThreadCommitment(): {
+    title: string
+    threadId: number
+    type: string
+    status: string
+  } | undefined {
     const database = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
       readOnly: true
     })
     const row = database
-      .prepare('SELECT title, focus_id AS focusId, status FROM commitments ORDER BY id LIMIT 1')
-      .get() as { title: string; focusId: number; status: string } | undefined
+      .prepare(
+        'SELECT title, thread_id AS threadId, commitment_type AS type, status FROM commitments WHERE thread_id IS NOT NULL ORDER BY id LIMIT 1'
+      )
+      .get() as {
+        title: string
+        threadId: number
+        type: string
+        status: string
+      } | undefined
+    database.close()
+    return row
+  }
+
+  function storedThreadUpdate(): {
+    date: string
+    observation: string
+    state: string
+    threadId: number
+  } | undefined {
+    const database = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
+      readOnly: true
+    })
+    const row = database
+      .prepare(
+        'SELECT recorded_on AS date, observation, state, thread_id AS threadId FROM updates WHERE thread_id IS NOT NULL ORDER BY id LIMIT 1'
+      )
+      .get() as {
+        date: string
+        observation: string
+        state: string
+        threadId: number
+      } | undefined
+    database.close()
+    return row
+  }
+
+  function storedCommitment(): {
+    title: string
+    focusId: number
+    type: string
+    status: string
+    dueDate: string | null
+  } | undefined {
+    const database = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
+      readOnly: true
+    })
+    const row = database
+      .prepare(
+        'SELECT title, focus_id AS focusId, commitment_type AS type, status, due_on AS dueDate FROM commitments WHERE focus_id IS NOT NULL ORDER BY id LIMIT 1'
+      )
+      .get() as {
+        title: string
+        focusId: number
+        type: string
+        status: string
+        dueDate: string | null
+      } | undefined
     database.close()
     return row
   }
@@ -102,6 +170,19 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       } | undefined
     database.close()
     return row
+  }
+
+  function latestCommitmentTransition(): string | undefined {
+    const database = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
+      readOnly: true
+    })
+    const row = database
+      .prepare(
+        'SELECT to_status AS status FROM commitment_status_transitions ORDER BY id DESC LIMIT 1'
+      )
+      .get() as { status: string } | undefined
+    database.close()
+    return row?.status
   }
 
   function storedFocusUpdate(): {
@@ -146,6 +227,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await window.getByRole('button', { name: 'Create focus' }).click()
     await expect(window.getByRole('heading', { name: 'Persistent focus' })).toBeVisible()
     await expect(window.getByLabel('Focus last reviewed')).toContainText('Last reviewed · Never')
+    await expect(window.getByRole('combobox', { name: 'Focus status' })).toHaveValue('active')
     await expect(window.getByLabel('Focus description').locator('em')).toContainText('Stored notes')
     const drawerToggle = window.getByRole('button', { name: 'Toggle context drawer' })
     await expect(drawerToggle).toHaveAttribute('aria-pressed', 'false')
@@ -207,39 +289,139 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(window.getByLabel('Focus last reviewed')).toContainText(
       `Last reviewed · ${focusUpdateDate}`
     )
+    const focusSidebarButton = window.getByRole('button', { name: 'Persistent focus' })
+    const overallSunflower = focusSidebarButton.getByRole('img', {
+      name: 'Overall Green; no active commitments'
+    })
+    await expect(overallSunflower).toBeVisible()
+    await expect(overallSunflower).toHaveAttribute('width', '24')
+    await expect(overallSunflower.locator('[data-seed-index="0"]')).toHaveAttribute(
+      'fill',
+      'var(--success)'
+    )
+    await expect(overallSunflower.locator('[data-seed-index="0"]')).toHaveCSS(
+      'fill',
+      'rgb(136, 176, 75)'
+    )
+    await expect(overallSunflower.locator('circle').first()).toHaveCSS(
+      'stroke',
+      'rgb(155, 183, 212)'
+    )
+    await expect(focusSidebarButton.locator('.lucide-circle')).toHaveCount(0)
     await window.getByRole('button', { name: 'New thread' }).click()
     await window
       .getByRole('dialog', { name: 'New thread' })
       .getByLabel(/^Title/)
       .fill('Sprint execution')
     await window.getByRole('button', { name: 'Create thread' }).click()
-    await expect(window.getByRole('button', { name: 'Sprint execution' })).toBeVisible()
-    await window.getByRole('button', { name: 'Sprint execution' }).click()
+    await expect(
+      window.getByRole('button', { name: 'Sprint execution', exact: true })
+    ).toBeVisible()
+    await window.getByRole('button', { name: 'Sprint execution', exact: true }).click()
     await expect(window.getByLabel('Thread last reviewed')).toContainText('Last reviewed · Never')
+    const threadStatus = window.getByRole('combobox', { name: 'Thread status' })
+    await expect(threadStatus).toHaveValue('active')
+    await threadStatus.selectOption('paused')
+    await expect.poll(() => storedThread()?.status).toBe('paused')
+    await expect(threadStatus).toHaveValue('paused')
     const threadDrawer = window.getByRole('complementary', { name: 'Thread context drawer' })
     await expect(threadDrawer).toBeVisible()
     await expect(threadDrawer.getByText('Never')).toBeVisible()
     await threadDrawer.getByLabel('Needs review').uncheck()
     await threadDrawer.getByRole('button', { name: 'Save changes' }).click()
     await expect.poll(() => storedThread()?.needsReview).toBe(0)
-    await window.getByRole('button', { name: 'Overall' }).click()
+    const threadUpdates = window.getByRole('list', { name: 'Thread updates' })
+    await expect(threadUpdates).toBeVisible()
+    await window.getByRole('button', { name: 'Add update' }).click()
+    await expect.poll(() => storedThreadUpdate()?.state).toBe('none')
+    await threadUpdates.getByLabel('Update observation').fill('Sprint review completed')
+    await threadUpdates.getByLabel('Update state').selectOption('green')
+    await expect.poll(() => storedThreadUpdate()?.state, { timeout: 3_000 }).toBe('green')
+    await expect
+      .poll(() => storedThreadUpdate()?.observation, { timeout: 3_000 })
+      .toContain('Sprint review completed')
+    const threadUpdateDate = storedThreadUpdate()!.date
+    await expect(window.getByLabel('Thread last reviewed')).toContainText(
+      `Last reviewed · ${threadUpdateDate}`
+    )
+    await window
+      .getByRole('button', { name: 'Add commitment to Sprint execution' })
+      .click()
+    const newThreadCommitmentDialog = window.getByRole('dialog', {
+      name: 'New commitment'
+    })
+    await expect(newThreadCommitmentDialog).toContainText('Add a Thread-level commitment.')
+    await newThreadCommitmentDialog
+      .getByLabel(/^Title/)
+      .fill('Improve ticket quality')
+    await newThreadCommitmentDialog
+      .getByRole('button', { name: 'Create commitment' })
+      .click()
+    await expect.poll(() => storedThreadCommitment()?.title).toBe('Improve ticket quality')
+    await expect(storedThreadCommitment()).toMatchObject({
+      type: 'ongoing',
+      status: 'active'
+    })
+    const threadCommitmentNavigation = window.getByRole('navigation', {
+      name: 'Focus sections'
+    })
+    await expect(threadCommitmentNavigation).toBeVisible()
+    await expect(
+      threadCommitmentNavigation.getByRole('button', {
+        name: 'Open Sprint execution commitment Improve ticket quality'
+      })
+    ).toHaveAttribute('aria-current', 'page')
+    await expect(window.getByRole('heading', { name: 'Improve ticket quality' })).toBeVisible()
+    await expect(
+      window
+        .getByRole('complementary', { name: 'Commitment context drawer' })
+        .getByText('Thread — Sprint execution')
+    ).toBeVisible()
+    await window
+      .getByRole('button', { name: 'Sprint execution, paused', exact: true })
+      .click()
+    await expect(
+      window.getByRole('button', { name: 'Open commitment Improve ticket quality' })
+    ).toBeVisible()
+    await window.getByRole('button', { name: 'Overall', exact: true }).click()
     await expect(window.getByRole('complementary', { name: 'Focus context drawer' })).toBeVisible()
-    await window.getByRole('button', { name: 'Commitments' }).click()
+    await window.getByRole('button', { name: 'Commitments', exact: true }).click()
     await expect(window.getByRole('navigation', { name: 'Focus commitments' })).toBeVisible()
     await expect(window.getByRole('complementary', { name: 'Context drawer' })).toContainText(
       'No settings here.'
     )
     await window.getByRole('button', { name: 'New commitment' }).click()
-    await window
-      .getByRole('dialog', { name: 'New commitment' })
-      .getByLabel(/^Title/)
-      .fill('Keep sponsors aligned')
+    const newCommitmentDialog = window.getByRole('dialog', { name: 'New commitment' })
+    await newCommitmentDialog.getByLabel(/^Title/).fill('Keep sponsors aligned')
+    const newCommitmentType = newCommitmentDialog.getByRole('combobox', { name: 'Type' })
+    await expect(newCommitmentType).toHaveValue('ongoing')
+    await newCommitmentType.selectOption('action')
+    const commitmentDueDate = '2026-09-15'
+    await newCommitmentDialog.getByLabel(/Due date/).fill(commitmentDueDate)
     await window.getByRole('button', { name: 'Create commitment' }).click()
+    await expect.poll(() => storedCommitment()?.type).toBe('action')
+    await expect.poll(() => storedCommitment()?.dueDate).toBe(commitmentDueDate)
+    const activeCommitmentSunflower = focusSidebarButton.getByRole('img', {
+      name: 'Overall Green; active commitments: Keep sponsors aligned None'
+    })
+    await expect(activeCommitmentSunflower).toBeVisible()
+    await expect(activeCommitmentSunflower.locator('[data-seed-index="0"]')).toHaveAttribute(
+      'fill',
+      'var(--success)'
+    )
+    await expect(activeCommitmentSunflower.locator('[data-seed-index="1"]')).toHaveAttribute(
+      'fill',
+      'var(--muted-foreground)'
+    )
     await expect(window.getByRole('button', { name: 'Keep sponsors aligned' })).toHaveAttribute(
       'aria-current',
       'page'
     )
     await expect(window.getByRole('heading', { name: 'Keep sponsors aligned' })).toBeVisible()
+    await expect(window.getByLabel('Commitment type')).toContainText('Type · Action')
+    await expect(window.getByLabel('Commitment due date')).toContainText(
+      `Due date · ${commitmentDueDate}`
+    )
     const commitmentNavigation = window.getByRole('navigation', { name: 'Focus commitments' })
     await expect(commitmentNavigation.getByText('Active · Last updated · Never')).toBeVisible()
     await expect(window.getByLabel('Commitment last updated')).toContainText(
@@ -251,6 +433,8 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(commitmentDrawer).toBeVisible()
     await expect(commitmentDrawer.getByText('Last updated')).toBeVisible()
     await expect(commitmentDrawer.getByText('Never')).toBeVisible()
+    await expect(commitmentDrawer.getByText('Action', { exact: true })).toBeVisible()
+    await expect(commitmentDrawer.getByText(commitmentDueDate)).toBeVisible()
     const commitmentStatus = window.getByRole('combobox', { name: 'Commitment status' })
     await expect(commitmentStatus).toHaveValue('active')
     await commitmentStatus.selectOption('paused')
@@ -258,6 +442,11 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(commitmentStatus).toHaveValue('paused')
     await expect(commitmentNavigation.getByText('Paused · Last updated · Never')).toBeVisible()
     await expect(commitmentDrawer.getByText('paused', { exact: true })).toBeVisible()
+    await expect(
+      focusSidebarButton.getByRole('img', {
+        name: 'Overall Green; active commitments: Improve ticket quality None'
+      })
+    ).toBeVisible()
     const updateList = window.getByRole('list', { name: 'Commitment updates' })
     await expect(updateList).toBeVisible()
     await expect(window.getByRole('table')).toHaveCount(0)
@@ -310,13 +499,18 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       .poll(() => storedCommitmentUpdate()?.observation, { timeout: 3_000 })
       .toContain('Sponsors confirmed the launch plan')
     await expect(updateObservation).toContainText('Sponsors confirmed the launch plan')
-    await commitmentStatus.selectOption('done')
-    await expect.poll(() => storedCommitment()?.status).toBe('done')
-    await expect(
-      commitmentNavigation.getByText(`Done · Last updated · ${newUpdateDate}`)
-    ).toBeVisible()
     await window.getByRole('button', { name: 'Back to Focus sections' }).click()
     const currentCommitments = window.getByRole('list', { name: 'Current commitments' })
+    const actionRow = currentCommitments
+      .getByRole('button', { name: 'Open commitment Keep sponsors aligned' })
+      .locator('..')
+    await expect(actionRow.getByText('Action', { exact: true })).toBeVisible()
+    await expect(actionRow.getByText(`Due · ${commitmentDueDate}`)).toBeVisible()
+    await actionRow
+      .getByRole('checkbox', { name: 'Mark commitment Keep sponsors aligned done' })
+      .click()
+    await expect.poll(() => storedCommitment()?.status).toBe('done')
+    await expect.poll(() => latestCommitmentTransition()).toBe('done')
     await expect(currentCommitments).toContainText('No active or paused commitments')
     const closedCommitments = window.getByRole('list', {
       name: 'Done and cancelled commitments'
@@ -324,10 +518,13 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     const commitmentRow = closedCommitments
       .getByRole('button', { name: 'Open commitment Keep sponsors aligned' })
       .locator('..')
-    await expect(commitmentRow.getByText(`Last updated · ${newUpdateDate}`)).toBeVisible()
+    await expect(commitmentRow).toContainText(`Last updated · ${newUpdateDate}`)
     await expect(
       commitmentRow.locator('[data-slot="lifecycle-status-label"]').filter({ hasText: /^Done$/ })
     ).toBeVisible()
+    await expect(
+      commitmentRow.getByRole('checkbox', { name: 'Mark commitment Keep sponsors aligned done' })
+    ).toBeChecked()
     await expect(
       commitmentRow.locator('[data-tone="danger"]').filter({ hasText: /^Red$/ })
     ).toBeVisible()
@@ -340,7 +537,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(
       window.getByRole('complementary', { name: 'Commitment context drawer' })
     ).toBeVisible()
-    await expect(window.getByRole('button', { name: 'Overall' })).toHaveAttribute(
+    await expect(window.getByRole('button', { name: 'Overall', exact: true })).toHaveAttribute(
       'aria-current',
       'page'
     )
@@ -366,9 +563,31 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     ).toBeVisible()
     await window.getByRole('button', { name: 'Unpin drawer and follow current selection' }).click()
     await expect(window.getByRole('complementary', { name: 'Focus context drawer' })).toBeVisible()
-    await window.getByLabel('Status').selectOption('paused')
+    await window
+      .getByRole('complementary', { name: 'Focus context drawer' })
+      .getByLabel('Status', { exact: true })
+      .selectOption('paused')
     await window.getByRole('button', { name: 'Save changes' }).click()
     await expect(window.getByRole('button', { name: 'Persistent focus, paused' })).toBeVisible()
+    await window.getByRole('main').getByLabel('Sensitive').first().click()
+    await expect.poll(() => storedFocus()?.sensitive).toBe(1)
+    await expect(window.getByRole('main').getByLabel('Sensitive').first()).toBeChecked()
+    await application.evaluate(({ BrowserWindow, Menu }) => {
+      const menuItem = Menu.getApplicationMenu()?.getMenuItemById('hide-sensitive-content')
+      if (!menuItem) throw new Error('Missing sensitive-content View menu item')
+      menuItem.click?.(menuItem, BrowserWindow.getFocusedWindow() ?? undefined, {} as never)
+    })
+    await expect(window.getByRole('heading', { name: 'Home', exact: true })).toBeVisible()
+    await expect(window.getByRole('button', { name: 'Persistent focus, paused' })).toHaveCount(0)
+    await application.evaluate(({ BrowserWindow, Menu }) => {
+      const menuItem = Menu.getApplicationMenu()?.getMenuItemById('hide-sensitive-content')
+      if (!menuItem) throw new Error('Missing sensitive-content View menu item')
+      menuItem.click?.(menuItem, BrowserWindow.getFocusedWindow() ?? undefined, {} as never)
+    })
+    await expect(window.getByRole('button', { name: 'Persistent focus, paused' })).toBeVisible()
+    await expect(window.getByRole('heading', { name: 'Home', exact: true })).toBeVisible()
+    await window.getByRole('button', { name: 'Persistent focus, paused' }).click()
+    await expect(window.getByRole('heading', { name: 'Persistent focus' })).toBeVisible()
     await application.close()
     application = undefined
 
@@ -377,7 +596,8 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     expect(storedFocus()).toMatchObject({
       title: 'Persistent focus',
       status: 'paused',
-      needsReview: 0
+      needsReview: 0,
+      sensitive: 1
     })
     expect(storedFocus()?.description).toContain('onmove-rich-text:1:')
     expect(storedFocus()?.description).toContain('Stored notes')
@@ -387,8 +607,16 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     expect(storedThread()).toEqual({
       title: 'Sprint execution',
       reviewFrequencyDays: 7,
-      needsReview: 0
+      needsReview: 0,
+      status: 'paused'
     })
+    expect(storedThreadCommitment()).toMatchObject({
+      title: 'Improve ticket quality',
+      type: 'ongoing',
+      status: 'active'
+    })
+    expect(storedThreadUpdate()).toMatchObject({ state: 'green' })
+    expect(storedThreadUpdate()?.observation).toContain('Sprint review completed')
     expect(storedCommitment()).toMatchObject({
       title: 'Keep sponsors aligned',
       status: 'done'
@@ -420,7 +648,38 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(window.getByRole('list', { name: 'Focus updates' })).toContainText(
       'Overall review completed'
     )
-    await expect(window.getByRole('button', { name: 'Sprint execution' })).toBeVisible()
+    await expect(
+      window.getByRole('button', { name: 'Sprint execution, paused', exact: true })
+    ).toBeVisible()
+    await window
+      .getByRole('button', { name: 'Sprint execution, paused', exact: true })
+      .click()
+    await expect(window.getByRole('heading', { name: 'Sprint execution' })).toBeVisible()
+    await expect(window.getByRole('combobox', { name: 'Thread status' })).toHaveValue('paused')
+    await expect(window.getByRole('list', { name: 'Thread updates' })).toContainText(
+      'Sprint review completed'
+    )
+    await expect(
+      window.getByRole('button', { name: 'Open commitment Improve ticket quality' })
+    ).toBeVisible()
+    await window
+      .getByRole('button', { name: 'Open commitment Improve ticket quality' })
+      .click()
+    await expect(
+      window
+        .getByRole('navigation', { name: 'Focus sections' })
+        .getByRole('button', {
+          name: 'Open Sprint execution commitment Improve ticket quality'
+        })
+    ).toHaveAttribute('aria-current', 'page')
+    await expect(
+      window.getByRole('navigation', { name: 'Focus sections' })
+    ).toBeVisible()
+    await expect(window.getByRole('heading', { name: 'Improve ticket quality' })).toBeVisible()
+    await window
+      .getByRole('button', { name: 'Sprint execution, paused', exact: true })
+      .click()
+    await window.getByRole('button', { name: 'Overall', exact: true }).click()
     await expect(
       window.getByRole('button', { name: 'Open commitment Keep sponsors aligned' })
     ).toBeVisible()
@@ -439,13 +698,20 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     ).toBeVisible()
     await window.getByRole('button', { name: 'Open commitment Keep sponsors aligned' }).click()
     await expect(window.getByRole('combobox', { name: 'Commitment status' })).toHaveValue('done')
+    await expect(window.getByLabel('Commitment type')).toContainText('Type · Action')
+    await expect(window.getByLabel('Commitment due date')).toContainText(
+      `Due date · ${commitmentDueDate}`
+    )
+    await expect(
+      window.getByRole('checkbox', { name: /Mark commitment/ })
+    ).toHaveCount(0)
     await expect(window.getByLabel('Update observation')).toContainText(
       'Sponsors confirmed the launch plan'
     )
     await expect(
       window.getByRole('list', { name: 'Commitment updates' }).locator('span').filter({ hasText: /^Red$/ })
     ).toBeVisible()
-    await window.getByRole('button', { name: 'Back to Focus sections' }).click()
+    await window.getByRole('button', { name: 'Overall', exact: true }).click()
     await window.getByRole('button', { name: 'Toggle context drawer' }).click()
     await expect(window.getByLabel('Description / notes')).toContainText('Stored notes')
     await window
@@ -461,6 +727,8 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     expect(launchCount()).toBe(2)
     expect(storedFocus()).toBeUndefined()
     expect(storedThread()).toBeUndefined()
+    expect(storedThreadCommitment()).toBeUndefined()
+    expect(storedThreadUpdate()).toBeUndefined()
     expect(storedCommitment()).toBeUndefined()
     expect(storedFocusUpdate()).toBeUndefined()
     expect(storedCommitmentUpdate()).toBeUndefined()

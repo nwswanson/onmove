@@ -17,6 +17,7 @@ export function updateListItems(updates: readonly UpdateSnapshot[]): UpdateListI
     id: String(update.id),
     date: update.date,
     observation: update.observation,
-    state: update.state
+    state: update.state,
+    sensitive: update.sensitive
   }))
 }

@@ -311,7 +311,11 @@ export function App(): React.JSX.Element {
     status: 'good'
   })
   const selectedFocus = application.selectedFocus
-  const focusItems = focusPrimaryNavigationItems(application.navigableFocuses)
+  const focusItems = focusPrimaryNavigationItems(
+    application.navigableFocuses,
+    application.focusStatusSummaries,
+    application.sensitiveContentHidden
+  )
   const toolbarTitle = selectedFocus?.title ?? 'Home'
   const contextDrawer = {
     open: contextDrawerState.open,
@@ -375,7 +379,11 @@ export function App(): React.JSX.Element {
               contextDrawer={contextDrawer}
               onUpdateFocus={(input) => application.updateFocus(selectedFocus.id, input)}
               onRefreshFocus={() => application.refreshFocus(selectedFocus.id)}
+              onRefreshStatusSummary={() =>
+                application.refreshFocusStatusSummary(selectedFocus.id)
+              }
               onDeleteFocus={() => deleteFocus(selectedFocus.id)}
+              hideSensitiveContent={application.sensitiveContentHidden}
             />
           ) : (
             <HomeView

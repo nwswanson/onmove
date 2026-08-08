@@ -8,6 +8,7 @@ export interface UpdateListDraft {
   date: string
   observation: string
   state: string
+  sensitive: boolean
 }
 
 export interface UpdateListItemModel extends UpdateListDraft {

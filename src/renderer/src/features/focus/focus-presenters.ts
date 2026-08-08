@@ -1,8 +1,9 @@
 import type {
   CommitmentSnapshot,
-  CommitmentStatus,
+  CommitmentType,
   FocusSnapshot,
   FocusStatus,
+  HealthState,
   ThreadSnapshot,
   UpdateFocusInput,
   UpdateThreadInput
@@ -11,33 +12,45 @@ import type {
   ContextDrawerAdapter,
   ContextDrawerValues
 } from '@/components/ui/context-drawer'
-import type { ContextualSidebarItemModel } from '@/components/ui/contextual-sidebar'
-import type { LifecycleStatusOptionModel } from '@/components/ui/lifecycle-status'
+import type {
+  ContextualSidebarChildCollectionModel,
+  ContextualSidebarItemModel
+} from '@/components/ui/contextual-sidebar'
 import type { SidebarNavigationItemModel } from '@/components/ui/sidebar-navigation'
-import { buildCommitmentListModel } from '@/features/focus/commitment-list-model'
+import type {
+  SemanticSunflowerModel,
+  SemanticSunflowerTone
+} from '@/components/ui/sunflower'
+import type { CommitmentCollectionModel } from '@/features/focus/commitment-ui'
+import {
+  buildCommitmentListModel,
+  commitmentCompletionModel,
+  type CommitmentListModel
+} from '@/features/focus/commitment-list-model'
 import { healthStateLabel } from '@/features/shared/state-presenters'
+import {
+  EMPTY_STATUS_SUMMARY,
+  statusSummaryForVisibility,
+  type StatusSummary
+} from '@/features/shared/status-summary'
+import {
+  WORK_STATUS_OPTIONS,
+  workStatusLabel
+} from '@/features/shared/work-status'
 
-const FOCUS_STATUS_OPTIONS = [
-  { value: 'active', label: 'Active' },
-  { value: 'paused', label: 'Paused' },
-  { value: 'cancelled', label: 'Cancelled' },
-  { value: 'done', label: 'Done' }
-] as const
+export const COMMITMENT_TYPE_OPTIONS = [
+  { value: 'ongoing', label: 'Ongoing' },
+  { value: 'action', label: 'Action' }
+] as const satisfies readonly { value: CommitmentType; label: string }[]
 
-export const COMMITMENT_STATUS_OPTIONS = [
-  { value: 'active', label: 'Active', tone: 'primary' },
-  { value: 'paused', label: 'Paused', tone: 'neutral' },
-  { value: 'done', label: 'Done', tone: 'success' },
-  { value: 'cancelled', label: 'Cancelled', tone: 'danger' }
-] as const satisfies readonly LifecycleStatusOptionModel[]
+export function commitmentTypeLabel(type: CommitmentType): string {
+  const option = COMMITMENT_TYPE_OPTIONS.find((candidate) => candidate.value === type)
+  if (!option) throw new Error(`Unsupported Commitment type "${type}".`)
+  return option.label
+}
 
-/** Translate a domain lifecycle status into the receiver-owned visual contract. */
-export function commitmentStatusLabel(
-  status: CommitmentStatus
-): LifecycleStatusOptionModel {
-  const option = COMMITMENT_STATUS_OPTIONS.find((candidate) => candidate.value === status)
-  if (!option) throw new Error(`Unsupported Commitment status "${status}".`)
-  return option
+export function commitmentDueDateLabel(dueDate: string | null): string {
+  return dueDate ?? 'No due date'
 }
 
 function textValue(values: ContextDrawerValues, id: string): string {
@@ -53,16 +66,68 @@ export function dateOrNeverLabel(value: string | null): string {
   return value ?? 'Never'
 }
 
+const HEALTH_STATE_TONES: Readonly<Record<HealthState, SemanticSunflowerTone>> = {
+  red: 'danger',
+  yellow: 'warning',
+  green: 'success',
+  none: 'neutral'
+}
+
+const HEALTH_STATE_NAMES: Readonly<Record<HealthState, string>> = {
+  red: 'Red',
+  yellow: 'Yellow',
+  green: 'Green',
+  none: 'None'
+}
+
+export type StatusSummariesById = Readonly<Record<number, StatusSummary | undefined>>
+
+export function statusSunflowerModel(
+  summary: StatusSummary,
+  hideSensitiveContent = false
+): SemanticSunflowerModel {
+  const visibleSummary = statusSummaryForVisibility(summary, hideSensitiveContent)
+  const commitmentDescription = visibleSummary.activeCommitments.length === 0
+    ? 'no active commitments'
+    : `active commitments: ${visibleSummary.activeCommitments
+        .map((commitment) => `${commitment.title} ${HEALTH_STATE_NAMES[commitment.state]}`)
+        .join(', ')}`
+
+  return {
+    ariaLabel: `Overall ${HEALTH_STATE_NAMES[visibleSummary.overallState]}; ${commitmentDescription}`,
+    seeds: [
+      {
+        id: 'overall',
+        label: `Overall: ${HEALTH_STATE_NAMES[visibleSummary.overallState]}`,
+        tone: HEALTH_STATE_TONES[visibleSummary.overallState]
+      },
+      ...visibleSummary.activeCommitments.map((commitment) => ({
+        id: `commitment:${commitment.id}`,
+        label: `${commitment.title}: ${HEALTH_STATE_NAMES[commitment.state]}`,
+        tone: HEALTH_STATE_TONES[commitment.state]
+      }))
+    ]
+  }
+}
+
 export function focusPrimaryNavigationItems(
-  focuses: readonly FocusSnapshot[]
+  focuses: readonly FocusSnapshot[],
+  summaries: StatusSummariesById = {},
+  hideSensitiveContent = false
 ): SidebarNavigationItemModel[] {
   return focuses.map((focus) => {
     const paused = focus.status === 'paused'
+    const label = focus.title
+    const sunflower = statusSunflowerModel(
+      summaries[focus.id] ?? EMPTY_STATUS_SUMMARY,
+      hideSensitiveContent
+    )
     return {
       id: String(focus.id),
-      label: focus.title,
-      ariaLabel: `${focus.title}${paused ? ', paused' : ''}`,
-      icon: paused ? 'paused' : 'item',
+      label,
+      ariaLabel: `${label}${paused ? ', paused' : ''}`,
+      icon: paused ? 'paused' : 'sunflower',
+      ...(paused ? {} : { sunflower }),
       tone: paused ? 'muted' : 'default'
     }
   })
@@ -72,24 +137,79 @@ export function threadSidebarItemId(threadId: number): string {
   return `thread:${threadId}`
 }
 
+export type CommitmentsByContextItemId = Readonly<
+  Record<string, readonly CommitmentSnapshot[] | undefined>
+>
+
+function commitmentChildCollection(
+  ownerLabel: string,
+  commitments: readonly CommitmentSnapshot[]
+): ContextualSidebarChildCollectionModel {
+  return {
+    id: 'commitments',
+    label: 'Commitments',
+    emptyState: 'No commitments',
+    action: {
+      id: 'add',
+      label: 'Add commitment',
+      ariaLabel: `Add commitment to ${ownerLabel}`
+    },
+    items: buildCommitmentListModel(commitments).ordered.map((commitment) => ({
+      id: String(commitment.id),
+      label: commitment.title,
+      ariaLabel: `Open ${ownerLabel} commitment ${commitment.title}`,
+      state: healthStateLabel(commitment.state),
+      tone: commitment.status === 'active' ? 'default' : 'muted'
+    }))
+  }
+}
+
 export function focusContextSidebarItems(
-  threads: readonly ThreadSnapshot[]
+  threads: readonly ThreadSnapshot[],
+  summaries: StatusSummariesById = {},
+  hideSensitiveContent = false,
+  commitmentsByItemId?: CommitmentsByContextItemId
 ): ContextualSidebarItemModel[] {
   return [
     {
       id: 'overall',
       label: 'Overall',
       icon: 'overview',
+      ...(commitmentsByItemId
+        ? {
+            childCollection: commitmentChildCollection(
+              'Overall',
+              commitmentsByItemId.overall ?? []
+            )
+          }
+        : {}),
       group: { id: 'focus', label: 'Focus' }
     },
-    ...threads.map((thread) => ({
-      id: threadSidebarItemId(thread.id),
-      label: thread.title,
-      ariaLabel: `${thread.title}${thread.status === 'paused' ? ', paused' : ''}`,
-      icon: thread.status === 'paused' ? ('paused' as const) : ('item' as const),
-      tone: thread.status === 'paused' ? ('muted' as const) : ('default' as const),
-      group: { id: 'threads', label: 'Threads' }
-    }))
+    ...threads.map((thread) => {
+      const paused = thread.status === 'paused'
+      const label = thread.title
+      const sunflower = statusSunflowerModel(
+        summaries[thread.id] ?? EMPTY_STATUS_SUMMARY,
+        hideSensitiveContent
+      )
+      return {
+        id: threadSidebarItemId(thread.id),
+        label,
+        ariaLabel: `${label}${paused ? ', paused' : ''}`,
+        icon: paused ? ('paused' as const) : ('sunflower' as const),
+        ...(paused ? {} : { sunflower }),
+        ...(commitmentsByItemId
+          ? {
+              childCollection: commitmentChildCollection(
+                label,
+                commitmentsByItemId[threadSidebarItemId(thread.id)] ?? []
+              )
+            }
+          : {}),
+        tone: paused ? ('muted' as const) : ('default' as const),
+        group: { id: 'threads', label: 'Threads' }
+      }
+    })
   ]
 }
 
@@ -98,7 +218,7 @@ export function commitmentContextSidebarItems(
 ): ContextualSidebarItemModel[] {
   return buildCommitmentListModel(commitments).groups.flatMap((group) =>
     group.commitments.map((commitment) => {
-      const status = commitmentStatusLabel(commitment.status)
+      const status = workStatusLabel(commitment.status)
       return {
         id: String(commitment.id),
         label: commitment.title,
@@ -112,6 +232,32 @@ export function commitmentContextSidebarItems(
   )
 }
 
+/** Translate ordered Commitment business projections into the list receiver's visual contract. */
+export function commitmentCollectionModel(
+  model: CommitmentListModel
+): CommitmentCollectionModel {
+  const groups = model.groups.map((group) => ({
+    id: group.id,
+    label: group.label,
+    items: group.commitments.map((commitment) => ({
+      id: commitment.id,
+      title: commitment.title,
+      typeLabel: commitmentTypeLabel(commitment.type),
+      statusLabel: workStatusLabel(commitment.status),
+      lastUpdatedLabel: dateOrNeverLabel(commitment.lastUpdateDate),
+      dueDateLabel: commitment.dueDate,
+      stateLabel: healthStateLabel(commitment.state),
+      completion: commitmentCompletionModel(commitment)
+    }))
+  }))
+
+  return {
+    currentCount: model.current.length,
+    closedCount: model.closed.length,
+    groups
+  }
+}
+
 export function focusDrawerAdapter({
   focus,
   onSave,
@@ -123,6 +269,7 @@ export function focusDrawerAdapter({
 }): ContextDrawerAdapter {
   return {
     id: `focus:${focus.id}`,
+    revision: `${focus.updatedAt}:${focus.sensitive}`,
     invalidationKeys: [`focus:${focus.id}`],
     model: {
       title: 'Focus',
@@ -144,7 +291,7 @@ export function focusDrawerAdapter({
               id: 'status',
               label: 'Status',
               value: focus.status,
-              options: FOCUS_STATUS_OPTIONS
+              options: WORK_STATUS_OPTIONS
             },
             { kind: 'static', id: 'kind', label: 'Kind', value: focus.kind },
             {
@@ -161,6 +308,13 @@ export function focusDrawerAdapter({
               description: 'Include this Focus in review workflows.'
             },
             {
+              kind: 'checkbox',
+              id: 'sensitive',
+              label: 'Sensitive',
+              value: focus.sensitive,
+              description: 'Hide this Focus and its descendants from lists.'
+            },
+            {
               kind: 'rich-text',
               id: 'description',
               label: 'Description / notes',
@@ -172,7 +326,7 @@ export function focusDrawerAdapter({
       autosave: {
         fieldIds: ['title', 'description'],
         errorMessage: 'The focus text could not be saved. Please try again.',
-        onInvoke: (values) =>
+        onInvoke: (values: ContextDrawerValues) =>
           onSave({
             title: textValue(values, 'title'),
             description:
@@ -207,12 +361,12 @@ export function focusDrawerAdapter({
           onInvoke: (values) =>
             onSave({
               title: textValue(values, 'title'),
-              description:
-                textValue(values, 'description').trim().length === 0
-                  ? null
-                  : textValue(values, 'description'),
+              description: textValue(values, 'description').trim().length === 0
+                ? null
+                : textValue(values, 'description'),
               status: textValue(values, 'status') as FocusStatus,
-              needsReview: booleanValue(values, 'needs-review')
+              needsReview: booleanValue(values, 'needs-review'),
+              sensitive: booleanValue(values, 'sensitive')
             })
         }
       ]
@@ -227,6 +381,7 @@ export function threadDrawerAdapter(
 ): ContextDrawerAdapter {
   return {
     id: `thread:${thread.id}`,
+    revision: `${thread.updatedAt}:${thread.sensitive}`,
     invalidationKeys: [`focus:${thread.focusId}`, `thread:${thread.id}`],
     model: {
       title: 'Thread',
@@ -263,6 +418,13 @@ export function threadDrawerAdapter(
               label: 'Needs review',
               value: thread.needsReview,
               description: 'Include this Thread in review workflows.'
+            },
+            {
+              kind: 'checkbox',
+              id: 'sensitive',
+              label: 'Sensitive',
+              value: thread.sensitive,
+              description: 'Hide this Thread and its descendants from lists.'
             }
           ]
         }
@@ -274,21 +436,31 @@ export function threadDrawerAdapter(
           pendingLabel: 'Saving…',
           errorMessage: 'The thread could not be updated. Please try again.',
           onInvoke: (values) =>
-            onSave({ needsReview: booleanValue(values, 'needs-review') })
+            onSave({
+              needsReview: booleanValue(values, 'needs-review'),
+              sensitive: booleanValue(values, 'sensitive')
+            })
         }
       ]
     }
   }
 }
 
-export function commitmentDrawerAdapter(
-  commitment: CommitmentSnapshot,
-  parentTitle: string,
-  ancestorKeys: readonly string[] = []
-): ContextDrawerAdapter {
+export function commitmentDrawerAdapter({
+  commitment,
+  parentTitle,
+  onSave,
+  ancestorKeys = []
+}: {
+  commitment: CommitmentSnapshot
+  parentTitle: string
+  onSave: (input: { sensitive: boolean }) => Promise<void>
+  ancestorKeys?: readonly string[]
+}): ContextDrawerAdapter {
   const parentKind = commitment.parent.type === 'focus' ? 'Focus' : 'Thread'
   return {
     id: `commitment:${commitment.id}`,
+    revision: `${commitment.updatedAt}:${commitment.sensitive}`,
     invalidationKeys: [
       ...new Set([
         ...ancestorKeys,
@@ -313,6 +485,18 @@ export function commitmentDrawerAdapter(
             },
             {
               kind: 'static',
+              id: 'type',
+              label: 'Type',
+              value: commitmentTypeLabel(commitment.type)
+            },
+            {
+              kind: 'static',
+              id: 'due-date',
+              label: 'Due date',
+              value: commitmentDueDateLabel(commitment.dueDate)
+            },
+            {
+              kind: 'static',
               id: 'status',
               label: 'Status',
               value: commitment.status,
@@ -330,9 +514,25 @@ export function commitmentDrawerAdapter(
               id: 'last-updated',
               label: 'Last updated',
               value: dateOrNeverLabel(commitment.lastUpdateDate)
+            },
+            {
+              kind: 'checkbox',
+              id: 'sensitive',
+              label: 'Sensitive',
+              value: commitment.sensitive,
+              description: 'Hide this Commitment and its Updates from lists.'
             }
-          ],
-          note: 'No editable settings here yet.'
+          ]
+        }
+      ],
+      actions: [
+        {
+          id: 'save',
+          label: 'Save changes',
+          pendingLabel: 'Saving…',
+          errorMessage: 'The commitment could not be updated. Please try again.',
+          onInvoke: (values) =>
+            onSave({ sensitive: booleanValue(values, 'sensitive') })
         }
       ]
     }

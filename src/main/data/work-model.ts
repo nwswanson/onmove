@@ -34,6 +34,7 @@ interface ThreadRow {
   status: string
   review_frequency_days: number
   needs_review: number
+  sensitive: number
   created_at: string
   updated_at: string
 }
@@ -47,6 +48,7 @@ interface CommitmentRow {
   status: string
   due_on: string | null
   cadence_days: number | null
+  sensitive: number
   created_at: string
   updated_at: string
 }
@@ -59,6 +61,7 @@ interface UpdateRow {
   recorded_on: string
   observation: string
   state: string
+  sensitive: number
   created_at: string
 }
 
@@ -142,6 +145,14 @@ function normalizePositiveDays(value: number, field: string): number {
 
 function normalizeNeedsReview(value: boolean | undefined, field: string): boolean {
   if (value === undefined) return true
+  if (typeof value !== 'boolean') {
+    throw new ModelValidationError(`${field} must be a boolean`)
+  }
+  return value
+}
+
+function normalizeSensitive(value: boolean | undefined, field: string): boolean {
+  if (value === undefined) return false
   if (typeof value !== 'boolean') {
     throw new ModelValidationError(`${field} must be a boolean`)
   }
@@ -238,6 +249,10 @@ export class ThreadModel extends BaseModel<ThreadRecord> {
     return this.record.status
   }
 
+  get sensitive(): boolean {
+    return this.record.sensitive
+  }
+
   update(input: UpdateThreadInput): this {
     return this.replace(this.repository.update(this.id, input))
   }
@@ -270,14 +285,15 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
     const createdAt = timestamp(now)
     const result = this.database.run(
       `INSERT INTO threads (
-         focus_id, title, status, review_frequency_days, needs_review, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         focus_id, title, status, review_frequency_days, needs_review, sensitive, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         input.focusId,
         normalizeTitle(input.title, 'thread'),
         normalizeStatus(input.status),
         normalizePositiveDays(input.reviewFrequencyDays, 'reviewFrequencyDays'),
         normalizeNeedsReview(input.needsReview, 'needsReview') ? 1 : 0,
+        normalizeSensitive(input.sensitive, 'sensitive') ? 1 : 0,
         createdAt,
         createdAt
       ]
@@ -308,7 +324,7 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
     if (!current) throw new ModelNotFoundError('Thread', id)
     this.database.run(
       `UPDATE threads
-       SET title = ?, status = ?, review_frequency_days = ?, needs_review = ?, updated_at = ?
+       SET title = ?, status = ?, review_frequency_days = ?, needs_review = ?, sensitive = ?, updated_at = ?
        WHERE id = ?`,
       [
         input.title === undefined ? current.title : normalizeTitle(input.title, 'thread'),
@@ -319,6 +335,9 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
         input.needsReview === undefined
           ? (current.needsReview ? 1 : 0)
           : (normalizeNeedsReview(input.needsReview, 'needsReview') ? 1 : 0),
+        input.sensitive === undefined
+          ? (current.sensitive ? 1 : 0)
+          : (normalizeSensitive(input.sensitive, 'sensitive') ? 1 : 0),
         timestamp(),
         id
       ]
@@ -355,7 +374,7 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
   private materializeOrNull(id: number, asOf: string): ThreadRecord | null {
     assertId(id, 'thread')
     const row = this.database.get<ThreadRow>(
-      `SELECT id, focus_id, title, status, review_frequency_days, needs_review, created_at, updated_at
+      `SELECT id, focus_id, title, status, review_frequency_days, needs_review, sensitive, created_at, updated_at
        FROM threads WHERE id = ?`,
       [id]
     )
@@ -394,6 +413,7 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
       lastReviewDate,
       nextReviewDate,
       needsReview: Boolean(row.needs_review),
+      sensitive: Boolean(row.sensitive),
       reviewDue: Boolean(row.needs_review) && row.status === 'active' && nextReviewDate <= asOf,
       createdAt: row.created_at,
       updatedAt: row.updated_at
@@ -424,6 +444,10 @@ export class CommitmentModel extends BaseModel<CommitmentRecord> {
 
   get status(): CommitmentStatus {
     return this.record.status
+  }
+
+  get sensitive(): boolean {
+    return this.record.sensitive
   }
 
   update(input: UpdateCommitmentInput): this {
@@ -459,8 +483,8 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
     const result = this.database.run(
       `INSERT INTO commitments (
          focus_id, thread_id, commitment_type, title, status, due_on,
-         cadence_days, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         cadence_days, sensitive, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         focusId,
         threadId,
@@ -469,6 +493,7 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
         normalizeStatus(input.status),
         normalizeOptionalDate(input.dueDate, 'dueDate'),
         normalizeOptionalDays(input.cadenceDays, 'cadenceDays'),
+        normalizeSensitive(input.sensitive, 'sensitive') ? 1 : 0,
         createdAt,
         createdAt
       ]
@@ -499,7 +524,7 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
     if (!current) throw new ModelNotFoundError('Commitment', id)
     this.database.run(
       `UPDATE commitments
-       SET commitment_type = ?, title = ?, status = ?, due_on = ?, cadence_days = ?, updated_at = ?
+       SET commitment_type = ?, title = ?, status = ?, due_on = ?, cadence_days = ?, sensitive = ?, updated_at = ?
        WHERE id = ?`,
       [
         input.type === undefined ? current.type : normalizeCommitmentType(input.type),
@@ -509,6 +534,9 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
         input.cadenceDays === undefined
           ? current.cadenceDays
           : normalizeOptionalDays(input.cadenceDays, 'cadenceDays'),
+        input.sensitive === undefined
+          ? (current.sensitive ? 1 : 0)
+          : (normalizeSensitive(input.sensitive, 'sensitive') ? 1 : 0),
         timestamp(),
         id
       ]
@@ -546,7 +574,7 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
     assertId(id, 'commitment')
     const row = this.database.get<CommitmentRow>(
       `SELECT id, focus_id, thread_id, commitment_type, title, status,
-              due_on, cadence_days, created_at, updated_at
+              due_on, cadence_days, sensitive, created_at, updated_at
        FROM commitments WHERE id = ?`,
       [id]
     )
@@ -577,6 +605,7 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
       nextUpdateDate,
       needsUpdate:
         row.status === 'active' && nextUpdateDate !== null && nextUpdateDate <= asOf,
+      sensitive: Boolean(row.sensitive),
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }
@@ -616,7 +645,10 @@ export class UpdateModel extends BaseModel<UpdateRecord> {
     const next = {
       date: normalizeDate(input.date ?? this.record.date, 'update date'),
       observation: normalizeObservation(input.observation ?? this.record.observation),
-      state: normalizeState(input.state ?? this.record.state)
+      state: normalizeState(input.state ?? this.record.state),
+      sensitive: input.sensitive === undefined
+        ? this.record.sensitive
+        : normalizeSensitive(input.sensitive, 'sensitive')
     }
     this.repository.updateRecord(this.id, next)
     return this.refresh()
@@ -637,8 +669,8 @@ export class UpdateRepository extends BaseRepository<UpdateRecord, UpdateModel> 
     this.assertParentExists(input.parent)
     const result = this.database.run(
       `INSERT INTO updates (
-         focus_id, thread_id, commitment_id, recorded_on, observation, state, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         focus_id, thread_id, commitment_id, recorded_on, observation, state, sensitive, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         focusId,
         threadId,
@@ -646,6 +678,7 @@ export class UpdateRepository extends BaseRepository<UpdateRecord, UpdateModel> 
         normalizeDate(input.date ?? today(now), 'update date'),
         normalizeObservation(input.observation),
         normalizeState(input.state),
+        normalizeSensitive(input.sensitive, 'sensitive') ? 1 : 0,
         timestamp(now)
       ]
     )
@@ -656,7 +689,7 @@ export class UpdateRepository extends BaseRepository<UpdateRecord, UpdateModel> 
     assertId(id, 'update')
     const row = this.database.get<UpdateRow>(
       `SELECT id, focus_id, thread_id, commitment_id, recorded_on,
-              observation, state, created_at
+              observation, state, sensitive, created_at
        FROM updates WHERE id = ?`,
       [id]
     )
@@ -678,8 +711,8 @@ export class UpdateRepository extends BaseRepository<UpdateRecord, UpdateModel> 
   updateRecord(id: number, input: Required<EditUpdateInput>): void {
     assertId(id, 'update')
     const result = this.database.run(
-      `UPDATE updates SET recorded_on = ?, observation = ?, state = ? WHERE id = ?`,
-      [input.date, input.observation, input.state, id]
+      `UPDATE updates SET recorded_on = ?, observation = ?, state = ?, sensitive = ? WHERE id = ?`,
+      [input.date, input.observation, input.state, input.sensitive ? 1 : 0, id]
     )
     if (result.changes === 0) throw new ModelNotFoundError('Update', id)
   }
@@ -694,7 +727,7 @@ export class UpdateRepository extends BaseRepository<UpdateRecord, UpdateModel> 
     return this.database
       .all<UpdateRow>(
         `SELECT id, focus_id, thread_id, commitment_id, recorded_on,
-                observation, state, created_at
+                observation, state, sensitive, created_at
          FROM updates WHERE ${column} = ? ORDER BY recorded_on, id`,
         [id]
       )
@@ -708,6 +741,7 @@ export class UpdateRepository extends BaseRepository<UpdateRecord, UpdateModel> 
       date: row.recorded_on,
       observation: row.observation,
       state: row.state as HealthState,
+      sensitive: Boolean(row.sensitive),
       createdAt: row.created_at
     }
   }

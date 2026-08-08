@@ -3,6 +3,8 @@ import type { MenuItemConstructorOptions } from 'electron'
 export interface MenuActions {
   createWindow: () => void
   showDataFolder: () => void
+  sensitiveContentHidden: boolean
+  setSensitiveContentHidden: (hidden: boolean) => void
 }
 
 export function createMenuTemplate(
@@ -48,6 +50,14 @@ export function createMenuTemplate(
     {
       label: 'View',
       submenu: [
+        {
+          id: 'hide-sensitive-content',
+          label: 'Hide Sensitive Content',
+          type: 'checkbox',
+          checked: actions.sensitiveContentHidden,
+          click: (menuItem) => actions.setSensitiveContentHidden(menuItem.checked)
+        },
+        { type: 'separator' },
         { role: 'reload' },
         { role: 'forceReload' },
         { role: 'toggleDevTools' },

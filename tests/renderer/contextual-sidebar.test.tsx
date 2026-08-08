@@ -7,6 +7,7 @@ import {
   ContextualSidebar,
   ContextualSidebarLevel,
   ContextualSidebarNavigation,
+  type ContextualSidebarChildCollectionModel,
   type ContextualSidebarNewItemAction,
   useContextualSidebarNavigation
 } from '../../src/renderer/src/components/ui/contextual-sidebar'
@@ -18,6 +19,7 @@ interface TestItem {
   description?: string
   disabled?: boolean
   stateLabel?: StateLabelModel
+  childCollection?: ContextualSidebarChildCollectionModel
 }
 
 function level(
@@ -28,6 +30,16 @@ function level(
     parent?: ContextualSidebarLevel
     parentItemId?: string
     onSelect?: (itemId: string) => void
+    onSelectChild?: (
+      parentItemId: string,
+      collectionId: string,
+      childItemId: string
+    ) => void
+    onChildCollectionAction?: (
+      parentItemId: string,
+      collectionId: string,
+      actionId: string
+    ) => void
     getItemGroup?: (item: TestItem) => { id: string; label: string } | null
     newItem?: ContextualSidebarNewItemAction
   } = {}
@@ -47,7 +59,9 @@ function level(
     parentItemId: options.parentItemId,
     items: typeof items === 'function' ? resolveItems : resolveItems(),
     newItem: options.newItem,
-    onSelect: options.onSelect
+    onSelect: options.onSelect,
+    onSelectChild: options.onSelectChild,
+    onChildCollectionAction: options.onChildCollectionAction
   })
 }
 
@@ -131,6 +145,123 @@ describe('ContextualSidebarNavigation', () => {
     expect(within(item).getByText('Last updated · 2026-08-07')).toBeInTheDocument()
   })
 
+  it('owns nested collection trees and selects a child without replacing its level', async () => {
+    const onSelect = vi.fn()
+    const onSelectChild = vi.fn()
+    const onChildCollectionAction = vi.fn()
+    const root = level(
+      'focus:1',
+      'Focus',
+      [
+        {
+          id: 'overall',
+          label: 'Overall',
+          childCollection: {
+            id: 'commitments',
+            label: 'Commitments',
+            action: {
+              id: 'add',
+              label: 'Add commitment',
+              ariaLabel: 'Add commitment to Overall'
+            },
+            items: [
+              {
+                id: 'quality',
+                label: 'Improve ticket quality',
+                ariaLabel: 'Open commitment Improve ticket quality',
+                state: { label: 'Red', tone: 'danger' }
+              }
+            ]
+          }
+        }
+      ],
+      { onSelect, onSelectChild, onChildCollectionAction }
+    )
+    const navigation = new ContextualSidebarNavigation(root)
+    const user = userEvent.setup()
+    render(<ContextualSidebar navigation={navigation} />)
+
+    expect(screen.getByRole('list', { name: 'Overall Commitments' })).toBeVisible()
+    expect(
+      screen.queryByRole('button', { name: 'Commitments' })
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Red state' })).toHaveAttribute(
+      'data-tone',
+      'danger'
+    )
+
+    await user.click(
+      screen.getByRole('button', { name: 'Open commitment Improve ticket quality' })
+    )
+
+    expect(screen.getByLabelText('Contextual sidebar')).toHaveAttribute(
+      'data-level-id',
+      'focus:1'
+    )
+    expect(
+      screen.getByRole('button', { name: 'Open commitment Improve ticket quality' })
+    ).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('button', { name: 'Overall' })).not.toHaveAttribute(
+      'aria-current'
+    )
+    expect(navigation.getSnapshot().selectedChild).toEqual({
+      parentItemId: 'overall',
+      collectionId: 'commitments',
+      childItemId: 'quality'
+    })
+    expect(onSelect).toHaveBeenCalledWith('overall')
+    expect(onSelectChild).toHaveBeenCalledWith(
+      'overall',
+      'commitments',
+      'quality'
+    )
+
+    await user.click(
+      screen.getByRole('button', { name: 'Add commitment to Overall' })
+    )
+    expect(onChildCollectionAction).toHaveBeenCalledWith(
+      'overall',
+      'commitments',
+      'add'
+    )
+    expect(navigation.getSnapshot().level).toBe(root)
+  })
+
+  it('falls back to the selected parent when a nested child is removed', () => {
+    const root = level('focus:1', 'Focus', [
+      {
+        id: 'overall',
+        label: 'Overall',
+        childCollection: {
+          id: 'commitments',
+          label: 'Commitments',
+          items: [{ id: 'quality', label: 'Improve ticket quality' }]
+        }
+      }
+    ])
+    const navigation = new ContextualSidebarNavigation(root)
+
+    navigation.selectChild('overall', 'commitments', 'quality')
+    root.setItems([
+      {
+        id: 'overall',
+        label: 'Overall',
+        childCollection: {
+          id: 'commitments',
+          label: 'Commitments',
+          items: []
+        }
+      }
+    ])
+    navigation.refresh()
+
+    expect(navigation.getSnapshot()).toMatchObject({
+      level: root,
+      selectedItemId: 'overall',
+      selectedChild: null
+    })
+  })
+
   it('replaces levels, retains each parent selection, and navigates back globally', async () => {
     const onThreadSelect = vi.fn()
     const root = level(
@@ -192,6 +323,82 @@ describe('ContextualSidebarNavigation', () => {
       'page'
     )
     expect(screen.getByLabelText('Main selection')).toHaveTextContent('Team health')
+  })
+
+  it('owns descendant paths and leaf selection for atomic deep links', () => {
+    const onFocusSectionSelect = vi.fn()
+    const onCommitmentSelect = vi.fn()
+    const root = level(
+      'focus:1',
+      'Focus',
+      [
+        { id: 'overall', label: 'Overall' },
+        { id: 'sprint', label: 'Sprint execution' }
+      ],
+      { onSelect: onFocusSectionSelect }
+    )
+    const commitments = level(
+      'thread:sprint:commitments',
+      'Commitments',
+      [
+        { id: 'quality', label: 'Improve ticket quality' },
+        { id: 'review', label: 'Hold weekly refinement' }
+      ],
+      {
+        parent: root,
+        parentItemId: 'sprint',
+        onSelect: onCommitmentSelect
+      }
+    )
+    const updates = level(
+      'commitment:review:updates',
+      'Updates',
+      [{ id: 'latest', label: 'Latest observation' }],
+      { parent: commitments, parentItemId: 'review' }
+    )
+    const navigation = new ContextualSidebarNavigation(root)
+
+    expect(navigation.getSnapshot().selectedItemId).toBe('overall')
+    expect(navigation.navigateToPath(updates, 'latest')).toBe(true)
+    expect(navigation.getSnapshot()).toMatchObject({
+      level: updates,
+      parent: commitments,
+      canGoBack: true,
+      selectedItemId: 'latest'
+    })
+    expect(navigation.getSelection(root)).toBe('sprint')
+    expect(navigation.getSelection(commitments)).toBe('review')
+    expect(onFocusSectionSelect).toHaveBeenCalledWith('sprint')
+    expect(onCommitmentSelect).toHaveBeenCalledWith('review')
+  })
+
+  it('rejects invalid deep links before changing the active path', () => {
+    const root = level('focus:1', 'Focus', [{ id: 'overall', label: 'Overall' }])
+    const commitments = level(
+      'focus:1:commitments',
+      'Commitments',
+      [{ id: 'quality', label: 'Improve ticket quality' }],
+      { parent: root, parentItemId: 'overall' }
+    )
+    const unrelatedRoot = level('focus:2', 'Other focus', [
+      { id: 'overall', label: 'Overall' }
+    ])
+    const unrelated = level(
+      'focus:2:commitments',
+      'Other commitments',
+      [{ id: 'other', label: 'Other item' }],
+      { parent: unrelatedRoot, parentItemId: 'overall' }
+    )
+    const navigation = new ContextualSidebarNavigation(root)
+
+    expect(() => navigation.navigateToPath(commitments, 'missing')).toThrow(
+      'Cannot deep link to missing item "missing"'
+    )
+    expect(navigation.getSnapshot()).toMatchObject({ level: root, selectedItemId: 'overall' })
+    expect(() => navigation.navigateToPath(unrelated, 'other')).toThrow(
+      'does not belong to navigation root "focus:1"'
+    )
+    expect(navigation.getSnapshot()).toMatchObject({ level: root, selectedItemId: 'overall' })
   })
 
   it('requires every entered level to assert the current level as its parent', () => {

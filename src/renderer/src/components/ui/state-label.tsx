@@ -16,6 +16,35 @@ export interface StateLabelProps extends Omit<ComponentProps<'span'>, 'children'
   size?: 'compact' | 'default'
 }
 
+export interface StateDotProps extends Omit<ComponentProps<'span'>, 'children'> {
+  model: StateLabelModel
+}
+
+/** Compact, text-free state receiver for dense tree and navigation rows. */
+export function StateDot({
+  model,
+  className,
+  ...props
+}: StateDotProps): React.JSX.Element {
+  return (
+    <span
+      role="img"
+      aria-label={`${model.label} state`}
+      title={model.label}
+      data-tone={model.tone}
+      className={cn(
+        'size-2 shrink-0 rounded-full ring-1 ring-inset',
+        model.tone === 'danger' && 'bg-destructive ring-destructive/35',
+        model.tone === 'warning' && 'bg-destructive/55 ring-destructive/25',
+        model.tone === 'success' && 'bg-success ring-success/35',
+        model.tone === 'neutral' && 'bg-muted-foreground/55 ring-border',
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
 export function StateLabel({
   model,
   size = 'default',
