@@ -7,6 +7,7 @@ import {
   type FocusStatus,
   type FocusStatusTransition,
   type ScopeApplicationSnapshot,
+  type ScopeApplicationTransition,
   type SetScopeApplicationInput,
   type UpdateFocusInput
 } from '../../shared/contracts'
@@ -192,6 +193,10 @@ export class FocusModel extends BaseModel<FocusRecord> {
     return this.repository.scopeApplication(this.id)
   }
 
+  scopeApplicationHistory(): ScopeApplicationTransition[] {
+    return this.repository.scopeApplicationHistory(this.id)
+  }
+
   setScope(input: SetScopeApplicationInput): this {
     this.repository.setScope(this.id, input)
     return this.refresh()
@@ -328,6 +333,10 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
 
   scopeApplication(id: number): ScopeApplicationSnapshot {
     return this.scopeApplications.get({ type: 'focus', id })
+  }
+
+  scopeApplicationHistory(id: number): ScopeApplicationTransition[] {
+    return this.scopeApplications.history({ type: 'focus', id })
   }
 
   setScope(id: number, input: SetScopeApplicationInput): ScopeApplicationSnapshot {

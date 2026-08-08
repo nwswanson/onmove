@@ -2,6 +2,7 @@ import type {
   CommitmentSnapshot,
   CommitmentType,
   FocusSnapshot,
+  FocusScopeSnapshot,
   FocusStatus,
   HealthState,
   ThreadSnapshot,
@@ -22,6 +23,7 @@ import type {
   SemanticSunflowerTone
 } from '@/components/ui/sunflower'
 import type { CommitmentCollectionModel } from '@/features/focus/commitment-ui'
+import type { FocusScopeEditorModel } from '@/features/focus/focus-scope-ui'
 import {
   buildCommitmentListModel,
   commitmentCompletionModel,
@@ -64,6 +66,13 @@ function booleanValue(values: ContextDrawerValues, id: string): boolean {
 
 export function dateOrNeverLabel(value: string | null): string {
   return value ?? 'Never'
+}
+
+export function focusScopeEditorModel(scope: FocusScopeSnapshot): FocusScopeEditorModel {
+  return {
+    isOpen: scope.mode === 'open',
+    subjects: scope.subjects.map(({ id, name }) => ({ id, name }))
+  }
 }
 
 const HEALTH_STATE_TONES: Readonly<Record<HealthState, SemanticSunflowerTone>> = {

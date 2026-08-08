@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AppDatabase } from '../../src/main/database'
 
@@ -82,6 +83,56 @@ describe('Subject, Scope, and scoped Update models', () => {
     temporaryMembership.end({ effectiveUntil: '2026-05-01' })
     expect(reports.effectiveSubjects('2026-04-30').map(({ name }) => name)).toContain('Morgan')
     expect(reports.effectiveSubjects('2026-05-01').map(({ name }) => name)).not.toContain('Morgan')
+  })
+
+  it('validates membership interval edits against resulting applicability and overlap', () => {
+    const focus = database!.domain.focuses.create({ title: 'Team effectiveness' })
+    const alex = database!.domain.subjects.create({ kind: 'person', name: 'Alex' })
+    const reports = database!.domain.scopes.create({
+      focusId: focus.id,
+      name: 'Direct reports',
+      dimension: 'people'
+    })
+    database!.domain.scopeMemberships.create({
+      scopeId: reports.id,
+      subjectId: alex.id,
+      effectiveFrom: '2026-01-01'
+    })
+    const exclusion = database!.domain.scopeMemberships.create({
+      scopeId: reports.id,
+      subjectId: alex.id,
+      effect: 'exclude',
+      effectiveFrom: '2026-01-10',
+      effectiveUntil: '2026-01-20'
+    })
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'focus', id: focus.id },
+      type: 'ongoing',
+      title: 'Hold a career conversation',
+      scope: { mode: 'explicit', scopeId: reports.id }
+    })
+    database!.domain.updates.create({
+      parent: { type: 'commitment', id: commitment.id },
+      date: '2026-01-25',
+      scope: { scopeId: reports.id, subjectId: alex.id }
+    })
+
+    exclusion.end({ effectiveUntil: '2026-01-15' })
+    expect(reports.effectiveSubjects('2026-01-25').map(({ id }) => id)).toEqual([alex.id])
+    expect(() => exclusion.end({ effectiveUntil: '2026-01-30' })).toThrow(
+      'invalidate scoped Update history on 2026-01-25'
+    )
+    expect(exclusion.refresh().toSnapshot().effectiveUntil).toBe('2026-01-15')
+
+    database!.domain.scopeMemberships.create({
+      scopeId: reports.id,
+      subjectId: alex.id,
+      effect: 'exclude',
+      effectiveFrom: '2026-02-01'
+    })
+    expect(() => exclusion.end({ effectiveUntil: '2026-02-05' })).toThrow(
+      'overlap another interval'
+    )
   })
 
   it('validates derived definitions, base ownership, dimensions, and cycles', () => {
@@ -239,10 +290,14 @@ describe('Subject, Scope, and scoped Update models', () => {
       { type: 'thread', id: openThread.id },
       { mode: 'explicit', scopeId: temporaryScope.id }
     )
-    expect(temporaryScope.delete()).toBe(true)
+    expect(() => temporaryScope.delete()).toThrow('applicability history references it')
     expect(database!.domain.scopeApplications.get({
       type: 'thread', id: openThread.id
-    })).toMatchObject({ mode: 'open', declaredScopeId: null, effectiveScopeId: null })
+    })).toMatchObject({
+      mode: 'explicit',
+      declaredScopeId: temporaryScope.id,
+      effectiveScopeId: temporaryScope.id
+    })
 
     const otherFocus = database!.domain.focuses.create({ title: 'Other' })
     const foreignScope = database!.domain.scopes.create({
@@ -266,6 +321,177 @@ describe('Subject, Scope, and scoped Update models', () => {
       { type: 'thread', id: openThread.id },
       { mode: 'inherited' }
     )).not.toThrow()
+    expect(() => temporaryScope.delete()).toThrow('applicability history references it')
+  })
+
+  it('audits applicability changes and keeps removed cells observable without keeping them current', () => {
+    const focus = database!.domain.focuses.create({ title: 'Team effectiveness' })
+    const alex = database!.domain.subjects.create({ kind: 'person', name: 'Alex' })
+    const jamie = database!.domain.subjects.create({ kind: 'person', name: 'Jamie' })
+    const reports = database!.domain.scopes.create({
+      focusId: focus.id,
+      name: 'Direct reports',
+      dimension: 'people'
+    })
+    const leads = database!.domain.scopes.create({
+      focusId: focus.id,
+      name: 'Technical leads',
+      dimension: 'people'
+    })
+    const alexMembership = database!.domain.scopeMemberships.create({
+      scopeId: reports.id,
+      subjectId: alex.id,
+      effectiveFrom: '2026-01-01'
+    })
+    database!.domain.scopeMemberships.create({
+      scopeId: leads.id,
+      subjectId: jamie.id,
+      effectiveFrom: '2026-01-01'
+    })
+    const thread = database!.domain.threads.create(
+      {
+        focusId: focus.id,
+        title: 'Career direction is current',
+        reviewFrequencyDays: 7,
+        scope: { mode: 'explicit', scopeId: reports.id }
+      },
+      new Date('2026-01-01T12:00:00.000Z')
+    )
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Hold a substantive career conversation'
+    })
+    const alexReview = database!.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2026-01-08',
+      state: 'green',
+      scope: { scopeId: reports.id, subjectId: alex.id }
+    })
+
+    expect(thread.scopeApplicationHistory()).toMatchObject([
+      { from: null, to: { mode: 'open', scopeId: null } },
+      {
+        from: { mode: 'open', scopeId: null },
+        to: { mode: 'explicit', scopeId: reports.id }
+      }
+    ])
+    expect(commitment.scopeApplicationHistory()).toMatchObject([
+      { from: null, to: { mode: 'inherited', scopeId: null } }
+    ])
+
+    thread.setScope({ mode: 'explicit', scopeId: reports.id })
+    expect(thread.scopeApplicationHistory()).toHaveLength(2)
+
+    thread.setScope({ mode: 'explicit', scopeId: leads.id })
+    expect(thread.scopeMatrix('2026-01-10').map(({ subjectId }) => subjectId)).toEqual([
+      jamie.id
+    ])
+    expect(commitment.scopeApplication()).toMatchObject({
+      mode: 'inherited',
+      effectiveScopeId: leads.id,
+      inheritedFrom: { type: 'thread', id: thread.id }
+    })
+    expect(commitment.scopeApplicationHistory()).toHaveLength(1)
+    expect(thread.scopeApplicationHistory().at(-1)).toMatchObject({
+      from: { mode: 'explicit', scopeId: reports.id },
+      to: { mode: 'explicit', scopeId: leads.id }
+    })
+    expect(database!.domain.updates.listForThread(thread.id)).toMatchObject([
+      { id: alexReview.id, scope: { scopeId: reports.id, subjectId: alex.id } }
+    ])
+
+    thread.setScope({ mode: 'open' })
+    expect(thread.scopeMatrix('2026-01-10')).toEqual([])
+    expect(commitment.scopeApplication().effectiveScopeId).toBeNull()
+
+    thread.setScope({ mode: 'explicit', scopeId: reports.id })
+    expect(thread.scopeMatrix('2026-01-10')).toEqual([
+      expect.objectContaining({
+        subjectId: alex.id,
+        lastReviewDate: '2026-01-08',
+        state: 'green'
+      })
+    ])
+    expect(() => reports.update({ dimension: 'teams' })).toThrow(
+      'create a new Scope instead'
+    )
+    expect(() => alexMembership.delete()).toThrow('end it instead')
+
+    alexMembership.end({ effectiveUntil: '2026-02-01' })
+    expect(thread.scopeMatrix('2026-02-01')).toEqual([])
+    expect(database!.domain.updates.listForThread(thread.id)).toHaveLength(1)
+    expect(() => alex.delete()).toThrow('Scope or Update history references it')
+  })
+
+  it('hard-deletes scoped owners and their evidence without deleting shared Scope or Subject records', () => {
+    const focus = database!.domain.focuses.create({ title: 'Team effectiveness' })
+    const alex = database!.domain.subjects.create({ kind: 'person', name: 'Alex' })
+    const reports = database!.domain.scopes.create({
+      focusId: focus.id,
+      name: 'Direct reports',
+      dimension: 'people'
+    })
+    database!.domain.scopeMemberships.create({
+      scopeId: reports.id,
+      subjectId: alex.id,
+      effectiveFrom: '2026-01-01'
+    })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Career direction',
+      reviewFrequencyDays: 7,
+      scope: { mode: 'explicit', scopeId: reports.id }
+    })
+    const childCommitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Hold career conversations'
+    })
+    const directCommitment = database!.domain.commitments.create({
+      parent: { type: 'focus', id: focus.id },
+      type: 'ongoing',
+      title: 'Review growth plans',
+      scope: { mode: 'explicit', scopeId: reports.id }
+    })
+    const threadUpdate = database!.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2026-01-08',
+      scope: { scopeId: reports.id, subjectId: alex.id }
+    })
+    const childUpdate = database!.domain.updates.create({
+      parent: { type: 'commitment', id: childCommitment.id },
+      date: '2026-01-08',
+      scope: { scopeId: reports.id, subjectId: alex.id }
+    })
+    const directUpdate = database!.domain.updates.create({
+      parent: { type: 'commitment', id: directCommitment.id },
+      date: '2026-01-08',
+      scope: { scopeId: reports.id, subjectId: alex.id }
+    })
+
+    expect(directCommitment.delete()).toBe(true)
+    expect(database!.domain.updates.find(directUpdate.id)).toBeNull()
+    expect(database!.domain.scopes.find(reports.id)).not.toBeNull()
+    expect(database!.domain.subjects.find(alex.id)).not.toBeNull()
+
+    expect(thread.delete()).toBe(true)
+    expect(database!.domain.commitments.find(childCommitment.id)).toBeNull()
+    expect(database!.domain.updates.find(threadUpdate.id)).toBeNull()
+    expect(database!.domain.updates.find(childUpdate.id)).toBeNull()
+    expect(database!.domain.scopes.find(reports.id)).not.toBeNull()
+    expect(database!.domain.scopes.effectiveSubjects(reports.id, '2026-01-08')).toMatchObject([
+      { id: alex.id, name: 'Alex' }
+    ])
+
+    const raw = new DatabaseSync(join(directory, 'onmove.sqlite3'))
+    const deletedOwnerHistory = raw.prepare(
+      `SELECT count(*) AS count FROM scope_application_transitions
+       WHERE thread_id = ? OR commitment_id IN (?, ?)`
+    ).get(thread.id, childCommitment.id, directCommitment.id) as { count: number }
+    raw.close()
+    expect(Number(deletedOwnerHistory.count)).toBe(0)
+    expect(() => alex.delete()).toThrow('Scope or Update history references it')
   })
 
   it('requires a valid effective Scope and Subject cell for scoped Updates', () => {
@@ -438,6 +664,144 @@ describe('Subject, Scope, and scoped Update models', () => {
     })
   })
 
+  it('materializes independent Thread reviews for every effective Subject', () => {
+    const focus = database!.domain.focuses.create({ title: 'Team effectiveness' })
+    const alex = database!.domain.subjects.create({ kind: 'person', name: 'Alex' })
+    const jamie = database!.domain.subjects.create({ kind: 'person', name: 'Jamie' })
+    const morgan = database!.domain.subjects.create({ kind: 'person', name: 'Morgan' })
+    const reports = database!.domain.scopes.create({
+      focusId: focus.id,
+      name: 'Direct reports',
+      dimension: 'people'
+    })
+    for (const subject of [alex, jamie]) {
+      database!.domain.scopeMemberships.create({
+        scopeId: reports.id,
+        subjectId: subject.id,
+        effectiveFrom: '2026-01-01'
+      })
+    }
+    database!.domain.scopeMemberships.create({
+      scopeId: reports.id,
+      subjectId: morgan.id,
+      effectiveFrom: '2026-01-20',
+      effectiveUntil: '2026-01-25'
+    })
+    const thread = database!.domain.threads.create(
+      {
+        focusId: focus.id,
+        title: 'Career direction is current',
+        reviewFrequencyDays: 7,
+        scope: { mode: 'explicit', scopeId: reports.id }
+      },
+      new Date('2026-01-01T12:00:00.000Z')
+    )
+
+    expect(thread.scopeMatrix('2026-01-08')).toEqual([
+      expect.objectContaining({
+        scopeId: reports.id,
+        subjectId: alex.id,
+        state: 'none',
+        lastReviewDate: null,
+        nextReviewDate: '2026-01-08',
+        reviewDue: true
+      }),
+      expect.objectContaining({
+        scopeId: reports.id,
+        subjectId: jamie.id,
+        state: 'none',
+        lastReviewDate: null,
+        nextReviewDate: '2026-01-08',
+        reviewDue: true
+      })
+    ])
+
+    const alexReview = database!.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2026-01-08',
+      state: 'green',
+      scope: { scopeId: reports.id, subjectId: alex.id }
+    })
+    expect(thread.snapshot('2026-01-10')).toMatchObject({
+      lastReviewDate: null,
+      nextReviewDate: '2026-01-08',
+      reviewDue: true
+    })
+    expect(thread.scopeMatrix('2026-01-10')).toEqual([
+      expect.objectContaining({
+        subjectId: alex.id,
+        lastReviewDate: '2026-01-08',
+        nextReviewDate: '2026-01-15',
+        reviewDue: false
+      }),
+      expect.objectContaining({
+        subjectId: jamie.id,
+        lastReviewDate: null,
+        nextReviewDate: '2026-01-08',
+        reviewDue: true
+      })
+    ])
+
+    database!.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2026-01-10',
+      state: 'green',
+      scope: { scopeId: reports.id, subjectId: jamie.id }
+    })
+    expect(thread.snapshot('2026-01-10')).toMatchObject({
+      lastReviewDate: '2026-01-08',
+      nextReviewDate: '2026-01-15',
+      reviewDue: false
+    })
+    expect(thread.scopeMatrix('2026-01-16')).toEqual([
+      expect.objectContaining({ subjectId: alex.id, reviewDue: true }),
+      expect.objectContaining({ subjectId: jamie.id, reviewDue: false })
+    ])
+
+    expect(thread.scopeMatrix('2026-01-20')).toEqual([
+      expect.objectContaining({ subjectId: alex.id }),
+      expect.objectContaining({ subjectId: jamie.id }),
+      expect.objectContaining({
+        subjectId: morgan.id,
+        lastReviewDate: null,
+        nextReviewDate: '2026-01-08',
+        reviewDue: true
+      })
+    ])
+    expect(thread.snapshot('2026-01-20').lastReviewDate).toBeNull()
+    expect(thread.scopeMatrix('2026-01-25').map(({ subjectId }) => subjectId)).toEqual([
+      alex.id,
+      jamie.id
+    ])
+
+    expect(alexReview.delete()).toBe(true)
+    expect(thread.scopeMatrix('2026-01-25')).toEqual([
+      expect.objectContaining({
+        subjectId: alex.id,
+        lastReviewDate: null,
+        reviewDue: true
+      }),
+      expect.objectContaining({ subjectId: jamie.id, lastReviewDate: '2026-01-10' })
+    ])
+    expect(thread.snapshot('2026-01-25').lastReviewDate).toBeNull()
+
+    thread.update({ needsReview: false })
+    expect(thread.scopeMatrix('2026-01-20').every(({ reviewDue }) => !reviewDue)).toBe(true)
+    expect(thread.snapshot('2026-01-20').reviewDue).toBe(false)
+
+    thread.update({ needsReview: true, status: 'paused' })
+    expect(thread.scopeMatrix('2026-01-20').every(({ reviewDue }) => !reviewDue)).toBe(true)
+    expect(thread.snapshot('2026-01-20').reviewDue).toBe(false)
+
+    const openThread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Aggregate alignment',
+      reviewFrequencyDays: 7,
+      scope: { mode: 'open' }
+    })
+    expect(openThread.scopeMatrix('2026-01-20')).toEqual([])
+  })
+
   it('preserves scoped Update history when membership or applicability later changes', () => {
     const focus = database!.domain.focuses.create({ title: 'Team health' })
     const alex = database!.domain.subjects.create({ kind: 'person', name: 'Alex' })
@@ -473,11 +837,11 @@ describe('Subject, Scope, and scoped Update models', () => {
       id: update.id,
       scope: { scopeId: reports.id, subjectId: alex.id }
     })
-    expect(() => reports.delete()).toThrow('Update history references it')
+    expect(() => reports.delete()).toThrow('Update or applicability history references it')
     expect(() => alex.delete()).toThrow('Update history references it')
-    expect(() => membership.delete()).toThrow('scoped Update history exists')
+    expect(() => membership.delete()).toThrow('end it instead')
     expect(() => membership.end({ effectiveUntil: '2026-01-10' })).toThrow(
-      'before existing scoped Update history'
+      'invalidate scoped Update history'
     )
 
     const otherScope = database!.domain.scopes.create({
@@ -496,5 +860,63 @@ describe('Subject, Scope, and scoped Update models', () => {
     expect(database!.domain.updates.find(update.id)).toBeNull()
     expect(database!.domain.scopes.find(reports.id)).toBeNull()
     expect(database!.domain.subjects.find(alex.id)).not.toBeNull()
+  })
+
+  it('coordinates the Focus Scope editor as one atomic Subject-set boundary', () => {
+    const focus = database!.domain.focuses.create({ title: 'Launch quality' })
+    const firstDay = new Date('2026-08-08T12:00:00.000Z')
+    const nextDay = new Date('2026-08-09T12:00:00.000Z')
+
+    expect(database!.domain.focusScopes.get(focus.id, '2026-08-08')).toEqual({
+      focusId: focus.id,
+      mode: 'open',
+      scopeId: null,
+      subjects: []
+    })
+
+    const withCustomerOperations = database!.domain.focusScopes.addSubject(
+      focus.id,
+      { name: '  Customer Operations  ' },
+      firstDay
+    )
+    expect(withCustomerOperations).toMatchObject({
+      focusId: focus.id,
+      mode: 'explicit',
+      subjects: [{ name: 'Customer Operations' }]
+    })
+    const scopeId = withCustomerOperations.scopeId as number
+    const subjectId = withCustomerOperations.subjects[0].id
+    expect(database!.domain.scopeApplications.get({ type: 'focus', id: focus.id })).toMatchObject({
+      mode: 'explicit',
+      declaredScopeId: scopeId
+    })
+
+    const unchanged = database!.domain.focusScopes.addSubject(
+      focus.id,
+      { name: 'customer operations' },
+      firstDay
+    )
+    expect(unchanged.subjects).toHaveLength(1)
+    expect(database!.domain.subjects.list()).toHaveLength(1)
+
+    expect(database!.domain.focusScopes.removeSubject(focus.id, subjectId, firstDay).subjects)
+      .toEqual([])
+    expect(database!.domain.subjects.find(subjectId)).not.toBeNull()
+    expect(database!.domain.focusScopes.addSubject(
+      focus.id,
+      { name: 'Customer Operations' },
+      firstDay
+    ).subjects.map(({ id }) => id)).toEqual([subjectId])
+
+    expect(database!.domain.focusScopes.removeSubject(focus.id, subjectId, nextDay).subjects)
+      .toEqual([])
+    expect(database!.domain.scopes.effectiveSubjects(scopeId, '2026-08-08').map(({ id }) => id))
+      .toEqual([subjectId])
+    expect(database!.domain.scopes.effectiveSubjects(scopeId, '2026-08-09')).toEqual([])
+    expect(database!.domain.focusScopes.addSubject(
+      focus.id,
+      { name: 'Customer Operations' },
+      nextDay
+    ).subjects.map(({ id }) => id)).toEqual([subjectId])
   })
 })

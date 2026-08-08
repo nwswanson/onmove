@@ -31,6 +31,7 @@ import {
   NewCommitmentDialog
 } from '@/features/focus/commitment-ui'
 import { buildCommitmentListModel } from '@/features/focus/commitment-list-model'
+import { FocusScopeEditor } from '@/features/focus/focus-scope-ui'
 import {
   commitmentCollectionModel,
   commitmentContextSidebarItems,
@@ -40,6 +41,7 @@ import {
   dateOrNeverLabel,
   focusContextSidebarItems,
   focusDrawerAdapter,
+  focusScopeEditorModel,
   threadDrawerAdapter,
   threadSidebarItemId
 } from '@/features/focus/focus-presenters'
@@ -881,6 +883,15 @@ export function FocusWorkspace({
               />
               {model.goalError && <p role="alert" className="mt-2 text-xs text-destructive">{model.goalError}</p>}
             </div>
+
+            <FocusScopeEditor
+              model={model.focusScope ? focusScopeEditorModel(model.focusScope) : null}
+              loading={model.focusScopeLoading}
+              saving={model.focusScopeSaving}
+              error={model.focusScopeError}
+              onAdd={model.addFocusScopeSubject}
+              onRemove={model.removeFocusScopeSubject}
+            />
 
             <CommitmentCollection
               idPrefix={`focus-${focus.id}`}

@@ -588,7 +588,8 @@ describe('Thread, Commitment, and Update models', () => {
       'commitments',
       'updates',
       'thread_status_transitions',
-      'commitment_status_transitions'
+      'commitment_status_transitions',
+      'scope_application_transitions'
     ]) {
       const row = raw.prepare(`SELECT count(*) AS count FROM ${table}`).get() as { count: number }
       expect(Number(row.count)).toBe(0)

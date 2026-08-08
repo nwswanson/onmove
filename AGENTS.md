@@ -165,9 +165,12 @@ and do not rely on color alone to communicate selection or status.
   Do not add writable columns or UI mutations for those derived values.
 - Order Commitment Updates by their recorded date without capping them at today. A future-dated
   Update immediately supplies the Commitment's state and cadence baseline.
-- Derive Focus and Thread `lastReviewDate` from their newest effective direct Update only. Keep the
-  persisted `needsReview` inclusion flag separate from lifecycle status and from the Thread's
-  derived `reviewDue` projection.
+- Derive Focus `lastReviewDate` from its newest effective direct Update. For an Open Thread, use its
+  newest effective direct Update. For a bounded Thread, expose one independent review cell per
+  effective Subject: aggregate `reviewDue` with any due cell, `nextReviewDate` with the earliest cell
+  deadline, and `lastReviewDate` as the oldest latest-review date across all current cells (or null
+  while any current Subject is unreviewed). Keep persisted `needsReview` separate from lifecycle
+  status and from all derived review projections.
 - A Commitment must have exactly one Focus or Thread parent. An Update must have exactly one Focus,
   Thread, or Commitment parent. Preserve these SQLite constraints and cascades.
 - Treat Subject, Scope, and Scope application as distinct model concepts. Subjects are canonical and
@@ -176,6 +179,17 @@ and do not rely on color alone to communicate selection or status.
 - Keep Scope membership effective-dated with half-open `[effectiveFrom, effectiveUntil)` intervals.
   Resolve effective membership as same-dimension base plus includes minus excludes, and never rewrite
   historical membership to describe a current population.
+- Validate membership interval edits against the resulting full Scope expression and every retained
+  exact-cell Update. Once a Scope has applicability or Update history, end membership instead of
+  deleting it. Prevent same-effect interval overlap.
+- Append immutable transitions for every actual declared Scope-application change, including writes
+  below repositories; assigning the same declaration is a no-op. Inherited descendants retain their
+  declared history and derive effective changes from their changing ancestor.
+- Do not structurally rewrite a used Scope. Preserve its dimension, base, derived relationship, and
+  context Subject; create and apply a new Scope so application history explains the change.
+- Preserve the hard-delete boundary: deleting a Thread or Commitment cascades its evidence,
+  lifecycle history, application, and application history, while shared Focus-owned Scopes,
+  memberships, and Subjects survive. Use done/cancelled when history must remain.
 - Keep context, Scope, and attention separate. Scope is the complete applicability set, not a tag or
   a filtered list of current exceptions; attention can be derived later without narrowing Scope.
 - Require every bounded Thread or Commitment Update to store its exact effective Scope and Subject

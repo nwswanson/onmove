@@ -1,7 +1,10 @@
 # Scope data-model addition
 
-This note records the data-model work introduced in schema migration 10. For the complete current
-domain specification, read [`focus-thread-commitment-model.md`](focus-thread-commitment-model.md).
+This note records the data-model work introduced in schema migrations 10 and 11. For the complete
+current domain specification, read
+[`focus-thread-commitment-model.md`](focus-thread-commitment-model.md).
+Lifecycle and deletion behavior is specified in
+[`scope-lifecycle-and-observability.md`](scope-lifecycle-and-observability.md).
 
 ## Why this addition exists
 
@@ -102,7 +105,9 @@ SubjectSnapshot / CreateSubjectInput / UpdateSubjectInput
 ScopeSnapshot / CreateScopeInput / UpdateScopeInput
 ScopeMembershipSnapshot / CreateScopeMembershipInput / EndScopeMembershipInput
 ScopeOwner / SetScopeApplicationInput / ScopeApplicationSnapshot
+ScopeApplicationState / ScopeApplicationTransition
 UpdateScopeCell
+ThreadScopeCellSnapshot
 CommitmentScopeCellSnapshot
 ```
 
@@ -112,6 +117,23 @@ as either an exact cell or `null`; the shape is never ambiguous.
 
 These are domain contracts, not a new renderer capability. Named IPC methods can be added when the
 Scope UI is designed.
+
+## Migration 11: application observability
+
+Migration 11, `scope_application_transition_history`, adds one immutable transition stream across
+Focus, Thread, and Commitment Scope applications. It backfills each existing application as an
+initial transition and uses SQLite triggers to capture changes made either through repositories or
+directly below the model layer.
+
+Transition rows retain declared `from` and `to` modes and Scope ids. Reassigning the same declaration
+through the repository is a no-op. History cascades only when its owning Focus, Thread, or Commitment
+is hard deleted; individual mutation or deletion is rejected while the owner survives. A referenced
+Scope cannot be deleted, so historical transitions never point at a missing definition. SQLite also
+rejects direct deletion of a surviving owner's required current application row.
+
+The same integrity review tightened membership interval edits and used Scope definitions without a
+new storage shape: interval edits now validate the resulting effective membership against every
+retained cell Update, and used Scope structure must be replaced rather than rewritten.
 
 ## New repositories and model helpers
 
@@ -125,7 +147,9 @@ Scope UI is designed.
 | `scopeApplications` | Get/set declared mode and resolve the effective inherited Scope. |
 
 Focus, Thread, and Commitment models expose `scopeApplication()` and `setScope()`. Scope models expose
-`effectiveSubjects(date)`. Commitment models additionally expose `scopeMatrix(date)`.
+`effectiveSubjects(date)`. Thread and Commitment models additionally expose `scopeMatrix(date)`.
+`scopeApplications.history(owner)` and each owner's `scopeApplicationHistory()` helper return the
+immutable declared transition stream.
 
 ## Materialized behavior
 
@@ -138,9 +162,19 @@ newest last-Update date, earliest next-Update date, and any-cell-needs-update.
 
 ### Bounded Threads
 
-Thread health includes one direct state per effective Subject plus each active child Commitment's
-materialized state. A missing Subject assessment contributes `none`. Direct Thread cell Updates
-advance the Thread's review projection; child Commitment Updates do not.
+`ThreadModel.scopeMatrix(date)` contains one independently scheduled review cell per effective
+Subject. Every cell carries its Subject, direct state, last review date, next review date, and due
+flag. A missing Subject assessment contributes `none` and remains independently due according to
+the Thread's review frequency. Child Commitment Updates do not complete Thread review cells.
+
+The ordinary Thread snapshot rolls the matrix up for list and review surfaces: `reviewDue` means any
+cell is due, `nextReviewDate` is the earliest cell deadline, and `lastReviewDate` is the oldest latest
+review across all effective cells. It remains `null` while any current Subject has never been
+reviewed. This projection required no additional schema migration because scoped Updates already
+store the exact Thread/Scope/Subject attribution.
+
+Thread health includes each cell's direct state plus every active child Commitment's materialized
+state. A missing Subject assessment contributes `none`.
 
 ### Open objects
 
@@ -160,9 +194,13 @@ The new automated tests cover:
 - required exact cells for bounded Updates;
 - rejection of wrong Scope, non-member Subject, invalid date edits, and scoped Focus/Open Updates;
 - per-Subject Commitment state and cadence rollups;
-- bounded Thread health with assessed and unassessed Subjects;
+- bounded Thread health and independent review deadlines for assessed and unassessed Subjects;
+- Thread review coverage as Subjects enter and leave an effective-dated Scope;
 - preservation of historical cell attribution after applicability changes;
 - guarded Scope, Subject, and membership deletion;
+- immutable Scope-application history, no-op reassignment, and below-repository auditing;
+- exact membership-end validation across include, exclude, and base resolution;
+- owner-deletion cascades that retain shared Scope and Subject records;
 - complete Focus cascade behavior; and
 - raw SQLite constraints for partial cells and cross-Focus references.
 

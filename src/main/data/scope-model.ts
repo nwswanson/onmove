@@ -2,11 +2,15 @@ import {
   SCOPE_MEMBERSHIP_EFFECTS,
   SCOPE_MODES,
   SCOPE_SOURCE_TYPES,
+  type AddFocusScopeSubjectInput,
   type CreateScopeInput,
   type CreateScopeMembershipInput,
   type CreateSubjectInput,
   type EndScopeMembershipInput,
+  type FocusScopeSnapshot,
   type ScopeApplicationSnapshot,
+  type ScopeApplicationState,
+  type ScopeApplicationTransition,
   type ScopeMembershipEffect,
   type ScopeMembershipSnapshot,
   type ScopeMode,
@@ -60,6 +64,18 @@ interface ApplicationRow {
   mode: string
   scope_id: number | null
   updated_at: string
+}
+
+interface ApplicationTransitionRow {
+  id: number
+  focus_id: number | null
+  thread_id: number | null
+  commitment_id: number | null
+  from_mode: string | null
+  from_scope_id: number | null
+  to_mode: string
+  to_scope_id: number | null
+  changed_at: string
 }
 
 interface ThreadOwnerRow {
@@ -163,6 +179,30 @@ function membershipFromRow(row: ScopeMembershipRow): ScopeMembershipSnapshot {
     effectiveFrom: row.effective_from,
     effectiveUntil: row.effective_until,
     createdAt: row.created_at
+  }
+}
+
+function applicationState(mode: string, scopeId: number | null): ScopeApplicationState {
+  return {
+    mode: mode as ScopeMode,
+    scopeId: scopeId === null ? null : Number(scopeId)
+  }
+}
+
+function applicationTransitionFromRow(row: ApplicationTransitionRow): ScopeApplicationTransition {
+  const owner: ScopeOwner = row.focus_id !== null
+    ? { type: 'focus', id: Number(row.focus_id) }
+    : row.thread_id !== null
+      ? { type: 'thread', id: Number(row.thread_id) }
+      : { type: 'commitment', id: Number(row.commitment_id) }
+  return {
+    id: Number(row.id),
+    owner,
+    from: row.from_mode === null
+      ? null
+      : applicationState(row.from_mode, row.from_scope_id),
+    to: applicationState(row.to_mode, row.to_scope_id),
+    changedAt: row.changed_at
   }
 }
 
@@ -409,6 +449,16 @@ export class ScopeRepository extends BaseRepository<ScopeSnapshot, ScopeModel> {
       },
       id
     )
+    const structureChanged =
+      definition.dimension !== current.dimension ||
+      definition.baseScopeId !== current.baseScopeId ||
+      definition.derivedRelationship !== current.derivedRelationship ||
+      definition.contextSubjectId !== current.contextSubjectId
+    if (structureChanged && this.hasDurableUse(id)) {
+      throw new ModelValidationError(
+        'Scope structure cannot change after membership, applicability, or history exists; create a new Scope instead'
+      )
+    }
     this.database.run(
       `UPDATE scopes
        SET name = ?, dimension = ?, base_scope_id = ?, derived_relationship = ?,
@@ -457,15 +507,37 @@ export class ScopeRepository extends BaseRepository<ScopeSnapshot, ScopeModel> {
   delete(id: number): boolean {
     assertId(id, 'scope id')
     const historical = this.database.get<ExistsRow>(
-      'SELECT 1 AS found FROM updates WHERE scope_id = ? LIMIT 1',
-      [id]
+      `SELECT 1 AS found
+       WHERE EXISTS (SELECT 1 FROM updates WHERE scope_id = ?)
+          OR EXISTS (
+            SELECT 1 FROM scope_application_transitions
+            WHERE from_scope_id = ? OR to_scope_id = ?
+          )`,
+      [id, id, id]
     )
     if (historical) {
       throw new ModelValidationError(
-        `Scope ${id} cannot be deleted while Update history references it`
+        `Scope ${id} cannot be deleted while Update or applicability history references it`
       )
     }
     return this.database.run('DELETE FROM scopes WHERE id = ?', [id]).changes > 0
+  }
+
+  private hasDurableUse(id: number): boolean {
+    return Boolean(this.database.get<ExistsRow>(
+      `SELECT 1 AS found
+       WHERE EXISTS (SELECT 1 FROM scope_memberships WHERE scope_id = ?)
+          OR EXISTS (SELECT 1 FROM updates WHERE scope_id = ?)
+          OR EXISTS (SELECT 1 FROM scopes WHERE base_scope_id = ?)
+          OR EXISTS (SELECT 1 FROM focus_scope_applications WHERE scope_id = ?)
+          OR EXISTS (SELECT 1 FROM thread_scope_applications WHERE scope_id = ?)
+          OR EXISTS (SELECT 1 FROM commitment_scope_applications WHERE scope_id = ?)
+          OR EXISTS (
+            SELECT 1 FROM scope_application_transitions
+            WHERE from_scope_id = ? OR to_scope_id = ?
+          )`,
+      [id, id, id, id, id, id, id, id]
+    ))
   }
 
   private normalizeSourceType(value: ScopeSourceType | undefined): ScopeSourceType {
@@ -689,21 +761,46 @@ export class ScopeMembershipRepository extends BaseRepository<
     if (effectiveUntil <= current.effectiveFrom) {
       throw new ModelValidationError('effectiveUntil must be after effectiveFrom')
     }
-    const laterHistory = this.database.get<ExistsRow>(
-      `SELECT 1 AS found FROM updates
-       WHERE scope_id = ? AND subject_id = ? AND recorded_on >= ? LIMIT 1`,
-      [current.scopeId, current.subjectId, effectiveUntil]
+    const overlap = this.database.get<ExistsRow>(
+      `SELECT 1 AS found FROM scope_memberships
+       WHERE id <> ? AND scope_id = ? AND subject_id = ? AND effect = ?
+         AND effective_from < ?
+         AND (effective_until IS NULL OR effective_until > ?)
+       LIMIT 1`,
+      [
+        id,
+        current.scopeId,
+        current.subjectId,
+        current.effect,
+        effectiveUntil,
+        current.effectiveFrom
+      ]
     )
-    if (laterHistory) {
+    if (overlap) {
       throw new ModelValidationError(
-        'Scope membership cannot end before existing scoped Update history'
+        'ending this Scope membership would overlap another interval with the same effect'
       )
     }
-    this.database.run(
-      'UPDATE scope_memberships SET effective_until = ? WHERE id = ?',
-      [effectiveUntil, id]
-    )
-    return this.find(id) as ScopeMembershipSnapshot
+    return this.database.transaction(() => {
+      this.database.run(
+        'UPDATE scope_memberships SET effective_until = ? WHERE id = ?',
+        [effectiveUntil, id]
+      )
+      const updateDates = this.database.all<{ recorded_on: string }>(
+        `SELECT DISTINCT recorded_on FROM updates
+         WHERE scope_id = ? AND subject_id = ? ORDER BY recorded_on`,
+        [current.scopeId, current.subjectId]
+      )
+      const invalidDate = updateDates.find(({ recorded_on: recordedOn }) =>
+        !this.scopes.isEffectiveMember(current.scopeId, current.subjectId, recordedOn)
+      )
+      if (invalidDate) {
+        throw new ModelValidationError(
+          `Scope membership change would invalidate scoped Update history on ${invalidDate.recorded_on}`
+        )
+      }
+      return this.find(id) as ScopeMembershipSnapshot
+    })
   }
 
   delete(id: number): boolean {
@@ -711,12 +808,18 @@ export class ScopeMembershipRepository extends BaseRepository<
     const current = this.find(id)
     if (!current) return false
     const historical = this.database.get<ExistsRow>(
-      'SELECT 1 AS found FROM updates WHERE scope_id = ? AND subject_id = ? LIMIT 1',
-      [current.scopeId, current.subjectId]
+      `SELECT 1 AS found
+       WHERE EXISTS (
+         SELECT 1 FROM updates WHERE scope_id = ? AND subject_id = ?
+       ) OR EXISTS (
+         SELECT 1 FROM scope_application_transitions
+         WHERE from_scope_id = ? OR to_scope_id = ?
+       )`,
+      [current.scopeId, current.subjectId, current.scopeId, current.scopeId]
     )
     if (historical) {
       throw new ModelValidationError(
-        'Scope membership cannot be deleted while scoped Update history exists'
+        'Scope membership cannot be deleted after scoped Update or applicability history exists; end it instead'
       )
     }
     return this.database.run('DELETE FROM scope_memberships WHERE id = ?', [id]).changes > 0
@@ -732,6 +835,19 @@ export class ScopeApplicationRepository {
 
   get(owner: ScopeOwner): ScopeApplicationSnapshot {
     return this.resolve(owner, new Set())
+  }
+
+  history(owner: ScopeOwner): ScopeApplicationTransition[] {
+    const ownerKey = this.ownerKey(owner)
+    return this.database
+      .all<ApplicationTransitionRow>(
+        `SELECT id, focus_id, thread_id, commitment_id,
+                from_mode, from_scope_id, to_mode, to_scope_id, changed_at
+         FROM scope_application_transitions
+         WHERE ${ownerKey.idColumn} = ? ORDER BY id`,
+        [owner.id]
+      )
+      .map(applicationTransitionFromRow)
   }
 
   set(owner: ScopeOwner, input: SetScopeApplicationInput, now = new Date()): ScopeApplicationSnapshot {
@@ -765,6 +881,9 @@ export class ScopeApplicationRepository {
         )
       }
     }
+
+    const current = this.get(owner)
+    if (current.mode === mode && current.declaredScopeId === scopeId) return current
 
     const result = this.database.run(
       `UPDATE ${ownerKey.table}
@@ -875,5 +994,171 @@ export class ScopeApplicationRepository {
     return row.thread_id === null
       ? { type: 'focus', id: Number(row.focus_id) }
       : { type: 'thread', id: Number(row.thread_id) }
+  }
+}
+
+/**
+ * A narrow aggregate boundary for the Focus-level Scope editor. It keeps the
+ * renderer from coordinating Subjects, memberships, and applications as three
+ * independent writes.
+ */
+export class FocusScopeRepository {
+  private readonly subjects: SubjectRepository
+  private readonly scopes: ScopeRepository
+  private readonly memberships: ScopeMembershipRepository
+  private readonly applications: ScopeApplicationRepository
+
+  constructor(private readonly database: SqliteAdapter) {
+    this.subjects = new SubjectRepository(database)
+    this.scopes = new ScopeRepository(database)
+    this.memberships = new ScopeMembershipRepository(database)
+    this.applications = new ScopeApplicationRepository(database)
+  }
+
+  get(focusId: number, on = today()): FocusScopeSnapshot {
+    assertId(focusId, 'focus id')
+    const application = this.applications.get({ type: 'focus', id: focusId })
+    return {
+      focusId,
+      mode: application.mode as Exclude<ScopeMode, 'inherited'>,
+      scopeId: application.effectiveScopeId,
+      subjects: application.effectiveScopeId === null
+        ? []
+        : this.scopes.effectiveSubjects(application.effectiveScopeId, on)
+    }
+  }
+
+  addSubject(
+    focusId: number,
+    input: AddFocusScopeSubjectInput,
+    now = new Date()
+  ): FocusScopeSnapshot {
+    const name = normalizeRequiredText(input.name, 'subject name')
+    const on = today(now)
+    return this.database.transaction(() => {
+      const subject = this.subjects.list().find(
+        (candidate) => candidate.name.localeCompare(name, undefined, { sensitivity: 'accent' }) === 0
+      ) ?? this.subjects.create({ name }, now).toSnapshot()
+      let application = this.applications.get({ type: 'focus', id: focusId })
+      let scopeId = application.effectiveScopeId
+
+      if (scopeId === null) {
+        scopeId = this.scopes.create({
+          focusId,
+          name: 'Focus subjects',
+          dimension: 'subject'
+        }, now).id
+        this.memberships.create({ scopeId, subjectId: subject.id, effectiveFrom: on }, now)
+        application = this.applications.set(
+          { type: 'focus', id: focusId },
+          { mode: 'explicit', scopeId },
+          now
+        )
+      } else if (!this.scopes.isEffectiveMember(scopeId, subject.id, on)) {
+        this.restoreSubject(scopeId, subject.id, on, now)
+      }
+
+      return this.get(application.owner.id, on)
+    })
+  }
+
+  removeSubject(focusId: number, subjectId: number, now = new Date()): FocusScopeSnapshot {
+    assertId(subjectId, 'subject id')
+    const on = today(now)
+    return this.database.transaction(() => {
+      const application = this.applications.get({ type: 'focus', id: focusId })
+      const scopeId = application.effectiveScopeId
+      if (scopeId === null || !this.scopes.isEffectiveMember(scopeId, subjectId, on)) {
+        return this.get(focusId, on)
+      }
+
+      const activeInclude = this.memberships.listForScope(scopeId).find((membership) =>
+        membership.subjectId === subjectId &&
+        membership.effect === 'include' &&
+        membership.effectiveFrom <= on &&
+        (membership.effectiveUntil === null || membership.effectiveUntil > on)
+      )
+
+      if (activeInclude?.effectiveFrom === on) {
+        this.assertCellHasNoUpdates(scopeId, subjectId)
+        this.database.run('DELETE FROM scope_memberships WHERE id = ?', [activeInclude.id])
+      } else if (activeInclude) {
+        this.memberships.end(activeInclude.id, { effectiveUntil: on })
+      }
+
+      if (this.scopes.isEffectiveMember(scopeId, subjectId, on)) {
+        this.memberships.create({
+          scopeId,
+          subjectId,
+          effect: 'exclude',
+          effectiveFrom: on
+        }, now)
+      }
+      this.assertCellUpdatesRemainEffective(scopeId, subjectId)
+      return this.get(focusId, on)
+    })
+  }
+
+  private restoreSubject(scopeId: number, subjectId: number, on: string, now: Date): void {
+    const memberships = this.memberships.listForScope(scopeId)
+    const activeExclusion = memberships.find((membership) =>
+      membership.subjectId === subjectId &&
+      membership.effect === 'exclude' &&
+      membership.effectiveFrom <= on &&
+      (membership.effectiveUntil === null || membership.effectiveUntil > on)
+    )
+
+    if (activeExclusion?.effectiveFrom === on) {
+      // A same-day add/remove cycle is a correction. No scoped Update can have
+      // been valid inside the exclusion, so removing it expands rather than
+      // rewrites attributable history.
+      this.database.run('DELETE FROM scope_memberships WHERE id = ?', [activeExclusion.id])
+    } else if (activeExclusion) {
+      this.memberships.end(activeExclusion.id, { effectiveUntil: on })
+    }
+
+    if (this.scopes.isEffectiveMember(scopeId, subjectId, on)) return
+    const nextInclude = memberships
+      .filter((membership) =>
+        membership.subjectId === subjectId &&
+        membership.effect === 'include' &&
+        membership.effectiveFrom > on
+      )
+      .sort((left, right) => left.effectiveFrom.localeCompare(right.effectiveFrom))[0]
+    this.memberships.create({
+      scopeId,
+      subjectId,
+      effectiveFrom: on,
+      effectiveUntil: nextInclude?.effectiveFrom ?? null
+    }, now)
+  }
+
+  private assertCellHasNoUpdates(scopeId: number, subjectId: number): void {
+    const update = this.database.get<ExistsRow>(
+      'SELECT 1 AS found FROM updates WHERE scope_id = ? AND subject_id = ? LIMIT 1',
+      [scopeId, subjectId]
+    )
+    if (update) {
+      throw new ModelValidationError(
+        'Subject cannot be removed because scoped Update history depends on this membership'
+      )
+    }
+  }
+
+  private assertCellUpdatesRemainEffective(scopeId: number, subjectId: number): void {
+    const invalidUpdate = this.database
+      .all<{ recorded_on: string }>(
+        `SELECT DISTINCT recorded_on FROM updates
+         WHERE scope_id = ? AND subject_id = ? ORDER BY recorded_on`,
+        [scopeId, subjectId]
+      )
+      .find(({ recorded_on: recordedOn }) =>
+        !this.scopes.isEffectiveMember(scopeId, subjectId, recordedOn)
+      )
+    if (invalidUpdate) {
+      throw new ModelValidationError(
+        `Subject removal would invalidate scoped Update history on ${invalidUpdate.recorded_on}`
+      )
+    }
   }
 }

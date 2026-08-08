@@ -14,9 +14,11 @@ import {
   type EditUpdateInput,
   type HealthState,
   type ScopeApplicationSnapshot,
+  type ScopeApplicationTransition,
   type ScopeOwner,
   type SetScopeApplicationInput,
   type ThreadSnapshot,
+  type ThreadScopeCellSnapshot,
   type ThreadStatus,
   type ThreadStatusTransition,
   type UpdateCommitmentInput,
@@ -288,6 +290,14 @@ export class ThreadModel extends BaseModel<ThreadRecord> {
     return this.repository.scopeApplication(this.id)
   }
 
+  scopeApplicationHistory(): ScopeApplicationTransition[] {
+    return this.repository.scopeApplicationHistory(this.id)
+  }
+
+  scopeMatrix(asOf?: string): ThreadScopeCellSnapshot[] {
+    return this.repository.scopeMatrix(this.id, asOf)
+  }
+
   setScope(input: SetScopeApplicationInput): this {
     this.repository.setScope(this.id, input)
     return this.refresh()
@@ -414,44 +424,41 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
     return this.scopeApplications.get({ type: 'thread', id })
   }
 
+  scopeApplicationHistory(id: number): ScopeApplicationTransition[] {
+    return this.scopeApplications.history({ type: 'thread', id })
+  }
+
   setScope(id: number, input: SetScopeApplicationInput): ScopeApplicationSnapshot {
     return this.scopeApplications.set({ type: 'thread', id }, input)
   }
 
+  scopeMatrix(id: number, asOf = today()): ThreadScopeCellSnapshot[] {
+    const date = normalizeDate(asOf, 'asOf')
+    const row = this.findRow(id)
+    if (!row) throw new ModelNotFoundError('Thread', id)
+    return this.scopeMatrixForRow(row, date)
+  }
+
   private materializeOrNull(id: number, asOf: string): ThreadRecord | null {
     assertId(id, 'thread')
-    const row = this.database.get<ThreadRow>(
-      `SELECT id, focus_id, title, status, review_frequency_days, needs_review, sensitive, created_at, updated_at
-       FROM threads WHERE id = ?`,
-      [id]
-    )
+    const row = this.findRow(id)
     if (!row) return null
 
     const application = this.scopeApplications.get({ type: 'thread', id })
-    const effectiveSubjects = application.effectiveScopeId === null
+    const scopeCells = application.effectiveScopeId === null
       ? []
-      : this.scopes.effectiveSubjects(application.effectiveScopeId, asOf)
-    const directEvidence = application.effectiveScopeId === null
-      ? [this.database.get<LatestUpdateRow>(
+      : this.scopeMatrixForRow(row, asOf)
+    const openEvidence = application.effectiveScopeId === null
+      ? this.database.get<LatestUpdateRow>(
           `SELECT recorded_on, state FROM updates
            WHERE thread_id = ? AND scope_id IS NULL AND recorded_on <= ?
            ORDER BY recorded_on DESC, id DESC LIMIT 1`,
           [id, asOf]
-        )]
-      : effectiveSubjects.map((subject) => this.database.get<LatestUpdateRow>(
-          `SELECT recorded_on, state FROM updates
-           WHERE thread_id = ? AND scope_id = ? AND subject_id = ? AND recorded_on <= ?
-           ORDER BY recorded_on DESC, id DESC LIMIT 1`,
-          [id, application.effectiveScopeId, subject.id, asOf]
-        ))
-    const directUpdates = directEvidence.filter(
-      (update): update is LatestUpdateRow => update !== undefined
-    )
-    const directStates = application.effectiveScopeId === null
-      ? [(directUpdates[0]?.state as HealthState | undefined) ?? 'none']
-      : directEvidence.map((update) =>
-          (update?.state as HealthState | undefined) ?? 'none'
         )
+      : undefined
+    const directStates = application.effectiveScopeId === null
+      ? [(openEvidence?.state as HealthState | undefined) ?? 'none']
+      : scopeCells.map((cell) => cell.state)
     const commitmentStates = this.database
       .all<{ id: number }>(
         `SELECT id FROM commitments
@@ -461,14 +468,22 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
       .map(({ id: commitmentId }) =>
         new CommitmentRepository(this.database).materialize(Number(commitmentId), asOf).state
       )
-    const lastReviewDate = directUpdates.reduce<string | null>(
-      (latest, update) => latest === null || update.recorded_on > latest
-        ? update.recorded_on
-        : latest,
-      null
+    const lastReviewDate = application.effectiveScopeId === null
+      ? (openEvidence?.recorded_on ?? null)
+      : this.scopeCoverageDate(scopeCells)
+    const defaultNextReviewDate = addDays(
+      row.created_at.slice(0, 10),
+      Number(row.review_frequency_days)
     )
-    const baseline = lastReviewDate ?? row.created_at.slice(0, 10)
-    const nextReviewDate = addDays(baseline, Number(row.review_frequency_days))
+    const nextReviewDate = application.effectiveScopeId === null
+      ? addDays(
+          openEvidence?.recorded_on ?? row.created_at.slice(0, 10),
+          Number(row.review_frequency_days)
+        )
+      : scopeCells.reduce(
+          (earliest, cell) => cell.nextReviewDate < earliest ? cell.nextReviewDate : earliest,
+          scopeCells[0]?.nextReviewDate ?? defaultNextReviewDate
+        )
 
     return {
       id: Number(row.id),
@@ -481,10 +496,61 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
       nextReviewDate,
       needsReview: Boolean(row.needs_review),
       sensitive: Boolean(row.sensitive),
-      reviewDue: Boolean(row.needs_review) && row.status === 'active' && nextReviewDate <= asOf,
+      reviewDue: application.effectiveScopeId === null
+        ? Boolean(row.needs_review) && row.status === 'active' && nextReviewDate <= asOf
+        : scopeCells.some((cell) => cell.reviewDue),
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }
+  }
+
+  private scopeMatrixForRow(row: ThreadRow, asOf: string): ThreadScopeCellSnapshot[] {
+    const application = this.scopeApplications.get({ type: 'thread', id: Number(row.id) })
+    if (application.effectiveScopeId === null) return []
+    const scopeId = application.effectiveScopeId
+    const reviewFrequencyDays = Number(row.review_frequency_days)
+    return this.scopes.effectiveSubjects(scopeId, asOf).map((subject) => {
+      const latest = this.database.get<LatestUpdateRow>(
+        `SELECT recorded_on, state FROM updates
+         WHERE thread_id = ? AND scope_id = ? AND subject_id = ? AND recorded_on <= ?
+         ORDER BY recorded_on DESC, id DESC LIMIT 1`,
+        [row.id, scopeId, subject.id, asOf]
+      )
+      const lastReviewDate = latest?.recorded_on ?? null
+      const nextReviewDate = addDays(
+        lastReviewDate ?? row.created_at.slice(0, 10),
+        reviewFrequencyDays
+      )
+      return {
+        scopeId,
+        subjectId: subject.id,
+        subject,
+        state: (latest?.state as HealthState | undefined) ?? 'none',
+        lastReviewDate,
+        nextReviewDate,
+        reviewDue:
+          Boolean(row.needs_review) && row.status === 'active' && nextReviewDate <= asOf
+      }
+    })
+  }
+
+  private scopeCoverageDate(cells: readonly ThreadScopeCellSnapshot[]): string | null {
+    if (cells.length === 0 || cells.some((cell) => cell.lastReviewDate === null)) return null
+    return cells.reduce<string>(
+      (oldest, cell) => (cell.lastReviewDate as string) < oldest
+        ? (cell.lastReviewDate as string)
+        : oldest,
+      cells[0].lastReviewDate as string
+    )
+  }
+
+  private findRow(id: number): ThreadRow | undefined {
+    assertId(id, 'thread')
+    return this.database.get<ThreadRow>(
+      `SELECT id, focus_id, title, status, review_frequency_days, needs_review, sensitive, created_at, updated_at
+       FROM threads WHERE id = ?`,
+      [id]
+    )
   }
 
   private assertParentExists(table: 'focuses', id: number, name: string): void {
@@ -539,6 +605,10 @@ export class CommitmentModel extends BaseModel<CommitmentRecord> {
 
   scopeApplication(): ScopeApplicationSnapshot {
     return this.repository.scopeApplication(this.id)
+  }
+
+  scopeApplicationHistory(): ScopeApplicationTransition[] {
+    return this.repository.scopeApplicationHistory(this.id)
   }
 
   setScope(input: SetScopeApplicationInput): this {
@@ -667,6 +737,10 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
 
   scopeApplication(id: number): ScopeApplicationSnapshot {
     return this.scopeApplications.get({ type: 'commitment', id })
+  }
+
+  scopeApplicationHistory(id: number): ScopeApplicationTransition[] {
+    return this.scopeApplications.history({ type: 'commitment', id })
   }
 
   setScope(id: number, input: SetScopeApplicationInput): ScopeApplicationSnapshot {

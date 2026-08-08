@@ -73,7 +73,9 @@ The model beneath Focus—Subjects, Focus-owned Scopes, Threads, Commitments, da
 reviews, and cadence—is specified as a unified whole in
 [`focus-thread-commitment-model.md`](focus-thread-commitment-model.md). The schema and repository work
 introduced for Scope is summarized separately in
-[`scope-data-model-addition.md`](scope-data-model-addition.md).
+[`scope-data-model-addition.md`](scope-data-model-addition.md). Removal, deletion, and audit behavior
+is specified in
+[`scope-lifecycle-and-observability.md`](scope-lifecycle-and-observability.md).
 
 ## Subjects, Scopes, and exact Update cells
 
@@ -88,6 +90,16 @@ cell. Direct Focus Updates remain aggregate and unscoped.
 
 Scope is applicability, not tagging or current attention. Current exception sets can later be
 derived from cell state without pretending that healthy Subjects have left the Scope.
+
+Bounded Threads and Commitments both expose per-Subject matrix projections. Commitment cells own
+state and update cadence. Thread cells own state and review cadence. A bounded Thread is due when any
+effective Subject cell is due; its next date is the earliest cell deadline, and its aggregate last
+review date represents complete current-Scope coverage rather than merely the newest observation.
+
+Declared Scope applications have immutable transition history. Membership is ended with an
+effective date rather than deleted once used, and structural changes to a used Scope require a new
+Scope definition. Hard-deleting a Thread or Commitment erases that owner's evidence and audit rows
+but leaves Focus-owned Scopes, memberships, and global Subjects intact.
 
 ## Status is state plus history
 

@@ -55,6 +55,21 @@ describe('registerAppIpc', () => {
           delete: vi.fn(() => true),
           statusHistory: vi.fn(() => [{ id: 1, from: null, to: 'active' }])
         },
+        focusScopes: {
+          get: vi.fn(() => ({ focusId: 12, mode: 'open', scopeId: null, subjects: [] })),
+          addSubject: vi.fn(() => ({
+            focusId: 12,
+            mode: 'explicit',
+            scopeId: 51,
+            subjects: [{ id: 61, name: 'Customer Operations' }]
+          })),
+          removeSubject: vi.fn(() => ({
+            focusId: 12,
+            mode: 'explicit',
+            scopeId: 51,
+            subjects: []
+          }))
+        },
         threads: {
           listForFocus: vi.fn(() => [{ id: 21, focusId: 12, title: 'Sprint execution' }]),
           create: vi.fn(() => ({
@@ -144,6 +159,25 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.getFocusStatusHistory)?.(undefined, 12)).toEqual([
       { id: 1, from: null, to: 'active' }
     ])
+    expect(await handlers.get(IPC_CHANNELS.getFocusScope)?.(undefined, 12)).toEqual({
+      focusId: 12,
+      mode: 'open',
+      scopeId: null,
+      subjects: []
+    })
+    expect(await handlers.get(IPC_CHANNELS.addFocusScopeSubject)?.(
+      undefined,
+      12,
+      { name: 'Customer Operations' }
+    )).toMatchObject({
+      mode: 'explicit',
+      subjects: [{ id: 61, name: 'Customer Operations' }]
+    })
+    expect(await handlers.get(IPC_CHANNELS.removeFocusScopeSubject)?.(
+      undefined,
+      12,
+      61
+    )).toMatchObject({ mode: 'explicit', subjects: [] })
     expect(await handlers.get(IPC_CHANNELS.listThreads)?.(undefined, 12)).toMatchObject([
       { id: 21, title: 'Sprint execution' }
     ])

@@ -5,6 +5,7 @@ import type {
   CreateCommitmentInput,
   CreateThreadInput,
   FocusSnapshot,
+  FocusScopeSnapshot,
   ThreadSnapshot,
   UpdateFocusInput,
   UpdateCommitmentInput,
@@ -31,6 +32,10 @@ export interface FocusWorkspaceModel {
   setGoal: (goal: string) => void
   goalSaving: boolean
   goalError: string | null
+  focusScope: FocusScopeSnapshot | null
+  focusScopeLoading: boolean
+  focusScopeSaving: boolean
+  focusScopeError: string | null
   loadError: string | null
   threads: ThreadSnapshot[]
   threadStatusSummaries: Readonly<Record<number, StatusSummary | undefined>>
@@ -39,6 +44,8 @@ export interface FocusWorkspaceModel {
   commitmentList: CommitmentListModel
   commitmentsFor: (parent: CommitmentParent) => readonly CommitmentSnapshot[]
   saveGoal: (goal?: string) => Promise<void>
+  addFocusScopeSubject: (name: string) => Promise<void>
+  removeFocusScopeSubject: (subjectId: number) => Promise<void>
   createThread: (input: CreateThreadInput) => Promise<ThreadSnapshot>
   updateThread: (id: number, input: UpdateThreadInput) => Promise<ThreadSnapshot>
   createCommitment: (input: CreateCommitmentInput) => Promise<CommitmentSnapshot>
@@ -79,6 +86,10 @@ export function useFocusWorkspaceModel({
 }: FocusWorkspaceModelOptions): FocusWorkspaceModel {
   const [goal, setGoal] = useState(focus.goal)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [focusScope, setFocusScope] = useState<FocusScopeSnapshot | null>(null)
+  const [focusScopeLoading, setFocusScopeLoading] = useState(true)
+  const [focusScopeSaving, setFocusScopeSaving] = useState(false)
+  const [focusScopeError, setFocusScopeError] = useState<string | null>(null)
   const [threads, setThreads] = useState<ThreadSnapshot[]>([])
   const [threadStatusSummaries, setThreadStatusSummaries] = useState<
     Record<number, StatusSummary | undefined>
@@ -146,6 +157,25 @@ export function useFocusWorkspaceModel({
     }
   }, [focus.id])
 
+  useEffect(() => {
+    let active = true
+    window.onmove.domain.getFocusScope(focus.id).then(
+      (nextScope) => {
+        if (!active) return
+        setFocusScope(nextScope)
+        setFocusScopeLoading(false)
+      },
+      () => {
+        if (!active) return
+        setFocusScopeError('The Focus scope could not be loaded.')
+        setFocusScopeLoading(false)
+      }
+    )
+    return () => {
+      active = false
+    }
+  }, [focus.id])
+
   function changeGoal(nextGoal: string): void {
     const normalizedGoal = nextGoal.trim()
     setGoal(normalizedGoal)
@@ -156,6 +186,32 @@ export function useFocusWorkspaceModel({
     const normalizedGoal = nextGoal.trim()
     setGoal(normalizedGoal)
     await goalAutosave.flush(normalizedGoal)
+  }
+
+  async function addFocusScopeSubject(name: string): Promise<void> {
+    setFocusScopeSaving(true)
+    setFocusScopeError(null)
+    try {
+      setFocusScope(await window.onmove.domain.addFocusScopeSubject(focus.id, { name }))
+    } catch (error) {
+      setFocusScopeError('The Subject could not be added to this Focus.')
+      throw error
+    } finally {
+      setFocusScopeSaving(false)
+    }
+  }
+
+  async function removeFocusScopeSubject(subjectId: number): Promise<void> {
+    setFocusScopeSaving(true)
+    setFocusScopeError(null)
+    try {
+      setFocusScope(await window.onmove.domain.removeFocusScopeSubject(focus.id, subjectId))
+    } catch (error) {
+      setFocusScopeError('The Subject could not be removed from this Focus.')
+      throw error
+    } finally {
+      setFocusScopeSaving(false)
+    }
   }
 
   async function createThread(input: CreateThreadInput): Promise<ThreadSnapshot> {
@@ -260,6 +316,10 @@ export function useFocusWorkspaceModel({
     setGoal: changeGoal,
     goalSaving: goalAutosave.saving,
     goalError: goalAutosave.error ? 'The goal could not be saved.' : null,
+    focusScope,
+    focusScopeLoading,
+    focusScopeSaving,
+    focusScopeError,
     loadError,
     threads,
     threadStatusSummaries,
@@ -268,6 +328,8 @@ export function useFocusWorkspaceModel({
     commitmentList,
     commitmentsFor,
     saveGoal,
+    addFocusScopeSubject,
+    removeFocusScopeSubject,
     createThread,
     updateThread,
     createCommitment,

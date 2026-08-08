@@ -208,6 +208,34 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     return row
   }
 
+  function storedFocusSubjectNames(): string[] {
+    const database = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
+      readOnly: true
+    })
+    const now = new Date()
+    const on = [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, '0'),
+      String(now.getDate()).padStart(2, '0')
+    ].join('-')
+    const rows = database.prepare(
+      `SELECT subject.name, membership.effect
+       FROM focus_scope_applications application
+       JOIN scope_memberships membership ON membership.scope_id = application.scope_id
+       JOIN subjects subject ON subject.id = membership.subject_id
+       WHERE membership.effective_from <= ?
+         AND (membership.effective_until IS NULL OR membership.effective_until > ?)
+       ORDER BY membership.id`
+    ).all(on, on) as { name: string; effect: 'include' | 'exclude' }[]
+    database.close()
+    const names = new Set<string>()
+    for (const row of rows) {
+      if (row.effect === 'include') names.add(row.name)
+      else names.delete(row.name)
+    }
+    return [...names].sort()
+  }
+
   try {
     application = await launch()
     let window = await application.firstWindow()
@@ -588,6 +616,27 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(window.getByRole('heading', { name: 'Home', exact: true })).toBeVisible()
     await window.getByRole('button', { name: 'Persistent focus, paused' }).click()
     await expect(window.getByRole('heading', { name: 'Persistent focus' })).toBeVisible()
+    const focusSubjectInput = window.getByRole('textbox', { name: 'Add a Subject' })
+    for (const subject of ['Customer Operations', 'Enterprise Accounts', 'Platform Team']) {
+      await focusSubjectInput.fill(subject)
+      await focusSubjectInput.press('Enter')
+      await expect(
+        window.getByRole('button', { name: `Remove ${subject} from scope` })
+      ).toBeVisible()
+    }
+    await focusSubjectInput.fill('Temporary audience')
+    await focusSubjectInput.press('Enter')
+    await window
+      .getByRole('button', { name: 'Remove Temporary audience from scope' })
+      .click()
+    await expect(
+      window.getByRole('button', { name: 'Remove Temporary audience from scope' })
+    ).toHaveCount(0)
+    await expect.poll(storedFocusSubjectNames).toEqual([
+      'Customer Operations',
+      'Enterprise Accounts',
+      'Platform Team'
+    ])
     await application.close()
     application = undefined
 
@@ -645,6 +694,17 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
         .filter({ hasText: 'Deliver predictable customer value' })
     ).toBeVisible()
     await expect(window.getByLabel('Goal').locator('ol ol')).toContainText('With aligned teams')
+    await expect(window.getByRole('list', { name: 'Subjects in scope' })).toContainText(
+      'Customer Operations'
+    )
+    await expect(window.getByRole('list', { name: 'Subjects in scope' })).toContainText(
+      'Enterprise Accounts'
+    )
+    await expect(window.getByRole('list', { name: 'Subjects in scope' })).toContainText(
+      'Platform Team'
+    )
+    const screenshotPath = process.env.ONMOVE_SCREENSHOT_PATH
+    if (screenshotPath) await window.screenshot({ path: screenshotPath })
     await expect(window.getByRole('list', { name: 'Focus updates' })).toContainText(
       'Overall review completed'
     )

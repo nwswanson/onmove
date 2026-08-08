@@ -18,6 +18,9 @@ export const IPC_CHANNELS = {
   setFocusStatus: 'domain:set-focus-status',
   deleteFocus: 'domain:delete-focus',
   getFocusStatusHistory: 'domain:get-focus-status-history',
+  getFocusScope: 'domain:get-focus-scope',
+  addFocusScopeSubject: 'domain:add-focus-scope-subject',
+  removeFocusScopeSubject: 'domain:remove-focus-scope-subject',
   listThreads: 'domain:list-threads',
   createThread: 'domain:create-thread',
   updateThread: 'domain:update-thread',
@@ -269,6 +272,31 @@ export interface ScopeApplicationSnapshot {
   updatedAt: string
 }
 
+export interface ScopeApplicationState {
+  mode: ScopeMode
+  scopeId: number | null
+}
+
+export interface ScopeApplicationTransition {
+  id: number
+  owner: ScopeOwner
+  from: ScopeApplicationState | null
+  to: ScopeApplicationState
+  changedAt: string
+}
+
+/** The bounded Subject set currently applied directly to a Focus. */
+export interface FocusScopeSnapshot {
+  focusId: number
+  mode: Exclude<ScopeMode, 'inherited'>
+  scopeId: number | null
+  subjects: SubjectSnapshot[]
+}
+
+export interface AddFocusScopeSubjectInput {
+  name: string
+}
+
 export interface UpdateScopeCell {
   scopeId: number
   subjectId: number
@@ -280,6 +308,14 @@ export interface CommitmentScopeCellSnapshot extends UpdateScopeCell {
   lastUpdateDate: string | null
   nextUpdateDate: string | null
   needsUpdate: boolean
+}
+
+export interface ThreadScopeCellSnapshot extends UpdateScopeCell {
+  subject: SubjectSnapshot
+  state: HealthState
+  lastReviewDate: string | null
+  nextReviewDate: string
+  reviewDue: boolean
 }
 
 export interface ThreadSnapshot {
@@ -421,6 +457,15 @@ export interface DomainApi {
   setFocusStatus: (id: number, status: FocusStatus) => Promise<FocusSnapshot>
   deleteFocus: (id: number) => Promise<boolean>
   getFocusStatusHistory: (id: number) => Promise<FocusStatusTransition[]>
+  getFocusScope: (focusId: number) => Promise<FocusScopeSnapshot>
+  addFocusScopeSubject: (
+    focusId: number,
+    input: AddFocusScopeSubjectInput
+  ) => Promise<FocusScopeSnapshot>
+  removeFocusScopeSubject: (
+    focusId: number,
+    subjectId: number
+  ) => Promise<FocusScopeSnapshot>
   listThreads: (focusId: number) => Promise<ThreadSnapshot[]>
   createThread: (input: CreateThreadInput) => Promise<ThreadSnapshot>
   updateThread: (id: number, input: UpdateThreadInput) => Promise<ThreadSnapshot>

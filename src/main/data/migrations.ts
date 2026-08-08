@@ -858,6 +858,214 @@ const migrations: readonly Migration[] = [
         `)
       }
     }
+  },
+  {
+    version: 11,
+    name: 'scope_application_transition_history',
+    up(database) {
+      const requiredTables = [
+        'focuses',
+        'threads',
+        'commitments',
+        'scopes',
+        'focus_scope_applications',
+        'thread_scope_applications',
+        'commitment_scope_applications'
+      ]
+      const hasCompleteScopeDomain = requiredTables.every((table) => database.get<{ found: number }>(
+        "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?",
+        [table]
+      ))
+      if (!hasCompleteScopeDomain) return
+
+      database.exec(`
+        CREATE TABLE scope_application_transitions (
+          id INTEGER PRIMARY KEY,
+          focus_id INTEGER REFERENCES focuses(id) ON DELETE CASCADE,
+          thread_id INTEGER REFERENCES threads(id) ON DELETE CASCADE,
+          commitment_id INTEGER REFERENCES commitments(id) ON DELETE CASCADE,
+          from_mode TEXT CHECK (
+            from_mode IS NULL OR from_mode IN ('open', 'inherited', 'explicit', 'derived')
+          ),
+          from_scope_id INTEGER REFERENCES scopes(id)
+            ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED,
+          to_mode TEXT NOT NULL
+            CHECK (to_mode IN ('open', 'inherited', 'explicit', 'derived')),
+          to_scope_id INTEGER REFERENCES scopes(id)
+            ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED,
+          changed_at TEXT NOT NULL,
+          CHECK (
+            (focus_id IS NOT NULL AND thread_id IS NULL AND commitment_id IS NULL) OR
+            (focus_id IS NULL AND thread_id IS NOT NULL AND commitment_id IS NULL) OR
+            (focus_id IS NULL AND thread_id IS NULL AND commitment_id IS NOT NULL)
+          ),
+          CHECK (
+            (from_mode IS NULL AND from_scope_id IS NULL) OR
+            (from_mode IN ('open', 'inherited') AND from_scope_id IS NULL) OR
+            (from_mode IN ('explicit', 'derived') AND from_scope_id IS NOT NULL)
+          ),
+          CHECK (
+            (to_mode IN ('open', 'inherited') AND to_scope_id IS NULL) OR
+            (to_mode IN ('explicit', 'derived') AND to_scope_id IS NOT NULL)
+          ),
+          CHECK (
+            from_mode IS NULL OR
+            from_mode IS NOT to_mode OR
+            from_scope_id IS NOT to_scope_id
+          )
+        ) STRICT;
+
+        CREATE INDEX scope_application_transitions_focus_index
+          ON scope_application_transitions(focus_id, id);
+        CREATE INDEX scope_application_transitions_thread_index
+          ON scope_application_transitions(thread_id, id);
+        CREATE INDEX scope_application_transitions_commitment_index
+          ON scope_application_transitions(commitment_id, id);
+        CREATE INDEX scope_application_transitions_from_scope_index
+          ON scope_application_transitions(from_scope_id, id);
+        CREATE INDEX scope_application_transitions_to_scope_index
+          ON scope_application_transitions(to_scope_id, id);
+
+        INSERT INTO scope_application_transitions (
+          focus_id, from_mode, from_scope_id, to_mode, to_scope_id, changed_at
+        )
+        SELECT focus_id, NULL, NULL, mode, scope_id, updated_at
+        FROM focus_scope_applications;
+
+        INSERT INTO scope_application_transitions (
+          thread_id, from_mode, from_scope_id, to_mode, to_scope_id, changed_at
+        )
+        SELECT thread_id, NULL, NULL, mode, scope_id, updated_at
+        FROM thread_scope_applications;
+
+        INSERT INTO scope_application_transitions (
+          commitment_id, from_mode, from_scope_id, to_mode, to_scope_id, changed_at
+        )
+        SELECT commitment_id, NULL, NULL, mode, scope_id, updated_at
+        FROM commitment_scope_applications;
+
+        CREATE TRIGGER focus_scope_application_log_initial
+        AFTER INSERT ON focus_scope_applications
+        BEGIN
+          INSERT INTO scope_application_transitions (
+            focus_id, from_mode, from_scope_id, to_mode, to_scope_id, changed_at
+          ) VALUES (
+            NEW.focus_id, NULL, NULL, NEW.mode, NEW.scope_id, NEW.updated_at
+          );
+        END;
+
+        CREATE TRIGGER focus_scope_application_log_change
+        AFTER UPDATE OF mode, scope_id ON focus_scope_applications
+        WHEN OLD.mode IS NOT NEW.mode OR OLD.scope_id IS NOT NEW.scope_id
+        BEGIN
+          INSERT INTO scope_application_transitions (
+            focus_id, from_mode, from_scope_id, to_mode, to_scope_id, changed_at
+          ) VALUES (
+            NEW.focus_id, OLD.mode, OLD.scope_id, NEW.mode, NEW.scope_id,
+            CASE
+              WHEN NEW.updated_at IS OLD.updated_at
+                THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+              ELSE NEW.updated_at
+            END
+          );
+        END;
+
+        CREATE TRIGGER thread_scope_application_log_initial
+        AFTER INSERT ON thread_scope_applications
+        BEGIN
+          INSERT INTO scope_application_transitions (
+            thread_id, from_mode, from_scope_id, to_mode, to_scope_id, changed_at
+          ) VALUES (
+            NEW.thread_id, NULL, NULL, NEW.mode, NEW.scope_id, NEW.updated_at
+          );
+        END;
+
+        CREATE TRIGGER thread_scope_application_log_change
+        AFTER UPDATE OF mode, scope_id ON thread_scope_applications
+        WHEN OLD.mode IS NOT NEW.mode OR OLD.scope_id IS NOT NEW.scope_id
+        BEGIN
+          INSERT INTO scope_application_transitions (
+            thread_id, from_mode, from_scope_id, to_mode, to_scope_id, changed_at
+          ) VALUES (
+            NEW.thread_id, OLD.mode, OLD.scope_id, NEW.mode, NEW.scope_id,
+            CASE
+              WHEN NEW.updated_at IS OLD.updated_at
+                THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+              ELSE NEW.updated_at
+            END
+          );
+        END;
+
+        CREATE TRIGGER commitment_scope_application_log_initial
+        AFTER INSERT ON commitment_scope_applications
+        BEGIN
+          INSERT INTO scope_application_transitions (
+            commitment_id, from_mode, from_scope_id, to_mode, to_scope_id, changed_at
+          ) VALUES (
+            NEW.commitment_id, NULL, NULL, NEW.mode, NEW.scope_id, NEW.updated_at
+          );
+        END;
+
+        CREATE TRIGGER commitment_scope_application_log_change
+        AFTER UPDATE OF mode, scope_id ON commitment_scope_applications
+        WHEN OLD.mode IS NOT NEW.mode OR OLD.scope_id IS NOT NEW.scope_id
+        BEGIN
+          INSERT INTO scope_application_transitions (
+            commitment_id, from_mode, from_scope_id, to_mode, to_scope_id, changed_at
+          ) VALUES (
+            NEW.commitment_id, OLD.mode, OLD.scope_id, NEW.mode, NEW.scope_id,
+            CASE
+              WHEN NEW.updated_at IS OLD.updated_at
+                THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+              ELSE NEW.updated_at
+            END
+          );
+        END;
+
+        CREATE TRIGGER focus_scope_application_delete_only_with_focus
+        BEFORE DELETE ON focus_scope_applications
+        WHEN EXISTS (SELECT 1 FROM focuses WHERE id = OLD.focus_id)
+        BEGIN
+          SELECT RAISE(ABORT, 'a surviving Focus must retain its Scope application');
+        END;
+
+        CREATE TRIGGER thread_scope_application_delete_only_with_thread
+        BEFORE DELETE ON thread_scope_applications
+        WHEN EXISTS (SELECT 1 FROM threads WHERE id = OLD.thread_id)
+        BEGIN
+          SELECT RAISE(ABORT, 'a surviving Thread must retain its Scope application');
+        END;
+
+        CREATE TRIGGER commitment_scope_application_delete_only_with_commitment
+        BEFORE DELETE ON commitment_scope_applications
+        WHEN EXISTS (SELECT 1 FROM commitments WHERE id = OLD.commitment_id)
+        BEGIN
+          SELECT RAISE(ABORT, 'a surviving Commitment must retain its Scope application');
+        END;
+
+        CREATE TRIGGER scope_application_transitions_are_immutable
+        BEFORE UPDATE ON scope_application_transitions
+        BEGIN
+          SELECT RAISE(ABORT, 'Scope application transitions are immutable');
+        END;
+
+        CREATE TRIGGER scope_application_transitions_delete_only_with_owner
+        BEFORE DELETE ON scope_application_transitions
+        WHEN
+          (OLD.focus_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM focuses WHERE id = OLD.focus_id
+          )) OR
+          (OLD.thread_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM threads WHERE id = OLD.thread_id
+          )) OR
+          (OLD.commitment_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM commitments WHERE id = OLD.commitment_id
+          ))
+        BEGIN
+          SELECT RAISE(ABORT, 'Scope application transitions are immutable');
+        END;
+      `)
+    }
   }
 ]
 

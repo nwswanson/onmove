@@ -27,6 +27,8 @@ The central idea is:
   the same Focus, or remain Open. A Focus cannot inherit.
 - A bounded Thread or Commitment Update belongs to one exact Scope/Subject cell. The cell is required
   and is retained as historical attribution.
+- A bounded Thread has one independently scheduled review cell per currently effective Subject.
+  Reviewing one Subject never satisfies another Subject's review obligation.
 - Direct Focus Updates remain aggregate observations and therefore have no Scope/Subject cell.
 - Lifecycle status and observed state are distinct. Status is audited; state is derived from Updates.
 - Health, review dates, cadence deadlines, and `needsUpdate`/`reviewDue` are projections and are not
@@ -137,9 +139,10 @@ A base Scope must:
 - not be the Scope itself; and
 - not introduce a base cycle.
 
-A Scope cannot change dimension while another Scope uses it as a base. A Scope referenced by Update
-history cannot be deleted. Deleting an unused Scope resets any surviving application that selected
-it to an `open` application.
+A used Scope's structural meaning is immutable. Dimension, base Scope, derived relationship, and
+context Subject cannot change after membership, applicability, a dependent Scope, or Update history
+exists; create and apply a new Scope instead. Name and sensitivity remain editable. A Scope
+referenced by Update or application history cannot be deleted.
 
 ### Scope membership
 
@@ -167,9 +170,10 @@ members(base Scope at D)
 ```
 
 Membership history is not rewritten when a Subject leaves a Scope. The current interval is ended
-and a later interval may begin. Ending a membership is rejected if it would place an already stored
-Update from that exact Scope/Subject cell outside the interval. Deleting a membership is likewise
-rejected while that exact cell has Update history.
+and a later interval may begin. An interval edit is applied transactionally and rejected if the
+resulting full Scope expression would make any retained exact-cell Update invalid on its recorded
+date, or if it overlaps another interval with the same effect. Membership deletion is reserved for
+unused setup mistakes; after Update or application history exists, end the interval instead.
 
 ### Scope application
 
@@ -186,6 +190,11 @@ has a separate row for every owner, including Open owners.
 The model exposes both `declaredScopeId` and `effectiveScopeId`. An inherited application has no
 declared id, while its effective id is resolved dynamically through its parent. It also identifies
 the immediate `inheritedFrom` owner.
+
+Every initial declaration and actual change is appended to immutable Scope-application transition
+history. Reassigning the same declaration is a no-op. Inherited descendants do not receive synthetic
+transitions when an ancestor changes; their declared choice remains `inherited`, and the effective
+change is explained by the changing ancestor's history.
 
 Inheritance is a live relationship. If a parent changes from a bounded Scope to Open, an inheriting
 child becomes effectively Open. If the parent selects another Scope, the child follows it. This does
@@ -212,8 +221,8 @@ A Thread is an independently meaningful dimension by which its Focus is judged.
 | `health` | Derived `red`, `yellow`, `green`, or `none`. |
 | `status` | `active`, `paused`, `done`, or `cancelled`, with transition history. |
 | `reviewFrequencyDays` | Required positive whole-number review interval. |
-| `lastReviewDate` | Latest qualifying direct Thread Update. |
-| `nextReviewDate` | Review baseline plus `reviewFrequencyDays`. |
+| `lastReviewDate` | Open: latest direct Update. Bounded: the current Scope's review-coverage watermark. |
+| `nextReviewDate` | Open: aggregate deadline. Bounded: earliest Subject-cell deadline. |
 | `needsReview` | Review-workflow inclusion independent of status. |
 | `reviewDue` | Derived from status, inclusion, cadence, and projection date. |
 | `sensitive` | Presentation classification. |
@@ -223,9 +232,37 @@ Selecting or opening a Thread never counts as reviewing it. A direct Thread Upda
 review evidence. Commitment Updates do not advance the Thread review date.
 
 For an Open Thread, the latest direct unscoped Update supplies its direct state and review date. For
-a bounded Thread, the repository projects one direct state per currently effective Subject. A
-Subject without an effective Update contributes `none`; it is not silently treated as healthy.
-The Thread's `lastReviewDate` is the newest qualifying direct cell Update.
+a bounded Thread, `scopeMatrix(asOf)` returns one independent review projection per currently
+effective Subject:
+
+```ts
+{
+  scopeId,
+  subjectId,
+  subject,
+  state,
+  lastReviewDate,
+  nextReviewDate,
+  reviewDue
+}
+```
+
+Each cell uses only direct Thread Updates attributed to that exact Scope/Subject pair. A Subject
+without an effective Update contributes `none`, has `lastReviewDate: null`, and uses the Thread's
+creation date as its initial review-cadence baseline. Future-dated Thread Updates do not affect a
+cell before their recorded date.
+
+The bounded Thread snapshot rolls up its review cells:
+
+- `reviewDue` is true when any cell is due;
+- `nextReviewDate` is the earliest cell deadline;
+- `lastReviewDate` is a coverage watermark: the oldest latest-review date across the effective
+  cells, or `null` if any cell has never been reviewed; and
+- a bounded Scope with no effective Subjects has no due cell and therefore is not review-due.
+
+This means a Scope containing Alex and Jamie creates two review obligations. Reviewing Alex advances
+only Alex's cell; the Thread remains due until Jamie is also reviewed. Effective-dated additions and
+removals add and remove current matrix cells without rewriting their retained Update history.
 
 Thread health combines its direct state values with the current derived state of every active child
 Commitment. Paused, done, and cancelled Commitments do not participate.
@@ -355,10 +392,13 @@ entity cascades its transition history.
 ## Review and cadence calculations
 
 - Focus review is based only on direct Focus Updates.
-- Thread review is based only on direct Thread Updates, including all effective cells when bounded.
+- Open Thread review is based on its single direct Update stream.
+- Bounded Thread review is based on one independently scheduled direct-Update cell per effective
+  Subject. Its aggregate due flag uses any due cell, its next date uses the earliest deadline, and
+  its last-review date is the all-current-Subjects coverage watermark.
 - `needsReview = false` excludes a Focus or Thread from due-review workflows without pausing it.
-- A Thread is due only when active, included in review, and its next review date is on or before the
-  projection date.
+- A Thread review cell is due only when the Thread is active, included in review, and that cell's
+  next review date is on or before the projection date.
 - Commitment cadence is per Scope/Subject cell when bounded and one stream when Open.
 - A Commitment needs an Update only when active and at least one applicable cadence deadline is due.
 - Review and cadence values are recomputed from durable records whenever a snapshot is materialized.
@@ -370,10 +410,14 @@ entity cascades its transition history.
 - Deleting a Thread cascades its direct Updates, Commitments, their Updates, histories, and Scope
   applications. It does not delete Focus-owned Commitments.
 - Deleting a Commitment cascades its Updates, status history, and Scope application.
+- Thread and Commitment deletion also cascades their Scope-application transition history. It does
+  not delete shared Focus-owned Scopes, memberships, or Subjects.
 - Deleting an Update immediately changes every derived value that depended on it.
 - Subjects are global and survive Focus deletion unless explicitly deleted later.
 - Scope, Subject, and membership operations reject changes that would invalidate retained scoped
   Update history.
+- An individually deleted Scope must be unused: Update or application history protects it. Deleting
+  a Focus remains the explicit cascade that removes its entire Scope domain.
 - Foreign keys and key ownership invariants are also enforced in SQLite so direct database writes
   cannot bypass the essential Focus boundary or partial-cell constraints.
 
@@ -393,8 +437,13 @@ database.domain.updates
 ```
 
 Models expose ordinary update/delete/refresh behavior plus domain helpers such as
-`scopeApplication()`, `setScope()`, `effectiveSubjects()`, and `scopeMatrix()`. Repository methods
-return JSON-compatible snapshots; they never return SQLite handles.
+`scopeApplication()`, `setScope()`, `effectiveSubjects()`, and the Thread and Commitment
+`scopeMatrix()` projections. Focus, Thread, and Commitment models expose
+`scopeApplicationHistory()`, while `scopeApplications.history(owner)` provides the generic audit
+surface. Repository methods return JSON-compatible snapshots; they never return SQLite handles.
+
+Removal, deletion, and every supported observation surface are specified in
+[`scope-lifecycle-and-observability.md`](scope-lifecycle-and-observability.md).
 
 The new Scope repositories are main-process model contracts. They are not yet exposed to the
 renderer. When the UI is added, it must use named, typed IPC methods rather than generic repository

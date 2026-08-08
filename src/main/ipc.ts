@@ -1,6 +1,7 @@
 import type { IpcMain, Shell } from 'electron'
 import {
   IPC_CHANNELS,
+  type AddFocusScopeSubjectInput,
   type CommitmentParent,
   type CreateCommitmentInput,
   type CreateFocusInput,
@@ -75,6 +76,19 @@ export function registerAppIpc(
   )
   ipcMain.handle(IPC_CHANNELS.getFocusStatusHistory, (_event, id: number) =>
     database.domain.focuses.statusHistory(id)
+  )
+  ipcMain.handle(IPC_CHANNELS.getFocusScope, (_event, focusId: number) =>
+    database.domain.focusScopes.get(focusId)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.addFocusScopeSubject,
+    (_event, focusId: number, input: AddFocusScopeSubjectInput) =>
+      database.domain.focusScopes.addSubject(focusId, input)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.removeFocusScopeSubject,
+    (_event, focusId: number, subjectId: number) =>
+      database.domain.focusScopes.removeSubject(focusId, subjectId)
   )
   ipcMain.handle(IPC_CHANNELS.listThreads, (_event, focusId: number) =>
     database.domain.threads.listForFocus(focusId)

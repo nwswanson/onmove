@@ -205,6 +205,18 @@ describe('database migrations', () => {
         'SELECT mode, scope_id FROM commitment_scope_applications WHERE commitment_id = 2'
       )
       .get()
+    const focusScopeHistory = migrated
+      .prepare(
+        `SELECT from_mode, from_scope_id, to_mode, to_scope_id
+         FROM scope_application_transitions WHERE focus_id = 1 ORDER BY id`
+      )
+      .all()
+    const commitmentScopeHistory = migrated
+      .prepare(
+        `SELECT from_mode, from_scope_id, to_mode, to_scope_id
+         FROM scope_application_transitions WHERE commitment_id = 2 ORDER BY id`
+      )
+      .all()
     migrated.close()
 
     expect(existing).toMatchObject({
@@ -216,6 +228,12 @@ describe('database migrations', () => {
     expect(stateOnly).toMatchObject({ observation: '', state: 'red' })
     expect(focusScope).toMatchObject({ mode: 'open', scope_id: null })
     expect(commitmentScope).toMatchObject({ mode: 'open', scope_id: null })
+    expect(focusScopeHistory).toEqual([
+      { from_mode: null, from_scope_id: null, to_mode: 'open', to_scope_id: null }
+    ])
+    expect(commitmentScopeHistory).toEqual([
+      { from_mode: null, from_scope_id: null, to_mode: 'open', to_scope_id: null }
+    ])
     expect(foreignKeyViolations).toEqual([])
   })
 
@@ -264,6 +282,37 @@ describe('database migrations', () => {
       subject.id,
       '2026-08-08T12:00:00.000Z'
     )).toThrow(/scope owned by its parent focus/)
+
+    raw.prepare(
+      `UPDATE commitment_scope_applications
+       SET mode = 'explicit', scope_id = ? WHERE commitment_id = ?`
+    ).run(firstScope.id, commitment.id)
+    const transition = raw.prepare(
+      `SELECT id, from_mode, from_scope_id, to_mode, to_scope_id
+       FROM scope_application_transitions
+       WHERE commitment_id = ? ORDER BY id DESC LIMIT 1`
+    ).get(commitment.id) as {
+      id: number
+      from_mode: string
+      from_scope_id: number | null
+      to_mode: string
+      to_scope_id: number
+    }
+    expect(transition).toMatchObject({
+      from_mode: 'open',
+      from_scope_id: null,
+      to_mode: 'explicit',
+      to_scope_id: firstScope.id
+    })
+    expect(() => raw.prepare(
+      'UPDATE scope_application_transitions SET to_mode = to_mode WHERE id = ?'
+    ).run(transition.id)).toThrow(/immutable/)
+    expect(() => raw.prepare(
+      'DELETE FROM scope_application_transitions WHERE id = ?'
+    ).run(transition.id)).toThrow(/immutable/)
+    expect(() => raw.prepare(
+      'DELETE FROM commitment_scope_applications WHERE commitment_id = ?'
+    ).run(commitment.id)).toThrow(/must retain its Scope application/)
     raw.close()
   })
 })

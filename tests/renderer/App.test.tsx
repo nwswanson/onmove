@@ -117,6 +117,14 @@ function installApi(
     setFocusStatus: vi.fn(),
     deleteFocus: vi.fn(),
     getFocusStatusHistory: vi.fn(),
+    getFocusScope: vi.fn(async (focusId) => ({
+      focusId,
+      mode: 'open' as const,
+      scopeId: null,
+      subjects: []
+    })),
+    addFocusScopeSubject: vi.fn(),
+    removeFocusScopeSubject: vi.fn(),
     listThreads: vi.fn().mockResolvedValue([]),
     createThread: vi.fn(),
     updateThread: vi.fn(),
@@ -608,6 +616,69 @@ describe('App', () => {
       state: 'none',
       sensitive: false
     })
+  })
+
+  it('adds and removes Focus Scope Subjects inline from Overall', async () => {
+    const current = focus()
+    const customerOperations = {
+      id: 40,
+      kind: 'generic',
+      name: 'Customer Operations',
+      description: null,
+      externalKey: null,
+      sensitive: false,
+      createdAt: '2026-08-08T12:00:00.000Z',
+      updatedAt: '2026-08-08T12:00:00.000Z'
+    }
+    const addFocusScopeSubject = vi.fn().mockResolvedValue({
+      focusId: current.id,
+      mode: 'explicit',
+      scopeId: 50,
+      subjects: [customerOperations]
+    })
+    const removeFocusScopeSubject = vi.fn().mockResolvedValue({
+      focusId: current.id,
+      mode: 'explicit',
+      scopeId: 50,
+      subjects: []
+    })
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      getFocusScope: vi.fn().mockResolvedValue({
+        focusId: current.id,
+        mode: 'open',
+        scopeId: null,
+        subjects: []
+      }),
+      addFocusScopeSubject,
+      removeFocusScopeSubject
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Quarterly plan' }))
+    expect(await screen.findByText('Open scope — add a Subject to define its boundary.'))
+      .toBeVisible()
+    const subjectInput = screen.getByRole('textbox', { name: 'Add a Subject' })
+    await user.type(subjectInput, 'Customer Operations{Enter}')
+
+    expect(addFocusScopeSubject).toHaveBeenCalledWith(1, { name: 'Customer Operations' })
+    const subjects = await screen.findByRole('list', { name: 'Subjects in scope' })
+    expect(within(subjects).getByText('Customer Operations')).toBeVisible()
+    expect(screen.getByText('1 Subject in scope')).toBeVisible()
+    expect(subjectInput).toHaveValue('')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await user.click(
+      within(subjects).getByRole('button', { name: 'Remove Customer Operations from scope' })
+    )
+    await waitFor(() => expect(removeFocusScopeSubject).toHaveBeenCalledWith(1, 40))
+    expect(screen.queryByRole('list', { name: 'Subjects in scope' })).not.toBeInTheDocument()
+    expect(screen.getByText('0 Subjects in scope')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Overall' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
   })
 
   it('persists the Focus goal and drills into focus-level commitments', async () => {
