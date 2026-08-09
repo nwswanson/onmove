@@ -218,17 +218,20 @@ evidence entry are deliberately separate controls and locations:
 1. The Thread context drawer owns Scope definition. `Inherit Focus scope` follows the Focus's
    effective Subject set; `Custom scope` exposes an inline Subject token editor for the Thread's
    override.
-2. All Subjects displays all retained direct Thread Updates across current and former Scope ids. Its
-   Add Update dropdown requires one current Subject choice, immediately creates that exact cell, and
-   leaves the new card editable in the overview.
+2. All Subjects displays currently applicable direct Thread Updates in its main list. Retained
+   evidence for Subjects that are no longer applicable, plus old unscoped evidence after the owner
+   becomes bounded, remains editable in a bottom Former scope updates accordion that is closed by
+   default. Its Add Update dropdown requires one current Subject choice, immediately creates that
+   exact cell, and leaves the new card editable in the overview.
 3. A selected Subject displays and creates direct Thread Updates for its exact current
    Scope/Subject pair.
 4. The same Subject lens includes only child Commitment matrices that contain that canonical
    Subject, using the Commitment cell rather than its aggregate rollup.
 5. If the selected Subject leaves the Thread Scope, the lens returns to All Subjects. The prior
    Update remains visible there with its original cell and is labeled as former while that canonical
-   Subject is not currently applicable. Re-applying the Subject restores its ordinary current label,
-   even when the operation created a replacement overlay Scope id.
+   Subject is not currently applicable. Re-applying the Subject moves the card back to the main list
+   and restores its ordinary current label, even when the operation created a replacement overlay
+   Scope id.
 6. If the Thread has no effective Subjects, the selector becomes Thread-wide and direct Updates are
    stored unscoped. Adding effective Subjects restores exact-cell creation.
 

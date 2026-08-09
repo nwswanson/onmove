@@ -229,7 +229,8 @@ The Thread main screen contains only the operational **working context**:
 - an Open Thread, or a Thread with zero effective Subjects, has one Thread-wide aggregate context
   and creates unscoped direct Updates;
 - a bounded Thread with current Subjects opens on an All Subjects overview containing its complete
-  retained direct Update history across current and former Scope ids;
+  retained direct Update history across current and former Scope ids, split between a current main
+  list and a closed-by-default Former scope updates accordion;
 - the All Subjects creation dropdown requires one current Subject and immediately creates a blank,
   exactly attributed Update that remains editable in the overview;
 - selecting a Subject filters direct Updates to the exact current `{scopeId, subjectId}` cell and
@@ -248,7 +249,10 @@ Subject-specific.
 Former-Scope and ended-membership direct Thread Updates remain durable and visible in All Subjects.
 The visible `Former scope` classification follows current canonical Subject applicability rather
 than internal Scope identity: a replacement overlay that still contains, or later re-adds, the same
-Subject shows its ordinary Subject label. The Update retains its immutable original Scope/Subject
-cell for audit history and current-matrix calculations. A fuller historical-evidence surface,
+Subject moves that evidence into the main list and shows its ordinary Subject label. While the
+Subject is absent, the card lives in a bottom accordion that is closed by default; unscoped evidence
+from an earlier Open application follows the same former-evidence path once the owner is bounded.
+The Update retains its immutable original Scope/Subject cell for audit history and current-matrix
+calculations. A fuller historical-evidence surface,
 relationship resolution, attention sets, Commitment series/occurrences, Moves, a Scope Board, and a
 Review workflow remain deferred.

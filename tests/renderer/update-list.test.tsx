@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { UpdateList } from '../../src/renderer/src/features/updates/update-list'
@@ -124,6 +124,55 @@ describe('UpdateList', () => {
     })
     expect(subjectChoice).toHaveValue('')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('keeps former-scope cards in a closed-by-default editable accordion', async () => {
+    const onUpdate = vi.fn().mockResolvedValue(undefined)
+    const onDelete = vi.fn().mockResolvedValue(undefined)
+    const user = userEvent.setup()
+    render(
+      <UpdateList
+        ariaLabel="Current scoped updates"
+        items={[{
+          id: '20',
+          date: '2026-08-08',
+          observation: 'Current evidence',
+          state: 'green',
+          sensitive: false
+        }]}
+        formerItems={[{
+          id: '19',
+          date: '2026-08-01',
+          observation: 'Former evidence',
+          state: 'yellow',
+          sensitive: false,
+          contextLabel: 'Customer Operations · Former scope'
+        }]}
+        formerItemsLabel="Former scope updates"
+        stateOptions={states}
+        defaultDate="2026-08-08"
+        defaultState="none"
+        onUpdate={onUpdate}
+        onDelete={onDelete}
+      />
+    )
+
+    expect(
+      within(screen.getByRole('list', { name: 'Current scoped updates' }))
+        .getByText('Current evidence')
+    ).toBeVisible()
+    const accordion = screen.getByRole('button', { name: /Former scope updates/ })
+    expect(accordion).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('list', { name: 'Former scope updates' }))
+      .not.toBeInTheDocument()
+
+    await user.click(accordion)
+    expect(accordion).toHaveAttribute('aria-expanded', 'true')
+    const formerList = screen.getByRole('list', { name: 'Former scope updates' })
+    expect(within(formerList).getByText('Former evidence')).toBeVisible()
+    expect(within(formerList).getByText('Customer Operations · Former scope')).toBeVisible()
+    await user.click(within(formerList).getByRole('button', { name: 'Delete update' }))
+    expect(onDelete).toHaveBeenCalledWith('19')
   })
 
   it('shows receiver-owned loading, empty, and failure states', () => {

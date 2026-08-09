@@ -181,6 +181,8 @@ export function UpdateList({
   supportingText,
   emptyLabel = 'No updates yet.',
   items,
+  formerItems = [],
+  formerItemsLabel = 'Former scope updates',
   stateOptions,
   defaultDate,
   defaultState,
@@ -194,7 +196,8 @@ export function UpdateList({
   onDelete
 }: UpdateListProps): React.JSX.Element {
   if (ariaLabel.trim().length === 0) throw new Error('An Update list requires an accessible label.')
-  validateUpdateListModel(items, stateOptions, createOptions)
+  if (!formerItemsLabel.trim()) throw new Error('A former Update collection requires a label.')
+  validateUpdateListModel([...items, ...formerItems], stateOptions, createOptions)
   if (onCreate && onCreateFor) {
     throw new Error('An Update list cannot use both direct and choice-based creation.')
   }
@@ -211,7 +214,9 @@ export function UpdateList({
   const [adding, setAdding] = useState(false)
   const [createOptionId, setCreateOptionId] = useState('')
   const [createError, setCreateError] = useState<string | null>(null)
+  const [formerItemsOpen, setFormerItemsOpen] = useState(false)
   const headingId = useId()
+  const formerItemsId = useId()
 
   async function addUpdate(): Promise<void> {
     setAdding(true)
@@ -320,6 +325,43 @@ export function UpdateList({
       </div>
       {createError && <p role="alert" className="mt-2 text-xs text-destructive">{createError}</p>}
       {loadError && <p role="alert" className="mt-2 text-xs text-destructive">{loadError}</p>}
+      {formerItems.length > 0 && (
+        <div className="mt-6 overflow-hidden rounded-xl border border-border/75 bg-muted/15">
+          <button
+            type="button"
+            aria-expanded={formerItemsOpen}
+            aria-controls={formerItemsId}
+            className="flex w-full items-center gap-2 px-3.5 py-3 text-left outline-none transition-colors hover:bg-muted/35 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/55"
+            onClick={() => setFormerItemsOpen((open) => !open)}
+          >
+            <ChevronDown
+              aria-hidden="true"
+              className={`size-4 shrink-0 text-muted-foreground transition-transform ${formerItemsOpen ? 'rotate-180' : ''}`}
+            />
+            <span className="text-xs font-semibold">{formerItemsLabel}</span>
+            <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-[0.6875rem] font-medium text-muted-foreground">
+              {formerItems.length}
+            </span>
+          </button>
+          <div
+            id={formerItemsId}
+            hidden={!formerItemsOpen}
+            role="list"
+            aria-label={formerItemsLabel}
+            className="space-y-3 border-t border-border/70 p-3"
+          >
+            {formerItems.map((item) => (
+              <UpdateEditorCard
+                key={item.id}
+                item={item}
+                stateOptions={stateOptions}
+                onSave={(draft) => onUpdate(item.id, draft)}
+                onDelete={() => onDelete(item.id)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   )
 }

@@ -17,11 +17,17 @@ export interface UpdateListContextModel {
   currentSubjectIds?: ReadonlySet<number>
 }
 
-export function updateListItems(
+export interface UpdateListProjection {
+  items: UpdateListItemModel[]
+  formerItems: UpdateListItemModel[]
+}
+
+export function updateListProjection(
   updates: readonly UpdateSnapshot[],
   context?: UpdateListContextModel
-): UpdateListItemModel[] {
-  return updates.map((update) => {
+): UpdateListProjection {
+  const projection: UpdateListProjection = { items: [], formerItems: [] }
+  for (const update of updates) {
     const subjectLabel = update.scope
       ? context?.subjectLabels.get(update.scope.subjectId)
       : undefined
@@ -29,14 +35,15 @@ export function updateListItems(
     // cycle may replace the internal Scope id while restoring the same
     // canonical Subject, so current applicability must be classified by
     // Subject membership rather than raw Scope identity.
-    const formerScope = update.scope && context?.currentSubjectIds !== undefined &&
-      !context.currentSubjectIds.has(update.scope.subjectId)
+    const formerScope = context?.currentSubjectIds !== undefined && (
+      update.scope === null || !context.currentSubjectIds.has(update.scope.subjectId)
+    )
     const contextLabel = formerScope
       ? subjectLabel
         ? `${subjectLabel} · Former scope`
         : 'Former scope'
       : subjectLabel
-    return {
+    const item = {
       id: String(update.id),
       date: update.date,
       observation: update.observation,
@@ -44,5 +51,16 @@ export function updateListItems(
       sensitive: update.sensitive,
       ...(contextLabel ? { contextLabel } : {})
     }
-  })
+    if (formerScope) projection.formerItems.push(item)
+    else projection.items.push(item)
+  }
+  return projection
+}
+
+export function updateListItems(
+  updates: readonly UpdateSnapshot[],
+  context?: UpdateListContextModel
+): UpdateListItemModel[] {
+  const projection = updateListProjection(updates, context)
+  return [...projection.items, ...projection.formerItems]
 }

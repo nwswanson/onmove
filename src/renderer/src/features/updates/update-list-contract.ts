@@ -27,6 +27,8 @@ export interface UpdateListProps {
   supportingText?: string
   emptyLabel?: string
   items: readonly UpdateListItemModel[]
+  formerItems?: readonly UpdateListItemModel[]
+  formerItemsLabel?: string
   stateOptions: readonly UpdateListStateOptionModel[]
   defaultDate: string
   defaultState: string

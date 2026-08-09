@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { UpdateSnapshot } from '../../src/shared/contracts'
 import {
   UPDATE_LIST_STATE_OPTIONS,
-  updateListItems
+  updateListItems,
+  updateListProjection
 } from '../../src/renderer/src/features/updates/updates-presenters'
 
 describe('Update presenters', () => {
@@ -47,14 +48,16 @@ describe('Update presenters', () => {
       createdAt: '2026-08-07T12:00:00.000Z'
     }
 
-    expect(updateListItems([update], {
+    expect(updateListProjection([update], {
       subjectLabels: new Map([[40, 'Customer Operations']]),
       currentSubjectIds: new Set()
-    }))
-      .toEqual([expect.objectContaining({
-        id: '9',
-        contextLabel: 'Customer Operations · Former scope'
-      })])
+    })).toEqual({
+      items: [],
+      formerItems: [expect.objectContaining({
+          id: '9',
+          contextLabel: 'Customer Operations · Former scope'
+        })]
+    })
   })
 
   it('restores current classification when the canonical Subject is re-applied through a new Scope', () => {
@@ -69,12 +72,39 @@ describe('Update presenters', () => {
       createdAt: '2026-08-07T12:00:00.000Z'
     }
 
-    expect(updateListItems([update], {
+    expect(updateListProjection([update], {
       subjectLabels: new Map([[40, 'Customer Operations']]),
       currentSubjectIds: new Set([40])
-    })).toEqual([expect.objectContaining({
-      id: '10',
-      contextLabel: 'Customer Operations'
-    })])
+    })).toEqual({
+      items: [expect.objectContaining({
+        id: '10',
+        contextLabel: 'Customer Operations'
+      })],
+      formerItems: []
+    })
+  })
+
+  it('moves evidence from a former Open application out of a bounded current list', () => {
+    const unscopedUpdate: UpdateSnapshot = {
+      id: 11,
+      parent: { type: 'thread', id: 4 },
+      date: '2026-08-07',
+      observation: 'Thread-wide evidence before Subjects were applied',
+      state: 'none',
+      sensitive: false,
+      scope: null,
+      createdAt: '2026-08-07T12:00:00.000Z'
+    }
+
+    expect(updateListProjection([unscopedUpdate], {
+      subjectLabels: new Map(),
+      currentSubjectIds: new Set([40])
+    })).toEqual({
+      items: [],
+      formerItems: [expect.objectContaining({
+        id: '11',
+        contextLabel: 'Former scope'
+      })]
+    })
   })
 })

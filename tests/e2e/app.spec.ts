@@ -768,7 +768,12 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       .getByRole('button', { name: 'Remove Customer Operations' })
       .click()
     scopedThreadUpdates = window.getByRole('list', { name: 'Thread updates' })
-    customerUpdateCard = scopedThreadUpdates
+    await expect(scopedThreadUpdates.getByText('Customer scope review')).toHaveCount(0)
+    const formerUpdatesToggle = window.getByRole('button', { name: /Former scope updates/ })
+    await expect(formerUpdatesToggle).toHaveAttribute('aria-expanded', 'false')
+    await formerUpdatesToggle.click()
+    customerUpdateCard = window
+      .getByRole('list', { name: 'Former scope updates' })
       .getByRole('listitem')
       .filter({ hasText: 'Customer scope review' })
     await expect(customerUpdateCard).toContainText('Former scope')
@@ -792,6 +797,16 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(customerUpdateCard).toBeVisible()
     await expect(customerUpdateCard).not.toContainText('Former scope')
     await expect(customerUpdateCard).toContainText('Customer Operations')
+    const remainingFormerUpdatesToggle = window.getByRole('button', {
+      name: /Former scope updates/
+    })
+    await expect(remainingFormerUpdatesToggle).toHaveAttribute('aria-expanded', 'false')
+    await remainingFormerUpdatesToggle.click()
+    const remainingFormerUpdates = window.getByRole('list', {
+      name: 'Former scope updates'
+    })
+    await expect(remainingFormerUpdates).toContainText('Sprint review completed')
+    await expect(remainingFormerUpdates).not.toContainText('Customer scope review')
     await expect(window.getByRole('tab', { name: 'All subjects' }))
       .toHaveAttribute('aria-selected', 'true')
     await expect.poll(() => storedScopedThreadUpdate()?.state, { timeout: 3_000 }).toBe('yellow')
@@ -947,6 +962,13 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       'Customer scope review'
     )
     await expect(window.getByRole('list', { name: 'Thread updates' }))
+      .not.toContainText('Sprint review completed')
+    const reloadedFormerUpdatesToggle = window.getByRole('button', {
+      name: /Former scope updates/
+    })
+    await expect(reloadedFormerUpdatesToggle).toHaveAttribute('aria-expanded', 'false')
+    await reloadedFormerUpdatesToggle.click()
+    await expect(window.getByRole('list', { name: 'Former scope updates' }))
       .toContainText('Sprint review completed')
     await expect(
       window.getByRole('button', { name: 'Open commitment Improve ticket quality' })

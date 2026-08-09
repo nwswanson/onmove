@@ -124,15 +124,19 @@ and do not rely on color alone to communicate selection or status.
   Blank and state-only Updates are valid. State must always have a text label as well as semantic color
   (`destructive` for red/warning, `success` for green, muted for none).
 - Treat a bounded Thread's Subject selector as an operational working-context lens, distinct from
-  editing the Thread's Scope definition. All Subjects shows the complete retained direct Update
-  history across current and former Scopes. While current Subject cells exist, the receiver-owned
+  editing the Thread's Scope definition. All Subjects keeps its main Update list limited to
+  currently applicable canonical Subjects. Put retained Updates whose Subject is no longer
+  applicable—and retained unscoped evidence from a former Open application—in the receiver-owned
+  `Former scope updates` accordion at the bottom, closed by default. Exact Subject and unscoped
+  panes never render that accordion. While current Subject cells exist, the receiver-owned
   creation dropdown lets All Subjects immediately create a blank Update for one chosen Subject and
   keeps the resulting card editable in place. Selecting one Subject filters to its exact current
   Scope/Subject cell and retains the ordinary Add Update action. The model hook, not `UpdateList`,
   injects the exact cell during either creation path. In All Subjects, classify an Update as
   `Former scope` only when its canonical Subject is not currently applicable; never compare raw
   Scope ids for this label because every customization creates a replacement overlay. Re-applying
-  the Subject restores its current label without rewriting the Update's immutable original cell.
+  the Subject moves its evidence back into the main list and restores its current label without
+  rewriting the Update's immutable original cell.
   In a Subject lens, project only bounded child Commitments whose
   effective Scope includes the canonical Subject and show their cell-specific state and dates;
   keep Open Commitments in the aggregate overview. If a Thread has zero effective Subjects, present

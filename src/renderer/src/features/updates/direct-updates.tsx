@@ -8,7 +8,7 @@ import { UpdateList } from '@/features/updates/update-list'
 import type { UpdateListDraft } from '@/features/updates/update-list-contract'
 import {
   UPDATE_LIST_STATE_OPTIONS,
-  updateListItems
+  updateListProjection
 } from '@/features/updates/updates-presenters'
 import { useUpdatesModel } from '@/features/updates/use-updates-model'
 import { visibleSensitiveRecords } from '@/features/shared/sensitivity'
@@ -62,6 +62,19 @@ export function DirectUpdates({
         ? [[context.subject.id, context.subject.name] as const]
         : []
   )
+  const updateProjection = updateListProjection(
+    visibleSensitiveRecords(
+      model.updates,
+      hideSensitiveContent,
+      ancestorSensitive
+    ),
+    {
+      subjectLabels: contextLabels,
+      ...(context.mode === 'scope-overview'
+        ? { currentSubjectIds: new Set(context.subjects.map(({ id }) => id)) }
+        : {})
+    }
+  )
 
   async function changed(): Promise<void> {
     try {
@@ -78,24 +91,19 @@ export function DirectUpdates({
       heading={context.mode === 'subject' ? `Updates · ${context.subject.name}` : 'Updates'}
       supportingText={context.mode === 'scope-overview'
         ? context.subjects.length > 0
-          ? `All ${parentLabel(parent)} updates across current and former scopes. Choose a Subject to add evidence.`
+          ? `Current ${parentLabel(parent)} updates across all applicable Subjects. Choose a Subject to add evidence.`
           : `This ${parentLabel(parent)} has no applicable Subjects, so there is no current cell to update.`
         : context.mode === 'subject'
           ? 'New Updates are attributed only to this Scope and Subject.'
           : undefined}
-      items={updateListItems(
-        visibleSensitiveRecords(
-          model.updates,
-          hideSensitiveContent,
-          ancestorSensitive
-        ),
-        {
-          subjectLabels: contextLabels,
-          ...(context.mode === 'scope-overview'
-            ? { currentSubjectIds: new Set(context.subjects.map(({ id }) => id)) }
-            : {})
-        }
-      )}
+      emptyLabel={context.mode === 'scope-overview'
+        ? 'No current updates yet.'
+        : undefined}
+      items={updateProjection.items}
+      formerItems={context.mode === 'scope-overview'
+        ? updateProjection.formerItems
+        : undefined}
+      formerItemsLabel="Former scope updates"
       stateOptions={UPDATE_LIST_STATE_OPTIONS}
       defaultDate={today()}
       defaultState="none"
