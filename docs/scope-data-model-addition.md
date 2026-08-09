@@ -226,8 +226,8 @@ their Focus-provided suggestions without changing their declared application.
 
 The Thread main screen contains only the operational **working context**:
 
-- an Open Thread, or a Thread with zero effective Subjects, has one Thread-wide aggregate context
-  and creates unscoped direct Updates;
+- an Open Thread, or a Thread with zero effective Subjects, behaves as one Thread-wide aggregate
+  context and creates unscoped direct Updates, but omits the redundant one-item tab bar;
 - a bounded Thread with current Subjects opens on an All Subjects overview containing its complete
   retained direct Update history across current and former Scope ids, split between a current main
   list and a closed-by-default Former scope updates accordion;
@@ -237,6 +237,12 @@ The Thread main screen contains only the operational **working context**:
   automatically applies that cell to every new Update; and
 - removing the selected Subject returns the screen to All Subjects without deleting its retained
   evidence.
+
+The selected canonical Subject is UI session state owned at the Focus boundary. It follows
+navigation between that Focus's Thread and Commitment screens and is remembered independently when
+the user switches Focuses. If the selected Subject is absent from the new destination's current
+matrix, the Focus's selection becomes All Subjects. The tab receiver has no visible heading, renders
+All Subjects without a subtitle, and is hidden entirely when there are no Subject tabs.
 
 The named `getThreadSubjectMatrix` projection joins each Thread review cell to bounded child
 Commitment cells containing the same canonical Subject. In a Subject working context, the renderer

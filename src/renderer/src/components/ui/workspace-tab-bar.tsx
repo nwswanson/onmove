@@ -13,7 +13,6 @@ export interface WorkspaceTabItemModel {
 }
 
 export interface WorkspaceTabBarModel {
-  label: string
   ariaLabel: string
   items: readonly WorkspaceTabItemModel[]
 }
@@ -67,19 +66,14 @@ export function WorkspaceTabBar({
     <div
       data-slot="workspace-tab-bar"
       className={cn(
-        'flex min-w-0 shrink-0 items-stretch border-b border-border/80 bg-card/55',
+        'flex min-w-0 shrink-0 border-b border-border/80 bg-background/95 px-3 py-2',
         className
       )}
     >
-      <div className="flex shrink-0 items-center border-r border-border/70 px-3.5">
-        <span className="text-[0.6875rem] font-semibold tracking-[0.04em] text-muted-foreground uppercase">
-          {model.label}
-        </span>
-      </div>
       <div
         role="tablist"
         aria-label={model.ariaLabel}
-        className="flex min-w-0 flex-1 items-stretch overflow-x-auto px-1.5"
+        className="inline-flex min-w-0 max-w-full items-stretch gap-1 overflow-x-auto rounded-lg bg-muted p-1 text-muted-foreground"
       >
         {model.items.map((item, index) => {
           const selected = item.id === selectedId
@@ -95,10 +89,10 @@ export function WorkspaceTabBar({
               disabled={item.disabled}
               title={item.meta}
               className={cn(
-                'relative flex min-h-14 shrink-0 flex-col justify-center gap-0.5 border-b-2 border-transparent px-3 text-left outline-none transition-colors',
-                'hover:bg-primary/10 focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60',
+                'relative flex min-h-10 shrink-0 flex-col justify-center gap-0.5 rounded-md border border-transparent px-3 py-1 text-left outline-none transition-all',
+                'hover:bg-background/55 hover:text-foreground focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-ring/60',
                 'disabled:pointer-events-none disabled:opacity-50',
-                selected && 'border-primary bg-primary/18'
+                selected && 'border-border/70 bg-background text-foreground shadow-xs'
               )}
               onClick={() => onSelect(item.id)}
               onKeyDown={(event) => {

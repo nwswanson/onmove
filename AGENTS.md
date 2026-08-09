@@ -88,8 +88,11 @@ and do not rely on color alone to communicate selection or status.
   above the main canvas only; the contextual sidebar and context drawer retain their full height.
 - Project scope/lens switching through the receiver-owned `WorkspaceTabBar` contract. Feature
   presenters supply data-only tab labels, state, review metadata, and stable ids; the shared
-  receiver owns tab semantics, keyboard navigation, and visual selection. Thread Working Context
-  uses this bar rather than rendering a selector inside the Thread document.
+  receiver owns compact shadcn-style tab semantics, keyboard navigation, and visual selection. Do
+  not spend horizontal space on a visible bar title or add explanatory metadata to All Subjects.
+  Hide the bar when there are no Subject tabs. Keep one selected canonical Subject per Focus while
+  navigating between its Threads and Commitments; remember each Focus independently while the app
+  is open, and normalize that Focus to All Subjects when the next destination lacks the selection.
 - Put preload calls, persistence-backed state, and domain mutation rules in feature model hooks.
   Model hooks must not import UI components; feature views translate their results into generic
   sidebar levels, main content, and drawer adapters.
@@ -140,7 +143,7 @@ and do not rely on color alone to communicate selection or status.
   In a Subject lens, project only bounded child Commitments whose
   effective Scope includes the canonical Subject and show their cell-specific state and dates;
   keep Open Commitments in the aggregate overview. If a Thread has zero effective Subjects, present
-  a Thread-wide context and allow direct unscoped Updates.
+  direct unscoped Updates without rendering the otherwise redundant one-item context bar.
 - Give a selected Commitment the same operational Working Context tab contract. Open Commitments
   expose one Commitment-wide context and create unscoped Updates. Bounded Commitments expose All
   Subjects plus one tab per current exact Scope/Subject cell: All Subjects uses the choice-based

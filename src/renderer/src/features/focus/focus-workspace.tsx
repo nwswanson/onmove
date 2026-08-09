@@ -176,6 +176,8 @@ interface FocusWorkspaceProps {
   onRefreshFocus: () => Promise<FocusSnapshot>
   onRefreshStatusSummary: () => Promise<void>
   onDeleteFocus: () => Promise<void>
+  selectedSubjectId: number | null
+  onSelectedSubjectChange: (subjectId: number | null) => void
   hideSensitiveContent?: boolean
 }
 
@@ -186,6 +188,8 @@ export function FocusWorkspace({
   onRefreshFocus,
   onRefreshStatusSummary,
   onDeleteFocus,
+  selectedSubjectId,
+  onSelectedSubjectChange,
   hideSensitiveContent = false
 }: FocusWorkspaceProps): React.JSX.Element {
   const model = useFocusWorkspaceModel({ focus, onUpdateFocus })
@@ -203,13 +207,6 @@ export function FocusWorkspace({
     key: string
     message: string
   } | null>(null)
-  const [threadContextSelection, setThreadContextSelection] = useState<{
-    threadId: number
-    subjectId: number | null
-  } | null>(null)
-  const [commitmentContextSelections, setCommitmentContextSelections] = useState<
-    Record<number, number | null | undefined>
-  >({})
   const [focusLevel] = useState(
     () =>
       new ContextualSidebarLevel({
@@ -449,12 +446,8 @@ export function FocusWorkspace({
   const displayedThreadSubjectMatrix = displayedThread
     ? model.threadSubjectMatrices[displayedThread.id]
     : undefined
-  const requestedThreadSubjectId = displayedThread &&
-    threadContextSelection?.threadId === displayedThread.id
-      ? threadContextSelection.subjectId
-      : null
   const selectedThreadSubject: SubjectSnapshot | null =
-    displayedThreadScope?.subjects.find(({ id }) => id === requestedThreadSubjectId) ?? null
+    displayedThreadScope?.subjects.find(({ id }) => id === selectedSubjectId) ?? null
   const selectedThreadSubjectCell: ThreadSubjectCellSnapshot | null =
     displayedThreadSubjectMatrix?.find(
       ({ subjectId }) => subjectId === selectedThreadSubject?.id
@@ -462,30 +455,45 @@ export function FocusWorkspace({
   const threadContextTabs = displayedThreadScope && displayedThreadSubjectMatrix
     ? threadWorkingContextModel(displayedThreadScope, displayedThreadSubjectMatrix)
     : null
-  const inheritedCommitmentSubjectId = selectedCommitment?.parent.type === 'thread' &&
-    threadContextSelection?.threadId === selectedCommitment.parent.id
-      ? threadContextSelection.subjectId
-      : null
-  const storedCommitmentSubjectId = selectedCommitment
-    ? commitmentContextSelections[selectedCommitment.id]
-    : undefined
-  const requestedCommitmentSubjectId = storedCommitmentSubjectId === undefined
-    ? inheritedCommitmentSubjectId
-    : storedCommitmentSubjectId
   const selectedCommitmentCell = commitmentWorkingContext.snapshot?.cells.find(
-    ({ subjectId }) => subjectId === requestedCommitmentSubjectId
+    ({ subjectId }) => subjectId === selectedSubjectId
   ) ?? null
   const commitmentContextTabs = commitmentWorkingContext.snapshot
     ? commitmentWorkingContextModel(commitmentWorkingContext.snapshot)
     : null
 
+  useEffect(() => {
+    if (selectedSubjectId === null) return
+    if (
+      displayedThread &&
+      displayedThreadScope &&
+      displayedThreadSubjectMatrix &&
+      selectedThreadSubject === null
+    ) {
+      onSelectedSubjectChange(null)
+      return
+    }
+    if (
+      selectedCommitment &&
+      commitmentWorkingContext.snapshot &&
+      selectedCommitmentCell === null
+    ) onSelectedSubjectChange(null)
+  }, [
+    commitmentWorkingContext.snapshot,
+    displayedThread,
+    displayedThreadScope,
+    displayedThreadSubjectMatrix,
+    onSelectedSubjectChange,
+    selectedCommitment,
+    selectedCommitmentCell,
+    selectedSubjectId,
+    selectedThreadSubject
+  ])
+
   function selectCommitmentContext(tabId: string): void {
     if (!selectedCommitment) return
     if (tabId === 'all') {
-      setCommitmentContextSelections((current) => ({
-        ...current,
-        [selectedCommitment.id]: null
-      }))
+      onSelectedSubjectChange(null)
       return
     }
     const subjectId = Number(tabId.slice('subject:'.length))
@@ -496,17 +504,14 @@ export function FocusWorkspace({
         (cell) => cell.subjectId === subjectId
       )
     ) {
-      setCommitmentContextSelections((current) => ({
-        ...current,
-        [selectedCommitment.id]: subjectId
-      }))
+      onSelectedSubjectChange(subjectId)
     }
   }
 
   function selectThreadContext(tabId: string): void {
     if (!displayedThread) return
     if (tabId === 'all') {
-      setThreadContextSelection({ threadId: displayedThread.id, subjectId: null })
+      onSelectedSubjectChange(null)
       return
     }
     const subjectId = Number(tabId.slice('subject:'.length))
@@ -515,7 +520,7 @@ export function FocusWorkspace({
       Number.isInteger(subjectId) &&
       displayedThreadScope?.subjects.some(({ id }) => id === subjectId)
     ) {
-      setThreadContextSelection({ threadId: displayedThread.id, subjectId })
+      onSelectedSubjectChange(subjectId)
     }
   }
 
@@ -584,13 +589,10 @@ export function FocusWorkspace({
       operation: () => Promise<ThreadScopeSnapshot>
     ): Promise<void> {
       const nextScope = await operation()
-      setThreadContextSelection((current) =>
-        current?.threadId === thread.id &&
-        current.subjectId !== null &&
-        !nextScope.subjects.some(({ id }) => id === current.subjectId)
-          ? { threadId: thread.id, subjectId: null }
-          : current
-      )
+      if (
+        selectedSubjectId !== null &&
+        !nextScope.subjects.some(({ id }) => id === selectedSubjectId)
+      ) onSelectedSubjectChange(null)
       if (contextDrawer.pinnedAdapter?.id === `thread:${thread.id}`) {
         contextDrawer.onPin(adapterForThread(thread, nextScope))
       }
@@ -1079,7 +1081,10 @@ export function FocusWorkspace({
               saving={model.focusScopeSaving}
               error={model.focusScopeError}
               onAdd={model.addFocusScopeSubject}
-              onRemove={model.removeFocusScopeSubject}
+              onRemove={async (subjectId) => {
+                await model.removeFocusScopeSubject(subjectId)
+                if (selectedSubjectId === subjectId) onSelectedSubjectChange(null)
+              }}
             />
 
             <CommitmentCollection
@@ -1142,7 +1147,8 @@ export function FocusWorkspace({
           direction: 1,
           onChange: setContextualSidebarWidth
         }}
-        tabBar={selectedCommitment && commitmentContextTabs ? (
+        tabBar={selectedCommitment && commitmentContextTabs &&
+          commitmentContextTabs.items.length > 1 ? (
           <WorkspaceTabBar
             model={commitmentContextTabs}
             selectedId={selectedCommitmentCell
@@ -1150,7 +1156,7 @@ export function FocusWorkspace({
               : 'all'}
             onSelect={selectCommitmentContext}
           />
-        ) : displayedThread && threadContextTabs ? (
+        ) : displayedThread && threadContextTabs && threadContextTabs.items.length > 1 ? (
           <WorkspaceTabBar
             model={threadContextTabs}
             selectedId={selectedThreadSubject ? `subject:${selectedThreadSubject.id}` : 'all'}

@@ -5,10 +5,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { WorkspaceTabBar } from '../../src/renderer/src/components/ui/workspace-tab-bar'
 
 const model = {
-  label: 'Working context',
   ariaLabel: 'Thread working context',
   items: [
-    { id: 'all', label: 'All subjects', meta: 'Complete history' },
+    { id: 'all', label: 'All subjects' },
     {
       id: 'subject:40',
       label: 'Customer Operations',
@@ -31,12 +30,16 @@ describe('WorkspaceTabBar', () => {
   it('renders receiver-owned tab semantics and visible context metadata', () => {
     render(<WorkspaceTabBar model={model} selectedId="subject:40" onSelect={vi.fn()} />)
 
-    expect(screen.getByRole('tablist', { name: 'Thread working context' })).toBeVisible()
-    expect(screen.getByText('Working context')).toBeVisible()
+    expect(screen.getByRole('tablist', { name: 'Thread working context' }))
+      .toHaveClass('rounded-lg', 'bg-muted', 'p-1')
+    expect(screen.queryByText('Working context')).not.toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Work in Customer Operations' }))
       .toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'Work in Customer Operations' }))
+      .toHaveClass('rounded-md', 'bg-background', 'shadow-xs')
     expect(screen.getByRole('tab', { name: 'All subjects' }))
       .toHaveAttribute('aria-selected', 'false')
+    expect(screen.getByRole('tab', { name: 'All subjects' })).not.toHaveAttribute('title')
     expect(screen.getByText('Last reviewed · 2026-08-07')).toBeVisible()
     expect(screen.getByText('Review due')).toBeVisible()
     expect(screen.getByText('Red', { selector: '[data-tone="danger"]' })).toBeVisible()

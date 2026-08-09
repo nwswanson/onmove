@@ -88,13 +88,11 @@ export function threadWorkingContextModel(
   subjectMatrix: readonly ThreadSubjectCellSnapshot[] = []
 ): WorkspaceTabBarModel {
   return {
-    label: 'Working context',
     ariaLabel: 'Thread working context',
     items: [
       {
         id: 'all',
-        label: scope.subjects.length ? 'All subjects' : 'Thread-wide',
-        meta: scope.subjects.length ? 'Complete history' : 'Thread-wide evidence'
+        label: scope.subjects.length ? 'All subjects' : 'Thread-wide'
       },
       ...scope.subjects.map(({ id, name }) => {
         const cell = subjectMatrix.find(({ subjectId }) => subjectId === id)
@@ -116,17 +114,13 @@ export function commitmentWorkingContextModel(
 ): WorkspaceTabBarModel {
   const bounded = context.scopeId !== null
   return {
-    label: 'Working context',
     ariaLabel: 'Commitment working context',
     items: [
       {
         id: 'all',
         label: bounded
           ? context.cells.length > 0 ? 'All subjects' : 'No subjects'
-          : 'Commitment-wide',
-        meta: bounded
-          ? context.cells.length > 0 ? 'Complete history' : 'No applicable Subjects'
-          : 'Commitment-wide evidence'
+          : 'Commitment-wide'
       },
       ...context.cells.map((cell) => ({
         id: `subject:${cell.subjectId}`,

@@ -125,13 +125,11 @@ describe('Focus presentation adapters', () => {
       ]
     })
     expect(threadWorkingContextModel(threadScope)).toEqual({
-      label: 'Working context',
       ariaLabel: 'Thread working context',
       items: [
         {
           id: 'all',
-          label: 'All subjects',
-          meta: 'Complete history'
+          label: 'All subjects'
         },
         {
           id: 'subject:41',
@@ -151,8 +149,7 @@ describe('Focus presentation adapters', () => {
       focusSubjects: []
     }).items).toEqual([{
       id: 'all',
-      label: 'Thread-wide',
-      meta: 'Thread-wide evidence'
+      label: 'Thread-wide'
     }])
 
     expect(commitmentWorkingContextModel({
@@ -168,10 +165,9 @@ describe('Focus presentation adapters', () => {
         needsUpdate: true
       }]
     })).toEqual({
-      label: 'Working context',
       ariaLabel: 'Commitment working context',
       items: [
-        { id: 'all', label: 'All subjects', meta: 'Complete history' },
+        { id: 'all', label: 'All subjects' },
         {
           id: `subject:${platformTeam.id}`,
           label: 'Platform Team',

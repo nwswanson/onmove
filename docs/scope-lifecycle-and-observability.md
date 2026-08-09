@@ -232,8 +232,12 @@ evidence entry are deliberately separate controls and locations:
    Subject is not currently applicable. Re-applying the Subject moves the card back to the main list
    and restores its ordinary current label, even when the operation created a replacement overlay
    Scope id.
-6. If the Thread has no effective Subjects, the selector becomes Thread-wide and direct Updates are
-   stored unscoped. Adding effective Subjects restores exact-cell creation.
+6. If the Thread has no effective Subjects, no context tab bar is shown and direct Updates are
+   stored Thread-wide and unscoped. Adding effective Subjects restores the tabs and exact-cell
+   creation.
+7. The selected canonical Subject follows navigation among Threads and Commitments in the same
+   Focus. Each Focus remembers its own selection for the current application session. A destination
+   that does not contain that Subject normalizes the Focus selection to All Subjects.
 
 The working selector and Commitment projection remain current-matrix views. The All Subjects Update
 list is deliberately broader. Its current/former label describes canonical Subject applicability,

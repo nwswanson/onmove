@@ -306,6 +306,9 @@ export function App(): React.JSX.Element {
   )
   const [sidebarWidth, setSidebarWidth] = useState(248)
   const [drawerWidth, setDrawerWidth] = useState(336)
+  const [focusSubjectSelections, setFocusSubjectSelections] = useState<
+    Record<number, number | null | undefined>
+  >({})
   const [homeExample, setHomeExample] = useState<HomeExample>({
     title: 'Example home item',
     status: 'good'
@@ -383,6 +386,13 @@ export function App(): React.JSX.Element {
                 application.refreshFocusStatusSummary(selectedFocus.id)
               }
               onDeleteFocus={() => deleteFocus(selectedFocus.id)}
+              selectedSubjectId={focusSubjectSelections[selectedFocus.id] ?? null}
+              onSelectedSubjectChange={(subjectId) =>
+                setFocusSubjectSelections((current) => ({
+                  ...current,
+                  [selectedFocus.id]: subjectId
+                }))
+              }
               hideSensitiveContent={application.sensitiveContentHidden}
             />
           ) : (

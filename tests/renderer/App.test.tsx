@@ -817,6 +817,121 @@ describe('App', () => {
     })
   })
 
+  it('carries one Subject selection across contexts and remembers it independently per Focus', async () => {
+    const atlas = focus({ id: 1, title: 'Project Atlas' })
+    const horizon = focus({ id: 2, title: 'Project Horizon' })
+    const atlasDelivery = thread({ id: 10, focusId: atlas.id, title: 'Atlas delivery' })
+    const atlasPlatform = thread({ id: 11, focusId: atlas.id, title: 'Atlas platform' })
+    const horizonDelivery = thread({ id: 20, focusId: horizon.id, title: 'Horizon delivery' })
+    const customer = subject(40, 'Customer Operations')
+    const platform = subject(41, 'Platform Team')
+    const scopedCommitment = commitment({
+      id: 21,
+      parent: { type: 'thread', id: atlasDelivery.id },
+      title: 'Preserve the selected lens'
+    })
+    const scopes = new Map([
+      [atlasDelivery.id, { scopeId: 50, subject: customer, focusId: atlas.id }],
+      [atlasPlatform.id, { scopeId: 51, subject: platform, focusId: atlas.id }],
+      [horizonDelivery.id, { scopeId: 52, subject: platform, focusId: horizon.id }]
+    ])
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([atlas, horizon]),
+      listThreads: vi.fn(async (focusId) =>
+        focusId === atlas.id
+          ? [atlasDelivery, atlasPlatform]
+          : [horizonDelivery]
+      ),
+      getThreadScope: vi.fn(async (threadId) => {
+        const entry = scopes.get(threadId)
+        if (!entry) throw new Error('Unknown Thread')
+        return {
+          threadId,
+          focusId: entry.focusId,
+          mode: 'inherited' as const,
+          scopeId: entry.scopeId,
+          subjects: [entry.subject],
+          focusSubjects: [entry.subject]
+        }
+      }),
+      getThreadSubjectMatrix: vi.fn(async (threadId) => {
+        const entry = scopes.get(threadId)
+        if (!entry) throw new Error('Unknown Thread')
+        return [{
+          scopeId: entry.scopeId,
+          subjectId: entry.subject.id,
+          subject: entry.subject,
+          state: 'none' as const,
+          lastReviewDate: null,
+          nextReviewDate: '2026-08-15',
+          reviewDue: false,
+          commitments: threadId === atlasDelivery.id
+            ? [{
+                commitmentId: scopedCommitment.id,
+                scopeId: entry.scopeId,
+                subjectId: entry.subject.id,
+                state: 'none' as const,
+                lastUpdateDate: null,
+                nextUpdateDate: null,
+                needsUpdate: false
+              }]
+            : []
+        }]
+      }),
+      listCommitments: vi.fn(async (parent) =>
+        parent.type === 'thread' && parent.id === atlasDelivery.id
+          ? [scopedCommitment]
+          : []
+      ),
+      getCommitmentWorkingContext: vi.fn(async (commitmentId) => ({
+        commitmentId,
+        scopeId: 50,
+        cells: [{
+          scopeId: 50,
+          subjectId: customer.id,
+          subject: customer,
+          state: 'none' as const,
+          lastUpdateDate: null,
+          nextUpdateDate: null,
+          needsUpdate: false
+        }]
+      }))
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    await user.click(await screen.findByRole('button', { name: 'Atlas delivery' }))
+    await user.click(await screen.findByRole('tab', { name: 'Work in Customer Operations' }))
+    await user.click(screen.getByRole('button', {
+      name: 'Open commitment Preserve the selected lens'
+    }))
+    expect(await screen.findByRole('tab', { name: 'Work in Customer Operations' }))
+      .toHaveAttribute('aria-selected', 'true')
+
+    await user.click(screen.getByRole('button', { name: 'Atlas platform' }))
+    expect(await screen.findByRole('tab', { name: 'All subjects' }))
+      .toHaveAttribute('aria-selected', 'true')
+    await user.click(screen.getByRole('button', { name: 'Atlas delivery' }))
+    expect(screen.getByRole('tab', { name: 'All subjects' }))
+      .toHaveAttribute('aria-selected', 'true')
+    await user.click(screen.getByRole('tab', { name: 'Work in Customer Operations' }))
+
+    await user.click(screen.getByRole('button', { name: 'Project Horizon' }))
+    await user.click(await screen.findByRole('button', { name: 'Horizon delivery' }))
+    await user.click(await screen.findByRole('tab', { name: 'Work in Platform Team' }))
+
+    await user.click(screen.getByRole('button', { name: 'Project Atlas' }))
+    await user.click(await screen.findByRole('button', { name: 'Atlas delivery' }))
+    expect(await screen.findByRole('tab', { name: 'Work in Customer Operations' }))
+      .toHaveAttribute('aria-selected', 'true')
+
+    await user.click(screen.getByRole('button', { name: 'Project Horizon' }))
+    await user.click(await screen.findByRole('button', { name: 'Horizon delivery' }))
+    expect(await screen.findByRole('tab', { name: 'Work in Platform Team' }))
+      .toHaveAttribute('aria-selected', 'true')
+  })
+
   it('creates and edits a Subject Update from the All Subjects dropdown', async () => {
     const current = focus({ title: 'Project Atlas' })
     const sprint = thread()
@@ -915,8 +1030,8 @@ describe('App', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
     await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
-    expect(await screen.findByRole('tab', { name: 'Thread-wide' }))
-      .toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByRole('tablist', { name: 'Thread working context' }))
+      .not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Add update' }))
     await waitFor(() => expect(createUpdate).toHaveBeenCalledOnce())
     expect(createUpdate).toHaveBeenCalledWith({
@@ -1206,8 +1321,8 @@ describe('App', () => {
       'page'
     )
     await user.click(screen.getByRole('button', { name: /^Sprint execution$/ }))
-    expect(await screen.findByRole('tab', { name: 'Thread-wide' }))
-      .toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByRole('tablist', { name: 'Thread working context' }))
+      .not.toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: 'Work in Customer Operations' }))
       .not.toBeInTheDocument()
     expect(getThreadScope.mock.calls.length).toBeGreaterThanOrEqual(3)
