@@ -21,6 +21,10 @@ export const IPC_CHANNELS = {
   getFocusScope: 'domain:get-focus-scope',
   addFocusScopeSubject: 'domain:add-focus-scope-subject',
   removeFocusScopeSubject: 'domain:remove-focus-scope-subject',
+  getThreadScope: 'domain:get-thread-scope',
+  addThreadScopeSubject: 'domain:add-thread-scope-subject',
+  removeThreadScopeSubject: 'domain:remove-thread-scope-subject',
+  followFocusThreadScope: 'domain:follow-focus-thread-scope',
   listThreads: 'domain:list-threads',
   createThread: 'domain:create-thread',
   updateThread: 'domain:update-thread',
@@ -297,6 +301,16 @@ export interface AddFocusScopeSubjectInput {
   name: string
 }
 
+/** A Thread's current applicability plus the Subjects offered by its Focus. */
+export interface ThreadScopeSnapshot {
+  threadId: number
+  focusId: number
+  mode: ScopeMode
+  scopeId: number | null
+  subjects: SubjectSnapshot[]
+  focusSubjects: SubjectSnapshot[]
+}
+
 export interface UpdateScopeCell {
   scopeId: number
   subjectId: number
@@ -466,6 +480,16 @@ export interface DomainApi {
     focusId: number,
     subjectId: number
   ) => Promise<FocusScopeSnapshot>
+  getThreadScope: (threadId: number) => Promise<ThreadScopeSnapshot>
+  addThreadScopeSubject: (
+    threadId: number,
+    input: AddFocusScopeSubjectInput
+  ) => Promise<ThreadScopeSnapshot>
+  removeThreadScopeSubject: (
+    threadId: number,
+    subjectId: number
+  ) => Promise<ThreadScopeSnapshot>
+  followFocusThreadScope: (threadId: number) => Promise<ThreadScopeSnapshot>
   listThreads: (focusId: number) => Promise<ThreadSnapshot[]>
   createThread: (input: CreateThreadInput) => Promise<ThreadSnapshot>
   updateThread: (id: number, input: UpdateThreadInput) => Promise<ThreadSnapshot>

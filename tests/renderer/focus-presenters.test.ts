@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import type {
   CommitmentSnapshot,
+  FocusScopeSnapshot,
   FocusSnapshot,
+  SubjectSnapshot,
+  ThreadScopeSnapshot,
   ThreadSnapshot
 } from '../../src/shared/contracts'
 import {
@@ -15,8 +18,10 @@ import {
   focusContextSidebarItems,
   focusDrawerAdapter,
   focusPrimaryNavigationItems,
+  focusScopeEditorModel,
   statusSunflowerModel,
-  threadDrawerAdapter
+  threadDrawerAdapter,
+  threadScopeEditorModel
 } from '../../src/renderer/src/features/focus/focus-presenters'
 import { buildCommitmentListModel } from '../../src/renderer/src/features/focus/commitment-list-model'
 import { healthStateLabel } from '../../src/renderer/src/features/shared/state-presenters'
@@ -73,10 +78,64 @@ const commitment: CommitmentSnapshot = {
   updatedAt: '2026-01-01T00:00:00.000Z'
 }
 
+const customerOperations: SubjectSnapshot = {
+  id: 40,
+  kind: 'generic',
+  name: 'Customer Operations',
+  description: null,
+  externalKey: null,
+  sensitive: false,
+  createdAt: '2026-08-08T12:00:00.000Z',
+  updatedAt: '2026-08-08T12:00:00.000Z'
+}
+
+const platformTeam: SubjectSnapshot = {
+  ...customerOperations,
+  id: 41,
+  name: 'Platform Team'
+}
+
 describe('Focus presentation adapters', () => {
   it('formats missing and effective review dates for every UI receiver', () => {
     expect(dateOrNeverLabel(null)).toBe('Never')
     expect(dateOrNeverLabel('2026-01-06')).toBe('2026-01-06')
+  })
+
+  it('translates Focus and Thread applicability into receiver-owned chip models', () => {
+    const focusScope: FocusScopeSnapshot = {
+      focusId: focus.id,
+      mode: 'explicit',
+      scopeId: 50,
+      subjects: [customerOperations, platformTeam]
+    }
+    const threadScope: ThreadScopeSnapshot = {
+      threadId: thread.id,
+      focusId: focus.id,
+      mode: 'explicit',
+      scopeId: 51,
+      subjects: [platformTeam],
+      focusSubjects: [customerOperations, platformTeam]
+    }
+    expect(focusScopeEditorModel(focusScope)).toEqual({
+      summary: '2 Subjects in scope',
+      subjects: [
+        { id: 40, name: 'Customer Operations' },
+        { id: 41, name: 'Platform Team' }
+      ]
+    })
+    expect(threadScopeEditorModel(threadScope)).toEqual({
+      summary: 'Custom · 1 Subject in scope',
+      subjects: [{ id: 41, name: 'Platform Team' }],
+      suggestions: [{ id: 40, name: 'Customer Operations' }],
+      canFollowFocus: true
+    })
+    expect(threadScopeEditorModel({
+      ...threadScope,
+      mode: 'inherited',
+      scopeId: null,
+      subjects: [],
+      focusSubjects: []
+    }).summary).toBe('Following Focus · Open scope')
   })
 
   it('maps domain records into primary and contextual receiver contracts', () => {

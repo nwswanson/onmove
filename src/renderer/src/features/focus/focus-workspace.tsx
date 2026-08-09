@@ -31,7 +31,10 @@ import {
   NewCommitmentDialog
 } from '@/features/focus/commitment-ui'
 import { buildCommitmentListModel } from '@/features/focus/commitment-list-model'
-import { FocusScopeEditor } from '@/features/focus/focus-scope-ui'
+import {
+  FocusScopeEditor,
+  ThreadScopeEditor
+} from '@/features/focus/focus-scope-ui'
 import {
   commitmentCollectionModel,
   commitmentContextSidebarItems,
@@ -43,9 +46,11 @@ import {
   focusDrawerAdapter,
   focusScopeEditorModel,
   threadDrawerAdapter,
+  threadScopeEditorModel,
   threadSidebarItemId
 } from '@/features/focus/focus-presenters'
 import { useFocusWorkspaceModel } from '@/features/focus/use-focus-workspace-model'
+import { useThreadScopeModel } from '@/features/focus/use-thread-scope-model'
 import { WorkStatusSelect } from '@/features/shared/work-status-select'
 import { visibleSensitiveRecords } from '@/features/shared/sensitivity'
 import { SensitivityToggle } from '@/features/shared/sensitivity-toggle'
@@ -167,6 +172,27 @@ interface FocusWorkspaceProps {
   onRefreshStatusSummary: () => Promise<void>
   onDeleteFocus: () => Promise<void>
   hideSensitiveContent?: boolean
+}
+
+function ThreadScopeSection({
+  threadId,
+  onScopeChanged
+}: {
+  threadId: number
+  onScopeChanged: () => Promise<void>
+}): React.JSX.Element {
+  const scope = useThreadScopeModel({ threadId, onScopeChanged })
+  return (
+    <ThreadScopeEditor
+      model={scope.scope ? threadScopeEditorModel(scope.scope) : null}
+      loading={scope.loading}
+      saving={scope.saving}
+      error={scope.error}
+      onAdd={scope.addSubject}
+      onRemove={scope.removeSubject}
+      onFollowFocus={scope.followFocus}
+    />
+  )
 }
 
 export function FocusWorkspace({
@@ -780,6 +806,11 @@ export function FocusWorkspace({
                 {workspaceStatusError.message}
               </p>
             )}
+            <ThreadScopeSection
+              key={displayedThread.id}
+              threadId={displayedThread.id}
+              onScopeChanged={() => model.refreshThread(displayedThread.id).then(() => undefined)}
+            />
             <CommitmentCollection
               idPrefix={`thread-${displayedThread.id}`}
               model={commitmentCollectionModel(

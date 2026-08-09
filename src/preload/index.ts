@@ -36,6 +36,13 @@ const api: OnMoveApi = {
       ipcRenderer.invoke(IPC_CHANNELS.addFocusScopeSubject, focusId, input),
     removeFocusScopeSubject: (focusId, subjectId) =>
       ipcRenderer.invoke(IPC_CHANNELS.removeFocusScopeSubject, focusId, subjectId),
+    getThreadScope: (threadId) => ipcRenderer.invoke(IPC_CHANNELS.getThreadScope, threadId),
+    addThreadScopeSubject: (threadId, input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.addThreadScopeSubject, threadId, input),
+    removeThreadScopeSubject: (threadId, subjectId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.removeThreadScopeSubject, threadId, subjectId),
+    followFocusThreadScope: (threadId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.followFocusThreadScope, threadId),
     listThreads: (focusId) => ipcRenderer.invoke(IPC_CHANNELS.listThreads, focusId),
     createThread: (input) => ipcRenderer.invoke(IPC_CHANNELS.createThread, input),
     updateThread: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateThread, id, input),

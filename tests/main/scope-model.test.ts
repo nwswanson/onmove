@@ -919,4 +919,153 @@ describe('Subject, Scope, and scoped Update models', () => {
       nextDay
     ).subjects.map(({ id }) => id)).toEqual([subjectId])
   })
+
+  it('customizes a Thread Scope without mutating its Focus, siblings, or retained evidence', () => {
+    const firstDay = new Date('2026-08-08T12:00:00.000Z')
+    const nextDay = new Date('2026-08-09T12:00:00.000Z')
+    const focus = database!.domain.focuses.create({ title: 'Launch quality' })
+    const focusScope = database!.domain.focusScopes.addSubject(
+      focus.id,
+      { name: 'Customer Operations' },
+      firstDay
+    )
+    database!.domain.focusScopes.addSubject(
+      focus.id,
+      { name: 'Platform Team' },
+      firstDay
+    )
+    const customerOperationsId = focusScope.subjects[0].id
+    const platformTeamId = database!.domain.subjects.list()
+      .find(({ name }) => name === 'Platform Team')!.id
+    const sprint = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Sprint execution',
+      reviewFrequencyDays: 7
+    }, firstDay)
+    const teamHealth = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Team health',
+      reviewFrequencyDays: 7
+    }, firstDay)
+
+    expect(database!.domain.threadScopes.get(sprint.id, '2026-08-08')).toMatchObject({
+      mode: 'inherited',
+      subjects: [{ id: customerOperationsId }, { id: platformTeamId }],
+      focusSubjects: [{ id: customerOperationsId }, { id: platformTeamId }]
+    })
+    database!.domain.updates.create({
+      parent: { type: 'thread', id: sprint.id },
+      date: '2026-08-08',
+      state: 'green',
+      scope: { scopeId: focusScope.scopeId as number, subjectId: customerOperationsId }
+    }, firstDay)
+
+    const narrowed = database!.domain.threadScopes.removeSubject(
+      sprint.id,
+      customerOperationsId,
+      firstDay
+    )
+    expect(narrowed).toMatchObject({
+      mode: 'explicit',
+      subjects: [{ id: platformTeamId }]
+    })
+    const firstCustomScopeId = narrowed.scopeId as number
+    expect(database!.domain.focusScopes.get(focus.id, '2026-08-08').subjects.map(({ id }) => id))
+      .toEqual([customerOperationsId, platformTeamId])
+    expect(database!.domain.threadScopes.get(teamHealth.id, '2026-08-08').subjects.map(({ id }) => id))
+      .toEqual([customerOperationsId, platformTeamId])
+    expect(database!.domain.updates.listForThread(sprint.id)).toMatchObject([
+      { state: 'green', scope: { scopeId: focusScope.scopeId, subjectId: customerOperationsId } }
+    ])
+    expect(sprint.scopeMatrix('2026-08-08').map(({ subjectId }) => subjectId))
+      .toEqual([platformTeamId])
+
+    const restored = database!.domain.threadScopes.addSubject(
+      sprint.id,
+      { name: 'customer operations' },
+      firstDay
+    )
+    expect(restored.subjects.map(({ id }) => id)).toEqual([
+      customerOperationsId,
+      platformTeamId
+    ])
+    expect(restored.scopeId).not.toBe(firstCustomScopeId)
+    expect(sprint.scopeMatrix('2026-08-08')).toEqual([
+      expect.objectContaining({ subjectId: customerOperationsId, state: 'none' }),
+      expect.objectContaining({ subjectId: platformTeamId, state: 'none' })
+    ])
+
+    const extended = database!.domain.threadScopes.addSubject(
+      sprint.id,
+      { name: 'Delivery Partners' },
+      firstDay
+    )
+    const deliveryPartnersId = extended.subjects
+      .find(({ name }) => name === 'Delivery Partners')!.id
+    expect(extended.subjects.map(({ id }) => id)).toEqual([
+      customerOperationsId,
+      deliveryPartnersId,
+      platformTeamId
+    ])
+    expect(database!.domain.focusScopes.get(focus.id, '2026-08-08').subjects.map(({ id }) => id))
+      .toEqual([customerOperationsId, platformTeamId])
+
+    const followed = database!.domain.threadScopes.followFocus(sprint.id, firstDay)
+    expect(followed).toMatchObject({
+      mode: 'inherited',
+      scopeId: focusScope.scopeId,
+      subjects: [{ id: customerOperationsId }, { id: platformTeamId }]
+    })
+    expect(sprint.scopeApplicationHistory().map(({ to }) => to.mode)).toEqual([
+      'inherited',
+      'explicit',
+      'explicit',
+      'explicit',
+      'inherited'
+    ])
+
+    database!.domain.focusScopes.removeSubject(focus.id, platformTeamId, nextDay)
+    expect(database!.domain.threadScopes.get(sprint.id, '2026-08-09').subjects.map(({ id }) => id))
+      .toEqual([customerOperationsId])
+    expect(database!.domain.threadScopes.get(teamHealth.id, '2026-08-09').subjects.map(({ id }) => id))
+      .toEqual([customerOperationsId])
+
+    expect(sprint.delete()).toBe(true)
+    expect(database!.domain.scopes.find(firstCustomScopeId)).not.toBeNull()
+    expect(database!.domain.subjects.find(deliveryPartnersId)).not.toBeNull()
+    expect(database!.domain.threadScopes.get(teamHealth.id, '2026-08-09').subjects.map(({ id }) => id))
+      .toEqual([customerOperationsId])
+    expect(focus.delete()).toBe(true)
+    expect(database!.domain.scopes.find(firstCustomScopeId)).toBeNull()
+    expect(database!.domain.subjects.find(deliveryPartnersId)).not.toBeNull()
+  })
+
+  it('cascades an active Thread and its nested overlay Scope chain with its Focus', () => {
+    const now = new Date('2026-08-08T12:00:00.000Z')
+    const focus = database!.domain.focuses.create({ title: 'Launch quality' })
+    const bounded = database!.domain.focusScopes.addSubject(
+      focus.id,
+      { name: 'Customer Operations' },
+      now
+    )
+    const customerOperationsId = bounded.subjects[0].id
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Sprint execution',
+      reviewFrequencyDays: 7
+    }, now)
+    database!.domain.threadScopes.removeSubject(thread.id, customerOperationsId, now)
+    database!.domain.threadScopes.addSubject(thread.id, { name: 'Customer Operations' }, now)
+    database!.domain.threadScopes.addSubject(thread.id, { name: 'Delivery Partners' }, now)
+    database!.domain.threadScopes.followFocus(thread.id, now)
+    database!.domain.threadScopes.removeSubject(thread.id, customerOperationsId, now)
+
+    expect(focus.delete()).toBe(true)
+    expect(database!.domain.threads.find(thread.id)).toBeNull()
+    expect(database!.domain.scopes.listForFocus(focus.id)).toEqual([])
+    expect(database!.domain.subjects.list().map(({ name }) => name)).toEqual([
+      'Customer Operations',
+      'Delivery Partners'
+    ])
+  })
 })

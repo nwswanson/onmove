@@ -236,6 +236,24 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     return [...names].sort()
   }
 
+  function storedThreadScopeState(): {
+    mode: string
+    transitionCount: number
+  } | undefined {
+    const database = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
+      readOnly: true
+    })
+    const row = database.prepare(
+      `SELECT application.mode,
+              (SELECT count(*) FROM scope_application_transitions transition
+               WHERE transition.thread_id = application.thread_id) AS transitionCount
+       FROM thread_scope_applications application
+       ORDER BY application.thread_id LIMIT 1`
+    ).get() as { mode: string; transitionCount: number } | undefined
+    database.close()
+    return row ? { mode: row.mode, transitionCount: Number(row.transitionCount) } : undefined
+  }
+
   try {
     application = await launch()
     let window = await application.firstWindow()
@@ -637,6 +655,51 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       'Enterprise Accounts',
       'Platform Team'
     ])
+    await window
+      .getByRole('button', { name: 'Sprint execution, paused', exact: true })
+      .click()
+    await expect(window.getByText('Open scope — add a Subject to define its boundary.'))
+      .toBeVisible()
+    for (const subject of ['Customer Operations', 'Platform Team']) {
+      await window
+        .getByRole('button', { name: `Add ${subject} to Thread scope` })
+        .click()
+      await expect(
+        window.getByRole('button', { name: `Remove ${subject} from Thread scope` })
+      ).toBeVisible()
+    }
+    const threadSubjectInput = window.getByRole('textbox', {
+      name: 'Add a Subject to Thread'
+    })
+    await threadSubjectInput.fill('Delivery Partners')
+    await threadSubjectInput.press('Enter')
+    await expect(
+      window.getByRole('button', { name: 'Remove Delivery Partners from Thread scope' })
+    ).toBeVisible()
+    await window
+      .getByRole('button', { name: 'Remove Customer Operations from Thread scope' })
+      .click()
+    await expect(
+      window.getByRole('button', { name: 'Add Customer Operations to Thread scope' })
+    ).toBeVisible()
+    await window
+      .getByRole('button', { name: 'Add Customer Operations to Thread scope' })
+      .click()
+    await window.getByRole('button', { name: 'Follow Focus' }).click()
+    await expect(window.getByText('Following Focus · 3 Subjects in scope')).toBeVisible()
+    await window
+      .getByRole('button', { name: 'Remove Enterprise Accounts from Thread scope' })
+      .click()
+    await expect(window.getByText('Custom · 2 Subjects in scope')).toBeVisible()
+    await expect.poll(storedThreadScopeState).toEqual({
+      mode: 'explicit',
+      transitionCount: 8
+    })
+    await expect.poll(storedFocusSubjectNames).toEqual([
+      'Customer Operations',
+      'Enterprise Accounts',
+      'Platform Team'
+    ])
     await application.close()
     application = undefined
 
@@ -715,6 +778,20 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       .getByRole('button', { name: 'Sprint execution, paused', exact: true })
       .click()
     await expect(window.getByRole('heading', { name: 'Sprint execution' })).toBeVisible()
+    await expect(window.getByText('Custom · 2 Subjects in scope')).toBeVisible()
+    await expect(
+      window.getByRole('button', { name: 'Remove Customer Operations from Thread scope' })
+    ).toBeVisible()
+    await expect(
+      window.getByRole('button', { name: 'Remove Platform Team from Thread scope' })
+    ).toBeVisible()
+    await expect(
+      window.getByRole('button', { name: 'Add Enterprise Accounts to Thread scope' })
+    ).toBeVisible()
+    const threadScopeScreenshotPath = process.env.ONMOVE_THREAD_SCOPE_SCREENSHOT_PATH
+    if (threadScopeScreenshotPath) {
+      await window.screenshot({ path: threadScopeScreenshotPath })
+    }
     await expect(window.getByRole('combobox', { name: 'Thread status' })).toHaveValue('paused')
     await expect(window.getByRole('list', { name: 'Thread updates' })).toContainText(
       'Sprint review completed'

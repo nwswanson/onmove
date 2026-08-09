@@ -144,6 +144,11 @@ and do not rely on color alone to communicate selection or status.
   only on Action Commitment list rows. Checking an active or paused Action sends `status: done`
   through the existing typed mutation so transition auditing remains intact; closed Actions cannot
   be reopened through the checkbox, and Ongoing rows never expose it.
+- Render Focus and Thread Subject applicability through the shared feature-level chip editor. Keep
+  raw application modes out of form controls: Thread customization removes chips or adds typed and
+  Focus-suggested Subjects, while one `Follow Focus` action restores live inheritance. Views consume
+  presenter-owned editor models and never coordinate Subject, Scope, membership, or application
+  writes themselves.
 - Keep view identifiers and navigation definitions typed. Add tests whenever a destination or
   sidebar action is introduced.
 - Persist `sensitive` independently on Focus, Thread, Commitment, and Update records. The native
@@ -176,6 +181,10 @@ and do not rely on color alone to communicate selection or status.
 - Treat Subject, Scope, and Scope application as distinct model concepts. Subjects are canonical and
   generic; Scopes are Focus-owned applicability expressions; applications state whether a Focus,
   Thread, or Commitment is Open, inherited, explicit, or derived.
+- Route inline Focus and Thread applicability through their aggregate repositories and named IPC.
+  A Thread customization must create and apply a new Focus-owned overlay Scope based on its current
+  effective Scope; never mutate a Scope shared by the Focus or a sibling. `Follow Focus` declares
+  inheritance and retains obsolete overlays and exact-cell evidence for observability.
 - Keep Scope membership effective-dated with half-open `[effectiveFrom, effectiveUntil)` intervals.
   Resolve effective membership as same-dimension base plus includes minus excludes, and never rewrite
   historical membership to describe a current population.

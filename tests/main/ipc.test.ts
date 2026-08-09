@@ -70,6 +70,43 @@ describe('registerAppIpc', () => {
             subjects: []
           }))
         },
+        threadScopes: {
+          get: vi.fn(() => ({
+            threadId: 21,
+            focusId: 12,
+            mode: 'inherited',
+            scopeId: 51,
+            subjects: [{ id: 61, name: 'Customer Operations' }],
+            focusSubjects: [{ id: 61, name: 'Customer Operations' }]
+          })),
+          addSubject: vi.fn(() => ({
+            threadId: 21,
+            focusId: 12,
+            mode: 'explicit',
+            scopeId: 52,
+            subjects: [
+              { id: 61, name: 'Customer Operations' },
+              { id: 62, name: 'Platform Team' }
+            ],
+            focusSubjects: [{ id: 61, name: 'Customer Operations' }]
+          })),
+          removeSubject: vi.fn(() => ({
+            threadId: 21,
+            focusId: 12,
+            mode: 'explicit',
+            scopeId: 53,
+            subjects: [],
+            focusSubjects: [{ id: 61, name: 'Customer Operations' }]
+          })),
+          followFocus: vi.fn(() => ({
+            threadId: 21,
+            focusId: 12,
+            mode: 'inherited',
+            scopeId: 51,
+            subjects: [{ id: 61, name: 'Customer Operations' }],
+            focusSubjects: [{ id: 61, name: 'Customer Operations' }]
+          }))
+        },
         threads: {
           listForFocus: vi.fn(() => [{ id: 21, focusId: 12, title: 'Sprint execution' }]),
           create: vi.fn(() => ({
@@ -178,6 +215,24 @@ describe('registerAppIpc', () => {
       12,
       61
     )).toMatchObject({ mode: 'explicit', subjects: [] })
+    expect(await handlers.get(IPC_CHANNELS.getThreadScope)?.(undefined, 21)).toMatchObject({
+      mode: 'inherited',
+      subjects: [{ id: 61, name: 'Customer Operations' }]
+    })
+    expect(await handlers.get(IPC_CHANNELS.addThreadScopeSubject)?.(
+      undefined,
+      21,
+      { name: 'Platform Team' }
+    )).toMatchObject({ mode: 'explicit', subjects: [{ id: 61 }, { id: 62 }] })
+    expect(await handlers.get(IPC_CHANNELS.removeThreadScopeSubject)?.(
+      undefined,
+      21,
+      61
+    )).toMatchObject({ mode: 'explicit', subjects: [] })
+    expect(await handlers.get(IPC_CHANNELS.followFocusThreadScope)?.(
+      undefined,
+      21
+    )).toMatchObject({ mode: 'inherited', scopeId: 51 })
     expect(await handlers.get(IPC_CHANNELS.listThreads)?.(undefined, 12)).toMatchObject([
       { id: 21, title: 'Sprint execution' }
     ])

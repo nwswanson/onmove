@@ -19,6 +19,7 @@ import {
   type ScopeSourceType,
   type SetScopeApplicationInput,
   type SubjectSnapshot,
+  type ThreadScopeSnapshot,
   type UpdateScopeInput,
   type UpdateSubjectInput
 } from '../../shared/contracts'
@@ -1160,5 +1161,135 @@ export class FocusScopeRepository {
         `Subject removal would invalidate scoped Update history on ${invalidUpdate.recorded_on}`
       )
     }
+  }
+}
+
+/**
+ * Coordinates Thread-local applicability without mutating a Scope shared by
+ * the Focus or another consumer. Each customization is a new overlay Scope;
+ * returning to the Focus is an application change, not destructive cleanup.
+ */
+export class ThreadScopeRepository {
+  private readonly subjects: SubjectRepository
+  private readonly scopes: ScopeRepository
+  private readonly memberships: ScopeMembershipRepository
+  private readonly applications: ScopeApplicationRepository
+
+  constructor(private readonly database: SqliteAdapter) {
+    this.subjects = new SubjectRepository(database)
+    this.scopes = new ScopeRepository(database)
+    this.memberships = new ScopeMembershipRepository(database)
+    this.applications = new ScopeApplicationRepository(database)
+  }
+
+  get(threadId: number, on = today()): ThreadScopeSnapshot {
+    const thread = this.requireThread(threadId)
+    const application = this.applications.get({ type: 'thread', id: threadId })
+    const focusApplication = this.applications.get({ type: 'focus', id: thread.focus_id })
+    return {
+      threadId,
+      focusId: thread.focus_id,
+      mode: application.mode,
+      scopeId: application.effectiveScopeId,
+      subjects: application.effectiveScopeId === null
+        ? []
+        : this.scopes.effectiveSubjects(application.effectiveScopeId, on),
+      focusSubjects: focusApplication.effectiveScopeId === null
+        ? []
+        : this.scopes.effectiveSubjects(focusApplication.effectiveScopeId, on)
+    }
+  }
+
+  addSubject(
+    threadId: number,
+    input: AddFocusScopeSubjectInput,
+    now = new Date()
+  ): ThreadScopeSnapshot {
+    const name = normalizeRequiredText(input.name, 'subject name')
+    const on = today(now)
+    return this.database.transaction(() => {
+      const current = this.get(threadId, on)
+      const subject = this.subjects.list().find(
+        (candidate) => candidate.name.localeCompare(name, undefined, { sensitivity: 'accent' }) === 0
+      ) ?? this.subjects.create({ name }, now).toSnapshot()
+      if (current.subjects.some(({ id }) => id === subject.id)) return current
+
+      const scope = this.createOverlay(threadId, current, now)
+      this.memberships.create({
+        scopeId: scope.id,
+        subjectId: subject.id,
+        effect: 'include',
+        effectiveFrom: on
+      }, now)
+      this.applications.set(
+        { type: 'thread', id: threadId },
+        { mode: 'explicit', scopeId: scope.id },
+        now
+      )
+      return this.get(threadId, on)
+    })
+  }
+
+  removeSubject(threadId: number, subjectId: number, now = new Date()): ThreadScopeSnapshot {
+    assertId(subjectId, 'subject id')
+    const on = today(now)
+    return this.database.transaction(() => {
+      const current = this.get(threadId, on)
+      if (
+        current.scopeId === null ||
+        !current.subjects.some(({ id }) => id === subjectId)
+      ) return current
+
+      const scope = this.createOverlay(threadId, current, now)
+      this.memberships.create({
+        scopeId: scope.id,
+        subjectId,
+        effect: 'exclude',
+        effectiveFrom: on
+      }, now)
+      this.applications.set(
+        { type: 'thread', id: threadId },
+        { mode: 'explicit', scopeId: scope.id },
+        now
+      )
+      return this.get(threadId, on)
+    })
+  }
+
+  followFocus(threadId: number, now = new Date()): ThreadScopeSnapshot {
+    return this.database.transaction(() => {
+      this.requireThread(threadId)
+      this.applications.set(
+        { type: 'thread', id: threadId },
+        { mode: 'inherited' },
+        now
+      )
+      return this.get(threadId, today(now))
+    })
+  }
+
+  private createOverlay(
+    threadId: number,
+    current: ThreadScopeSnapshot,
+    now: Date
+  ): ScopeModel {
+    const thread = this.requireThread(threadId)
+    const base = current.scopeId === null ? null : this.scopes.find(current.scopeId)
+    return this.scopes.create({
+      focusId: thread.focus_id,
+      name: `${thread.title} subjects`,
+      dimension: base?.dimension ?? 'subject',
+      baseScopeId: base?.id ?? null
+    }, now)
+  }
+
+  private requireThread(threadId: number): { focus_id: number; title: string } {
+    assertId(threadId, 'thread id')
+    const thread = this.database.get<{ focus_id: number; title: string }>(
+      'SELECT focus_id, title FROM threads WHERE id = ?',
+      [threadId]
+    )
+    if (!thread) throw new ModelNotFoundError('Thread', threadId)
+    return { focus_id: Number(thread.focus_id), title: thread.title }
   }
 }

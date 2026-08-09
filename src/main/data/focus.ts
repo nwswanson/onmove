@@ -317,7 +317,19 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
 
   delete(id: number): boolean {
     assertId(id)
-    return this.database.run('DELETE FROM focuses WHERE id = ?', [id]).changes > 0
+    const exists = this.database.get<{ found: number }>(
+      'SELECT 1 AS found FROM focuses WHERE id = ?',
+      [id]
+    )
+    if (!exists) return false
+    return this.database.transaction(() => {
+      // Explicit child applications can reference Focus-owned overlay Scopes.
+      // Delete those owners first so Scope cascades cannot momentarily remove
+      // a required application from a still-surviving child.
+      this.database.run('DELETE FROM threads WHERE focus_id = ?', [id])
+      this.database.run('DELETE FROM commitments WHERE focus_id = ?', [id])
+      return this.database.run('DELETE FROM focuses WHERE id = ?', [id]).changes > 0
+    })
   }
 
   statusHistory(id: number): FocusStatusTransition[] {

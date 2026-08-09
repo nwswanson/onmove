@@ -145,6 +145,8 @@ retained cell Update, and used Scope structure must be replaced rather than rewr
 | `scopes` | Create and validate definitions, list per Focus, resolve effective Subjects, test membership, and safely delete. |
 | `scopeMemberships` | Create/list intervals, end an interval, and safely delete unused history. |
 | `scopeApplications` | Get/set declared mode and resolve the effective inherited Scope. |
+| `focusScopes` | Return the Focus's current Subject set and coordinate atomic inline add/remove mutations. |
+| `threadScopes` | Return effective and Focus-offered Subjects, fork isolated Thread overlays, and restore live Focus inheritance. |
 
 Focus, Thread, and Commitment models expose `scopeApplication()` and `setScope()`. Scope models expose
 `effectiveSubjects(date)`. Thread and Commitment models additionally expose `scopeMatrix(date)`.
@@ -204,9 +206,11 @@ The new automated tests cover:
 - complete Focus cascade behavior; and
 - raw SQLite constraints for partial cells and cross-Focus references.
 
-## Deliberately deferred
+## Current renderer boundary
 
-This addition does not change renderer layout or preload IPC. It also does not yet add automatic
-relationship resolution, attention sets, Commitment series/occurrences, Moves, a Scope Board, or a
-Review workflow. The schema captures the stable prerequisites for those features without claiming
-that they already exist.
+The preload exposes named Focus- and Thread-Scope operations rather than generic Subject, Scope,
+membership, or application CRUD. Focus Overall edits its direct Subject set through chips. A Thread
+shows its effective chips, offers missing Focus Subjects as one-click suggestions, forks a new
+Focus-owned overlay when customized, and can return to live Focus inheritance with one action.
+Commitment matrix entry, relationship resolution, attention sets, Commitment series/occurrences,
+Moves, a Scope Board, and a Review workflow remain deferred.

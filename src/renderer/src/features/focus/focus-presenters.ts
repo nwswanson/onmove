@@ -6,6 +6,7 @@ import type {
   FocusStatus,
   HealthState,
   ThreadSnapshot,
+  ThreadScopeSnapshot,
   UpdateFocusInput,
   UpdateThreadInput
 } from '../../../../shared/contracts'
@@ -23,7 +24,10 @@ import type {
   SemanticSunflowerTone
 } from '@/components/ui/sunflower'
 import type { CommitmentCollectionModel } from '@/features/focus/commitment-ui'
-import type { FocusScopeEditorModel } from '@/features/focus/focus-scope-ui'
+import type {
+  FocusScopeEditorModel,
+  ThreadScopeEditorModel
+} from '@/features/focus/focus-scope-ui'
 import {
   buildCommitmentListModel,
   commitmentCompletionModel,
@@ -70,9 +74,34 @@ export function dateOrNeverLabel(value: string | null): string {
 
 export function focusScopeEditorModel(scope: FocusScopeSnapshot): FocusScopeEditorModel {
   return {
-    isOpen: scope.mode === 'open',
+    summary: scope.mode === 'open'
+      ? 'Open scope — add a Subject to define its boundary.'
+      : subjectCountLabel(scope.subjects.length),
     subjects: scope.subjects.map(({ id, name }) => ({ id, name }))
   }
+}
+
+export function threadScopeEditorModel(scope: ThreadScopeSnapshot): ThreadScopeEditorModel {
+  const selectedIds = new Set(scope.subjects.map(({ id }) => id))
+  const summary = scope.mode === 'inherited'
+    ? scope.scopeId === null
+      ? 'Following Focus · Open scope'
+      : `Following Focus · ${subjectCountLabel(scope.subjects.length)}`
+    : scope.mode === 'open'
+      ? 'Open scope — add a Subject to define its boundary.'
+      : `Custom · ${subjectCountLabel(scope.subjects.length)}`
+  return {
+    summary,
+    subjects: scope.subjects.map(({ id, name }) => ({ id, name })),
+    suggestions: scope.focusSubjects
+      .filter(({ id }) => !selectedIds.has(id))
+      .map(({ id, name }) => ({ id, name })),
+    canFollowFocus: scope.mode !== 'inherited'
+  }
+}
+
+function subjectCountLabel(count: number): string {
+  return count === 1 ? '1 Subject in scope' : `${count} Subjects in scope`
 }
 
 const HEALTH_STATE_TONES: Readonly<Record<HealthState, SemanticSunflowerTone>> = {

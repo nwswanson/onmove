@@ -9,6 +9,7 @@ import type {
   DomainApi,
   FocusSnapshot,
   OnMoveApi,
+  SubjectSnapshot,
   ThreadSnapshot,
   UpdateSnapshot
 } from '../../src/shared/contracts'
@@ -97,6 +98,19 @@ function update(overrides: Partial<UpdateSnapshot> = {}): UpdateSnapshot {
   }
 }
 
+function subject(id: number, name: string): SubjectSnapshot {
+  return {
+    id,
+    kind: 'generic',
+    name,
+    description: null,
+    externalKey: null,
+    sensitive: false,
+    createdAt: '2026-08-08T12:00:00.000Z',
+    updatedAt: '2026-08-08T12:00:00.000Z'
+  }
+}
+
 function installApi(
   domainOverrides: Partial<DomainApi> = {},
   apiOverrides: Partial<OnMoveApi> = {}
@@ -125,6 +139,17 @@ function installApi(
     })),
     addFocusScopeSubject: vi.fn(),
     removeFocusScopeSubject: vi.fn(),
+    getThreadScope: vi.fn(async (threadId) => ({
+      threadId,
+      focusId: 1,
+      mode: 'open' as const,
+      scopeId: null,
+      subjects: [],
+      focusSubjects: []
+    })),
+    addThreadScopeSubject: vi.fn(),
+    removeThreadScopeSubject: vi.fn(),
+    followFocusThreadScope: vi.fn(),
     listThreads: vi.fn().mockResolvedValue([]),
     createThread: vi.fn(),
     updateThread: vi.fn(),
@@ -508,6 +533,77 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Sprint execution, paused' })).toHaveClass(
       'opacity-55'
     )
+  })
+
+  it('refines a Thread Scope with chips, Focus suggestions, and one-click inheritance', async () => {
+    const current = focus({ title: 'Project Atlas' })
+    const sprint = thread()
+    const customerOperations = subject(40, 'Customer Operations')
+    const platformTeam = subject(41, 'Platform Team')
+    const inheritedScope = {
+      threadId: sprint.id,
+      focusId: current.id,
+      mode: 'inherited' as const,
+      scopeId: 50,
+      subjects: [customerOperations, platformTeam],
+      focusSubjects: [customerOperations, platformTeam]
+    }
+    const removeThreadScopeSubject = vi.fn().mockResolvedValue({
+      ...inheritedScope,
+      mode: 'explicit',
+      scopeId: 51,
+      subjects: [platformTeam]
+    })
+    const addThreadScopeSubject = vi.fn().mockResolvedValue({
+      ...inheritedScope,
+      mode: 'explicit',
+      scopeId: 52
+    })
+    const followFocusThreadScope = vi.fn().mockResolvedValue(inheritedScope)
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listThreads: vi.fn().mockResolvedValue([sprint]),
+      getThreadScope: vi.fn().mockResolvedValue(inheritedScope),
+      removeThreadScopeSubject,
+      addThreadScopeSubject,
+      followFocusThreadScope
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
+    expect(await screen.findByText('Following Focus · 2 Subjects in scope')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Follow Focus' })).not.toBeInTheDocument()
+
+    await user.click(
+      screen.getByRole('button', { name: 'Remove Customer Operations from Thread scope' })
+    )
+    expect(removeThreadScopeSubject).toHaveBeenCalledWith(sprint.id, customerOperations.id)
+    expect(await screen.findByText('Custom · 1 Subject in scope')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Follow Focus' })).toBeVisible()
+    expect(
+      screen.getByRole('button', { name: 'Add Customer Operations to Thread scope' })
+    ).toBeVisible()
+
+    await user.click(
+      screen.getByRole('button', { name: 'Add Customer Operations to Thread scope' })
+    )
+    expect(addThreadScopeSubject).toHaveBeenCalledWith(sprint.id, {
+      name: 'Customer Operations'
+    })
+    expect(await screen.findByText('Custom · 2 Subjects in scope')).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: 'Follow Focus' }))
+    expect(followFocusThreadScope).toHaveBeenCalledWith(sprint.id)
+    expect(await screen.findByText('Following Focus · 2 Subjects in scope')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Follow Focus' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Sprint execution' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Sprint execution' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('reuses parent-aware Commitment and Update flows inside a Thread', async () => {

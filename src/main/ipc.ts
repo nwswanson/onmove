@@ -90,6 +90,22 @@ export function registerAppIpc(
     (_event, focusId: number, subjectId: number) =>
       database.domain.focusScopes.removeSubject(focusId, subjectId)
   )
+  ipcMain.handle(IPC_CHANNELS.getThreadScope, (_event, threadId: number) =>
+    database.domain.threadScopes.get(threadId)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.addThreadScopeSubject,
+    (_event, threadId: number, input: AddFocusScopeSubjectInput) =>
+      database.domain.threadScopes.addSubject(threadId, input)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.removeThreadScopeSubject,
+    (_event, threadId: number, subjectId: number) =>
+      database.domain.threadScopes.removeSubject(threadId, subjectId)
+  )
+  ipcMain.handle(IPC_CHANNELS.followFocusThreadScope, (_event, threadId: number) =>
+    database.domain.threadScopes.followFocus(threadId)
+  )
   ipcMain.handle(IPC_CHANNELS.listThreads, (_event, focusId: number) =>
     database.domain.threads.listForFocus(focusId)
   )

@@ -20,7 +20,8 @@ import {
   ScopeApplicationRepository,
   ScopeMembershipRepository,
   ScopeRepository,
-  SubjectRepository
+  SubjectRepository,
+  ThreadScopeRepository
 } from './scope-model'
 import { CommitmentRepository, ThreadRepository, UpdateRepository } from './work-model'
 
@@ -532,6 +533,7 @@ export class DomainStore {
   readonly items: ItemRepository
   readonly focuses: FocusRepository
   readonly focusScopes: FocusScopeRepository
+  readonly threadScopes: ThreadScopeRepository
   readonly subjects: SubjectRepository
   readonly scopes: ScopeRepository
   readonly scopeMemberships: ScopeMembershipRepository
@@ -545,6 +547,7 @@ export class DomainStore {
     this.items = new ItemRepository(database)
     this.focuses = new FocusRepository(database)
     this.focusScopes = new FocusScopeRepository(database)
+    this.threadScopes = new ThreadScopeRepository(database)
     this.subjects = new SubjectRepository(database)
     this.scopes = new ScopeRepository(database)
     this.scopeMemberships = new ScopeMembershipRepository(database)

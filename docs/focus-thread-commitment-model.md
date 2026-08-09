@@ -525,8 +525,8 @@ implement:
 - per-Subject Thread assessment records beyond scoped Updates;
 - health trend and confidence projections;
 - Moves, Agenda, or Review-session records;
-- Scope Board, exception filtering, or any other Scope UI; or
-- renderer IPC for Subject, Scope, membership, application, or matrix management.
+- Scope Board, exception filtering, Commitment applicability, or matrix-review UI; or
+- generic renderer IPC for arbitrary Subject, Scope, membership, application, or matrix management.
 
 Those features can build on the exact historical cell, effective membership, and explicit
 applicability contracts without changing the meaning of existing records.
