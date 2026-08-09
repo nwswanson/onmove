@@ -26,7 +26,8 @@ The central idea is:
 - Threads and Commitments may inherit their parent's effective Scope, select another Scope owned by
   the same Focus, or remain Open. A Focus cannot inherit.
 - A bounded Thread or Commitment Update belongs to one exact Scope/Subject cell. The cell is required
-  and is retained as historical attribution.
+  and is retained as historical attribution. A Thread with zero effective Subjects is operationally
+  Thread-wide and may record direct unscoped evidence until Subjects become effective.
 - A bounded Thread has one independently scheduled review cell per currently effective Subject.
   Reviewing one Subject never satisfies another Subject's review obligation.
 - Direct Focus Updates remain aggregate observations and therefore have no Scope/Subject cell.
@@ -221,8 +222,8 @@ A Thread is an independently meaningful dimension by which its Focus is judged.
 | `health` | Derived `red`, `yellow`, `green`, or `none`. |
 | `status` | `active`, `paused`, `done`, or `cancelled`, with transition history. |
 | `reviewFrequencyDays` | Required positive whole-number review interval. |
-| `lastReviewDate` | Open: latest direct Update. Bounded: the current Scope's review-coverage watermark. |
-| `nextReviewDate` | Open: aggregate deadline. Bounded: earliest Subject-cell deadline. |
+| `lastReviewDate` | Open or zero-Subject: latest direct unscoped Update. Bounded with Subjects: the current Scope's review-coverage watermark. |
+| `nextReviewDate` | Open or zero-Subject: aggregate deadline. Bounded with Subjects: earliest Subject-cell deadline. |
 | `needsReview` | Review-workflow inclusion independent of status. |
 | `reviewDue` | Derived from status, inclusion, cadence, and projection date. |
 | `sensitive` | Presentation classification. |
@@ -231,9 +232,9 @@ A Thread is an independently meaningful dimension by which its Focus is judged.
 Selecting or opening a Thread never counts as reviewing it. A direct Thread Update is the explicit
 review evidence. Commitment Updates do not advance the Thread review date.
 
-For an Open Thread, the latest direct unscoped Update supplies its direct state and review date. For
-a bounded Thread, `scopeMatrix(asOf)` returns one independent review projection per currently
-effective Subject:
+For an Open Thread—or one whose effective Scope has no Subjects—the latest direct unscoped Update
+supplies its direct state and review date. Otherwise `scopeMatrix(asOf)` returns one independent
+review projection per currently effective Subject:
 
 ```ts
 {
@@ -329,7 +330,7 @@ model.
 | `observation` | Optional rich-text-compatible text. Blank and state-only Updates are valid. |
 | `state` | `red`, `yellow`, `green`, or `none`; defaults to `none`. |
 | `sensitive` | Presentation classification. |
-| `scope` | Exact `{scopeId, subjectId}` attribution for bounded Thread/Commitment Updates, otherwise `null`. |
+| `scope` | Exact `{scopeId, subjectId}` attribution for bounded cells; `null` for Focus, Open-parent, and zero-Subject Thread-wide evidence. |
 | `createdAt` | Durable insertion timestamp and same-day tie breaker. |
 
 Creation validation uses the parent's current effective application and tests membership on the
@@ -337,7 +338,8 @@ Update date:
 
 - a direct Focus Update must be unscoped;
 - an Open Thread or Commitment Update must be unscoped;
-- a bounded Thread or Commitment Update must provide both Scope and Subject ids;
+- a bounded Thread or Commitment Update must provide both Scope and Subject ids, except a direct
+  Thread Update recorded when its effective Scope has zero Subjects is unscoped;
 - the supplied Scope must equal the parent's effective Scope;
 - the Subject must be an effective member of that Scope on the Update date; and
 - the Scope must belong to the parent object's Focus.
@@ -392,7 +394,7 @@ entity cascades its transition history.
 ## Review and cadence calculations
 
 - Focus review is based only on direct Focus Updates.
-- Open Thread review is based on its single direct Update stream.
+- Open and zero-Subject Thread review is based on its single direct unscoped Update stream.
 - Bounded Thread review is based on one independently scheduled direct-Update cell per effective
   Subject. Its aggregate due flag uses any due cell, its next date uses the earliest deadline, and
   its last-review date is the all-current-Subjects coverage watermark.

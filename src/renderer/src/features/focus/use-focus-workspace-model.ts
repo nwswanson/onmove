@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type {
   CommitmentParent,
   CommitmentSnapshot,
@@ -7,6 +7,8 @@ import type {
   FocusSnapshot,
   FocusScopeSnapshot,
   ThreadSnapshot,
+  ThreadScopeSnapshot,
+  ThreadSubjectCellSnapshot,
   UpdateFocusInput,
   UpdateCommitmentInput,
   UpdateThreadInput
@@ -38,6 +40,8 @@ export interface FocusWorkspaceModel {
   focusScopeError: string | null
   loadError: string | null
   threads: ThreadSnapshot[]
+  threadScopes: Readonly<Record<number, ThreadScopeSnapshot | undefined>>
+  threadSubjectMatrices: Readonly<Record<number, readonly ThreadSubjectCellSnapshot[] | undefined>>
   threadStatusSummaries: Readonly<Record<number, StatusSummary | undefined>>
   commitments: CommitmentSnapshot[]
   threadCommitments: Readonly<Record<number, readonly CommitmentSnapshot[] | undefined>>
@@ -48,6 +52,13 @@ export interface FocusWorkspaceModel {
   removeFocusScopeSubject: (subjectId: number) => Promise<void>
   createThread: (input: CreateThreadInput) => Promise<ThreadSnapshot>
   updateThread: (id: number, input: UpdateThreadInput) => Promise<ThreadSnapshot>
+  customizeThreadScope: (threadId: number) => Promise<ThreadScopeSnapshot>
+  followFocusThreadScope: (threadId: number) => Promise<ThreadScopeSnapshot>
+  addThreadScopeSubject: (threadId: number, name: string) => Promise<ThreadScopeSnapshot>
+  removeThreadScopeSubject: (
+    threadId: number,
+    subjectId: number
+  ) => Promise<ThreadScopeSnapshot>
   createCommitment: (input: CreateCommitmentInput) => Promise<CommitmentSnapshot>
   updateCommitment: (id: number, input: UpdateCommitmentInput) => Promise<CommitmentSnapshot>
   refreshCommitments: (parent?: CommitmentParent) => Promise<void>
@@ -79,6 +90,41 @@ function summaryWithCommitment(
   }
 }
 
+interface ThreadWorkspaceProjection {
+  threadId: number
+  commitments: CommitmentSnapshot[]
+  summary: StatusSummary
+  scope: ThreadScopeSnapshot
+  subjectMatrix: ThreadSubjectCellSnapshot[]
+}
+
+interface FocusThreadWorkspaceData {
+  threads: ThreadSnapshot[]
+  projections: ThreadWorkspaceProjection[]
+}
+
+async function loadFocusThreadWorkspaceData(focusId: number): Promise<FocusThreadWorkspaceData> {
+  const threads = await window.onmove.domain.listThreads(focusId)
+  const projections = await Promise.all(
+    threads.map(async (thread) => {
+      const [commitments, updates, scope, subjectMatrix] = await Promise.all([
+        window.onmove.domain.listCommitments({ type: 'thread', id: thread.id }),
+        window.onmove.domain.listUpdates({ type: 'thread', id: thread.id }),
+        window.onmove.domain.getThreadScope(thread.id),
+        window.onmove.domain.getThreadSubjectMatrix(thread.id)
+      ])
+      return {
+        threadId: thread.id,
+        commitments,
+        summary: buildStatusSummary(updates, commitments),
+        scope,
+        subjectMatrix
+      }
+    })
+  )
+  return { threads, projections }
+}
+
 /** Persistence-backed state and operations for a Focus workspace. */
 export function useFocusWorkspaceModel({
   focus,
@@ -94,60 +140,53 @@ export function useFocusWorkspaceModel({
   const [threadStatusSummaries, setThreadStatusSummaries] = useState<
     Record<number, StatusSummary | undefined>
   >({})
+  const [threadScopes, setThreadScopes] = useState<
+    Record<number, ThreadScopeSnapshot | undefined>
+  >({})
+  const [threadSubjectMatrices, setThreadSubjectMatrices] = useState<
+    Record<number, readonly ThreadSubjectCellSnapshot[] | undefined>
+  >({})
   const [commitments, setCommitments] = useState<CommitmentSnapshot[]>([])
   const [threadCommitments, setThreadCommitments] = useState<
     Record<number, readonly CommitmentSnapshot[] | undefined>
   >({})
+  const threadProjectionRequest = useRef(0)
   const goalAutosave = useThrottledAutosave({
     initialValue: focus.goal,
     onSave: (nextGoal: string) => onUpdateFocus({ goal: nextGoal })
   })
   const commitmentList = buildCommitmentListModel(commitments)
 
+  function applyFocusThreadWorkspaceData(data: FocusThreadWorkspaceData): void {
+    setThreads(data.threads)
+    setThreadStatusSummaries(Object.fromEntries(
+      data.projections.map((entry) => [entry.threadId, entry.summary])
+    ))
+    setThreadCommitments(Object.fromEntries(
+      data.projections.map((entry) => [entry.threadId, entry.commitments])
+    ))
+    setThreadScopes(Object.fromEntries(
+      data.projections.map((entry) => [entry.threadId, entry.scope])
+    ))
+    setThreadSubjectMatrices(Object.fromEntries(
+      data.projections.map((entry) => [entry.threadId, entry.subjectMatrix])
+    ))
+  }
+
   useEffect(() => {
     let active = true
+    const requestId = ++threadProjectionRequest.current
 
     Promise.all([
-      window.onmove.domain.listThreads(focus.id),
+      loadFocusThreadWorkspaceData(focus.id),
       window.onmove.domain.listCommitments({ type: 'focus', id: focus.id })
     ]).then(
-      ([nextThreads, nextCommitments]) => {
+      ([threadData, nextCommitments]) => {
         if (!active) return
-        setThreads(nextThreads)
+        if (requestId === threadProjectionRequest.current) {
+          applyFocusThreadWorkspaceData(threadData)
+        }
         setCommitments(nextCommitments)
-        void Promise.all(
-          nextThreads.map(async (thread) => {
-            try {
-              const [nextCommitments, updates] = await Promise.all([
-                window.onmove.domain.listCommitments({ type: 'thread', id: thread.id }),
-                window.onmove.domain.listUpdates({ type: 'thread', id: thread.id })
-              ])
-              return {
-                threadId: thread.id,
-                commitments: nextCommitments,
-                summary: buildStatusSummary(updates, nextCommitments)
-              }
-            } catch {
-              return null
-            }
-          })
-        ).then((entries) => {
-          if (!active) return
-          setThreadStatusSummaries(
-            Object.fromEntries(
-              entries
-                .filter((entry) => entry !== null)
-                .map((entry) => [entry.threadId, entry.summary])
-            )
-          )
-          setThreadCommitments(
-            Object.fromEntries(
-              entries
-                .filter((entry) => entry !== null)
-                .map((entry) => [entry.threadId, entry.commitments])
-            )
-          )
-        })
       },
       () => active && setLoadError('The focus workspace could not be loaded.')
     )
@@ -188,35 +227,61 @@ export function useFocusWorkspaceModel({
     await goalAutosave.flush(normalizedGoal)
   }
 
-  async function addFocusScopeSubject(name: string): Promise<void> {
+  async function refreshFocusScopeDependents(): Promise<void> {
+    const requestId = ++threadProjectionRequest.current
+    const data = await loadFocusThreadWorkspaceData(focus.id)
+    if (requestId !== threadProjectionRequest.current) return
+    applyFocusThreadWorkspaceData(data)
+  }
+
+  async function mutateFocusScope(
+    operation: () => Promise<FocusScopeSnapshot>,
+    mutationError: string
+  ): Promise<void> {
     setFocusScopeSaving(true)
     setFocusScopeError(null)
+    let nextScope: FocusScopeSnapshot
     try {
-      setFocusScope(await window.onmove.domain.addFocusScopeSubject(focus.id, { name }))
+      nextScope = await operation()
     } catch (error) {
-      setFocusScopeError('The Subject could not be added to this Focus.')
+      setFocusScopeError(mutationError)
+      setFocusScopeSaving(false)
       throw error
+    }
+
+    setFocusScope(nextScope)
+    try {
+      await refreshFocusScopeDependents()
+    } catch {
+      setFocusScopeError('The Focus changed, but its Thread views could not be refreshed.')
     } finally {
       setFocusScopeSaving(false)
     }
   }
 
+  async function addFocusScopeSubject(name: string): Promise<void> {
+    await mutateFocusScope(
+      () => window.onmove.domain.addFocusScopeSubject(focus.id, { name }),
+      'The Subject could not be added to this Focus.'
+    )
+  }
+
   async function removeFocusScopeSubject(subjectId: number): Promise<void> {
-    setFocusScopeSaving(true)
-    setFocusScopeError(null)
-    try {
-      setFocusScope(await window.onmove.domain.removeFocusScopeSubject(focus.id, subjectId))
-    } catch (error) {
-      setFocusScopeError('The Subject could not be removed from this Focus.')
-      throw error
-    } finally {
-      setFocusScopeSaving(false)
-    }
+    await mutateFocusScope(
+      () => window.onmove.domain.removeFocusScopeSubject(focus.id, subjectId),
+      'The Subject could not be removed from this Focus.'
+    )
   }
 
   async function createThread(input: CreateThreadInput): Promise<ThreadSnapshot> {
     const created = await window.onmove.domain.createThread(input)
+    const [scope, subjectMatrix] = await Promise.all([
+      window.onmove.domain.getThreadScope(created.id),
+      window.onmove.domain.getThreadSubjectMatrix(created.id)
+    ])
     setThreads((current) => [...current, created])
+    setThreadScopes((current) => ({ ...current, [created.id]: scope }))
+    setThreadSubjectMatrices((current) => ({ ...current, [created.id]: subjectMatrix }))
     setThreadCommitments((current) => ({ ...current, [created.id]: [] }))
     setThreadStatusSummaries((current) => ({
       ...current,
@@ -234,6 +299,49 @@ export function useFocusWorkspaceModel({
       current.map((thread) => (thread.id === updated.id ? updated : thread))
     )
     return updated
+  }
+
+  async function mutateThreadScope(
+    threadId: number,
+    operation: () => Promise<ThreadScopeSnapshot>
+  ): Promise<ThreadScopeSnapshot> {
+    const nextScope = await operation()
+    await refreshThreadData(threadId, nextScope)
+    return nextScope
+  }
+
+  function customizeThreadScope(threadId: number): Promise<ThreadScopeSnapshot> {
+    return mutateThreadScope(
+      threadId,
+      () => window.onmove.domain.customizeThreadScope(threadId)
+    )
+  }
+
+  function followFocusThreadScope(threadId: number): Promise<ThreadScopeSnapshot> {
+    return mutateThreadScope(
+      threadId,
+      () => window.onmove.domain.followFocusThreadScope(threadId)
+    )
+  }
+
+  function addThreadScopeSubject(
+    threadId: number,
+    name: string
+  ): Promise<ThreadScopeSnapshot> {
+    return mutateThreadScope(
+      threadId,
+      () => window.onmove.domain.addThreadScopeSubject(threadId, { name })
+    )
+  }
+
+  function removeThreadScopeSubject(
+    threadId: number,
+    subjectId: number
+  ): Promise<ThreadScopeSnapshot> {
+    return mutateThreadScope(
+      threadId,
+      () => window.onmove.domain.removeThreadScopeSubject(threadId, subjectId)
+    )
   }
 
   async function createCommitment(
@@ -283,21 +391,32 @@ export function useFocusWorkspaceModel({
     return parent.type === 'focus' ? commitments : (threadCommitments[parent.id] ?? [])
   }
 
-  async function refreshThread(threadId: number): Promise<ThreadSnapshot> {
-    const [nextThreads, nextCommitments, updates] = await Promise.all([
+  async function refreshThreadData(
+    threadId: number,
+    knownScope?: ThreadScopeSnapshot
+  ): Promise<ThreadSnapshot> {
+    const [nextThreads, nextCommitments, updates, scope, subjectMatrix] = await Promise.all([
       window.onmove.domain.listThreads(focus.id),
       window.onmove.domain.listCommitments({ type: 'thread', id: threadId }),
-      window.onmove.domain.listUpdates({ type: 'thread', id: threadId })
+      window.onmove.domain.listUpdates({ type: 'thread', id: threadId }),
+      knownScope ?? window.onmove.domain.getThreadScope(threadId),
+      window.onmove.domain.getThreadSubjectMatrix(threadId)
     ])
     const refreshed = nextThreads.find((thread) => thread.id === threadId)
     if (!refreshed) throw new Error('Thread no longer exists')
     setThreads(nextThreads)
     setThreadCommitments((current) => ({ ...current, [threadId]: nextCommitments }))
+    setThreadScopes((current) => ({ ...current, [threadId]: scope }))
+    setThreadSubjectMatrices((current) => ({ ...current, [threadId]: subjectMatrix }))
     setThreadStatusSummaries((current) => ({
       ...current,
       [threadId]: buildStatusSummary(updates, nextCommitments)
     }))
     return refreshed
+  }
+
+  function refreshThread(threadId: number): Promise<ThreadSnapshot> {
+    return refreshThreadData(threadId)
   }
 
   async function refreshCommitments(
@@ -322,6 +441,8 @@ export function useFocusWorkspaceModel({
     focusScopeError,
     loadError,
     threads,
+    threadScopes,
+    threadSubjectMatrices,
     threadStatusSummaries,
     commitments,
     threadCommitments,
@@ -332,6 +453,10 @@ export function useFocusWorkspaceModel({
     removeFocusScopeSubject,
     createThread,
     updateThread,
+    customizeThreadScope,
+    followFocusThreadScope,
+    addThreadScopeSubject,
+    removeThreadScopeSubject,
     createCommitment,
     updateCommitment,
     refreshCommitments,

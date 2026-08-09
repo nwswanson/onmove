@@ -209,3 +209,36 @@ their projection date.
   should label the former Scope and Subject explicitly.
 - For inherited applications, explain both the child's declared `inherited` state and the ancestor
   transition that changed its effective Scope.
+
+## Implemented Thread working context
+
+The Thread screen applies those rules through a Subject working-context lens. Scope definition and
+evidence entry are deliberately separate controls and locations:
+
+1. The Thread context drawer owns Scope definition. `Inherit Focus scope` follows the Focus's
+   effective Subject set; `Custom scope` exposes an inline Subject token editor for the Thread's
+   override.
+2. All Subjects displays all retained direct Thread Updates across current and former Scope ids. Its
+   Add Update dropdown requires one current Subject choice, immediately creates that exact cell, and
+   leaves the new card editable in the overview.
+3. A selected Subject displays and creates direct Thread Updates for its exact current
+   Scope/Subject pair.
+4. The same Subject lens includes only child Commitment matrices that contain that canonical
+   Subject, using the Commitment cell rather than its aggregate rollup.
+5. If the selected Subject leaves the Thread Scope, the lens returns to All Subjects. The prior
+   Update remains visible there with its original cell and is labeled as former while that canonical
+   Subject is not currently applicable. Re-applying the Subject restores its ordinary current label,
+   even when the operation created a replacement overlay Scope id.
+6. If the Thread has no effective Subjects, the selector becomes Thread-wide and direct Updates are
+   stored unscoped. Adding effective Subjects restores exact-cell creation.
+
+The working selector and Commitment projection remain current-matrix views. The All Subjects Update
+list is deliberately broader. Its current/former label describes canonical Subject applicability,
+not raw Scope identity, so replacement overlays do not make an unchanged or re-added Subject appear
+former. The persisted Update still retains its original exact cell, and new evidence uses the
+replacement Scope id; no evidence silently crosses an application boundary.
+
+The main Thread canvas never renders Scope-definition controls. It only consumes the resulting
+matrix as an operational working context. Scope mutations cross named Thread Scope IPC methods;
+generic drawer choice and token-list fields own the interaction markup while the Thread presenter
+owns the mapping to domain operations.

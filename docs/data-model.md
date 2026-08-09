@@ -86,7 +86,9 @@ are effective-dated, so changing populations does not rewrite historical meaning
 Focuses, Threads, and Commitments each have an explicit Scope application. `open` means no boundary;
 Threads and Commitments may use `inherited`; `explicit` and `derived` select a Scope owned by the
 same Focus. A bounded Thread or Commitment Update must store the exact effective Scope and Subject
-cell. Direct Focus Updates remain aggregate and unscoped.
+cell. Direct Focus Updates remain aggregate and unscoped. A Thread whose effective Scope has zero
+Subjects is operationally Thread-wide and may record a direct unscoped Update; Commitments retain
+the strict exact-cell rule.
 
 Scope is applicability, not tagging or current attention. Current exception sets can later be
 derived from cell state without pretending that healthy Subjects have left the Scope.

@@ -1,5 +1,5 @@
 import { useId, useRef, useState } from 'react'
-import { Plus, X } from 'lucide-react'
+import { ChevronDown, Plus, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { RichTextEditor } from '@/components/ui/rich-text-editor'
@@ -89,6 +89,11 @@ function UpdateEditorCard({
       }}
     >
       <div className="flex flex-wrap items-end gap-3 border-b border-border/65 bg-muted/20 p-3">
+        {item.contextLabel && (
+          <span className="self-center rounded-full border border-primary/45 bg-primary/15 px-2 py-1 text-[0.6875rem] font-semibold">
+            {item.contextLabel}
+          </span>
+        )}
         <label className="flex min-w-0 flex-[1_1_9rem] flex-col gap-1 sm:max-w-48">
           <span className="text-[0.6875rem] font-medium text-muted-foreground">Date</span>
           <Input
@@ -172,6 +177,9 @@ function UpdateEditorCard({
 
 export function UpdateList({
   ariaLabel,
+  heading = 'Updates',
+  supportingText,
+  emptyLabel = 'No updates yet.',
   items,
   stateOptions,
   defaultDate,
@@ -179,16 +187,29 @@ export function UpdateList({
   loading = false,
   loadError,
   onCreate,
+  createOptions = [],
+  createOptionsLabel = 'Add update for…',
+  onCreateFor,
   onUpdate,
   onDelete
 }: UpdateListProps): React.JSX.Element {
   if (ariaLabel.trim().length === 0) throw new Error('An Update list requires an accessible label.')
-  validateUpdateListModel(items, stateOptions)
+  validateUpdateListModel(items, stateOptions, createOptions)
+  if (onCreate && onCreateFor) {
+    throw new Error('An Update list cannot use both direct and choice-based creation.')
+  }
+  if ((createOptions.length > 0) !== Boolean(onCreateFor)) {
+    throw new Error('An Update list requires creation options and their handler together.')
+  }
+  if (onCreateFor && !createOptionsLabel.trim()) {
+    throw new Error('An Update list choice-based creation control requires an accessible label.')
+  }
   if (defaultDate.trim().length === 0) throw new Error('An Update list requires a default date.')
   if (!stateOptions.some((option) => option.value === defaultState)) {
     throw new Error(`Update list contains an invalid default state "${defaultState}".`)
   }
   const [adding, setAdding] = useState(false)
+  const [createOptionId, setCreateOptionId] = useState('')
   const [createError, setCreateError] = useState<string | null>(null)
   const headingId = useId()
 
@@ -196,6 +217,7 @@ export function UpdateList({
     setAdding(true)
     setCreateError(null)
     try {
+      if (!onCreate) return
       await onCreate({
         date: defaultDate,
         observation: '',
@@ -209,20 +231,71 @@ export function UpdateList({
     }
   }
 
+  async function addUpdateFor(optionId: string): Promise<void> {
+    if (!onCreateFor || !optionId) return
+    setCreateOptionId(optionId)
+    setAdding(true)
+    setCreateError(null)
+    try {
+      await onCreateFor(optionId, {
+        date: defaultDate,
+        observation: '',
+        state: defaultState,
+        sensitive: false
+      })
+    } catch {
+      setCreateError('The update could not be added.')
+    } finally {
+      setCreateOptionId('')
+      setAdding(false)
+    }
+  }
+
   return (
     <section className="mt-8" aria-labelledby={headingId}>
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <h2 id={headingId} className="text-sm font-semibold">Updates</h2>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={adding}
-          onClick={() => void addUpdate()}
-        >
-          <Plus aria-hidden="true" />
-          {adding ? 'Adding…' : 'Add update'}
-        </Button>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-48 flex-1">
+          <h2 id={headingId} className="text-sm font-semibold">{heading}</h2>
+          {supportingText && (
+            <p className="mt-0.5 text-xs text-muted-foreground">{supportingText}</p>
+          )}
+        </div>
+        {onCreate && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={adding}
+            onClick={() => void addUpdate()}
+          >
+            <Plus aria-hidden="true" />
+            {adding ? 'Adding…' : 'Add update'}
+          </Button>
+        )}
+        {onCreateFor && (
+          <div className="relative shrink-0">
+            <Plus
+              aria-hidden="true"
+              className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2"
+            />
+            <select
+              aria-label={createOptionsLabel}
+              value={createOptionId}
+              disabled={adding}
+              className="h-9 max-w-64 appearance-none rounded-md border border-input bg-background pl-8 pr-8 text-sm font-medium shadow-xs outline-none hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/35 disabled:pointer-events-none disabled:opacity-50"
+              onChange={(event) => void addUpdateFor(event.target.value)}
+            >
+              <option value="">{adding ? 'Adding…' : createOptionsLabel}</option>
+              {createOptions.map((option) => (
+                <option key={option.id} value={option.id}>{option.label}</option>
+              ))}
+            </select>
+            <ChevronDown
+              aria-hidden="true"
+              className="pointer-events-none absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+            />
+          </div>
+        )}
       </div>
       <div role="list" aria-label={ariaLabel} className="space-y-3">
         {items.map((item) => (
@@ -236,7 +309,7 @@ export function UpdateList({
         ))}
         {items.length === 0 && !loading && (
           <div className="rounded-xl border border-dashed border-border/80 px-4 py-10 text-center text-xs text-muted-foreground">
-            No updates yet.
+            {emptyLabel}
           </div>
         )}
         {loading && (

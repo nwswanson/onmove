@@ -1,4 +1,4 @@
-import { Plus, RotateCcw, X } from 'lucide-react'
+import { Plus, X } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -13,11 +13,6 @@ export interface FocusScopeEditorModel {
   subjects: readonly FocusScopeSubjectItemModel[]
 }
 
-export interface ThreadScopeEditorModel extends FocusScopeEditorModel {
-  suggestions: readonly FocusScopeSubjectItemModel[]
-  canFollowFocus: boolean
-}
-
 interface FocusScopeEditorProps {
   model: FocusScopeEditorModel | null
   loading: boolean
@@ -27,20 +22,11 @@ interface FocusScopeEditorProps {
   onRemove: (subjectId: number) => Promise<void>
 }
 
-interface ThreadScopeEditorProps extends FocusScopeEditorProps {
-  model: ThreadScopeEditorModel | null
-  onFollowFocus: () => Promise<void>
-}
-
 interface ScopeSubjectEditorProps extends FocusScopeEditorProps {
   idPrefix: string
   inputLabel: string
   inputPlaceholder: string
   removeLabel: (subjectName: string) => string
-  suggestions?: readonly FocusScopeSubjectItemModel[]
-  suggestionLabel?: (subjectName: string) => string
-  followFocus?: boolean
-  onFollowFocus?: () => Promise<void>
 }
 
 /** Receiver-owned inline editor for a Focus's bounded Subject set. */
@@ -68,50 +54,17 @@ export function FocusScopeEditor({
   )
 }
 
-export function ThreadScopeEditor({
-  model,
-  loading,
-  saving,
-  error,
-  onAdd,
-  onRemove,
-  onFollowFocus
-}: ThreadScopeEditorProps): React.JSX.Element {
-  return (
-    <ScopeSubjectEditor
-      idPrefix="thread-scope"
-      inputLabel="Add a Subject to Thread"
-      inputPlaceholder="Add a Subject…"
-      removeLabel={(subjectName) => `Remove ${subjectName} from Thread scope`}
-      suggestions={model?.suggestions}
-      suggestionLabel={(subjectName) => `Add ${subjectName} to Thread scope`}
-      followFocus={model?.canFollowFocus}
-      model={model}
-      loading={loading}
-      saving={saving}
-      error={error}
-      onAdd={onAdd}
-      onRemove={onRemove}
-      onFollowFocus={onFollowFocus}
-    />
-  )
-}
-
 function ScopeSubjectEditor({
   idPrefix,
   inputLabel,
   inputPlaceholder,
   removeLabel,
-  suggestions = [],
-  suggestionLabel,
-  followFocus = false,
   model,
   loading,
   saving,
   error,
   onAdd,
-  onRemove,
-  onFollowFocus
+  onRemove
 }: ScopeSubjectEditorProps): React.JSX.Element {
   const [name, setName] = useState('')
   const normalizedName = name.trim()
@@ -137,19 +90,6 @@ function ScopeSubjectEditor({
           <span className="text-xs text-muted-foreground">
             {loading ? 'Loading scope…' : model?.summary}
           </span>
-          {followFocus && onFollowFocus && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              disabled={saving || loading}
-              className="h-7 px-2"
-              onClick={() => void onFollowFocus().catch(() => undefined)}
-            >
-              <RotateCcw aria-hidden="true" />
-              Follow Focus
-            </Button>
-          )}
         </div>
       </div>
       <div className="rounded-xl border border-border/80 bg-muted/20 p-2 shadow-xs">
@@ -199,27 +139,6 @@ function ScopeSubjectEditor({
             Add
           </Button>
         </form>
-        {suggestions.length > 0 && suggestionLabel && (
-          <div
-            aria-label="Subjects available from Focus"
-            className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border/60 px-1 pt-2"
-          >
-            <span className="mr-1 text-[11px] font-medium text-muted-foreground">From Focus</span>
-            {suggestions.map((subject) => (
-              <button
-                key={subject.id}
-                type="button"
-                aria-label={suggestionLabel(subject.name)}
-                disabled={saving || loading}
-                className="inline-flex h-7 items-center gap-1 rounded-md border border-dashed border-primary/60 bg-background/50 px-2 text-xs text-foreground outline-none transition-colors hover:border-primary hover:bg-primary/15 focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
-                onClick={() => void onAdd(subject.name).catch(() => undefined)}
-              >
-                <Plus aria-hidden="true" className="size-3" />
-                {subject.name}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
       {error && <p role="alert" className="mt-2 text-xs text-destructive">{error}</p>}
     </section>

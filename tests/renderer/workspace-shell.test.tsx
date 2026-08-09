@@ -32,6 +32,7 @@ describe('workspace shells', () => {
             direction: 1,
             onChange: resizeContextual
           }}
+          tabBar={<nav aria-label="Context tabs">Tab region</nav>}
           main={<main>Main region</main>}
           drawer={<aside aria-label="Drawer region">Drawer</aside>}
         />
@@ -43,6 +44,7 @@ describe('workspace shells', () => {
     expect(screen.getByText('Toolbar region')).toBeInTheDocument()
     expect(screen.getByRole('navigation', { name: 'Primary region' })).toBeInTheDocument()
     expect(screen.getByRole('navigation', { name: 'Contextual region' })).toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: 'Context tabs' })).toBeInTheDocument()
     expect(screen.getByRole('main')).toHaveTextContent('Main region')
     expect(screen.getByRole('complementary', { name: 'Drawer region' })).toBeInTheDocument()
 
@@ -55,6 +57,12 @@ describe('workspace shells', () => {
 
     expect(resizePrimary).toHaveBeenCalledWith(240)
     expect(resizeContextual).toHaveBeenCalledWith(256)
+    expect(
+      container.querySelector('[data-slot="workspace-main-column"]')
+    ).toContainElement(screen.getByRole('main'))
+    expect(
+      container.querySelector('[data-slot="workspace-main-column"]')?.firstElementChild
+    ).toBe(screen.getByRole('navigation', { name: 'Context tabs' }))
   })
 
   it('allows screens without contextual navigation or a drawer', () => {

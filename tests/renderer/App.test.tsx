@@ -147,6 +147,8 @@ function installApi(
       subjects: [],
       focusSubjects: []
     })),
+    getThreadSubjectMatrix: vi.fn().mockResolvedValue([]),
+    customizeThreadScope: vi.fn(),
     addThreadScopeSubject: vi.fn(),
     removeThreadScopeSubject: vi.fn(),
     followFocusThreadScope: vi.fn(),
@@ -154,6 +156,11 @@ function installApi(
     createThread: vi.fn(),
     updateThread: vi.fn(),
     listCommitments: vi.fn().mockResolvedValue([]),
+    getCommitmentWorkingContext: vi.fn(async (commitmentId) => ({
+      commitmentId,
+      scopeId: null,
+      cells: []
+    })),
     createCommitment: vi.fn(),
     updateCommitment: vi.fn(),
     listUpdates: vi.fn().mockResolvedValue([]),
@@ -548,62 +555,449 @@ describe('App', () => {
       subjects: [customerOperations, platformTeam],
       focusSubjects: [customerOperations, platformTeam]
     }
-    const removeThreadScopeSubject = vi.fn().mockResolvedValue({
+    const customizedScope = {
       ...inheritedScope,
-      mode: 'explicit',
-      scopeId: 51,
+      mode: 'explicit' as const,
+      scopeId: 51
+    }
+    const customizeThreadScope = vi.fn().mockResolvedValue(customizedScope)
+    const removeThreadScopeSubject = vi.fn().mockResolvedValue({
+      ...customizedScope,
+      scopeId: 52,
       subjects: [platformTeam]
     })
     const addThreadScopeSubject = vi.fn().mockResolvedValue({
-      ...inheritedScope,
-      mode: 'explicit',
-      scopeId: 52
+      ...customizedScope,
+      scopeId: 53
     })
     const followFocusThreadScope = vi.fn().mockResolvedValue(inheritedScope)
+    const customerUpdate = update({
+      id: 31,
+      parent: { type: 'thread', id: sprint.id },
+      observation: 'Customer review before customization',
+      scope: { scopeId: 50, subjectId: customerOperations.id }
+    })
+    const platformUpdate = update({
+      id: 32,
+      parent: { type: 'thread', id: sprint.id },
+      observation: 'Platform review before customization',
+      scope: { scopeId: 50, subjectId: platformTeam.id }
+    })
     installApi({
       listFocuses: vi.fn().mockResolvedValue([current]),
       listThreads: vi.fn().mockResolvedValue([sprint]),
       getThreadScope: vi.fn().mockResolvedValue(inheritedScope),
+      customizeThreadScope,
       removeThreadScopeSubject,
       addThreadScopeSubject,
-      followFocusThreadScope
+      followFocusThreadScope,
+      listUpdates: vi.fn(async (parent) =>
+        parent.type === 'thread' ? [customerUpdate, platformUpdate] : []
+      )
     })
     const user = userEvent.setup()
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
     await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
-    expect(await screen.findByText('Following Focus · 2 Subjects in scope')).toBeVisible()
-    expect(screen.queryByRole('button', { name: 'Follow Focus' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('tab', { name: 'Work in Customer Operations' })).toBeVisible()
+    expect(within(screen.getByRole('main')).queryByText('Scope definition')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: 'Work in Customer Operations' }))
+    expect(screen.getByRole('tab', { name: 'Work in Customer Operations' }))
+      .toHaveAttribute('aria-selected', 'true')
+
+    await user.click(screen.getByRole('button', { name: 'Toggle context drawer' }))
+    const drawer = screen.getByRole('complementary', { name: 'Thread context drawer' })
+    expect(within(drawer).getByRole('radio', { name: /Inherit Focus scope/ })).toBeChecked()
+    expect(within(drawer).queryByLabelText('Add a Subject to custom scope'))
+      .not.toBeInTheDocument()
+    await user.click(within(drawer).getByRole('radio', { name: /Custom scope/ }))
+    expect(customizeThreadScope).toHaveBeenCalledWith(sprint.id)
+    expect(within(drawer).getByRole('radio', { name: /Custom scope/ })).toBeChecked()
+    expect(within(drawer).getByLabelText('Add a Subject to custom scope')).toBeVisible()
 
     await user.click(
-      screen.getByRole('button', { name: 'Remove Customer Operations from Thread scope' })
+      within(drawer).getByRole('button', { name: 'Remove Customer Operations' })
     )
     expect(removeThreadScopeSubject).toHaveBeenCalledWith(sprint.id, customerOperations.id)
-    expect(await screen.findByText('Custom · 1 Subject in scope')).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Follow Focus' })).toBeVisible()
+    expect(screen.getByRole('tab', { name: 'All subjects' }))
+      .toHaveAttribute('aria-selected', 'true')
+    const retainedUpdates = await screen.findByRole('list', { name: 'Thread updates' })
+    expect(within(retainedUpdates).getByText('Customer review before customization')).toBeVisible()
+    expect(within(retainedUpdates).getByText('Platform review before customization')).toBeVisible()
+    expect(within(retainedUpdates).getAllByText(/Former scope/)).toHaveLength(1)
+    expect(within(retainedUpdates).getByText('Platform Team', { exact: true })).toBeVisible()
     expect(
-      screen.getByRole('button', { name: 'Add Customer Operations to Thread scope' })
+      within(drawer).getByRole('button', { name: 'Add Customer Operations' })
     ).toBeVisible()
 
     await user.click(
-      screen.getByRole('button', { name: 'Add Customer Operations to Thread scope' })
+      within(drawer).getByRole('button', { name: 'Add Customer Operations' })
     )
     expect(addThreadScopeSubject).toHaveBeenCalledWith(sprint.id, {
       name: 'Customer Operations'
     })
-    expect(await screen.findByText('Custom · 2 Subjects in scope')).toBeVisible()
+    expect(within(drawer).getByRole('button', { name: 'Remove Customer Operations' }))
+      .toBeVisible()
+    await waitFor(() => {
+      expect(within(screen.getByRole('list', { name: 'Thread updates' }))
+        .queryByText(/Former scope/)).not.toBeInTheDocument()
+    })
 
-    await user.click(screen.getByRole('button', { name: 'Follow Focus' }))
+    await user.click(within(drawer).getByRole('radio', { name: /Inherit Focus scope/ }))
     expect(followFocusThreadScope).toHaveBeenCalledWith(sprint.id)
-    expect(await screen.findByText('Following Focus · 2 Subjects in scope')).toBeVisible()
-    expect(screen.queryByRole('button', { name: 'Follow Focus' })).not.toBeInTheDocument()
+    expect(within(drawer).getByRole('radio', { name: /Inherit Focus scope/ })).toBeChecked()
+    expect(within(drawer).queryByLabelText('Add a Subject to custom scope'))
+      .not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Sprint execution' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Sprint execution' })).toHaveAttribute(
       'aria-current',
       'page'
     )
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('uses a Thread Subject lens for exact-cell Updates and Commitment projections', async () => {
+    const current = focus({ title: 'Project Atlas' })
+    const sprint = thread()
+    const customer = subject(40, 'Customer Operations')
+    const platform = subject(41, 'Platform Team')
+    const scope = {
+      threadId: sprint.id,
+      focusId: current.id,
+      mode: 'inherited' as const,
+      scopeId: 50,
+      subjects: [customer, platform],
+      focusSubjects: [customer, platform]
+    }
+    const inheritedCommitment = commitment({
+      id: 21,
+      parent: { type: 'thread', id: sprint.id },
+      title: 'Improve ticket quality',
+      state: 'yellow'
+    })
+    const platformCommitment = commitment({
+      id: 22,
+      parent: { type: 'thread', id: sprint.id },
+      title: 'Stabilize build agents',
+      state: 'green'
+    })
+    const openCommitment = commitment({
+      id: 23,
+      parent: { type: 'thread', id: sprint.id },
+      title: 'Unscoped coordination'
+    })
+    const customerUpdate = update({
+      id: 31,
+      parent: { type: 'thread', id: sprint.id },
+      observation: 'Customer tickets are still unclear',
+      state: 'red',
+      scope: { scopeId: 50, subjectId: customer.id }
+    })
+    const platformUpdate = update({
+      id: 32,
+      parent: { type: 'thread', id: sprint.id },
+      observation: 'Platform ticket quality improved',
+      state: 'green',
+      scope: { scopeId: 50, subjectId: platform.id }
+    })
+    const subjectMatrix = [
+      {
+        scopeId: 50,
+        subjectId: customer.id,
+        subject: customer,
+        state: 'red' as const,
+        lastReviewDate: '2026-08-07',
+        nextReviewDate: '2026-08-14',
+        reviewDue: false,
+        commitments: [{
+          commitmentId: inheritedCommitment.id,
+          scopeId: 50,
+          subjectId: customer.id,
+          state: 'red' as const,
+          lastUpdateDate: '2026-08-06',
+          nextUpdateDate: null,
+          needsUpdate: false
+        }]
+      },
+      {
+        scopeId: 50,
+        subjectId: platform.id,
+        subject: platform,
+        state: 'green' as const,
+        lastReviewDate: '2026-08-08',
+        nextReviewDate: '2026-08-15',
+        reviewDue: false,
+        commitments: [{
+          commitmentId: platformCommitment.id,
+          scopeId: 52,
+          subjectId: platform.id,
+          state: 'green' as const,
+          lastUpdateDate: '2026-08-08',
+          nextUpdateDate: null,
+          needsUpdate: false
+        }]
+      }
+    ]
+    const createUpdate = vi.fn(async (input) => update({
+      id: 33,
+      parent: input.parent,
+      date: input.date,
+      observation: input.observation,
+      state: input.state,
+      scope: input.scope ?? null
+    }))
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listThreads: vi.fn().mockResolvedValue([sprint]),
+      getThreadScope: vi.fn().mockResolvedValue(scope),
+      getThreadSubjectMatrix: vi.fn().mockResolvedValue(subjectMatrix),
+      listCommitments: vi.fn(async (parent) =>
+        parent.type === 'thread'
+          ? [inheritedCommitment, platformCommitment, openCommitment]
+          : []
+      ),
+      listUpdates: vi.fn(async (parent) =>
+        parent.type === 'thread' ? [customerUpdate, platformUpdate] : []
+      ),
+      createUpdate
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
+    const allUpdates = await screen.findByRole('list', { name: 'Thread updates' })
+    expect(within(allUpdates).getByText('Customer tickets are still unclear')).toBeVisible()
+    expect(within(allUpdates).getByText('Platform ticket quality improved')).toBeVisible()
+    expect(within(allUpdates).getByText('Customer Operations')).toBeVisible()
+    expect(within(allUpdates).getByText('Platform Team')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Add update' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: 'Work in Customer Operations' }))
+    const customerUpdates = await screen.findByRole('list', { name: 'Thread updates' })
+    expect(within(customerUpdates).getByText('Customer tickets are still unclear')).toBeVisible()
+    expect(within(customerUpdates).queryByText('Platform ticket quality improved'))
+      .not.toBeInTheDocument()
+    const currentCommitments = screen.getByRole('list', { name: 'Current commitments' })
+    expect(within(currentCommitments).getByRole('button', {
+      name: 'Open commitment Improve ticket quality'
+    })).toBeVisible()
+    expect(within(currentCommitments).queryByRole('button', {
+      name: 'Open commitment Stabilize build agents'
+    })).not.toBeInTheDocument()
+    expect(within(currentCommitments).queryByRole('button', {
+      name: 'Open commitment Unscoped coordination'
+    })).not.toBeInTheDocument()
+    expect(within(currentCommitments).getByText('Red', { selector: '[data-tone="danger"]' }))
+      .toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Add commitment' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Add update' }))
+    await waitFor(() => expect(createUpdate).toHaveBeenCalledOnce())
+    expect(createUpdate).toHaveBeenCalledWith({
+      parent: { type: 'thread', id: sprint.id },
+      date: expect.any(String),
+      observation: '',
+      state: 'none',
+      sensitive: false,
+      scope: { scopeId: 50, subjectId: customer.id }
+    })
+  })
+
+  it('creates and edits a Subject Update from the All Subjects dropdown', async () => {
+    const current = focus({ title: 'Project Atlas' })
+    const sprint = thread()
+    const customer = subject(40, 'Customer Operations')
+    const platform = subject(41, 'Platform Team')
+    const scope = {
+      threadId: sprint.id,
+      focusId: current.id,
+      mode: 'inherited' as const,
+      scopeId: 50,
+      subjects: [customer, platform],
+      focusSubjects: [customer, platform]
+    }
+    const createUpdate = vi.fn(async (input) => update({
+      id: 33,
+      parent: input.parent,
+      date: input.date,
+      observation: input.observation,
+      state: input.state,
+      scope: input.scope ?? null
+    }))
+    const updateUpdate = vi.fn(async (id, input) => update({
+      id,
+      parent: { type: 'thread', id: sprint.id },
+      date: input.date ?? '2026-08-08',
+      observation: input.observation ?? '',
+      state: input.state ?? 'none',
+      sensitive: input.sensitive ?? false,
+      scope: { scopeId: 50, subjectId: customer.id }
+    }))
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listThreads: vi.fn().mockResolvedValue([sprint]),
+      getThreadScope: vi.fn().mockResolvedValue(scope),
+      getThreadSubjectMatrix: vi.fn().mockResolvedValue([]),
+      createUpdate,
+      updateUpdate
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
+    expect(screen.getByRole('tab', { name: 'All subjects' }))
+      .toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByRole('button', { name: 'Add update' })).not.toBeInTheDocument()
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Add update for Subject…' }),
+      String(customer.id)
+    )
+    await waitFor(() => expect(createUpdate).toHaveBeenCalledOnce())
+    expect(createUpdate).toHaveBeenCalledWith({
+      parent: { type: 'thread', id: sprint.id },
+      date: expect.any(String),
+      observation: '',
+      state: 'none',
+      sensitive: false,
+      scope: { scopeId: 50, subjectId: customer.id }
+    })
+
+    const updates = await screen.findByRole('list', { name: 'Thread updates' })
+    expect(within(updates).getByText('Customer Operations')).toBeVisible()
+    await user.selectOptions(within(updates).getByLabelText('Update state'), 'yellow')
+    await waitFor(() => expect(updateUpdate).toHaveBeenCalled(), { timeout: 2_000 })
+    expect(updateUpdate.mock.calls.at(-1)?.[1]).toMatchObject({ state: 'yellow' })
+    expect(screen.getByRole('tab', { name: 'All subjects' }))
+      .toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('creates an unscoped Thread-wide Update when no Subjects are effective', async () => {
+    const current = focus({ title: 'Project Atlas' })
+    const sprint = thread()
+    const createUpdate = vi.fn(async (input) => update({
+      id: 33,
+      parent: input.parent,
+      date: input.date,
+      observation: input.observation,
+      state: input.state,
+      scope: input.scope ?? null
+    }))
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listThreads: vi.fn().mockResolvedValue([sprint]),
+      getThreadScope: vi.fn().mockResolvedValue({
+        threadId: sprint.id,
+        focusId: current.id,
+        mode: 'explicit',
+        scopeId: 50,
+        subjects: [],
+        focusSubjects: []
+      }),
+      createUpdate
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
+    expect(await screen.findByRole('tab', { name: 'Thread-wide' }))
+      .toHaveAttribute('aria-selected', 'true')
+    await user.click(screen.getByRole('button', { name: 'Add update' }))
+    await waitFor(() => expect(createUpdate).toHaveBeenCalledOnce())
+    expect(createUpdate).toHaveBeenCalledWith({
+      parent: { type: 'thread', id: sprint.id },
+      date: expect.any(String),
+      observation: '',
+      state: 'none',
+      sensitive: false
+    })
+  })
+
+  it('creates Commitment Updates in an exact Subject cell instead of sending an invalid unscoped write', async () => {
+    const current = focus({ title: 'Project Atlas' })
+    const customer = subject(40, 'Customer Operations')
+    const platform = subject(41, 'Platform Team')
+    const boundedCommitment = commitment({
+      id: 21,
+      title: 'Improve ticket quality'
+    })
+    const workingContext = {
+      commitmentId: boundedCommitment.id,
+      scopeId: 50,
+      cells: [customer, platform].map((cellSubject) => ({
+        scopeId: 50,
+        subjectId: cellSubject.id,
+        subject: cellSubject,
+        state: 'none' as const,
+        lastUpdateDate: null,
+        nextUpdateDate: null,
+        needsUpdate: false
+      }))
+    }
+    let updateId = 30
+    const createUpdate = vi.fn(async (input) => update({
+      id: ++updateId,
+      parent: input.parent,
+      date: input.date,
+      observation: input.observation,
+      state: input.state,
+      sensitive: input.sensitive,
+      scope: input.scope ?? null
+    }))
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listCommitments: vi.fn(async (parent) =>
+        parent.type === 'focus' ? [boundedCommitment] : []
+      ),
+      getCommitmentWorkingContext: vi.fn().mockResolvedValue(workingContext),
+      createUpdate
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    await user.click(await screen.findByRole('button', {
+      name: 'Open commitment Improve ticket quality'
+    }))
+
+    expect(await screen.findByRole('tablist', {
+      name: 'Commitment working context'
+    })).toBeVisible()
+    expect(screen.getByRole('tab', { name: 'All subjects' }))
+      .toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByRole('button', { name: 'Add update' })).not.toBeInTheDocument()
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Add update for Subject…' }),
+      String(customer.id)
+    )
+    await waitFor(() => expect(createUpdate).toHaveBeenCalledOnce())
+    expect(createUpdate).toHaveBeenLastCalledWith({
+      parent: { type: 'commitment', id: boundedCommitment.id },
+      date: expect.any(String),
+      observation: '',
+      state: 'none',
+      sensitive: false,
+      scope: { scopeId: 50, subjectId: customer.id }
+    })
+
+    await user.click(screen.getByRole('tab', { name: 'Work in Platform Team' }))
+    expect(screen.getByRole('tab', { name: 'Work in Platform Team' }))
+      .toHaveAttribute('aria-selected', 'true')
+    await user.click(screen.getByRole('button', { name: 'Add update' }))
+    await waitFor(() => expect(createUpdate).toHaveBeenCalledTimes(2))
+    expect(createUpdate).toHaveBeenLastCalledWith({
+      parent: { type: 'commitment', id: boundedCommitment.id },
+      date: expect.any(String),
+      observation: '',
+      state: 'none',
+      sensitive: false,
+      scope: { scopeId: 50, subjectId: platform.id }
+    })
   })
 
   it('reuses parent-aware Commitment and Update flows inside a Thread', async () => {
@@ -716,6 +1110,7 @@ describe('App', () => {
 
   it('adds and removes Focus Scope Subjects inline from Overall', async () => {
     const current = focus()
+    const sprint = thread()
     const customerOperations = {
       id: 40,
       kind: 'generic',
@@ -726,20 +1121,36 @@ describe('App', () => {
       createdAt: '2026-08-08T12:00:00.000Z',
       updatedAt: '2026-08-08T12:00:00.000Z'
     }
-    const addFocusScopeSubject = vi.fn().mockResolvedValue({
-      focusId: current.id,
-      mode: 'explicit',
-      scopeId: 50,
-      subjects: [customerOperations]
+    let subjectApplied = false
+    const addFocusScopeSubject = vi.fn(async () => {
+      subjectApplied = true
+      return {
+        focusId: current.id,
+        mode: 'explicit' as const,
+        scopeId: 50,
+        subjects: [customerOperations]
+      }
     })
-    const removeFocusScopeSubject = vi.fn().mockResolvedValue({
-      focusId: current.id,
-      mode: 'explicit',
-      scopeId: 50,
-      subjects: []
+    const removeFocusScopeSubject = vi.fn(async () => {
+      subjectApplied = false
+      return {
+        focusId: current.id,
+        mode: 'explicit' as const,
+        scopeId: 50,
+        subjects: []
+      }
     })
+    const getThreadScope = vi.fn(async () => ({
+      threadId: sprint.id,
+      focusId: current.id,
+      mode: 'inherited' as const,
+      scopeId: subjectApplied ? 50 : null,
+      subjects: subjectApplied ? [customerOperations] : [],
+      focusSubjects: subjectApplied ? [customerOperations] : []
+    }))
     installApi({
       listFocuses: vi.fn().mockResolvedValue([current]),
+      listThreads: vi.fn().mockResolvedValue([sprint]),
       getFocusScope: vi.fn().mockResolvedValue({
         focusId: current.id,
         mode: 'open',
@@ -747,7 +1158,8 @@ describe('App', () => {
         subjects: []
       }),
       addFocusScopeSubject,
-      removeFocusScopeSubject
+      removeFocusScopeSubject,
+      getThreadScope
     })
     const user = userEvent.setup()
     render(<App />)
@@ -765,8 +1177,15 @@ describe('App', () => {
     expect(subjectInput).toHaveValue('')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
+    await user.click(screen.getByRole('button', { name: /^Sprint execution$/ }))
+    expect(await screen.findByRole('tab', { name: 'Work in Customer Operations' })).toBeVisible()
+    expect(screen.getByRole('combobox', { name: 'Add update for Subject…' }))
+      .toHaveDisplayValue('Add update for Subject…')
+    await user.click(screen.getByRole('button', { name: /^Overall$/ }))
+
     await user.click(
-      within(subjects).getByRole('button', { name: 'Remove Customer Operations from scope' })
+      within(screen.getByRole('list', { name: 'Subjects in scope' }))
+        .getByRole('button', { name: 'Remove Customer Operations from scope' })
     )
     await waitFor(() => expect(removeFocusScopeSubject).toHaveBeenCalledWith(1, 40))
     expect(screen.queryByRole('list', { name: 'Subjects in scope' })).not.toBeInTheDocument()
@@ -775,6 +1194,88 @@ describe('App', () => {
       'aria-current',
       'page'
     )
+    await user.click(screen.getByRole('button', { name: /^Sprint execution$/ }))
+    expect(await screen.findByRole('tab', { name: 'Thread-wide' }))
+      .toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByRole('tab', { name: 'Work in Customer Operations' }))
+      .not.toBeInTheDocument()
+    expect(getThreadScope.mock.calls.length).toBeGreaterThanOrEqual(3)
+  })
+
+  it('does not let a stale initial Thread projection overwrite a Focus Scope mutation', async () => {
+    const current = focus()
+    const sprint = thread()
+    const customerOperations = subject(40, 'Customer Operations')
+    let resolveInitialScope: ((scope: {
+      threadId: number
+      focusId: number
+      mode: 'inherited'
+      scopeId: null
+      subjects: SubjectSnapshot[]
+      focusSubjects: SubjectSnapshot[]
+    }) => void) | undefined
+    const initialScope = new Promise<{
+      threadId: number
+      focusId: number
+      mode: 'inherited'
+      scopeId: null
+      subjects: SubjectSnapshot[]
+      focusSubjects: SubjectSnapshot[]
+    }>((resolve) => {
+      resolveInitialScope = resolve
+    })
+    const currentThreadScope = {
+      threadId: sprint.id,
+      focusId: current.id,
+      mode: 'inherited' as const,
+      scopeId: 50,
+      subjects: [customerOperations],
+      focusSubjects: [customerOperations]
+    }
+    const getThreadScope = vi.fn()
+      .mockImplementationOnce(() => initialScope)
+      .mockResolvedValue(currentThreadScope)
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listThreads: vi.fn().mockResolvedValue([sprint]),
+      getFocusScope: vi.fn().mockResolvedValue({
+        focusId: current.id,
+        mode: 'open',
+        scopeId: null,
+        subjects: []
+      }),
+      addFocusScopeSubject: vi.fn().mockResolvedValue({
+        focusId: current.id,
+        mode: 'explicit',
+        scopeId: 50,
+        subjects: [customerOperations]
+      }),
+      getThreadScope
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Quarterly plan' }))
+    await waitFor(() => expect(getThreadScope).toHaveBeenCalledOnce())
+    await user.type(await screen.findByRole('textbox', { name: 'Add a Subject' }),
+      'Customer Operations{Enter}')
+    await screen.findByRole('button', { name: /^Sprint execution$/ })
+
+    await act(async () => {
+      resolveInitialScope?.({
+        threadId: sprint.id,
+        focusId: current.id,
+        mode: 'inherited',
+        scopeId: null,
+        subjects: [],
+        focusSubjects: []
+      })
+      await Promise.resolve()
+    })
+
+    await user.click(screen.getByRole('button', { name: /^Sprint execution$/ }))
+    expect(await screen.findByRole('tab', { name: 'Work in Customer Operations' })).toBeVisible()
+    expect(getThreadScope).toHaveBeenCalledTimes(2)
   })
 
   it('persists the Focus goal and drills into focus-level commitments', async () => {

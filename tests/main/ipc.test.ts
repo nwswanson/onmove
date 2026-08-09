@@ -105,10 +105,28 @@ describe('registerAppIpc', () => {
             scopeId: 51,
             subjects: [{ id: 61, name: 'Customer Operations' }],
             focusSubjects: [{ id: 61, name: 'Customer Operations' }]
+          })),
+          customize: vi.fn(() => ({
+            threadId: 21,
+            focusId: 12,
+            mode: 'explicit',
+            scopeId: 54,
+            subjects: [{ id: 61, name: 'Customer Operations' }],
+            focusSubjects: [{ id: 61, name: 'Customer Operations' }]
           }))
         },
         threads: {
           listForFocus: vi.fn(() => [{ id: 21, focusId: 12, title: 'Sprint execution' }]),
+          subjectMatrix: vi.fn(() => [{
+            scopeId: 51,
+            subjectId: 61,
+            subject: { id: 61, name: 'Customer Operations' },
+            state: 'green',
+            lastReviewDate: '2026-08-08',
+            nextReviewDate: '2026-08-15',
+            reviewDue: false,
+            commitments: []
+          }]),
           create: vi.fn(() => ({
             snapshot: () => ({ id: 22, focusId: 12, title: 'Team health' })
           })),
@@ -125,13 +143,23 @@ describe('registerAppIpc', () => {
           listForThread: vi.fn(() => [
             { id: 32, parent: { type: 'thread', id: 21 }, title: 'Refine weekly' }
           ]),
-          create: vi.fn(() => ({
-            snapshot: () => ({ id: 33, title: 'Align sponsors' })
-          })),
           requireModel: vi.fn(() => ({
+            scopeApplication: vi.fn(() => ({ effectiveScopeId: 51 })),
+            scopeMatrix: vi.fn(() => [{
+              scopeId: 51,
+              subjectId: 61,
+              subject: { id: 61, name: 'Customer Operations' },
+              state: 'green',
+              lastUpdateDate: '2026-08-08',
+              nextUpdateDate: null,
+              needsUpdate: false
+            }]),
             update: vi.fn(() => ({
               snapshot: () => ({ id: 31, title: 'Ship safely', status: 'paused' })
             }))
+          })),
+          create: vi.fn(() => ({
+            snapshot: () => ({ id: 33, title: 'Align sponsors' })
           }))
         },
         updates: {
@@ -219,6 +247,13 @@ describe('registerAppIpc', () => {
       mode: 'inherited',
       subjects: [{ id: 61, name: 'Customer Operations' }]
     })
+    expect(await handlers.get(IPC_CHANNELS.getThreadSubjectMatrix)?.(undefined, 21)).toMatchObject([
+      { subjectId: 61, state: 'green', commitments: [] }
+    ])
+    expect(await handlers.get(IPC_CHANNELS.customizeThreadScope)?.(undefined, 21)).toMatchObject({
+      mode: 'explicit',
+      scopeId: 54
+    })
     expect(await handlers.get(IPC_CHANNELS.addThreadScopeSubject)?.(
       undefined,
       21,
@@ -252,6 +287,14 @@ describe('registerAppIpc', () => {
       type: 'thread',
       id: 21
     })).toMatchObject([{ id: 32, title: 'Refine weekly' }])
+    expect(await handlers.get(IPC_CHANNELS.getCommitmentWorkingContext)?.(
+      undefined,
+      31
+    )).toMatchObject({
+      commitmentId: 31,
+      scopeId: 51,
+      cells: [{ subjectId: 61, state: 'green' }]
+    })
     expect(await handlers.get(IPC_CHANNELS.createCommitment)?.(undefined, {
       parent: { type: 'focus', id: 12 },
       type: 'ongoing',

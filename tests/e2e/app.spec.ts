@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { _electron as electron, expect, test, type ElectronApplication } from '@playwright/test'
 
 test('creates, edits, reloads, and deletes a persisted focus across Electron launches', async () => {
+  test.setTimeout(60_000)
   const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-e2e-'))
   let application: ElectronApplication | undefined
 
@@ -119,6 +120,66 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
         observation: string
         state: string
         threadId: number
+      } | undefined
+    database.close()
+    return row
+  }
+
+  function storedScopedThreadUpdate(): {
+    observation: string
+    state: string
+    scopeId: number
+    subjectId: number
+    subjectName: string
+  } | undefined {
+    const database = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
+      readOnly: true
+    })
+    const row = database
+      .prepare(
+        `SELECT u.observation, u.state, u.scope_id AS scopeId,
+                u.subject_id AS subjectId, s.name AS subjectName
+         FROM updates u
+         JOIN subjects s ON s.id = u.subject_id
+         WHERE u.thread_id IS NOT NULL AND u.scope_id IS NOT NULL
+         ORDER BY u.id DESC LIMIT 1`
+      )
+      .get() as {
+        observation: string
+        state: string
+        scopeId: number
+        subjectId: number
+        subjectName: string
+      } | undefined
+    database.close()
+    return row
+  }
+
+  function storedScopedCommitmentUpdate(): {
+    observation: string
+    state: string
+    scopeId: number
+    subjectId: number
+    subjectName: string
+  } | undefined {
+    const database = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
+      readOnly: true
+    })
+    const row = database
+      .prepare(
+        `SELECT u.observation, u.state, u.scope_id AS scopeId,
+                u.subject_id AS subjectId, s.name AS subjectName
+         FROM updates u
+         JOIN subjects s ON s.id = u.subject_id
+         WHERE u.commitment_id IS NOT NULL AND u.scope_id IS NOT NULL
+         ORDER BY u.id DESC LIMIT 1`
+      )
+      .get() as {
+        observation: string
+        state: string
+        scopeId: number
+        subjectId: number
+        subjectName: string
       } | undefined
     database.close()
     return row
@@ -634,6 +695,18 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(window.getByRole('heading', { name: 'Home', exact: true })).toBeVisible()
     await window.getByRole('button', { name: 'Persistent focus, paused' }).click()
     await expect(window.getByRole('heading', { name: 'Persistent focus' })).toBeVisible()
+    await window
+      .getByRole('button', { name: 'Sprint execution, paused', exact: true })
+      .click()
+    const preSubjectScopeDrawer = window.getByRole('complementary', {
+      name: 'Thread context drawer'
+    })
+    await expect(preSubjectScopeDrawer.getByRole('radio', { name: /Custom scope/ })).toBeChecked()
+    await preSubjectScopeDrawer.getByRole('radio', { name: /Inherit Focus scope/ }).click()
+    await expect(
+      preSubjectScopeDrawer.getByRole('radio', { name: /Inherit Focus scope/ })
+    ).toBeChecked()
+    await window.getByRole('button', { name: 'Overall', exact: true }).click()
     const focusSubjectInput = window.getByRole('textbox', { name: 'Add a Subject' })
     for (const subject of ['Customer Operations', 'Enterprise Accounts', 'Platform Team']) {
       await focusSubjectInput.fill(subject)
@@ -658,48 +731,106 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await window
       .getByRole('button', { name: 'Sprint execution, paused', exact: true })
       .click()
-    await expect(window.getByText('Open scope — add a Subject to define its boundary.'))
-      .toBeVisible()
-    for (const subject of ['Customer Operations', 'Platform Team']) {
-      await window
-        .getByRole('button', { name: `Add ${subject} to Thread scope` })
-        .click()
-      await expect(
-        window.getByRole('button', { name: `Remove ${subject} from Thread scope` })
-      ).toBeVisible()
-    }
-    const threadSubjectInput = window.getByRole('textbox', {
-      name: 'Add a Subject to Thread'
+    await expect(window.getByRole('main').getByText('Scope definition')).toHaveCount(0)
+    await expect(window.getByRole('tab', { name: 'Work in Customer Operations' })).toBeVisible()
+    await expect(window.getByRole('tab', { name: 'Work in Enterprise Accounts' })).toBeVisible()
+    await expect(window.getByRole('tab', { name: 'Work in Platform Team' })).toBeVisible()
+    const scopeDrawer = window.getByRole('complementary', { name: 'Thread context drawer' })
+    await expect(scopeDrawer.getByRole('radio', { name: /Inherit Focus scope/ })).toBeChecked()
+    await scopeDrawer.getByRole('radio', { name: /Custom scope/ }).click()
+    await expect(scopeDrawer.getByRole('radio', { name: /Custom scope/ })).toBeChecked()
+    await expect(window.getByRole('tab', { name: 'All subjects' }))
+      .toHaveAttribute('aria-selected', 'true')
+    await window
+      .getByRole('combobox', { name: 'Add update for Subject…' })
+      .selectOption({ label: 'Customer Operations' })
+    let scopedThreadUpdates = window.getByRole('list', { name: 'Thread updates' })
+    let customerUpdateCard = scopedThreadUpdates
+      .getByRole('listitem')
+      .filter({ hasText: 'Customer Operations' })
+    await expect(customerUpdateCard).toBeVisible()
+    await customerUpdateCard.getByLabel('Update observation').fill('Customer scope review')
+    await customerUpdateCard.getByLabel('Update state').selectOption('yellow')
+    await expect.poll(() => storedScopedThreadUpdate()?.state, { timeout: 3_000 }).toBe('yellow')
+    await scopeDrawer.getByRole('button', { name: 'Remove Enterprise Accounts' }).click()
+    const threadSubjectInput = scopeDrawer.getByRole('textbox', {
+      name: 'Add a Subject to custom scope'
     })
     await threadSubjectInput.fill('Delivery Partners')
     await threadSubjectInput.press('Enter')
     await expect(
-      window.getByRole('button', { name: 'Remove Delivery Partners from Thread scope' })
+      scopeDrawer.getByRole('button', { name: 'Remove Delivery Partners' })
     ).toBeVisible()
-    await window
-      .getByRole('button', { name: 'Remove Customer Operations from Thread scope' })
+    await scopeDrawer
+      .getByRole('button', { name: 'Remove Delivery Partners' })
       .click()
-    await expect(
-      window.getByRole('button', { name: 'Add Customer Operations to Thread scope' })
-    ).toBeVisible()
-    await window
-      .getByRole('button', { name: 'Add Customer Operations to Thread scope' })
+    await scopeDrawer
+      .getByRole('button', { name: 'Remove Customer Operations' })
       .click()
-    await window.getByRole('button', { name: 'Follow Focus' }).click()
-    await expect(window.getByText('Following Focus · 3 Subjects in scope')).toBeVisible()
-    await window
-      .getByRole('button', { name: 'Remove Enterprise Accounts from Thread scope' })
+    scopedThreadUpdates = window.getByRole('list', { name: 'Thread updates' })
+    customerUpdateCard = scopedThreadUpdates
+      .getByRole('listitem')
+      .filter({ hasText: 'Customer scope review' })
+    await expect(customerUpdateCard).toContainText('Former scope')
+    await expect(scopeDrawer.getByRole('button', { name: 'Add Customer Operations' }))
+      .toBeVisible()
+    await scopeDrawer
+      .getByRole('button', { name: 'Add Customer Operations' })
       .click()
-    await expect(window.getByText('Custom · 2 Subjects in scope')).toBeVisible()
+    await expect(scopeDrawer.getByRole('button', { name: 'Remove Customer Operations' }))
+      .toBeVisible()
     await expect.poll(storedThreadScopeState).toEqual({
       mode: 'explicit',
       transitionCount: 8
     })
+    await expect(window.getByRole('tab', { name: 'All subjects' }))
+      .toHaveAttribute('aria-selected', 'true')
+    scopedThreadUpdates = window.getByRole('list', { name: 'Thread updates' })
+    customerUpdateCard = scopedThreadUpdates
+      .getByRole('listitem')
+      .filter({ hasText: 'Customer scope review' })
+    await expect(customerUpdateCard).toBeVisible()
+    await expect(customerUpdateCard).not.toContainText('Former scope')
+    await expect(customerUpdateCard).toContainText('Customer Operations')
+    await expect(window.getByRole('tab', { name: 'All subjects' }))
+      .toHaveAttribute('aria-selected', 'true')
+    await expect.poll(() => storedScopedThreadUpdate()?.state, { timeout: 3_000 }).toBe('yellow')
+    await expect.poll(() => storedScopedThreadUpdate()?.subjectName).toBe('Customer Operations')
     await expect.poll(storedFocusSubjectNames).toEqual([
       'Customer Operations',
       'Enterprise Accounts',
       'Platform Team'
     ])
+
+    await window
+      .getByRole('button', { name: 'Add commitment to Sprint execution' })
+      .click()
+    const scopedCommitmentDialog = window.getByRole('dialog', { name: 'New commitment' })
+    await scopedCommitmentDialog.getByLabel(/^Title/).fill('Scoped ticket quality')
+    await scopedCommitmentDialog.getByRole('button', { name: 'Create commitment' }).click()
+    await expect(window.getByRole('heading', { name: 'Scoped ticket quality' })).toBeVisible()
+    await expect(window.getByRole('tablist', {
+      name: 'Commitment working context'
+    })).toBeVisible()
+    await expect(window.getByRole('tab', { name: 'All subjects' }))
+      .toHaveAttribute('aria-selected', 'true')
+    await window
+      .getByRole('combobox', { name: 'Add update for Subject…' })
+      .selectOption({ label: 'Customer Operations' })
+    const scopedCommitmentUpdates = window.getByRole('list', { name: 'Commitment updates' })
+    const scopedCommitmentUpdateCard = scopedCommitmentUpdates
+      .getByRole('listitem')
+      .filter({ hasText: 'Customer Operations' })
+    await expect(scopedCommitmentUpdateCard).toBeVisible()
+    await scopedCommitmentUpdateCard
+      .getByLabel('Update observation')
+      .fill('Customer ticket quality is improving')
+    await scopedCommitmentUpdateCard.getByLabel('Update state').selectOption('green')
+    await expect
+      .poll(() => storedScopedCommitmentUpdate()?.state, { timeout: 3_000 })
+      .toBe('green')
+    await expect.poll(() => storedScopedCommitmentUpdate()?.subjectName)
+      .toBe('Customer Operations')
     await application.close()
     application = undefined
 
@@ -729,6 +860,11 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     })
     expect(storedThreadUpdate()).toMatchObject({ state: 'green' })
     expect(storedThreadUpdate()?.observation).toContain('Sprint review completed')
+    expect(storedScopedThreadUpdate()).toMatchObject({
+      state: 'yellow',
+      subjectName: 'Customer Operations'
+    })
+    expect(storedScopedThreadUpdate()?.observation).toContain('Customer scope review')
     expect(storedCommitment()).toMatchObject({
       title: 'Keep sponsors aligned',
       status: 'done'
@@ -778,24 +914,40 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       .getByRole('button', { name: 'Sprint execution, paused', exact: true })
       .click()
     await expect(window.getByRole('heading', { name: 'Sprint execution' })).toBeVisible()
-    await expect(window.getByText('Custom · 2 Subjects in scope')).toBeVisible()
+    await expect(window.getByRole('tab', { name: 'Work in Customer Operations' })).toBeVisible()
     await expect(
-      window.getByRole('button', { name: 'Remove Customer Operations from Thread scope' })
+      window.getByRole('tab', { name: 'Work in Platform Team' })
     ).toBeVisible()
-    await expect(
-      window.getByRole('button', { name: 'Remove Platform Team from Thread scope' })
-    ).toBeVisible()
-    await expect(
-      window.getByRole('button', { name: 'Add Enterprise Accounts to Thread scope' })
-    ).toBeVisible()
+    const reloadedCustomerUpdateCard = window
+      .getByRole('list', { name: 'Thread updates' })
+      .getByRole('listitem')
+      .filter({ hasText: 'Customer scope review' })
+    await expect(reloadedCustomerUpdateCard).toBeVisible()
+    await expect(reloadedCustomerUpdateCard).toContainText('Customer Operations')
+    await expect(reloadedCustomerUpdateCard).not.toContainText('Former scope')
+    await window.getByRole('button', { name: 'Toggle context drawer' }).click()
+    const reloadedScopeDrawer = window.getByRole('complementary', {
+      name: 'Thread context drawer'
+    })
+    await expect(reloadedScopeDrawer.getByRole('radio', { name: /Custom scope/ })).toBeChecked()
+    await expect(reloadedScopeDrawer.getByRole('button', { name: 'Remove Customer Operations' }))
+      .toBeVisible()
+    await expect(reloadedScopeDrawer.getByRole('button', { name: 'Remove Platform Team' }))
+      .toBeVisible()
+    await expect(reloadedScopeDrawer.getByRole('button', { name: 'Add Enterprise Accounts' }))
+      .toBeVisible()
     const threadScopeScreenshotPath = process.env.ONMOVE_THREAD_SCOPE_SCREENSHOT_PATH
     if (threadScopeScreenshotPath) {
       await window.screenshot({ path: threadScopeScreenshotPath })
     }
+    await window.getByRole('button', { name: 'Toggle context drawer' }).click()
+    await expect(reloadedScopeDrawer).toHaveCount(0)
     await expect(window.getByRole('combobox', { name: 'Thread status' })).toHaveValue('paused')
     await expect(window.getByRole('list', { name: 'Thread updates' })).toContainText(
-      'Sprint review completed'
+      'Customer scope review'
     )
+    await expect(window.getByRole('list', { name: 'Thread updates' }))
+      .toContainText('Sprint review completed')
     await expect(
       window.getByRole('button', { name: 'Open commitment Improve ticket quality' })
     ).toBeVisible()

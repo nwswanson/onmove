@@ -19,6 +19,7 @@ import {
   type SetScopeApplicationInput,
   type ThreadSnapshot,
   type ThreadScopeCellSnapshot,
+  type ThreadSubjectCellSnapshot,
   type ThreadStatus,
   type ThreadStatusTransition,
   type UpdateCommitmentInput,
@@ -298,6 +299,10 @@ export class ThreadModel extends BaseModel<ThreadRecord> {
     return this.repository.scopeMatrix(this.id, asOf)
   }
 
+  subjectMatrix(asOf?: string): ThreadSubjectCellSnapshot[] {
+    return this.repository.subjectMatrix(this.id, asOf)
+  }
+
   setScope(input: SetScopeApplicationInput): this {
     this.repository.setScope(this.id, input)
     return this.refresh()
@@ -439,6 +444,45 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
     return this.scopeMatrixForRow(row, date)
   }
 
+  /**
+   * Operational Thread matrix for the renderer. A Subject lens joins the
+   * Thread's own review cell to each bounded child Commitment that currently
+   * contains the same canonical Subject. Open Commitments stay in the aggregate
+   * view because they have no Subject-specific evidence cell.
+   */
+  subjectMatrix(id: number, asOf = today()): ThreadSubjectCellSnapshot[] {
+    const date = normalizeDate(asOf, 'asOf')
+    const threadCells = this.scopeMatrix(id, date)
+    const commitmentRepository = new CommitmentRepository(this.database)
+    const commitments = commitmentRepository.listForThread(id, date)
+    const commitmentCells = new Map(
+      commitments.map((commitment) => [
+        commitment.id,
+        commitmentRepository.scopeMatrix(commitment.id, date)
+      ])
+    )
+
+    return threadCells.map((threadCell) => ({
+      ...threadCell,
+      commitments: commitments.flatMap((commitment) => {
+        const cell = commitmentCells
+          .get(commitment.id)
+          ?.find(({ subjectId }) => subjectId === threadCell.subjectId)
+        return cell
+          ? [{
+              commitmentId: commitment.id,
+              scopeId: cell.scopeId,
+              subjectId: cell.subjectId,
+              state: cell.state,
+              lastUpdateDate: cell.lastUpdateDate,
+              nextUpdateDate: cell.nextUpdateDate,
+              needsUpdate: cell.needsUpdate
+            }]
+          : []
+      })
+    }))
+  }
+
   private materializeOrNull(id: number, asOf: string): ThreadRecord | null {
     assertId(id, 'thread')
     const row = this.findRow(id)
@@ -448,7 +492,8 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
     const scopeCells = application.effectiveScopeId === null
       ? []
       : this.scopeMatrixForRow(row, asOf)
-    const openEvidence = application.effectiveScopeId === null
+    const threadWide = application.effectiveScopeId === null || scopeCells.length === 0
+    const threadWideEvidence = threadWide
       ? this.database.get<LatestUpdateRow>(
           `SELECT recorded_on, state FROM updates
            WHERE thread_id = ? AND scope_id IS NULL AND recorded_on <= ?
@@ -456,8 +501,8 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
           [id, asOf]
         )
       : undefined
-    const directStates = application.effectiveScopeId === null
-      ? [(openEvidence?.state as HealthState | undefined) ?? 'none']
+    const directStates = threadWide
+      ? [(threadWideEvidence?.state as HealthState | undefined) ?? 'none']
       : scopeCells.map((cell) => cell.state)
     const commitmentStates = this.database
       .all<{ id: number }>(
@@ -468,16 +513,16 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
       .map(({ id: commitmentId }) =>
         new CommitmentRepository(this.database).materialize(Number(commitmentId), asOf).state
       )
-    const lastReviewDate = application.effectiveScopeId === null
-      ? (openEvidence?.recorded_on ?? null)
+    const lastReviewDate = threadWide
+      ? (threadWideEvidence?.recorded_on ?? null)
       : this.scopeCoverageDate(scopeCells)
     const defaultNextReviewDate = addDays(
       row.created_at.slice(0, 10),
       Number(row.review_frequency_days)
     )
-    const nextReviewDate = application.effectiveScopeId === null
+    const nextReviewDate = threadWide
       ? addDays(
-          openEvidence?.recorded_on ?? row.created_at.slice(0, 10),
+          threadWideEvidence?.recorded_on ?? row.created_at.slice(0, 10),
           Number(row.review_frequency_days)
         )
       : scopeCells.reduce(
@@ -496,7 +541,7 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
       nextReviewDate,
       needsReview: Boolean(row.needs_review),
       sensitive: Boolean(row.sensitive),
-      reviewDue: application.effectiveScopeId === null
+      reviewDue: threadWide
         ? Boolean(row.needs_review) && row.status === 'active' && nextReviewDate <= asOf
         : scopeCells.some((cell) => cell.reviewDue),
       createdAt: row.created_at,
@@ -1037,6 +1082,12 @@ export class UpdateRepository extends BaseRepository<UpdateRecord, UpdateModel> 
       return null
     }
     if (!requested) {
+      if (
+        parent.type === 'thread' &&
+        this.scopes.effectiveSubjects(application.effectiveScopeId, on).length === 0
+      ) {
+        return null
+      }
       throw new ModelValidationError(
         'a scoped Thread or Commitment Update requires a Scope and Subject cell'
       )

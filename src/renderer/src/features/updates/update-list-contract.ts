@@ -13,24 +13,37 @@ export interface UpdateListDraft {
 
 export interface UpdateListItemModel extends UpdateListDraft {
   id: string
+  contextLabel?: string
+}
+
+export interface UpdateListCreateOptionModel {
+  id: string
+  label: string
 }
 
 export interface UpdateListProps {
   ariaLabel: string
+  heading?: string
+  supportingText?: string
+  emptyLabel?: string
   items: readonly UpdateListItemModel[]
   stateOptions: readonly UpdateListStateOptionModel[]
   defaultDate: string
   defaultState: string
   loading?: boolean
   loadError?: string | null
-  onCreate: (draft: UpdateListDraft) => Promise<void>
+  onCreate?: (draft: UpdateListDraft) => Promise<void>
+  createOptions?: readonly UpdateListCreateOptionModel[]
+  createOptionsLabel?: string
+  onCreateFor?: (optionId: string, draft: UpdateListDraft) => Promise<void>
   onUpdate: (itemId: string, draft: UpdateListDraft) => Promise<void>
   onDelete: (itemId: string) => Promise<void>
 }
 
 export function validateUpdateListModel(
   items: readonly UpdateListItemModel[],
-  stateOptions: readonly UpdateListStateOptionModel[]
+  stateOptions: readonly UpdateListStateOptionModel[],
+  createOptions: readonly UpdateListCreateOptionModel[] = []
 ): void {
   const stateValues = new Set<string>()
   for (const option of stateOptions) {
@@ -47,5 +60,13 @@ export function validateUpdateListModel(
       throw new Error(`Update list contains an invalid item "${item.id}".`)
     }
     itemIds.add(item.id)
+  }
+
+  const createOptionIds = new Set<string>()
+  for (const option of createOptions) {
+    if (!option.id.trim() || !option.label.trim() || createOptionIds.has(option.id)) {
+      throw new Error(`Update list contains an invalid creation option "${option.id}".`)
+    }
+    createOptionIds.add(option.id)
   }
 }

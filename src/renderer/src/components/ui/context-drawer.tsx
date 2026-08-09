@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Undo2, X } from 'lucide-react'
+import { Plus, Undo2, X } from 'lucide-react'
 import type * as React from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
@@ -21,7 +21,19 @@ export interface ContextDrawerSelectOption {
   label: string
 }
 
-export type ContextDrawerFieldModel =
+export interface ContextDrawerChoiceOption extends ContextDrawerSelectOption {
+  description?: string
+}
+
+export interface ContextDrawerTokenItem {
+  id: string
+  label: string
+}
+
+export type ContextDrawerValue = string | boolean
+export type ContextDrawerValues = Readonly<Record<string, ContextDrawerValue>>
+
+export type ContextDrawerFieldModel = (
   | {
       kind: 'text'
       id: string
@@ -47,6 +59,27 @@ export type ContextDrawerFieldModel =
       required?: boolean
     }
   | {
+      kind: 'choice'
+      id: string
+      label: string
+      value: string
+      options: readonly ContextDrawerChoiceOption[]
+      errorMessage: string
+      onValueChange: (value: string) => void | Promise<void>
+    }
+  | {
+      kind: 'token-list'
+      id: string
+      label: string
+      items: readonly ContextDrawerTokenItem[]
+      suggestions?: readonly ContextDrawerTokenItem[]
+      inputLabel: string
+      placeholder?: string
+      errorMessage: string
+      onAdd: (label: string) => void | Promise<void>
+      onRemove: (itemId: string) => void | Promise<void>
+    }
+  | {
       kind: 'checkbox'
       id: string
       label: string
@@ -60,15 +93,15 @@ export type ContextDrawerFieldModel =
       value: string
       capitalization?: 'normal' | 'capitalize'
     }
+  ) & {
+    visibleWhen?: { fieldId: string; equals: ContextDrawerValue }
+  }
 
 export interface ContextDrawerSectionModel {
   id: string
   fields: readonly ContextDrawerFieldModel[]
   note?: string
 }
-
-export type ContextDrawerValue = string | boolean
-export type ContextDrawerValues = Readonly<Record<string, ContextDrawerValue>>
 
 export interface ContextDrawerAutosaveModel {
   fieldIds: readonly string[]
@@ -258,7 +291,9 @@ function initialDrawerValues(model: ContextDrawerModel): Record<string, ContextD
   return Object.fromEntries(
     model.sections.flatMap((section) =>
       section.fields.flatMap((field) =>
-        field.kind === 'static' ? [] : [[field.id, field.value] as const]
+        field.kind === 'static' || field.kind === 'token-list'
+          ? []
+          : [[field.id, field.value] as const]
       )
     )
   )
@@ -292,10 +327,43 @@ export function validateContextDrawerModel(model: ContextDrawerModel): void {
           throw new Error(`Context drawer select field "${fieldId}" has invalid options or value.`)
         }
       }
+      if (field.kind === 'choice') {
+        const values = new Set(field.options.map((option) => option.value))
+        if (
+          values.size === 0 ||
+          values.size !== field.options.length ||
+          !values.has(field.value) ||
+          !field.errorMessage.trim()
+        ) {
+          throw new Error(`Context drawer choice field "${fieldId}" has invalid options or value.`)
+        }
+      }
+      if (field.kind === 'token-list') {
+        const itemIds = new Set(field.items.map(({ id }) => id))
+        const suggestionIds = new Set((field.suggestions ?? []).map(({ id }) => id))
+        if (
+          itemIds.size !== field.items.length ||
+          suggestionIds.size !== (field.suggestions ?? []).length ||
+          field.items.some(({ id, label }) => !id.trim() || !label.trim()) ||
+          (field.suggestions ?? []).some(({ id, label }) => !id.trim() || !label.trim()) ||
+          !field.inputLabel.trim() ||
+          !field.errorMessage.trim()
+        ) {
+          throw new Error(`Context drawer token-list field "${fieldId}" is invalid.`)
+        }
+      }
       if (field.kind === 'checkbox' && typeof field.value !== 'boolean') {
         throw new Error(`Context drawer checkbox field "${fieldId}" requires a boolean value.`)
       }
       fieldIds.add(fieldId)
+    }
+  }
+
+  for (const field of model.sections.flatMap((section) => section.fields)) {
+    if (field.visibleWhen && !fieldIds.has(field.visibleWhen.fieldId)) {
+      throw new Error(
+        `Context drawer field "${field.id}" references missing visibility field "${field.visibleWhen.fieldId}".`
+      )
     }
   }
 
@@ -355,8 +423,134 @@ function requiredFieldValid(
   field: ContextDrawerFieldModel,
   values: ContextDrawerValues
 ): boolean {
-  if (field.kind === 'static' || field.kind === 'checkbox' || !field.required) return true
+  if (
+    field.kind === 'static' ||
+    field.kind === 'checkbox' ||
+    field.kind === 'choice' ||
+    field.kind === 'token-list' ||
+    !field.required
+  ) return true
   return drawerStringValue(values, field.id).trim().length > 0
+}
+
+type ContextDrawerTokenListFieldModel = Extract<
+  ContextDrawerFieldModel,
+  { kind: 'token-list' }
+>
+
+function ContextDrawerTokenListField({
+  field,
+  inputId,
+  disabled
+}: {
+  field: ContextDrawerTokenListFieldModel
+  inputId: string
+  disabled: boolean
+}): React.JSX.Element {
+  const [name, setName] = useState('')
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const normalizedName = name.trim()
+
+  async function add(label: string): Promise<void> {
+    if (!label.trim() || pending || disabled) return
+    setPending(true)
+    setError(null)
+    try {
+      await field.onAdd(label.trim())
+      setName('')
+    } catch {
+      setError(field.errorMessage)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  async function remove(itemId: string): Promise<void> {
+    if (pending || disabled) return
+    setPending(true)
+    setError(null)
+    try {
+      await field.onRemove(itemId)
+    } catch {
+      setError(field.errorMessage)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <p className="text-xs font-medium">{field.label}</p>
+      {field.items.length > 0 && (
+        <div role="list" aria-label={field.label} className="flex flex-wrap gap-1.5">
+          {field.items.map((item) => (
+            <span
+              key={item.id}
+              role="listitem"
+              className="inline-flex min-h-7 items-center gap-1 rounded-md border border-primary/50 bg-primary/20 pl-2 pr-1 text-xs font-medium"
+            >
+              {item.label}
+              <button
+                type="button"
+                aria-label={`Remove ${item.label}`}
+                disabled={disabled || pending}
+                className="inline-flex size-5 items-center justify-center rounded text-muted-foreground outline-none hover:bg-background/65 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
+                onClick={() => void remove(item.id)}
+              >
+                <X aria-hidden="true" className="size-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <form
+        className="flex min-w-0 items-center gap-1.5"
+        onSubmit={(event) => {
+          event.preventDefault()
+          void add(normalizedName)
+        }}
+      >
+        <Input
+          id={inputId}
+          aria-label={field.inputLabel}
+          placeholder={field.placeholder}
+          autoComplete="off"
+          disabled={disabled || pending}
+          value={name}
+          className="h-8"
+          onChange={(event) => setName(event.target.value)}
+        />
+        <Button
+          type="submit"
+          variant="ghost"
+          size="sm"
+          disabled={disabled || pending || normalizedName.length === 0}
+        >
+          <Plus aria-hidden="true" />
+          Add
+        </Button>
+      </form>
+      {(field.suggestions ?? []).length > 0 && (
+        <div className="flex flex-wrap gap-1.5 border-t border-border/60 pt-2">
+          {(field.suggestions ?? []).map((suggestion) => (
+            <button
+              key={suggestion.id}
+              type="button"
+              aria-label={`Add ${suggestion.label}`}
+              disabled={disabled || pending}
+              className="inline-flex min-h-7 items-center gap-1 rounded-md border border-dashed border-primary/60 bg-background/50 px-2 text-xs outline-none hover:bg-primary/15 focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
+              onClick={() => void add(suggestion.label)}
+            >
+              <Plus aria-hidden="true" className="size-3" />
+              {suggestion.label}
+            </button>
+          ))}
+        </div>
+      )}
+      {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+    </div>
+  )
 }
 
 function ContextDrawerInspector({
@@ -377,6 +571,7 @@ function ContextDrawerInspector({
   const valuesRef = useRef(values)
   const [pendingActionId, setPendingActionId] = useState<string | null>(null)
   const [confirmingAction, setConfirmingAction] = useState<ContextDrawerActionModel | null>(null)
+  const [pendingFieldId, setPendingFieldId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const actions = model.actions ?? []
   const fieldsValid = model.sections.every((section) =>
@@ -409,6 +604,29 @@ function ContextDrawerInspector({
       return
     }
     autosave.schedule(autosaveValues(model, nextValues))
+  }
+
+  async function updateChoice(
+    field: Extract<ContextDrawerFieldModel, { kind: 'choice' }>,
+    value: string
+  ): Promise<void> {
+    const previous = valuesRef.current[field.id]
+    updateValue(field.id, value)
+    setPendingFieldId(field.id)
+    setError(null)
+    try {
+      await field.onValueChange(value)
+    } catch {
+      updateValue(field.id, previous ?? field.value)
+      setError(field.errorMessage)
+    } finally {
+      setPendingFieldId(null)
+    }
+  }
+
+  function fieldVisible(field: ContextDrawerFieldModel): boolean {
+    return !field.visibleWhen ||
+      values[field.visibleWhen.fieldId] === field.visibleWhen.equals
   }
 
   function flushAutosave(): void {
@@ -494,7 +712,7 @@ function ContextDrawerInspector({
           <div className="space-y-4">
             {model.sections.map((section) => (
               <ContextDrawerSection key={section.id}>
-                {section.fields.map((field) => {
+                {section.fields.filter(fieldVisible).map((field) => {
                   const inputId = `${adapterId}-${field.id}`
                   if (field.kind === 'static') {
                     return (
@@ -538,6 +756,49 @@ function ContextDrawerInspector({
                           )}
                         </span>
                       </label>
+                    )
+                  }
+
+                  if (field.kind === 'choice') {
+                    return (
+                      <fieldset key={field.id} className="space-y-2">
+                        <legend className="text-xs font-medium">{field.label}</legend>
+                        {field.options.map((option) => (
+                          <label
+                            key={option.value}
+                            className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border/75 bg-background/55 p-2.5 has-checked:border-primary/65 has-checked:bg-primary/15"
+                          >
+                            <input
+                              type="radio"
+                              name={inputId}
+                              value={option.value}
+                              checked={drawerStringValue(values, field.id) === option.value}
+                              disabled={pendingFieldId !== null || pendingActionId !== null}
+                              className="mt-0.5 size-4 shrink-0 accent-primary focus-visible:ring-2 focus-visible:ring-ring/45"
+                              onChange={() => void updateChoice(field, option.value)}
+                            />
+                            <span className="min-w-0">
+                              <span className="block text-xs font-medium">{option.label}</span>
+                              {option.description && (
+                                <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+                                  {option.description}
+                                </span>
+                              )}
+                            </span>
+                          </label>
+                        ))}
+                      </fieldset>
+                    )
+                  }
+
+                  if (field.kind === 'token-list') {
+                    return (
+                      <ContextDrawerTokenListField
+                        key={field.id}
+                        field={field}
+                        inputId={inputId}
+                        disabled={pendingFieldId !== null || pendingActionId !== null}
+                      />
                     )
                   }
 

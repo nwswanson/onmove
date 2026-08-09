@@ -83,8 +83,13 @@ and do not rely on color alone to communicate selection or status.
 - Keep `src/renderer/src/components/ui` domain-free: it must not import feature modules, shared
   domain contracts, main/preload modules, or access `window.onmove`.
 - Compose the window with `ApplicationShell` and each active screen with `WorkspaceShell`. Supply
-  toolbar, primary sidebar, contextual sidebar, main view, and drawer as independent slots rather
-  than rebuilding the frame in feature components.
+  toolbar, primary sidebar, contextual sidebar, workspace tab bar, main view, and drawer as
+  independent slots rather than rebuilding the frame in feature components. Context tabs belong
+  above the main canvas only; the contextual sidebar and context drawer retain their full height.
+- Project scope/lens switching through the receiver-owned `WorkspaceTabBar` contract. Feature
+  presenters supply data-only tab labels, state, review metadata, and stable ids; the shared
+  receiver owns tab semantics, keyboard navigation, and visual selection. Thread Working Context
+  uses this bar rather than rendering a selector inside the Thread document.
 - Put preload calls, persistence-backed state, and domain mutation rules in feature model hooks.
   Model hooks must not import UI components; feature views translate their results into generic
   sidebar levels, main content, and drawer adapters.
@@ -118,6 +123,26 @@ and do not rely on color alone to communicate selection or status.
   persisted Update fields autosave through the shared throttle; do not render a manual save action.
   Blank and state-only Updates are valid. State must always have a text label as well as semantic color
   (`destructive` for red/warning, `success` for green, muted for none).
+- Treat a bounded Thread's Subject selector as an operational working-context lens, distinct from
+  editing the Thread's Scope definition. All Subjects shows the complete retained direct Update
+  history across current and former Scopes. While current Subject cells exist, the receiver-owned
+  creation dropdown lets All Subjects immediately create a blank Update for one chosen Subject and
+  keeps the resulting card editable in place. Selecting one Subject filters to its exact current
+  Scope/Subject cell and retains the ordinary Add Update action. The model hook, not `UpdateList`,
+  injects the exact cell during either creation path. In All Subjects, classify an Update as
+  `Former scope` only when its canonical Subject is not currently applicable; never compare raw
+  Scope ids for this label because every customization creates a replacement overlay. Re-applying
+  the Subject restores its current label without rewriting the Update's immutable original cell.
+  In a Subject lens, project only bounded child Commitments whose
+  effective Scope includes the canonical Subject and show their cell-specific state and dates;
+  keep Open Commitments in the aggregate overview. If a Thread has zero effective Subjects, present
+  a Thread-wide context and allow direct unscoped Updates.
+- Give a selected Commitment the same operational Working Context tab contract. Open Commitments
+  expose one Commitment-wide context and create unscoped Updates. Bounded Commitments expose All
+  Subjects plus one tab per current exact Scope/Subject cell: All Subjects uses the choice-based
+  creation control, while a Subject tab uses ordinary immediate creation with that exact cell.
+  A bounded Commitment with zero effective Subjects has no valid current cell, so retain history
+  but do not expose Update creation. Never fall back to an unscoped write for a bounded Commitment.
 - Show every Commitment row's derived state using the shared receiver-owned state-label contract.
   The label must use `CommitmentSnapshot.state`, which already projects the Update with the highest
   recorded date (including a future date); do not sort or inspect Updates again in the renderer.
@@ -144,11 +169,18 @@ and do not rely on color alone to communicate selection or status.
   only on Action Commitment list rows. Checking an active or paused Action sends `status: done`
   through the existing typed mutation so transition auditing remains intact; closed Actions cannot
   be reopened through the checkbox, and Ongoing rows never expose it.
-- Render Focus and Thread Subject applicability through the shared feature-level chip editor. Keep
-  raw application modes out of form controls: Thread customization removes chips or adds typed and
-  Focus-suggested Subjects, while one `Follow Focus` action restores live inheritance. Views consume
-  presenter-owned editor models and never coordinate Subject, Scope, membership, or application
-  writes themselves.
+- Keep Focus Subject applicability in the shared feature-level chip editor on the Focus screen.
+  Configure Thread applicability only through the Thread context drawer: a receiver-owned choice
+  switches between `Inherit Focus scope` and `Custom scope`, and a conditional receiver-owned token
+  list edits the custom Subject set. The Thread main screen owns only the operational Subject working
+  context. Views consume presenter-owned models and never coordinate Subject, Scope, membership, or
+  application writes themselves.
+- Treat named preload IPC as request/response, not a live query subscription. After a Focus Subject
+  mutation succeeds, invalidate and reload every Thread snapshot, effective Scope, Subject matrix,
+  direct-Update summary, and owned Commitment collection for that Focus. Use one request generation
+  so a slower initial load cannot overwrite the post-mutation projections. Inherited Threads must
+  reflect the new Focus Subjects without navigation, reload, or app restart; custom/Open Threads
+  still refresh their Focus-offered Subject suggestions.
 - Keep view identifiers and navigation definitions typed. Add tests whenever a destination or
   sidebar action is introduced.
 - Persist `sensitive` independently on Focus, Thread, Commitment, and Update records. The native
@@ -170,8 +202,8 @@ and do not rely on color alone to communicate selection or status.
   Do not add writable columns or UI mutations for those derived values.
 - Order Commitment Updates by their recorded date without capping them at today. A future-dated
   Update immediately supplies the Commitment's state and cadence baseline.
-- Derive Focus `lastReviewDate` from its newest effective direct Update. For an Open Thread, use its
-  newest effective direct Update. For a bounded Thread, expose one independent review cell per
+- Derive Focus `lastReviewDate` from its newest effective direct Update. For an Open or zero-Subject
+  Thread, use its newest effective direct unscoped Update. For a bounded Thread with Subjects, expose one independent review cell per
   effective Subject: aggregate `reviewDue` with any due cell, `nextReviewDate` with the earliest cell
   deadline, and `lastReviewDate` as the oldest latest-review date across all current cells (or null
   while any current Subject is unreviewed). Keep persisted `needsReview` separate from lifecycle
@@ -181,9 +213,10 @@ and do not rely on color alone to communicate selection or status.
 - Treat Subject, Scope, and Scope application as distinct model concepts. Subjects are canonical and
   generic; Scopes are Focus-owned applicability expressions; applications state whether a Focus,
   Thread, or Commitment is Open, inherited, explicit, or derived.
-- Route inline Focus and Thread applicability through their aggregate repositories and named IPC.
-  A Thread customization must create and apply a new Focus-owned overlay Scope based on its current
-  effective Scope; never mutate a Scope shared by the Focus or a sibling. `Follow Focus` declares
+- Route Focus and Thread applicability through their aggregate repositories and named IPC. Focus
+  edits are inline on its main screen; Thread edits originate in its context drawer. A Thread
+  customization must create and apply a new Focus-owned overlay Scope based on its current effective
+  Scope; never mutate a Scope shared by the Focus or a sibling. `Inherit Focus scope` declares
   inheritance and retains obsolete overlays and exact-cell evidence for observability.
 - Keep Scope membership effective-dated with half-open `[effectiveFrom, effectiveUntil)` intervals.
   Resolve effective membership as same-dimension base plus includes minus excludes, and never rewrite
@@ -202,8 +235,10 @@ and do not rely on color alone to communicate selection or status.
 - Keep context, Scope, and attention separate. Scope is the complete applicability set, not a tag or
   a filtered list of current exceptions; attention can be derived later without narrowing Scope.
 - Require every bounded Thread or Commitment Update to store its exact effective Scope and Subject
-  cell. Direct Focus Updates and Updates on Open parents remain unscoped. Preserve cell attribution
-  when applications or membership later change.
+  cell. Direct Focus Updates and Updates on Open parents remain unscoped. A Thread with zero
+  effective Subjects is operationally Thread-wide and may store direct unscoped Updates; this
+  exception does not apply to Commitments. Preserve cell attribution when applications or membership
+  later change.
 - Store `sensitive` as a strict non-null boolean flag that defaults to false on every Focus, Thread,
   Commitment, and Update. Visibility is a presentation preference, not a database filter or a
   lifecycle state.

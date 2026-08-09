@@ -37,6 +37,10 @@ const api: OnMoveApi = {
     removeFocusScopeSubject: (focusId, subjectId) =>
       ipcRenderer.invoke(IPC_CHANNELS.removeFocusScopeSubject, focusId, subjectId),
     getThreadScope: (threadId) => ipcRenderer.invoke(IPC_CHANNELS.getThreadScope, threadId),
+    getThreadSubjectMatrix: (threadId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.getThreadSubjectMatrix, threadId),
+    customizeThreadScope: (threadId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.customizeThreadScope, threadId),
     addThreadScopeSubject: (threadId, input) =>
       ipcRenderer.invoke(IPC_CHANNELS.addThreadScopeSubject, threadId, input),
     removeThreadScopeSubject: (threadId, subjectId) =>
@@ -47,6 +51,8 @@ const api: OnMoveApi = {
     createThread: (input) => ipcRenderer.invoke(IPC_CHANNELS.createThread, input),
     updateThread: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateThread, id, input),
     listCommitments: (parent) => ipcRenderer.invoke(IPC_CHANNELS.listCommitments, parent),
+    getCommitmentWorkingContext: (commitmentId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.getCommitmentWorkingContext, commitmentId),
     createCommitment: (input) => ipcRenderer.invoke(IPC_CHANNELS.createCommitment, input),
     updateCommitment: (id, input) =>
       ipcRenderer.invoke(IPC_CHANNELS.updateCommitment, id, input),

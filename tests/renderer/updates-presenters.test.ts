@@ -34,4 +34,47 @@ describe('Update presenters', () => {
       { value: 'none', label: 'None', tone: 'neutral' }
     ])
   })
+
+  it('labels retained evidence from a former Scope without dropping the card', () => {
+    const update: UpdateSnapshot = {
+      id: 9,
+      parent: { type: 'thread', id: 4 },
+      date: '2026-08-07',
+      observation: 'Customer review before the Scope changed',
+      state: 'yellow',
+      sensitive: false,
+      scope: { scopeId: 50, subjectId: 40 },
+      createdAt: '2026-08-07T12:00:00.000Z'
+    }
+
+    expect(updateListItems([update], {
+      subjectLabels: new Map([[40, 'Customer Operations']]),
+      currentSubjectIds: new Set()
+    }))
+      .toEqual([expect.objectContaining({
+        id: '9',
+        contextLabel: 'Customer Operations · Former scope'
+      })])
+  })
+
+  it('restores current classification when the canonical Subject is re-applied through a new Scope', () => {
+    const update: UpdateSnapshot = {
+      id: 10,
+      parent: { type: 'thread', id: 4 },
+      date: '2026-08-07',
+      observation: 'Customer review from the previous overlay',
+      state: 'green',
+      sensitive: false,
+      scope: { scopeId: 50, subjectId: 40 },
+      createdAt: '2026-08-07T12:00:00.000Z'
+    }
+
+    expect(updateListItems([update], {
+      subjectLabels: new Map([[40, 'Customer Operations']]),
+      currentSubjectIds: new Set([40])
+    })).toEqual([expect.objectContaining({
+      id: '10',
+      contextLabel: 'Customer Operations'
+    })])
+  })
 })

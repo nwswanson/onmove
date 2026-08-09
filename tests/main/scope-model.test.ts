@@ -560,6 +560,46 @@ describe('Subject, Scope, and scoped Update models', () => {
     })).toThrow('direct Focus Update')
   })
 
+  it('accepts Thread-wide evidence when a Thread has no effective Subjects', () => {
+    const now = new Date('2026-01-01T12:00:00.000Z')
+    const focus = database!.domain.focuses.create({ title: 'Team health' })
+    const emptyScope = database!.domain.scopes.create({
+      focusId: focus.id,
+      name: 'No current teams',
+      dimension: 'teams'
+    }, now)
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Team-wide observation',
+      reviewFrequencyDays: 7,
+      scope: { mode: 'explicit', scopeId: emptyScope.id }
+    }, now)
+
+    const update = database!.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2026-01-02',
+      observation: 'No Subject boundary applies yet',
+      state: 'green'
+    }, now)
+
+    expect(update.toSnapshot().scope).toBeNull()
+    expect(thread.snapshot('2026-01-02')).toMatchObject({
+      health: 'green',
+      lastReviewDate: '2026-01-02'
+    })
+
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Subject-specific work',
+      scope: { mode: 'explicit', scopeId: emptyScope.id }
+    }, now)
+    expect(() => database!.domain.updates.create({
+      parent: { type: 'commitment', id: commitment.id },
+      date: '2026-01-02'
+    }, now)).toThrow('requires a Scope and Subject cell')
+  })
+
   it('materializes scoped Commitment state and cadence per Subject cell', () => {
     const focus = database!.domain.focuses.create({ title: 'Career development' })
     const alex = database!.domain.subjects.create({ kind: 'person', name: 'Alex' })
@@ -621,6 +661,76 @@ describe('Subject, Scope, and scoped Update models', () => {
         needsUpdate: true
       })
     ])
+  })
+
+  it('materializes a Thread Subject lens with only matching bounded Commitment cells', () => {
+    const now = new Date('2026-01-08T12:00:00.000Z')
+    const focus = database!.domain.focuses.create({ title: 'Project Atlas' })
+    const customer = database!.domain.subjects.create({ name: 'Customer Operations' })
+    const platform = database!.domain.subjects.create({ name: 'Platform Team' })
+    const portfolio = database!.domain.scopes.create({
+      focusId: focus.id,
+      name: 'Portfolio',
+      dimension: 'team'
+    })
+    for (const subject of [customer, platform]) {
+      database!.domain.scopeMemberships.create({
+        scopeId: portfolio.id,
+        subjectId: subject.id,
+        effectiveFrom: '2026-01-01'
+      })
+    }
+    focus.setScope({ mode: 'explicit', scopeId: portfolio.id })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Sprint execution',
+      reviewFrequencyDays: 7
+    }, now)
+    const inherited = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Improve ticket quality'
+    }, now)
+    const open = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Unscoped coordination',
+      scope: { mode: 'open' }
+    }, now)
+    database!.domain.updates.create({
+      parent: { type: 'commitment', id: inherited.id },
+      date: '2026-01-08',
+      state: 'red',
+      scope: { scopeId: portfolio.id, subjectId: customer.id }
+    }, now)
+    database!.domain.updates.create({
+      parent: { type: 'commitment', id: inherited.id },
+      date: '2026-01-07',
+      state: 'green',
+      scope: { scopeId: portfolio.id, subjectId: platform.id }
+    }, now)
+
+    const matrix = thread.subjectMatrix('2026-01-08')
+    expect(matrix.map(({ subjectId }) => subjectId)).toEqual([customer.id, platform.id])
+    expect(matrix[0].commitments).toEqual([
+      expect.objectContaining({
+        commitmentId: inherited.id,
+        scopeId: portfolio.id,
+        subjectId: customer.id,
+        state: 'red',
+        lastUpdateDate: '2026-01-08'
+      })
+    ])
+    expect(matrix[1].commitments).toEqual([
+      expect.objectContaining({
+        commitmentId: inherited.id,
+        subjectId: platform.id,
+        state: 'green',
+        lastUpdateDate: '2026-01-07'
+      })
+    ])
+    expect(matrix.flatMap(({ commitments }) => commitments)
+      .some(({ commitmentId }) => commitmentId === open.id)).toBe(false)
   })
 
   it('derives scoped Thread health across assessed and unassessed Subjects', () => {
@@ -1038,6 +1148,54 @@ describe('Subject, Scope, and scoped Update models', () => {
     expect(focus.delete()).toBe(true)
     expect(database!.domain.scopes.find(firstCustomScopeId)).toBeNull()
     expect(database!.domain.subjects.find(deliveryPartnersId)).not.toBeNull()
+  })
+
+  it('switches a Thread between live Focus inheritance and an independent custom overlay', () => {
+    const now = new Date('2026-08-08T12:00:00.000Z')
+    const focus = database!.domain.focuses.create({ title: 'Project Atlas' })
+    const bounded = database!.domain.focusScopes.addSubject(
+      focus.id,
+      { name: 'Customer Operations' },
+      now
+    )
+    database!.domain.focusScopes.addSubject(focus.id, { name: 'Platform Team' }, now)
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Sprint execution',
+      reviewFrequencyDays: 7
+    }, now)
+
+    expect(database!.domain.threadScopes.get(thread.id, '2026-08-08')).toMatchObject({
+      mode: 'inherited',
+      scopeId: bounded.scopeId
+    })
+    const custom = database!.domain.threadScopes.customize(thread.id, now)
+    expect(custom).toMatchObject({
+      mode: 'explicit',
+      subjects: [{ name: 'Customer Operations' }, { name: 'Platform Team' }]
+    })
+    expect(custom.scopeId).not.toBe(bounded.scopeId)
+
+    database!.domain.threadScopes.removeSubject(thread.id, bounded.subjects[0].id, now)
+    expect(database!.domain.threadScopes.get(thread.id, '2026-08-08').subjects.map(({ name }) => name))
+      .toEqual(['Platform Team'])
+    expect(database!.domain.focusScopes.get(focus.id, '2026-08-08').subjects.map(({ name }) => name))
+      .toEqual(['Customer Operations', 'Platform Team'])
+
+    const inherited = database!.domain.threadScopes.followFocus(
+      thread.id,
+      now
+    )
+    expect(inherited).toMatchObject({
+      mode: 'inherited',
+      subjects: [{ name: 'Customer Operations' }, { name: 'Platform Team' }]
+    })
+    expect(thread.scopeApplicationHistory().map(({ to }) => to.mode)).toEqual([
+      'inherited',
+      'explicit',
+      'explicit',
+      'inherited'
+    ])
   })
 
   it('cascades an active Thread and its nested overlay Scope chain with its Focus', () => {

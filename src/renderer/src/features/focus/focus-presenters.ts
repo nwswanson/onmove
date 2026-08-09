@@ -1,5 +1,6 @@
 import type {
   CommitmentSnapshot,
+  CommitmentWorkingContextSnapshot,
   CommitmentType,
   FocusSnapshot,
   FocusScopeSnapshot,
@@ -7,6 +8,7 @@ import type {
   HealthState,
   ThreadSnapshot,
   ThreadScopeSnapshot,
+  ThreadSubjectCellSnapshot,
   UpdateFocusInput,
   UpdateThreadInput
 } from '../../../../shared/contracts'
@@ -25,9 +27,9 @@ import type {
 } from '@/components/ui/sunflower'
 import type { CommitmentCollectionModel } from '@/features/focus/commitment-ui'
 import type {
-  FocusScopeEditorModel,
-  ThreadScopeEditorModel
+  FocusScopeEditorModel
 } from '@/features/focus/focus-scope-ui'
+import type { WorkspaceTabBarModel } from '@/components/ui/workspace-tab-bar'
 import {
   buildCommitmentListModel,
   commitmentCompletionModel,
@@ -81,22 +83,60 @@ export function focusScopeEditorModel(scope: FocusScopeSnapshot): FocusScopeEdit
   }
 }
 
-export function threadScopeEditorModel(scope: ThreadScopeSnapshot): ThreadScopeEditorModel {
-  const selectedIds = new Set(scope.subjects.map(({ id }) => id))
-  const summary = scope.mode === 'inherited'
-    ? scope.scopeId === null
-      ? 'Following Focus · Open scope'
-      : `Following Focus · ${subjectCountLabel(scope.subjects.length)}`
-    : scope.mode === 'open'
-      ? 'Open scope — add a Subject to define its boundary.'
-      : `Custom · ${subjectCountLabel(scope.subjects.length)}`
+export function threadWorkingContextModel(
+  scope: ThreadScopeSnapshot,
+  subjectMatrix: readonly ThreadSubjectCellSnapshot[] = []
+): WorkspaceTabBarModel {
   return {
-    summary,
-    subjects: scope.subjects.map(({ id, name }) => ({ id, name })),
-    suggestions: scope.focusSubjects
-      .filter(({ id }) => !selectedIds.has(id))
-      .map(({ id, name }) => ({ id, name })),
-    canFollowFocus: scope.mode !== 'inherited'
+    label: 'Working context',
+    ariaLabel: 'Thread working context',
+    items: [
+      {
+        id: 'all',
+        label: scope.subjects.length ? 'All subjects' : 'Thread-wide',
+        meta: scope.subjects.length ? 'Complete history' : 'Thread-wide evidence'
+      },
+      ...scope.subjects.map(({ id, name }) => {
+        const cell = subjectMatrix.find(({ subjectId }) => subjectId === id)
+        return {
+          id: `subject:${id}`,
+          label: name,
+          accessibleLabel: `Work in ${name}`,
+          stateLabel: healthStateLabel(cell?.state ?? 'none'),
+          meta: `Last reviewed · ${dateOrNeverLabel(cell?.lastReviewDate ?? null)}`,
+          attentionLabel: cell?.reviewDue ? 'Review due' : undefined
+        }
+      })
+    ]
+  }
+}
+
+export function commitmentWorkingContextModel(
+  context: CommitmentWorkingContextSnapshot
+): WorkspaceTabBarModel {
+  const bounded = context.scopeId !== null
+  return {
+    label: 'Working context',
+    ariaLabel: 'Commitment working context',
+    items: [
+      {
+        id: 'all',
+        label: bounded
+          ? context.cells.length > 0 ? 'All subjects' : 'No subjects'
+          : 'Commitment-wide',
+        meta: bounded
+          ? context.cells.length > 0 ? 'Complete history' : 'No applicable Subjects'
+          : 'Commitment-wide evidence'
+      },
+      ...context.cells.map((cell) => ({
+        id: `subject:${cell.subjectId}`,
+        label: cell.subject.name,
+        accessibleLabel: `Work in ${cell.subject.name}`,
+        stateLabel: healthStateLabel(cell.state),
+        meta: `Last updated · ${dateOrNeverLabel(cell.lastUpdateDate)}`,
+        attentionLabel: cell.needsUpdate ? 'Update due' : undefined
+      }))
+    ]
   }
 }
 
@@ -415,8 +455,16 @@ export function focusDrawerAdapter({
 export function threadDrawerAdapter(
   thread: ThreadSnapshot,
   parentTitle: string,
-  onSave: (input: UpdateThreadInput) => Promise<void>
+  onSave: (input: UpdateThreadInput) => Promise<void>,
+  scopeEditor?: {
+    scope: ThreadScopeSnapshot
+    onCustomize: () => Promise<void>
+    onFollowFocus: () => Promise<void>
+    onAddSubject: (name: string) => Promise<void>
+    onRemoveSubject: (subjectId: number) => Promise<void>
+  }
 ): ContextDrawerAdapter {
+  const selectedSubjectIds = new Set(scopeEditor?.scope.subjects.map(({ id }) => id) ?? [])
   return {
     id: `thread:${thread.id}`,
     revision: `${thread.updatedAt}:${thread.sensitive}`,
@@ -465,7 +513,55 @@ export function threadDrawerAdapter(
               description: 'Hide this Thread and its descendants from lists.'
             }
           ]
-        }
+        },
+        ...(scopeEditor ? [{
+          id: 'scope',
+          fields: [
+            {
+              kind: 'choice' as const,
+              id: 'scope-mode',
+              label: 'Scope definition',
+              value: scopeEditor.scope.mode === 'inherited' ? 'inherited' : 'custom',
+              options: [
+                {
+                  value: 'inherited',
+                  label: 'Inherit Focus scope',
+                  description: 'Follow the Focus Subject set as it changes.'
+                },
+                {
+                  value: 'custom',
+                  label: 'Custom scope',
+                  description: 'Override the Focus Subject set for this Thread.'
+                }
+              ],
+              errorMessage: 'The Thread scope mode could not be changed.',
+              onValueChange: (value: string) =>
+                value === 'inherited'
+                  ? scopeEditor.onFollowFocus()
+                  : scopeEditor.onCustomize()
+            },
+            {
+              kind: 'token-list' as const,
+              id: 'scope-subjects',
+              label: 'Subjects in custom scope',
+              items: scopeEditor.scope.subjects.map(({ id, name }) => ({
+                id: String(id),
+                label: name
+              })),
+              suggestions: scopeEditor.scope.focusSubjects
+                .filter(({ id }) => !selectedSubjectIds.has(id))
+                .map(({ id, name }) => ({ id: String(id), label: name })),
+              inputLabel: 'Add a Subject to custom scope',
+              placeholder: 'Add a Subject…',
+              errorMessage: 'The custom Subject set could not be changed.',
+              visibleWhen: { fieldId: 'scope-mode', equals: 'custom' },
+              onAdd: scopeEditor.onAddSubject,
+              onRemove: (subjectId: string) =>
+                scopeEditor.onRemoveSubject(Number(subjectId))
+            }
+          ],
+          note: 'Scope changes apply immediately. Existing Updates retain their original cell attribution.'
+        }] : [])
       ],
       actions: [
         {

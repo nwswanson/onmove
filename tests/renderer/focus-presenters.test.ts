@@ -14,6 +14,7 @@ import {
   commitmentDueDateLabel,
   commitmentDrawerAdapter,
   commitmentTypeLabel,
+  commitmentWorkingContextModel,
   dateOrNeverLabel,
   focusContextSidebarItems,
   focusDrawerAdapter,
@@ -21,7 +22,7 @@ import {
   focusScopeEditorModel,
   statusSunflowerModel,
   threadDrawerAdapter,
-  threadScopeEditorModel
+  threadWorkingContextModel
 } from '../../src/renderer/src/features/focus/focus-presenters'
 import { buildCommitmentListModel } from '../../src/renderer/src/features/focus/commitment-list-model'
 import { healthStateLabel } from '../../src/renderer/src/features/shared/state-presenters'
@@ -123,19 +124,64 @@ describe('Focus presentation adapters', () => {
         { id: 41, name: 'Platform Team' }
       ]
     })
-    expect(threadScopeEditorModel(threadScope)).toEqual({
-      summary: 'Custom · 1 Subject in scope',
-      subjects: [{ id: 41, name: 'Platform Team' }],
-      suggestions: [{ id: 40, name: 'Customer Operations' }],
-      canFollowFocus: true
+    expect(threadWorkingContextModel(threadScope)).toEqual({
+      label: 'Working context',
+      ariaLabel: 'Thread working context',
+      items: [
+        {
+          id: 'all',
+          label: 'All subjects',
+          meta: 'Complete history'
+        },
+        {
+          id: 'subject:41',
+          label: 'Platform Team',
+          accessibleLabel: 'Work in Platform Team',
+          stateLabel: { label: 'None', tone: 'neutral' },
+          meta: 'Last reviewed · Never',
+          attentionLabel: undefined
+        }
+      ]
     })
-    expect(threadScopeEditorModel({
+    expect(threadWorkingContextModel({
       ...threadScope,
       mode: 'inherited',
       scopeId: null,
       subjects: [],
       focusSubjects: []
-    }).summary).toBe('Following Focus · Open scope')
+    }).items).toEqual([{
+      id: 'all',
+      label: 'Thread-wide',
+      meta: 'Thread-wide evidence'
+    }])
+
+    expect(commitmentWorkingContextModel({
+      commitmentId: 20,
+      scopeId: 51,
+      cells: [{
+        scopeId: 51,
+        subjectId: platformTeam.id,
+        subject: platformTeam,
+        state: 'green',
+        lastUpdateDate: '2026-08-08',
+        nextUpdateDate: '2026-08-15',
+        needsUpdate: true
+      }]
+    })).toEqual({
+      label: 'Working context',
+      ariaLabel: 'Commitment working context',
+      items: [
+        { id: 'all', label: 'All subjects', meta: 'Complete history' },
+        {
+          id: `subject:${platformTeam.id}`,
+          label: 'Platform Team',
+          accessibleLabel: 'Work in Platform Team',
+          stateLabel: { label: 'Green', tone: 'success' },
+          meta: 'Last updated · 2026-08-08',
+          attentionLabel: 'Update due'
+        }
+      ]
+    })
   })
 
   it('maps domain records into primary and contextual receiver contracts', () => {

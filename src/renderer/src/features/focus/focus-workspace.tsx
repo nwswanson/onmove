@@ -5,7 +5,10 @@ import type {
   CreateCommitmentInput,
   CreateThreadInput,
   FocusSnapshot,
+  SubjectSnapshot,
   ThreadSnapshot,
+  ThreadScopeSnapshot,
+  ThreadSubjectCellSnapshot,
   UpdateCommitmentInput,
   UpdateFocusInput,
   UpdateThreadInput
@@ -26,31 +29,33 @@ import { Dialog, DialogField } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { RichTextContent, RichTextEditor } from '@/components/ui/rich-text-editor'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
+import { WorkspaceTabBar } from '@/components/ui/workspace-tab-bar'
 import {
   CommitmentCollection,
   NewCommitmentDialog
 } from '@/features/focus/commitment-ui'
-import { buildCommitmentListModel } from '@/features/focus/commitment-list-model'
 import {
-  FocusScopeEditor,
-  ThreadScopeEditor
-} from '@/features/focus/focus-scope-ui'
+  buildCommitmentListModel,
+  commitmentsForThreadSubject
+} from '@/features/focus/commitment-list-model'
+import { FocusScopeEditor } from '@/features/focus/focus-scope-ui'
 import {
   commitmentCollectionModel,
   commitmentContextSidebarItems,
   commitmentDueDateLabel,
   commitmentDrawerAdapter,
+  commitmentWorkingContextModel,
   commitmentTypeLabel,
   dateOrNeverLabel,
   focusContextSidebarItems,
   focusDrawerAdapter,
   focusScopeEditorModel,
   threadDrawerAdapter,
-  threadScopeEditorModel,
+  threadWorkingContextModel,
   threadSidebarItemId
 } from '@/features/focus/focus-presenters'
+import { useCommitmentWorkingContextModel } from '@/features/focus/use-commitment-working-context-model'
 import { useFocusWorkspaceModel } from '@/features/focus/use-focus-workspace-model'
-import { useThreadScopeModel } from '@/features/focus/use-thread-scope-model'
 import { WorkStatusSelect } from '@/features/shared/work-status-select'
 import { visibleSensitiveRecords } from '@/features/shared/sensitivity'
 import { SensitivityToggle } from '@/features/shared/sensitivity-toggle'
@@ -174,27 +179,6 @@ interface FocusWorkspaceProps {
   hideSensitiveContent?: boolean
 }
 
-function ThreadScopeSection({
-  threadId,
-  onScopeChanged
-}: {
-  threadId: number
-  onScopeChanged: () => Promise<void>
-}): React.JSX.Element {
-  const scope = useThreadScopeModel({ threadId, onScopeChanged })
-  return (
-    <ThreadScopeEditor
-      model={scope.scope ? threadScopeEditorModel(scope.scope) : null}
-      loading={scope.loading}
-      saving={scope.saving}
-      error={scope.error}
-      onAdd={scope.addSubject}
-      onRemove={scope.removeSubject}
-      onFollowFocus={scope.followFocus}
-    />
-  )
-}
-
 export function FocusWorkspace({
   focus,
   contextDrawer,
@@ -219,6 +203,13 @@ export function FocusWorkspace({
     key: string
     message: string
   } | null>(null)
+  const [threadContextSelection, setThreadContextSelection] = useState<{
+    threadId: number
+    subjectId: number | null
+  } | null>(null)
+  const [commitmentContextSelections, setCommitmentContextSelections] = useState<
+    Record<number, number | null | undefined>
+  >({})
   const [focusLevel] = useState(
     () =>
       new ContextualSidebarLevel({
@@ -449,6 +440,84 @@ export function FocusWorkspace({
       : undefined
   )
   const focusTitle = focus.title
+  const commitmentWorkingContext = useCommitmentWorkingContextModel(
+    selectedCommitment?.id ?? null
+  )
+  const displayedThreadScope = displayedThread
+    ? model.threadScopes[displayedThread.id]
+    : undefined
+  const displayedThreadSubjectMatrix = displayedThread
+    ? model.threadSubjectMatrices[displayedThread.id]
+    : undefined
+  const requestedThreadSubjectId = displayedThread &&
+    threadContextSelection?.threadId === displayedThread.id
+      ? threadContextSelection.subjectId
+      : null
+  const selectedThreadSubject: SubjectSnapshot | null =
+    displayedThreadScope?.subjects.find(({ id }) => id === requestedThreadSubjectId) ?? null
+  const selectedThreadSubjectCell: ThreadSubjectCellSnapshot | null =
+    displayedThreadSubjectMatrix?.find(
+      ({ subjectId }) => subjectId === selectedThreadSubject?.id
+    ) ?? null
+  const threadContextTabs = displayedThreadScope && displayedThreadSubjectMatrix
+    ? threadWorkingContextModel(displayedThreadScope, displayedThreadSubjectMatrix)
+    : null
+  const inheritedCommitmentSubjectId = selectedCommitment?.parent.type === 'thread' &&
+    threadContextSelection?.threadId === selectedCommitment.parent.id
+      ? threadContextSelection.subjectId
+      : null
+  const storedCommitmentSubjectId = selectedCommitment
+    ? commitmentContextSelections[selectedCommitment.id]
+    : undefined
+  const requestedCommitmentSubjectId = storedCommitmentSubjectId === undefined
+    ? inheritedCommitmentSubjectId
+    : storedCommitmentSubjectId
+  const selectedCommitmentCell = commitmentWorkingContext.snapshot?.cells.find(
+    ({ subjectId }) => subjectId === requestedCommitmentSubjectId
+  ) ?? null
+  const commitmentContextTabs = commitmentWorkingContext.snapshot
+    ? commitmentWorkingContextModel(commitmentWorkingContext.snapshot)
+    : null
+
+  function selectCommitmentContext(tabId: string): void {
+    if (!selectedCommitment) return
+    if (tabId === 'all') {
+      setCommitmentContextSelections((current) => ({
+        ...current,
+        [selectedCommitment.id]: null
+      }))
+      return
+    }
+    const subjectId = Number(tabId.slice('subject:'.length))
+    if (
+      tabId.startsWith('subject:') &&
+      Number.isInteger(subjectId) &&
+      commitmentWorkingContext.snapshot?.cells.some(
+        (cell) => cell.subjectId === subjectId
+      )
+    ) {
+      setCommitmentContextSelections((current) => ({
+        ...current,
+        [selectedCommitment.id]: subjectId
+      }))
+    }
+  }
+
+  function selectThreadContext(tabId: string): void {
+    if (!displayedThread) return
+    if (tabId === 'all') {
+      setThreadContextSelection({ threadId: displayedThread.id, subjectId: null })
+      return
+    }
+    const subjectId = Number(tabId.slice('subject:'.length))
+    if (
+      tabId.startsWith('subject:') &&
+      Number.isInteger(subjectId) &&
+      displayedThreadScope?.subjects.some(({ id }) => id === subjectId)
+    ) {
+      setThreadContextSelection({ threadId: displayedThread.id, subjectId })
+    }
+  }
 
   useEffect(() => {
     if (!hideSensitiveContent) return
@@ -507,16 +576,48 @@ export function FocusWorkspace({
     })
   }
 
+  function adapterForThread(
+    thread: ThreadSnapshot,
+    scope = model.threadScopes[thread.id]
+  ): ContextDrawerAdapter {
+    async function mutateScope(
+      operation: () => Promise<ThreadScopeSnapshot>
+    ): Promise<void> {
+      const nextScope = await operation()
+      setThreadContextSelection((current) =>
+        current?.threadId === thread.id &&
+        current.subjectId !== null &&
+        !nextScope.subjects.some(({ id }) => id === current.subjectId)
+          ? { threadId: thread.id, subjectId: null }
+          : current
+      )
+      if (contextDrawer.pinnedAdapter?.id === `thread:${thread.id}`) {
+        contextDrawer.onPin(adapterForThread(thread, nextScope))
+      }
+    }
+
+    return threadDrawerAdapter(
+      thread,
+      focusTitle,
+      (input) => model.updateThread(thread.id, input).then(() => undefined),
+      scope ? {
+        scope,
+        onCustomize: () => mutateScope(() => model.customizeThreadScope(thread.id)),
+        onFollowFocus: () => mutateScope(() => model.followFocusThreadScope(thread.id)),
+        onAddSubject: (name) =>
+          mutateScope(() => model.addThreadScopeSubject(thread.id, name)),
+        onRemoveSubject: (subjectId) =>
+          mutateScope(() => model.removeThreadScopeSubject(thread.id, subjectId))
+      } : undefined
+    )
+  }
+
   const contextDrawerAdapter: ContextDrawerAdapter | null = selectedCommitment
     ? adapterForCommitment(selectedCommitment)
     : activeCommitmentParent
       ? null
       : selectedThread
-        ? threadDrawerAdapter(
-            selectedThread,
-            focusTitle,
-            (input) => model.updateThread(selectedThread.id, input).then(() => undefined)
-          )
+        ? adapterForThread(selectedThread)
         : focusDrawerAdapter({
             focus,
             onSave: onUpdateFocus,
@@ -590,13 +691,7 @@ export function FocusWorkspace({
     try {
       const updated = await model.updateThread(threadId, input)
       if (contextDrawer.pinnedAdapter?.id === key) {
-        contextDrawer.onPin(
-          threadDrawerAdapter(
-            updated,
-            focusTitle,
-            (nextInput) => model.updateThread(threadId, nextInput).then(() => undefined)
-          )
-        )
+        contextDrawer.onPin(adapterForThread(updated))
       }
     } catch {
       setWorkspaceStatusError({
@@ -653,13 +748,7 @@ export function FocusWorkspace({
   async function refreshThreadAfterUpdates(threadId: number): Promise<void> {
     const updated = await model.refreshThread(threadId)
     if (contextDrawer.pinnedAdapter?.id === `thread:${threadId}`) {
-      contextDrawer.onPin(
-        threadDrawerAdapter(
-          updated,
-          focusTitle,
-          (input) => model.updateThread(threadId, input).then(() => undefined)
-        )
-      )
+      contextDrawer.onPin(adapterForThread(updated))
     }
   }
 
@@ -742,22 +831,51 @@ export function FocusWorkspace({
                     {commitmentStatusError.message}
                   </p>
                 )}
-                <DirectUpdates
-                  key={selectedCommitment.id}
-                  parent={{ type: 'commitment', id: selectedCommitment.id }}
-                  hideSensitiveContent={hideSensitiveContent}
-                  ancestorSensitive={
-                    focus.sensitive ||
-                    selectedCommitment.sensitive ||
-                    (selectedCommitment.parent.type === 'thread' &&
-                      (model.threads.find(
-                        (thread) => thread.id === selectedCommitment.parent.id
-                      )?.sensitive ?? true))
-                  }
-                  onUpdatesChanged={() =>
-                    refreshCommitmentsAfterUpdates(selectedCommitment.parent)
-                  }
-                />
+                {commitmentWorkingContext.loading ? (
+                  <p role="status" className="mt-8 text-xs text-muted-foreground">
+                    Loading working context…
+                  </p>
+                ) : commitmentWorkingContext.error ? (
+                  <p role="alert" className="mt-8 text-xs text-destructive">
+                    {commitmentWorkingContext.error}
+                  </p>
+                ) : commitmentWorkingContext.snapshot ? (
+                  <DirectUpdates
+                    key={`${selectedCommitment.id}:${commitmentWorkingContext.snapshot.scopeId ?? 'open'}:${selectedCommitmentCell?.subjectId ?? 'all'}`}
+                    parent={{ type: 'commitment', id: selectedCommitment.id }}
+                    context={selectedCommitmentCell
+                      ? {
+                          mode: 'subject',
+                          cell: {
+                            scopeId: selectedCommitmentCell.scopeId,
+                            subjectId: selectedCommitmentCell.subjectId
+                          },
+                          subject: selectedCommitmentCell.subject
+                        }
+                      : commitmentWorkingContext.snapshot.scopeId === null
+                        ? { mode: 'aggregate' }
+                        : {
+                            mode: 'scope-overview',
+                            currentScopeId: commitmentWorkingContext.snapshot.scopeId,
+                            subjects: commitmentWorkingContext.snapshot.cells.map(
+                              ({ subject }) => subject
+                            )
+                          }}
+                    hideSensitiveContent={hideSensitiveContent}
+                    ancestorSensitive={
+                      focus.sensitive ||
+                      selectedCommitment.sensitive ||
+                      (selectedCommitment.parent.type === 'thread' &&
+                        (model.threads.find(
+                          (thread) => thread.id === selectedCommitment.parent.id
+                        )?.sensitive ?? true))
+                    }
+                    onUpdatesChanged={() => Promise.all([
+                      refreshCommitmentsAfterUpdates(selectedCommitment.parent),
+                      commitmentWorkingContext.refresh()
+                    ]).then(() => undefined)}
+                  />
+                ) : null}
               </>
             ) : (
               <>
@@ -806,49 +924,89 @@ export function FocusWorkspace({
                 {workspaceStatusError.message}
               </p>
             )}
-            <ThreadScopeSection
-              key={displayedThread.id}
-              threadId={displayedThread.id}
-              onScopeChanged={() => model.refreshThread(displayedThread.id).then(() => undefined)}
-            />
-            <CommitmentCollection
-              idPrefix={`thread-${displayedThread.id}`}
-              model={commitmentCollectionModel(
-                buildCommitmentListModel(
-                  visibleCommitmentsFor({ type: 'thread', id: displayedThread.id })
+            {!displayedThreadScope || !displayedThreadSubjectMatrix ? (
+              <p role="status" className="mt-6 text-xs text-muted-foreground">
+                Loading working context…
+              </p>
+            ) : (() => {
+                const scope = displayedThreadScope
+                const selectedSubject = selectedThreadSubject
+                const subjectCell = selectedThreadSubjectCell
+                const threadCommitments = visibleCommitmentsFor({
+                  type: 'thread',
+                  id: displayedThread.id
+                })
+                const displayedCommitments = subjectCell
+                  ? commitmentsForThreadSubject(threadCommitments, subjectCell)
+                  : threadCommitments
+                const updateContext = selectedSubject && subjectCell
+                  ? {
+                      mode: 'subject' as const,
+                      cell: {
+                        scopeId: subjectCell.scopeId,
+                        subjectId: subjectCell.subjectId
+                      },
+                      subject: selectedSubject
+                    }
+                  : scope.scopeId === null || scope.subjects.length === 0
+                    ? { mode: 'aggregate' as const }
+                    : {
+                        mode: 'scope-overview' as const,
+                        currentScopeId: scope.scopeId,
+                        subjects: scope.subjects,
+                        knownSubjects: [
+                          ...scope.subjects,
+                          ...scope.focusSubjects.filter(
+                            ({ id }) => !scope.subjects.some((subject) => subject.id === id)
+                          )
+                        ]
+                      }
+
+                return (
+                  <>
+                    <CommitmentCollection
+                      idPrefix={`thread-${displayedThread.id}${selectedSubject ? `-subject-${selectedSubject.id}` : ''}`}
+                      model={commitmentCollectionModel(
+                        buildCommitmentListModel(displayedCommitments)
+                      )}
+                      contextLabel={selectedSubject
+                        ? `${selectedSubject.name} only · create and change Commitment scope from All subjects.`
+                        : undefined}
+                      statusSavingId={commitmentStatusSavingId}
+                      statusError={commitmentStatusError}
+                      onCreate={selectedSubject ? undefined : () =>
+                        setNewCommitmentParent({ type: 'thread', id: displayedThread.id })
+                      }
+                      onOpenCollection={selectedSubject ? undefined : () =>
+                        drillIntoCommitments({ type: 'thread', id: displayedThread.id })
+                      }
+                      onOpen={(commitmentId) =>
+                        openCommitment(
+                          { type: 'thread', id: displayedThread.id },
+                          commitmentId
+                        )
+                      }
+                      onPin={(commitmentId) =>
+                        pinCommitment(
+                          { type: 'thread', id: displayedThread.id },
+                          commitmentId
+                        )
+                      }
+                      onComplete={(commitmentId) =>
+                        void updateCommitmentDetails(commitmentId, { status: 'done' })
+                      }
+                    />
+                    <DirectUpdates
+                      key={`thread-updates:${displayedThread.id}:${scope.scopeId ?? 'open'}:${selectedSubject?.id ?? 'all'}`}
+                      parent={{ type: 'thread', id: displayedThread.id }}
+                      context={updateContext}
+                      hideSensitiveContent={hideSensitiveContent}
+                      ancestorSensitive={focus.sensitive || displayedThread.sensitive}
+                      onUpdatesChanged={() => refreshThreadAfterUpdates(displayedThread.id)}
+                    />
+                  </>
                 )
-              )}
-              statusSavingId={commitmentStatusSavingId}
-              statusError={commitmentStatusError}
-              onCreate={() =>
-                setNewCommitmentParent({ type: 'thread', id: displayedThread.id })
-              }
-              onOpenCollection={() =>
-                drillIntoCommitments({ type: 'thread', id: displayedThread.id })
-              }
-              onOpen={(commitmentId) =>
-                openCommitment(
-                  { type: 'thread', id: displayedThread.id },
-                  commitmentId
-                )
-              }
-              onPin={(commitmentId) =>
-                pinCommitment(
-                  { type: 'thread', id: displayedThread.id },
-                  commitmentId
-                )
-              }
-              onComplete={(commitmentId) =>
-                void updateCommitmentDetails(commitmentId, { status: 'done' })
-              }
-            />
-            <DirectUpdates
-              key={`thread-updates:${displayedThread.id}`}
-              parent={{ type: 'thread', id: displayedThread.id }}
-              hideSensitiveContent={hideSensitiveContent}
-              ancestorSensitive={focus.sensitive || displayedThread.sensitive}
-              onUpdatesChanged={() => refreshThreadAfterUpdates(displayedThread.id)}
-            />
+              })()}
           </section>
         ) : (
           <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="focus-heading">
@@ -984,6 +1142,21 @@ export function FocusWorkspace({
           direction: 1,
           onChange: setContextualSidebarWidth
         }}
+        tabBar={selectedCommitment && commitmentContextTabs ? (
+          <WorkspaceTabBar
+            model={commitmentContextTabs}
+            selectedId={selectedCommitmentCell
+              ? `subject:${selectedCommitmentCell.subjectId}`
+              : 'all'}
+            onSelect={selectCommitmentContext}
+          />
+        ) : displayedThread && threadContextTabs ? (
+          <WorkspaceTabBar
+            model={threadContextTabs}
+            selectedId={selectedThreadSubject ? `subject:${selectedThreadSubject.id}` : 'all'}
+            onSelect={selectThreadContext}
+          />
+        ) : undefined}
         main={main}
         drawer={<ContextDrawerOutlet adapter={contextDrawerAdapter} {...contextDrawer} />}
       />

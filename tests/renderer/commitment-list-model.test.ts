@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { CommitmentSnapshot } from '../../src/shared/contracts'
 import {
   buildCommitmentListModel,
-  commitmentCompletionModel
+  commitmentCompletionModel,
+  commitmentsForThreadSubject
 } from '../../src/renderer/src/features/focus/commitment-list-model'
 
 function commitment(
@@ -105,5 +106,47 @@ describe('buildCommitmentListModel', () => {
       checked: false,
       disabled: true
     })
+  })
+
+  it('projects only matching Commitment cells into a Thread Subject lens', () => {
+    const included = commitment(1, 'active', 'green')
+    const excluded = commitment(2, 'active', 'yellow')
+    const projected = commitmentsForThreadSubject([included, excluded], {
+      scopeId: 10,
+      subjectId: 20,
+      subject: {
+        id: 20,
+        kind: 'generic',
+        name: 'Customer Operations',
+        description: null,
+        externalKey: null,
+        sensitive: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z'
+      },
+      state: 'yellow',
+      lastReviewDate: '2026-01-08',
+      nextReviewDate: '2026-01-15',
+      reviewDue: false,
+      commitments: [{
+        commitmentId: included.id,
+        scopeId: 11,
+        subjectId: 20,
+        state: 'red',
+        lastUpdateDate: '2026-01-07',
+        nextUpdateDate: '2026-01-14',
+        needsUpdate: true
+      }]
+    })
+
+    expect(projected).toEqual([
+      expect.objectContaining({
+        id: included.id,
+        state: 'red',
+        lastUpdateDate: '2026-01-07',
+        needsUpdate: true
+      })
+    ])
+    expect(included.state).toBe('green')
   })
 })

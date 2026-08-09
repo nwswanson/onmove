@@ -91,6 +91,41 @@ describe('UpdateList', () => {
     expect(onDelete).toHaveBeenCalledWith('20')
   })
 
+  it('owns choice-based immediate creation without exposing a second create step', async () => {
+    const onCreateFor = vi.fn().mockResolvedValue(undefined)
+    const user = userEvent.setup()
+    render(
+      <UpdateList
+        ariaLabel="Scoped updates"
+        items={[]}
+        stateOptions={states}
+        defaultDate="2026-08-08"
+        defaultState="none"
+        createOptions={[
+          { id: '40', label: 'Customer Operations' },
+          { id: '41', label: 'Platform Team' }
+        ]}
+        createOptionsLabel="Add update for Subject…"
+        onCreateFor={onCreateFor}
+        onUpdate={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: 'Add update' })).not.toBeInTheDocument()
+    const subjectChoice = screen.getByRole('combobox', { name: 'Add update for Subject…' })
+    await user.selectOptions(subjectChoice, '41')
+    await waitFor(() => expect(onCreateFor).toHaveBeenCalledOnce())
+    expect(onCreateFor).toHaveBeenCalledWith('41', {
+      date: '2026-08-08',
+      observation: '',
+      state: 'none',
+      sensitive: false
+    })
+    expect(subjectChoice).toHaveValue('')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
   it('shows receiver-owned loading, empty, and failure states', () => {
     const { rerender } = render(
       <UpdateList

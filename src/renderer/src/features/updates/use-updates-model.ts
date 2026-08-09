@@ -3,6 +3,7 @@ import type {
   CreateUpdateInput,
   EditUpdateInput,
   UpdateParent,
+  UpdateScopeCell,
   UpdateSnapshot
 } from '../../../../shared/contracts'
 
@@ -18,6 +19,29 @@ function updateParent(type: UpdateParent['type'], id: number): UpdateParent {
   return { type, id }
 }
 
+export type UpdateWorkingContext =
+  | { mode: 'unfiltered' }
+  | { mode: 'unscoped' }
+  | { mode: 'scope-overview' }
+  | { mode: 'cell'; cell: UpdateScopeCell }
+
+export function updatesForWorkingContext(
+  updates: readonly UpdateSnapshot[],
+  context: UpdateWorkingContext
+): UpdateSnapshot[] {
+  if (context.mode === 'unfiltered') return [...updates]
+  if (context.mode === 'unscoped') {
+    return updates.filter(({ scope }) => scope === null)
+  }
+  if (context.mode === 'cell') {
+    return updates.filter(({ scope }) =>
+      scope?.scopeId === context.cell.scopeId &&
+      scope.subjectId === context.cell.subjectId
+    )
+  }
+  return [...updates]
+}
+
 export interface UpdatesModel {
   updates: UpdateSnapshot[]
   loading: boolean
@@ -30,7 +54,10 @@ export interface UpdatesModel {
 }
 
 /** Persistence-backed operations for direct Updates on one typed domain parent. */
-export function useUpdatesModel(parent: UpdateParent): UpdatesModel {
+export function useUpdatesModel(
+  parent: UpdateParent,
+  workingContext: UpdateWorkingContext = { mode: 'unfiltered' }
+): UpdatesModel {
   const parentType = parent.type
   const parentId = parent.id
   const [updates, setUpdates] = useState<UpdateSnapshot[]>([])
@@ -59,9 +86,15 @@ export function useUpdatesModel(parent: UpdateParent): UpdatesModel {
   async function createUpdate(
     input: Omit<CreateUpdateInput, 'parent'>
   ): Promise<UpdateSnapshot> {
+    const { scope: requestedScope, ...draft } = input
+    const scope = workingContext.mode === 'cell' ? workingContext.cell : requestedScope
+    if (workingContext.mode === 'scope-overview' && !scope) {
+      throw new Error('Select a Subject before adding a scoped Update')
+    }
     const created = await window.onmove.domain.createUpdate({
-      ...input,
-      parent: updateParent(parentType, parentId)
+      ...draft,
+      parent: updateParent(parentType, parentId),
+      ...(scope ? { scope } : {})
     })
     setUpdates((current) => sortUpdates([...current, created]))
     return created
@@ -81,5 +114,12 @@ export function useUpdatesModel(parent: UpdateParent): UpdatesModel {
     setUpdates((current) => current.filter((candidate) => candidate.id !== id))
   }
 
-  return { updates, loading, loadError, createUpdate, editUpdate, deleteUpdate }
+  return {
+    updates: sortUpdates(updatesForWorkingContext(updates, workingContext)),
+    loading,
+    loadError,
+    createUpdate,
+    editUpdate,
+    deleteUpdate
+  }
 }

@@ -183,6 +183,76 @@ describe('ContextDrawerOutlet', () => {
     }
   })
 
+  it('owns immediate choice cards and conditionally visible token-list editing', async () => {
+    const changeMode = vi.fn().mockResolvedValue(undefined)
+    const add = vi.fn().mockResolvedValue(undefined)
+    const remove = vi.fn().mockResolvedValue(undefined)
+    const user = userEvent.setup()
+    render(
+      <ContextDrawerOutlet
+        open
+        adapter={{
+          id: 'thread:2',
+          invalidationKeys: ['thread:2'],
+          model: {
+            title: 'Thread',
+            ariaLabel: 'Thread drawer',
+            sections: [{
+              id: 'scope',
+              fields: [
+                {
+                  kind: 'choice',
+                  id: 'scope-mode',
+                  label: 'Scope definition',
+                  value: 'inherited',
+                  options: [
+                    { value: 'inherited', label: 'Inherit Focus scope' },
+                    { value: 'custom', label: 'Custom scope' }
+                  ],
+                  errorMessage: 'Could not change mode.',
+                  onValueChange: changeMode
+                },
+                {
+                  kind: 'token-list',
+                  id: 'subjects',
+                  label: 'Subjects in custom scope',
+                  items: [{ id: '40', label: 'Customer Operations' }],
+                  suggestions: [{ id: '41', label: 'Platform Team' }],
+                  inputLabel: 'Add a Subject to custom scope',
+                  errorMessage: 'Could not change Subjects.',
+                  visibleWhen: { fieldId: 'scope-mode', equals: 'custom' },
+                  onAdd: add,
+                  onRemove: remove
+                }
+              ]
+            }]
+          }
+        }}
+        pinnedAdapter={null}
+        width={320}
+        minWidth={280}
+        maxWidth={384}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onUnpin={vi.fn()}
+      />
+    )
+
+    expect(screen.getByRole('radio', { name: 'Inherit Focus scope' })).toBeChecked()
+    expect(screen.queryByLabelText('Add a Subject to custom scope')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('radio', { name: 'Custom scope' }))
+    expect(changeMode).toHaveBeenCalledWith('custom')
+    expect(screen.getByRole('radio', { name: 'Custom scope' })).toBeChecked()
+
+    await user.click(screen.getByRole('button', { name: 'Remove Customer Operations' }))
+    expect(remove).toHaveBeenCalledWith('40')
+    await user.click(screen.getByRole('button', { name: 'Add Platform Team' }))
+    expect(add).toHaveBeenCalledWith('Platform Team')
+    await user.type(screen.getByLabelText('Add a Subject to custom scope'), 'Delivery Partners')
+    await user.click(screen.getByRole('button', { name: /^Add$/ }))
+    expect(add).toHaveBeenCalledWith('Delivery Partners')
+  })
+
   it('renders the shared empty representation when an active screen has no adapter', async () => {
     const onClose = vi.fn()
     const onWidthChange = vi.fn()

@@ -1,4 +1,9 @@
-import type { CommitmentSnapshot, CommitmentStatus, HealthState } from '../../../../shared/contracts'
+import type {
+  CommitmentSnapshot,
+  CommitmentStatus,
+  HealthState,
+  ThreadSubjectCellSnapshot
+} from '../../../../shared/contracts'
 
 export type CommitmentListGroupId = 'active' | 'paused' | 'closed'
 
@@ -54,6 +59,32 @@ export function commitmentCompletionModel(
     checked: commitment.status === 'done',
     disabled: commitment.status === 'done' || commitment.status === 'cancelled'
   }
+}
+
+/**
+ * Projects Thread-owned Commitments through one canonical Subject lens. Open
+ * Commitments are intentionally absent because they have no Subject cell; each
+ * included row receives the state and dates of this exact Commitment cell.
+ */
+export function commitmentsForThreadSubject(
+  commitments: readonly CommitmentSnapshot[],
+  subjectCell: ThreadSubjectCellSnapshot
+): CommitmentSnapshot[] {
+  const cellsByCommitmentId = new Map(
+    subjectCell.commitments.map((cell) => [cell.commitmentId, cell])
+  )
+  return commitments.flatMap((commitment) => {
+    const cell = cellsByCommitmentId.get(commitment.id)
+    return cell
+      ? [{
+          ...commitment,
+          state: cell.state,
+          lastUpdateDate: cell.lastUpdateDate,
+          nextUpdateDate: cell.nextUpdateDate,
+          needsUpdate: cell.needsUpdate
+        }]
+      : []
+  })
 }
 
 /**

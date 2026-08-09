@@ -1256,6 +1256,22 @@ export class ThreadScopeRepository {
     })
   }
 
+  customize(threadId: number, now = new Date()): ThreadScopeSnapshot {
+    const on = today(now)
+    return this.database.transaction(() => {
+      const current = this.get(threadId, on)
+      if (current.mode === 'explicit') return current
+
+      const scope = this.createOverlay(threadId, current, now)
+      this.applications.set(
+        { type: 'thread', id: threadId },
+        { mode: 'explicit', scopeId: scope.id },
+        now
+      )
+      return this.get(threadId, on)
+    })
+  }
+
   followFocus(threadId: number, now = new Date()): ThreadScopeSnapshot {
     return this.database.transaction(() => {
       this.requireThread(threadId)

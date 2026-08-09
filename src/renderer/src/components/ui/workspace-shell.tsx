@@ -48,6 +48,7 @@ export function ApplicationShell({
 export interface WorkspaceShellProps {
   contextualSidebar?: ReactNode
   contextualSidebarResize?: WorkspaceResizeConfig
+  tabBar?: ReactNode
   main: ReactNode
   drawer?: ReactNode
   className?: string
@@ -55,11 +56,12 @@ export interface WorkspaceShellProps {
 
 /**
  * Domain-free active workspace frame. Every screen supplies independent
- * contextual-navigation, main-content, and drawer slots.
+ * contextual-navigation, tab-navigation, main-content, and drawer slots.
  */
 export function WorkspaceShell({
   contextualSidebar,
   contextualSidebarResize,
+  tabBar,
   main,
   drawer,
   className
@@ -73,7 +75,13 @@ export function WorkspaceShell({
       {contextualSidebar && contextualSidebarResize && (
         <ResizeHandle {...contextualSidebarResize} />
       )}
-      {main}
+      <div
+        data-slot="workspace-main-column"
+        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+      >
+        {tabBar}
+        {main}
+      </div>
       {drawer}
     </div>
   )

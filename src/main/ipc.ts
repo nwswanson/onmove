@@ -93,6 +93,12 @@ export function registerAppIpc(
   ipcMain.handle(IPC_CHANNELS.getThreadScope, (_event, threadId: number) =>
     database.domain.threadScopes.get(threadId)
   )
+  ipcMain.handle(IPC_CHANNELS.getThreadSubjectMatrix, (_event, threadId: number) =>
+    database.domain.threads.subjectMatrix(threadId)
+  )
+  ipcMain.handle(IPC_CHANNELS.customizeThreadScope, (_event, threadId: number) =>
+    database.domain.threadScopes.customize(threadId)
+  )
   ipcMain.handle(
     IPC_CHANNELS.addThreadScopeSubject,
     (_event, threadId: number, input: AddFocusScopeSubjectInput) =>
@@ -120,6 +126,14 @@ export function registerAppIpc(
       ? database.domain.commitments.listForFocus(parent.id)
       : database.domain.commitments.listForThread(parent.id)
   )
+  ipcMain.handle(IPC_CHANNELS.getCommitmentWorkingContext, (_event, id: number) => {
+    const commitment = database.domain.commitments.requireModel(id)
+    return {
+      commitmentId: id,
+      scopeId: commitment.scopeApplication().effectiveScopeId,
+      cells: commitment.scopeMatrix()
+    }
+  })
   ipcMain.handle(IPC_CHANNELS.createCommitment, (_event, input: CreateCommitmentInput) =>
     database.domain.commitments.create(input).snapshot()
   )

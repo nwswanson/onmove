@@ -19,8 +19,9 @@ The addition introduces three separate concepts:
 2. **Scope** — a Focus-owned expression describing which Subjects are applicable on a date.
 3. **Scope application** — how a Focus, Thread, or Commitment obtains its effective Scope.
 
-A bounded Thread or Commitment Update now identifies the exact Scope/Subject cell. This makes its
-durable identity equivalent to:
+A bounded Thread or Commitment Update now identifies the exact Scope/Subject cell. The one exception
+is direct Thread evidence recorded while no Subjects are effective, which is Thread-wide and
+unscoped. A cell-bound Update's durable identity is equivalent to:
 
 ```text
 parent object × effective Scope × Subject × recorded date
@@ -146,7 +147,7 @@ retained cell Update, and used Scope structure must be replaced rather than rewr
 | `scopeMemberships` | Create/list intervals, end an interval, and safely delete unused history. |
 | `scopeApplications` | Get/set declared mode and resolve the effective inherited Scope. |
 | `focusScopes` | Return the Focus's current Subject set and coordinate atomic inline add/remove mutations. |
-| `threadScopes` | Return effective and Focus-offered Subjects, fork isolated Thread overlays, and restore live Focus inheritance. |
+| `threadScopes` | Return effective and Focus-offered Subjects, fork isolated Thread overlays, edit isolated Subject membership, and restore live Focus inheritance. |
 
 Focus, Thread, and Commitment models expose `scopeApplication()` and `setScope()`. Scope models expose
 `effectiveSubjects(date)`. Thread and Commitment models additionally expose `scopeMatrix(date)`.
@@ -209,8 +210,45 @@ The new automated tests cover:
 ## Current renderer boundary
 
 The preload exposes named Focus- and Thread-Scope operations rather than generic Subject, Scope,
-membership, or application CRUD. Focus Overall edits its direct Subject set through chips. A Thread
-shows its effective chips, offers missing Focus Subjects as one-click suggestions, forks a new
-Focus-owned overlay when customized, and can return to live Focus inheritance with one action.
-Commitment matrix entry, relationship resolution, attention sets, Commitment series/occurrences,
-Moves, a Scope Board, and a Review workflow remain deferred.
+membership, or application CRUD. Focus Overall edits its direct Subject set through chips. A
+Thread's context drawer owns its Scope definition: mutually exclusive `Inherit Focus scope` and
+`Custom scope` choices declare the application mode. Custom mode reveals an inline token editor,
+offers missing Focus Subjects as one-click suggestions, and forks a Focus-owned overlay before any
+Thread-local membership change. Returning to inheritance is one immediate action.
+
+These IPC calls are typed request/response operations; SQLite changes do not push a reactive result
+into renderer state. After either Focus Subject mutation, the Focus workspace invalidates and reloads
+all of its Thread snapshots, effective Scope snapshots, Subject matrices, direct-Update summaries,
+and Thread-owned Commitment collections. A monotonically increasing request generation prevents a
+slower initial workspace load from restoring stale pre-mutation projections. Consequently inherited
+Threads receive Focus Subject additions/removals immediately, while custom and Open Threads refresh
+their Focus-provided suggestions without changing their declared application.
+
+The Thread main screen contains only the operational **working context**:
+
+- an Open Thread, or a Thread with zero effective Subjects, has one Thread-wide aggregate context
+  and creates unscoped direct Updates;
+- a bounded Thread with current Subjects opens on an All Subjects overview containing its complete
+  retained direct Update history across current and former Scope ids;
+- the All Subjects creation dropdown requires one current Subject and immediately creates a blank,
+  exactly attributed Update that remains editable in the overview;
+- selecting a Subject filters direct Updates to the exact current `{scopeId, subjectId}` cell and
+  automatically applies that cell to every new Update; and
+- removing the selected Subject returns the screen to All Subjects without deleting its retained
+  evidence.
+
+The named `getThreadSubjectMatrix` projection joins each Thread review cell to bounded child
+Commitment cells containing the same canonical Subject. In a Subject working context, the renderer
+therefore shows only applicable bounded Commitments and substitutes their cell-specific state,
+last-Update date, cadence date, and due flag for aggregate rollups. Open Commitments have no Subject
+cell and remain visible only in All Subjects. Commitment creation also remains in All Subjects until
+Commitment-level Scope entry is designed, preventing a Thread-wide creation from being presented as
+Subject-specific.
+
+Former-Scope and ended-membership direct Thread Updates remain durable and visible in All Subjects.
+The visible `Former scope` classification follows current canonical Subject applicability rather
+than internal Scope identity: a replacement overlay that still contains, or later re-adds, the same
+Subject shows its ordinary Subject label. The Update retains its immutable original Scope/Subject
+cell for audit history and current-matrix calculations. A fuller historical-evidence surface,
+relationship resolution, attention sets, Commitment series/occurrences, Moves, a Scope Board, and a
+Review workflow remain deferred.

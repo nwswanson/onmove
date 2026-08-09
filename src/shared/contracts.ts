@@ -22,6 +22,8 @@ export const IPC_CHANNELS = {
   addFocusScopeSubject: 'domain:add-focus-scope-subject',
   removeFocusScopeSubject: 'domain:remove-focus-scope-subject',
   getThreadScope: 'domain:get-thread-scope',
+  getThreadSubjectMatrix: 'domain:get-thread-subject-matrix',
+  customizeThreadScope: 'domain:customize-thread-scope',
   addThreadScopeSubject: 'domain:add-thread-scope-subject',
   removeThreadScopeSubject: 'domain:remove-thread-scope-subject',
   followFocusThreadScope: 'domain:follow-focus-thread-scope',
@@ -29,6 +31,7 @@ export const IPC_CHANNELS = {
   createThread: 'domain:create-thread',
   updateThread: 'domain:update-thread',
   listCommitments: 'domain:list-commitments',
+  getCommitmentWorkingContext: 'domain:get-commitment-working-context',
   createCommitment: 'domain:create-commitment',
   updateCommitment: 'domain:update-commitment',
   listUpdates: 'domain:list-updates',
@@ -324,12 +327,37 @@ export interface CommitmentScopeCellSnapshot extends UpdateScopeCell {
   needsUpdate: boolean
 }
 
+/** UI-ready current Scope projection for recording exact-cell Commitment evidence. */
+export interface CommitmentWorkingContextSnapshot {
+  commitmentId: number
+  scopeId: number | null
+  cells: CommitmentScopeCellSnapshot[]
+}
+
 export interface ThreadScopeCellSnapshot extends UpdateScopeCell {
   subject: SubjectSnapshot
   state: HealthState
   lastReviewDate: string | null
   nextReviewDate: string
   reviewDue: boolean
+}
+
+/** A Commitment's projection inside one canonical Subject lens on its parent Thread. */
+export interface ThreadSubjectCommitmentCellSnapshot extends UpdateScopeCell {
+  commitmentId: number
+  state: HealthState
+  lastUpdateDate: string | null
+  nextUpdateDate: string | null
+  needsUpdate: boolean
+}
+
+/**
+ * One operational Subject lens for a bounded Thread. The Thread cell owns direct
+ * review evidence; `commitments` contains only bounded child Commitments whose
+ * current Scope also includes this canonical Subject.
+ */
+export interface ThreadSubjectCellSnapshot extends ThreadScopeCellSnapshot {
+  commitments: ThreadSubjectCommitmentCellSnapshot[]
 }
 
 export interface ThreadSnapshot {
@@ -481,6 +509,8 @@ export interface DomainApi {
     subjectId: number
   ) => Promise<FocusScopeSnapshot>
   getThreadScope: (threadId: number) => Promise<ThreadScopeSnapshot>
+  getThreadSubjectMatrix: (threadId: number) => Promise<ThreadSubjectCellSnapshot[]>
+  customizeThreadScope: (threadId: number) => Promise<ThreadScopeSnapshot>
   addThreadScopeSubject: (
     threadId: number,
     input: AddFocusScopeSubjectInput
@@ -494,6 +524,9 @@ export interface DomainApi {
   createThread: (input: CreateThreadInput) => Promise<ThreadSnapshot>
   updateThread: (id: number, input: UpdateThreadInput) => Promise<ThreadSnapshot>
   listCommitments: (parent: CommitmentParent) => Promise<CommitmentSnapshot[]>
+  getCommitmentWorkingContext: (
+    commitmentId: number
+  ) => Promise<CommitmentWorkingContextSnapshot>
   createCommitment: (input: CreateCommitmentInput) => Promise<CommitmentSnapshot>
   updateCommitment: (id: number, input: UpdateCommitmentInput) => Promise<CommitmentSnapshot>
   listUpdates: (parent: UpdateParent) => Promise<UpdateSnapshot[]>

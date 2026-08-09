@@ -146,10 +146,11 @@ export interface CommitmentCollectionModel {
 interface CommitmentCollectionProps {
   idPrefix: string
   model: CommitmentCollectionModel
+  contextLabel?: string
   statusSavingId: number | null
   statusError: { id: number; message: string } | null
-  onOpenCollection: () => void
-  onCreate: () => void
+  onOpenCollection?: () => void
+  onCreate?: () => void
   onOpen: (commitmentId: number) => void
   onPin: (commitmentId: number) => void
   onComplete: (commitmentId: number) => void
@@ -159,6 +160,7 @@ interface CommitmentCollectionProps {
 export function CommitmentCollection({
   idPrefix,
   model,
+  contextLabel,
   statusSavingId,
   statusError,
   onOpenCollection,
@@ -239,21 +241,30 @@ export function CommitmentCollection({
 
   return (
     <section className="mt-8" aria-labelledby={`${idPrefix}-commitments-heading`}>
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <h2 id={`${idPrefix}-commitments-heading`} className="text-sm font-semibold">
-          <button
-            type="button"
-            className="flex items-center gap-1 rounded-md px-1 py-1 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/55"
-            onClick={onOpenCollection}
-          >
-            Commitments
-            <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
-          </button>
-        </h2>
-        <Button type="button" variant="outline" size="sm" onClick={onCreate}>
-          <Plus aria-hidden="true" />
-          Add commitment
-        </Button>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-48 flex-1">
+          <h2 id={`${idPrefix}-commitments-heading`} className="text-sm font-semibold">
+            {onOpenCollection ? (
+              <button
+                type="button"
+                className="flex items-center gap-1 rounded-md px-1 py-1 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/55"
+                onClick={onOpenCollection}
+              >
+                Commitments
+                <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
+              </button>
+            ) : 'Commitments'}
+          </h2>
+          {contextLabel && (
+            <p className="mt-0.5 text-xs text-muted-foreground">{contextLabel}</p>
+          )}
+        </div>
+        {onCreate && (
+          <Button type="button" variant="outline" size="sm" onClick={onCreate}>
+            <Plus aria-hidden="true" />
+            Add commitment
+          </Button>
+        )}
       </div>
 
       <div className="space-y-5">
