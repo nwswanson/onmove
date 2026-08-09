@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type {
+  CommitmentScopeSnapshot,
   CommitmentSnapshot,
   FocusScopeSnapshot,
   FocusSnapshot,
@@ -507,16 +508,27 @@ describe('Focus presentation adapters', () => {
     expect(remove?.confirmation?.confirmLabel).toBe('Delete focus')
   })
 
-  it('describes Thread review settings and delegates the inclusion toggle', async () => {
+  it('describes editable Thread details and delegates save and deletion', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined)
-    const adapter = threadDrawerAdapter(
-      { ...thread, lastReviewDate: '2026-01-06', needsReview: true },
-      focus.title,
-      onSave
-    )
+    const onDelete = vi.fn().mockResolvedValue(undefined)
+    const adapter = threadDrawerAdapter({
+      thread: { ...thread, lastReviewDate: '2026-01-06', needsReview: true },
+      parentTitle: focus.title,
+      onSave,
+      onDelete
+    })
 
     expect(adapter.model.sections[0]?.fields).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({ kind: 'text', id: 'title', value: 'Sprint execution' }),
+        expect.objectContaining({
+          kind: 'number',
+          id: 'review-frequency',
+          value: '7',
+          min: 1,
+          step: 1,
+          integer: true
+        }),
         expect.objectContaining({ kind: 'static', id: 'last-reviewed', value: '2026-01-06' }),
         expect.objectContaining({ kind: 'checkbox', id: 'needs-review', value: true }),
         expect.objectContaining({ kind: 'checkbox', id: 'sensitive', value: false })
@@ -524,18 +536,42 @@ describe('Focus presentation adapters', () => {
     )
 
     const save = adapter.model.actions?.find((action) => action.id === 'save')
-    await save?.onInvoke({ 'needs-review': false, sensitive: true })
+    const remove = adapter.model.actions?.find((action) => action.id === 'delete')
+    await adapter.model.autosave?.onInvoke({
+      title: 'Sprint reliability',
+      'review-frequency': '14'
+    })
+    await save?.onInvoke({
+      title: 'Sprint reliability',
+      'review-frequency': '14',
+      'needs-review': false,
+      sensitive: true
+    })
+    await remove?.onInvoke({})
 
-    expect(onSave).toHaveBeenCalledWith({ needsReview: false, sensitive: true })
+    expect(onSave).toHaveBeenNthCalledWith(1, {
+      title: 'Sprint reliability',
+      reviewFrequencyDays: 14
+    })
+    expect(onSave).toHaveBeenNthCalledWith(2, {
+      title: 'Sprint reliability',
+      reviewFrequencyDays: 14,
+      needsReview: false,
+      sensitive: true
+    })
+    expect(remove?.confirmation?.confirmLabel).toBe('Delete thread')
+    expect(onDelete).toHaveBeenCalledOnce()
   })
 
-  it('exposes Commitment facts without exposing UI markup or the domain object', () => {
+  it('exposes editable Commitment identity without exposing UI markup or the domain object', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined)
+    const onDelete = vi.fn().mockResolvedValue(undefined)
     const adapter = commitmentDrawerAdapter({
       commitment,
       parentTitle: focus.title,
       ancestorKeys: ['focus:1'],
-      onSave
+      onSave,
+      onDelete
     })
 
     expect(adapter).not.toHaveProperty('render')
@@ -543,7 +579,13 @@ describe('Focus presentation adapters', () => {
     expect(adapter.model.sections[0]).toEqual({
       id: 'details',
       fields: [
-        { kind: 'static', id: 'title', label: 'Title', value: 'Improve ticket quality' },
+        {
+          kind: 'text',
+          id: 'title',
+          label: 'Title',
+          value: 'Improve ticket quality',
+          required: true
+        },
         { kind: 'static', id: 'parent', label: 'Parent', value: 'Focus — Project Atlas' },
         { kind: 'static', id: 'type', label: 'Type', value: 'Ongoing' },
         { kind: 'static', id: 'due-date', label: 'Due date', value: 'No due date' },
@@ -572,9 +614,86 @@ describe('Focus presentation adapters', () => {
           id: 'sensitive',
           label: 'Sensitive',
           value: false,
-            description: 'Hide this Commitment and its Updates from lists.'
+          description: 'Hide this Commitment and its Updates from lists.'
         }
       ]
     })
+    await adapter.model.autosave?.onInvoke({ title: 'Improve all ticket quality' })
+    const remove = adapter.model.actions?.find((action) => action.id === 'delete')
+    await remove?.onInvoke({})
+
+    expect(onSave).toHaveBeenCalledWith({ title: 'Improve all ticket quality' })
+    expect(remove?.confirmation?.confirmLabel).toBe('Delete commitment')
+    expect(onDelete).toHaveBeenCalledOnce()
+  })
+
+  it('maps a Thread-owned Commitment scope into the receiver-owned drawer contract', async () => {
+    const scopedCommitment: CommitmentSnapshot = {
+      ...commitment,
+      parent: { type: 'thread', id: thread.id }
+    }
+    const scope: CommitmentScopeSnapshot = {
+      commitmentId: scopedCommitment.id,
+      focusId: focus.id,
+      parent: scopedCommitment.parent,
+      mode: 'open',
+      scopeId: null,
+      subjects: [],
+      parentSubjects: [],
+      focusSubjects: [customerOperations, platformTeam]
+    }
+    const onCustomize = vi.fn().mockResolvedValue(undefined)
+    const onFollowParent = vi.fn().mockResolvedValue(undefined)
+    const onAddSubject = vi.fn().mockResolvedValue(undefined)
+    const onRemoveSubject = vi.fn().mockResolvedValue(undefined)
+    const adapter = commitmentDrawerAdapter({
+      commitment: scopedCommitment,
+      parentTitle: thread.title,
+      onSave: vi.fn().mockResolvedValue(undefined),
+      onDelete: vi.fn().mockResolvedValue(undefined),
+      scopeEditor: {
+        scope,
+        parentLabel: 'Thread',
+        onCustomize,
+        onFollowParent,
+        onAddSubject,
+        onRemoveSubject
+      }
+    })
+    const section = adapter.model.sections.find(({ id }) => id === 'scope')
+    const mode = section?.fields.find(({ id }) => id === 'scope-mode')
+    const subjects = section?.fields.find(({ id }) => id === 'scope-subjects')
+
+    expect(mode).toMatchObject({
+      kind: 'choice',
+      label: 'Scope definition',
+      value: 'custom',
+      options: [
+        expect.objectContaining({ value: 'inherited', label: 'Inherit Thread scope' }),
+        expect.objectContaining({ value: 'custom', label: 'Custom scope' })
+      ]
+    })
+    expect(subjects).toMatchObject({
+      kind: 'token-list',
+      items: [],
+      suggestions: [
+        { id: String(customerOperations.id), label: customerOperations.name },
+        { id: String(platformTeam.id), label: platformTeam.name }
+      ],
+      visibleWhen: { fieldId: 'scope-mode', equals: 'custom' }
+    })
+    expect(section?.note).toContain('Thread has no Subjects to inherit')
+    if (mode?.kind !== 'choice' || subjects?.kind !== 'token-list') {
+      throw new Error('Expected scope choice and token-list drawer fields')
+    }
+    await mode.onValueChange('inherited')
+    await mode.onValueChange('custom')
+    await subjects.onAdd('Customer Operations')
+    await subjects.onRemove(String(customerOperations.id))
+
+    expect(onFollowParent).toHaveBeenCalledOnce()
+    expect(onCustomize).toHaveBeenCalledOnce()
+    expect(onAddSubject).toHaveBeenCalledWith('Customer Operations')
+    expect(onRemoveSubject).toHaveBeenCalledWith(customerOperations.id)
   })
 })

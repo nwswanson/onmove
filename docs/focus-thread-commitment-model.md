@@ -423,6 +423,13 @@ entity cascades its transition history.
 - Foreign keys and key ownership invariants are also enforced in SQLite so direct database writes
   cannot bypass the essential Focus boundary or partial-cell constraints.
 
+The application exposes these hard deletes as confirmed destructive actions in each entity's
+context drawer. Thread and Commitment deletion use named IPC operations rather than generic model
+dispatch. The renderer removes successful deletions from its local projections immediately, moves
+an active deleted route to its surviving parent, and invalidates a deleted pinned inspector without
+changing an unrelated active route. A false or failed deletion preserves the route, pin, and drawer
+contents.
+
 ## Model API boundary
 
 The main process accesses these repositories through `database.domain`:
@@ -432,6 +439,9 @@ database.domain.subjects
 database.domain.scopes
 database.domain.scopeMemberships
 database.domain.scopeApplications
+database.domain.focusScopes
+database.domain.threadScopes
+database.domain.commitmentScopes
 database.domain.focuses
 database.domain.threads
 database.domain.commitments
@@ -444,12 +454,23 @@ Models expose ordinary update/delete/refresh behavior plus domain helpers such a
 `scopeApplicationHistory()`, while `scopeApplications.history(owner)` provides the generic audit
 surface. Repository methods return JSON-compatible snapshots; they never return SQLite handles.
 
+The Focus, Thread, and Commitment Scope aggregate repositories expose the current application,
+effective Subjects, and parent-provided Subject choices without leaking lower-level Scope rows to
+the renderer. Thread and Commitment customization creates a new Focus-owned overlay instead of
+mutating the parent's Scope. A Commitment can explicitly follow its direct parent, add or remove a
+Subject in a local overlay, and return a typed snapshot containing both its effective Subjects and
+its parent's effective Subjects. Its snapshot also carries the owning Focus's current Subjects as
+custom-scope candidates. This distinction matters when a Thread remains Open after its Focus becomes
+bounded: inheritance remains Open, while the Commitment can still form an independent boundary from
+the Focus's canonical choices.
+
 Removal, deletion, and every supported observation surface are specified in
 [`scope-lifecycle-and-observability.md`](scope-lifecycle-and-observability.md).
 
-The new Scope repositories are main-process model contracts. They are not yet exposed to the
-renderer. When the UI is added, it must use named, typed IPC methods rather than generic repository
-dispatch or SQL.
+The renderer reaches these aggregates only through named, typed IPC methods. The Thread-owned
+Commitment drawer uses those operations to change applicability, then reloads the Commitment's
+working-context cells so Update creation immediately obeys the new boundary. No generic repository
+dispatch or SQL crosses the preload boundary.
 
 ## End-to-end example
 

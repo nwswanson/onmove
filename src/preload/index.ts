@@ -50,12 +50,28 @@ const api: OnMoveApi = {
     listThreads: (focusId) => ipcRenderer.invoke(IPC_CHANNELS.listThreads, focusId),
     createThread: (input) => ipcRenderer.invoke(IPC_CHANNELS.createThread, input),
     updateThread: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateThread, id, input),
+    deleteThread: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteThread, id),
     listCommitments: (parent) => ipcRenderer.invoke(IPC_CHANNELS.listCommitments, parent),
+    getCommitmentScope: (commitmentId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.getCommitmentScope, commitmentId),
+    customizeCommitmentScope: (commitmentId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.customizeCommitmentScope, commitmentId),
+    addCommitmentScopeSubject: (commitmentId, input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.addCommitmentScopeSubject, commitmentId, input),
+    removeCommitmentScopeSubject: (commitmentId, subjectId) =>
+      ipcRenderer.invoke(
+        IPC_CHANNELS.removeCommitmentScopeSubject,
+        commitmentId,
+        subjectId
+      ),
+    followParentCommitmentScope: (commitmentId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.followParentCommitmentScope, commitmentId),
     getCommitmentWorkingContext: (commitmentId) =>
       ipcRenderer.invoke(IPC_CHANNELS.getCommitmentWorkingContext, commitmentId),
     createCommitment: (input) => ipcRenderer.invoke(IPC_CHANNELS.createCommitment, input),
     updateCommitment: (id, input) =>
       ipcRenderer.invoke(IPC_CHANNELS.updateCommitment, id, input),
+    deleteCommitment: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteCommitment, id),
     listUpdates: (parent) => ipcRenderer.invoke(IPC_CHANNELS.listUpdates, parent),
     createUpdate: (input) => ipcRenderer.invoke(IPC_CHANNELS.createUpdate, input),
     updateUpdate: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateUpdate, id, input),

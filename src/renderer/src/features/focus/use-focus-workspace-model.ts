@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type {
   CommitmentParent,
+  CommitmentScopeSnapshot,
   CommitmentSnapshot,
   CreateCommitmentInput,
   CreateThreadInput,
@@ -45,6 +46,7 @@ export interface FocusWorkspaceModel {
   threadStatusSummaries: Readonly<Record<number, StatusSummary | undefined>>
   commitments: CommitmentSnapshot[]
   threadCommitments: Readonly<Record<number, readonly CommitmentSnapshot[] | undefined>>
+  commitmentScopes: Readonly<Record<number, CommitmentScopeSnapshot | undefined>>
   commitmentList: CommitmentListModel
   commitmentsFor: (parent: CommitmentParent) => readonly CommitmentSnapshot[]
   saveGoal: (goal?: string) => Promise<void>
@@ -52,6 +54,7 @@ export interface FocusWorkspaceModel {
   removeFocusScopeSubject: (subjectId: number) => Promise<void>
   createThread: (input: CreateThreadInput) => Promise<ThreadSnapshot>
   updateThread: (id: number, input: UpdateThreadInput) => Promise<ThreadSnapshot>
+  deleteThread: (id: number) => Promise<boolean>
   customizeThreadScope: (threadId: number) => Promise<ThreadScopeSnapshot>
   followFocusThreadScope: (threadId: number) => Promise<ThreadScopeSnapshot>
   addThreadScopeSubject: (threadId: number, name: string) => Promise<ThreadScopeSnapshot>
@@ -61,6 +64,17 @@ export interface FocusWorkspaceModel {
   ) => Promise<ThreadScopeSnapshot>
   createCommitment: (input: CreateCommitmentInput) => Promise<CommitmentSnapshot>
   updateCommitment: (id: number, input: UpdateCommitmentInput) => Promise<CommitmentSnapshot>
+  deleteCommitment: (id: number) => Promise<boolean>
+  customizeCommitmentScope: (commitmentId: number) => Promise<CommitmentScopeSnapshot>
+  followParentCommitmentScope: (commitmentId: number) => Promise<CommitmentScopeSnapshot>
+  addCommitmentScopeSubject: (
+    commitmentId: number,
+    name: string
+  ) => Promise<CommitmentScopeSnapshot>
+  removeCommitmentScopeSubject: (
+    commitmentId: number,
+    subjectId: number
+  ) => Promise<CommitmentScopeSnapshot>
   refreshCommitments: (parent?: CommitmentParent) => Promise<void>
   refreshThread: (threadId: number) => Promise<ThreadSnapshot>
 }
@@ -90,12 +104,33 @@ function summaryWithCommitment(
   }
 }
 
+function summaryWithoutCommitment(
+  summary: StatusSummary | undefined,
+  commitmentId: number
+): StatusSummary {
+  const current = summary ?? EMPTY_STATUS_SUMMARY
+  return {
+    ...current,
+    activeCommitments: current.activeCommitments.filter(({ id }) => id !== commitmentId)
+  }
+}
+
+function withoutRecordKey<T>(
+  records: Readonly<Record<number, T | undefined>>,
+  id: number
+): Record<number, T | undefined> {
+  return Object.fromEntries(
+    Object.entries(records).filter(([key]) => Number(key) !== id)
+  )
+}
+
 interface ThreadWorkspaceProjection {
   threadId: number
   commitments: CommitmentSnapshot[]
   summary: StatusSummary
   scope: ThreadScopeSnapshot
   subjectMatrix: ThreadSubjectCellSnapshot[]
+  commitmentScopes: CommitmentScopeSnapshot[]
 }
 
 interface FocusThreadWorkspaceData {
@@ -113,12 +148,16 @@ async function loadFocusThreadWorkspaceData(focusId: number): Promise<FocusThrea
         window.onmove.domain.getThreadScope(thread.id),
         window.onmove.domain.getThreadSubjectMatrix(thread.id)
       ])
+      const commitmentScopes = await Promise.all(
+        commitments.map(({ id }) => window.onmove.domain.getCommitmentScope(id))
+      )
       return {
         threadId: thread.id,
         commitments,
         summary: buildStatusSummary(updates, commitments),
         scope,
-        subjectMatrix
+        subjectMatrix,
+        commitmentScopes
       }
     })
   )
@@ -150,6 +189,9 @@ export function useFocusWorkspaceModel({
   const [threadCommitments, setThreadCommitments] = useState<
     Record<number, readonly CommitmentSnapshot[] | undefined>
   >({})
+  const [commitmentScopes, setCommitmentScopes] = useState<
+    Record<number, CommitmentScopeSnapshot | undefined>
+  >({})
   const threadProjectionRequest = useRef(0)
   const goalAutosave = useThrottledAutosave({
     initialValue: focus.goal,
@@ -171,6 +213,13 @@ export function useFocusWorkspaceModel({
     setThreadSubjectMatrices(Object.fromEntries(
       data.projections.map((entry) => [entry.threadId, entry.subjectMatrix])
     ))
+    const nextThreadScopes = data.projections.flatMap((entry) => entry.commitmentScopes)
+    setCommitmentScopes((current) => ({
+      ...Object.fromEntries(
+        Object.entries(current).filter(([, scope]) => scope?.parent.type !== 'thread')
+      ),
+      ...Object.fromEntries(nextThreadScopes.map((scope) => [scope.commitmentId, scope]))
+    }))
   }
 
   useEffect(() => {
@@ -301,6 +350,17 @@ export function useFocusWorkspaceModel({
     return updated
   }
 
+  async function deleteThread(id: number): Promise<boolean> {
+    const deleted = await window.onmove.domain.deleteThread(id)
+    if (!deleted) return false
+    setThreads((current) => current.filter((thread) => thread.id !== id))
+    setThreadScopes((current) => withoutRecordKey(current, id))
+    setThreadSubjectMatrices((current) => withoutRecordKey(current, id))
+    setThreadCommitments((current) => withoutRecordKey(current, id))
+    setThreadStatusSummaries((current) => withoutRecordKey(current, id))
+    return true
+  }
+
   async function mutateThreadScope(
     threadId: number,
     operation: () => Promise<ThreadScopeSnapshot>
@@ -351,6 +411,7 @@ export function useFocusWorkspaceModel({
     if (created.parent.type === 'focus') {
       setCommitments((current) => [...current, created])
     } else {
+      const scope = await window.onmove.domain.getCommitmentScope(created.id)
       setThreadCommitments((current) => ({
         ...current,
         [created.parent.id]: [...(current[created.parent.id] ?? []), created]
@@ -359,6 +420,7 @@ export function useFocusWorkspaceModel({
         ...current,
         [created.parent.id]: summaryWithCommitment(current[created.parent.id], created)
       }))
+      setCommitmentScopes((current) => ({ ...current, [created.id]: scope }))
     }
     return created
   }
@@ -387,6 +449,83 @@ export function useFocusWorkspaceModel({
     return updated
   }
 
+  async function deleteCommitment(id: number): Promise<boolean> {
+    const parent = commitments.find((commitment) => commitment.id === id)?.parent ??
+      Object.values(threadCommitments)
+        .flatMap((items) => items ?? [])
+        .find((commitment) => commitment.id === id)
+        ?.parent
+    const deleted = await window.onmove.domain.deleteCommitment(id)
+    if (!deleted) return false
+
+    setCommitments((current) => current.filter((commitment) => commitment.id !== id))
+    setThreadCommitments((current) => Object.fromEntries(
+      Object.entries(current).map(([threadId, items]) => [
+        threadId,
+        items?.filter((commitment) => commitment.id !== id)
+      ])
+    ))
+    setCommitmentScopes((current) => withoutRecordKey(current, id))
+    if (parent?.type === 'thread') {
+      setThreadStatusSummaries((current) => ({
+        ...current,
+        [parent.id]: summaryWithoutCommitment(current[parent.id], id)
+      }))
+    }
+    return true
+  }
+
+  async function mutateCommitmentScope(
+    commitmentId: number,
+    operation: () => Promise<CommitmentScopeSnapshot>
+  ): Promise<CommitmentScopeSnapshot> {
+    const nextScope = await operation()
+    setCommitmentScopes((current) => ({
+      ...current,
+      [commitmentId]: nextScope
+    }))
+    if (nextScope.parent.type === 'thread') await refreshThreadData(nextScope.parent.id)
+    return nextScope
+  }
+
+  function customizeCommitmentScope(
+    commitmentId: number
+  ): Promise<CommitmentScopeSnapshot> {
+    return mutateCommitmentScope(
+      commitmentId,
+      () => window.onmove.domain.customizeCommitmentScope(commitmentId)
+    )
+  }
+
+  function followParentCommitmentScope(
+    commitmentId: number
+  ): Promise<CommitmentScopeSnapshot> {
+    return mutateCommitmentScope(
+      commitmentId,
+      () => window.onmove.domain.followParentCommitmentScope(commitmentId)
+    )
+  }
+
+  function addCommitmentScopeSubject(
+    commitmentId: number,
+    name: string
+  ): Promise<CommitmentScopeSnapshot> {
+    return mutateCommitmentScope(
+      commitmentId,
+      () => window.onmove.domain.addCommitmentScopeSubject(commitmentId, { name })
+    )
+  }
+
+  function removeCommitmentScopeSubject(
+    commitmentId: number,
+    subjectId: number
+  ): Promise<CommitmentScopeSnapshot> {
+    return mutateCommitmentScope(
+      commitmentId,
+      () => window.onmove.domain.removeCommitmentScopeSubject(commitmentId, subjectId)
+    )
+  }
+
   function commitmentsFor(parent: CommitmentParent): readonly CommitmentSnapshot[] {
     return parent.type === 'focus' ? commitments : (threadCommitments[parent.id] ?? [])
   }
@@ -402,6 +541,9 @@ export function useFocusWorkspaceModel({
       knownScope ?? window.onmove.domain.getThreadScope(threadId),
       window.onmove.domain.getThreadSubjectMatrix(threadId)
     ])
+    const nextCommitmentScopes = await Promise.all(
+      nextCommitments.map(({ id }) => window.onmove.domain.getCommitmentScope(id))
+    )
     const refreshed = nextThreads.find((thread) => thread.id === threadId)
     if (!refreshed) throw new Error('Thread no longer exists')
     setThreads(nextThreads)
@@ -411,6 +553,17 @@ export function useFocusWorkspaceModel({
     setThreadStatusSummaries((current) => ({
       ...current,
       [threadId]: buildStatusSummary(updates, nextCommitments)
+    }))
+    setCommitmentScopes((current) => ({
+      ...Object.fromEntries(
+        Object.entries(current).filter(([, candidate]) =>
+          candidate?.parent.type !== 'thread' || candidate.parent.id !== threadId
+        )
+      ),
+      ...Object.fromEntries(nextCommitmentScopes.map((candidate) => [
+        candidate.commitmentId,
+        candidate
+      ]))
     }))
     return refreshed
   }
@@ -446,6 +599,7 @@ export function useFocusWorkspaceModel({
     threadStatusSummaries,
     commitments,
     threadCommitments,
+    commitmentScopes,
     commitmentList,
     commitmentsFor,
     saveGoal,
@@ -453,12 +607,18 @@ export function useFocusWorkspaceModel({
     removeFocusScopeSubject,
     createThread,
     updateThread,
+    deleteThread,
     customizeThreadScope,
     followFocusThreadScope,
     addThreadScopeSubject,
     removeThreadScopeSubject,
     createCommitment,
     updateCommitment,
+    deleteCommitment,
+    customizeCommitmentScope,
+    followParentCommitmentScope,
+    addCommitmentScopeSubject,
+    removeCommitmentScopeSubject,
     refreshCommitments,
     refreshThread
   }

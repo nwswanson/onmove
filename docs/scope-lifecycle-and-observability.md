@@ -238,6 +238,13 @@ evidence entry are deliberately separate controls and locations:
 7. The selected canonical Subject follows navigation among Threads and Commitments in the same
    Focus. Each Focus remembers its own selection for the current application session. A destination
    that does not contain that Subject normalizes the Focus selection to All Subjects.
+8. A Thread-owned Commitment uses the same drawer-owned scope-definition interaction. `Inherit
+   Thread scope` establishes a live inherited application; `Custom scope` creates and edits a
+   Focus-owned overlay using direct-parent and owning-Focus Subjects as suggestions. The mutation refreshes
+   the selected Commitment working-context projection immediately, so bounded evidence creation
+   requires a Subject instead of continuing to offer the unscoped Add Update action.
+   When the Thread is Open, the drawer explicitly says that it has no Subjects to inherit and offers
+   the owning Focus's effective Subjects as custom-scope candidates instead.
 
 The working selector and Commitment projection remain current-matrix views. The All Subjects Update
 list is deliberately broader. Its current/former label describes canonical Subject applicability,
@@ -246,6 +253,6 @@ former. The persisted Update still retains its original exact cell, and new evid
 replacement Scope id; no evidence silently crosses an application boundary.
 
 The main Thread canvas never renders Scope-definition controls. It only consumes the resulting
-matrix as an operational working context. Scope mutations cross named Thread Scope IPC methods;
-generic drawer choice and token-list fields own the interaction markup while the Thread presenter
-owns the mapping to domain operations.
+matrix as an operational working context. Scope mutations cross named Thread or Commitment Scope
+IPC methods; generic drawer choice and token-list fields own the interaction markup while feature
+presenters own the mapping to typed domain operations.

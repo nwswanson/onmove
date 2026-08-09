@@ -248,9 +248,16 @@ The named `getThreadSubjectMatrix` projection joins each Thread review cell to b
 Commitment cells containing the same canonical Subject. In a Subject working context, the renderer
 therefore shows only applicable bounded Commitments and substitutes their cell-specific state,
 last-Update date, cadence date, and due flag for aggregate rollups. Open Commitments have no Subject
-cell and remain visible only in All Subjects. Commitment creation also remains in All Subjects until
-Commitment-level Scope entry is designed, preventing a Thread-wide creation from being presented as
-Subject-specific.
+cell and remain visible only in All Subjects. Commitment creation remains in All Subjects so a
+Thread-wide creation is never presented as Subject-specific. A Thread-owned Commitment's context
+drawer exposes its own applicability: it can follow the Thread's effective scope or fork a
+Focus-owned custom overlay. Switching an Open Commitment to inheritance immediately replaces its
+single unscoped Update stream with one exact cell per effective Thread Subject for subsequent
+evidence; retained unscoped Updates remain historical evidence rather than being rewritten.
+If the Thread itself is still Open, inheritance remains unscoped. The Commitment aggregate therefore
+returns the Focus's effective Subjects separately from the direct parent's effective Subjects; the
+drawer explains that the Thread has nothing to inherit and offers those Focus Subjects as one-click
+custom-scope candidates.
 
 Former-Scope and ended-membership direct Thread Updates remain durable and visible in All Subjects.
 The visible `Former scope` classification follows current canonical Subject applicability rather

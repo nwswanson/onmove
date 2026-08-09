@@ -1,5 +1,6 @@
 import type {
   CommitmentSnapshot,
+  CommitmentScopeSnapshot,
   CommitmentWorkingContextSnapshot,
   CommitmentType,
   FocusSnapshot,
@@ -9,11 +10,13 @@ import type {
   ThreadSnapshot,
   ThreadScopeSnapshot,
   ThreadSubjectCellSnapshot,
+  UpdateCommitmentInput,
   UpdateFocusInput,
   UpdateThreadInput
 } from '../../../../shared/contracts'
 import type {
   ContextDrawerAdapter,
+  ContextDrawerSectionModel,
   ContextDrawerValues
 } from '@/components/ui/context-drawer'
 import type {
@@ -68,6 +71,14 @@ function textValue(values: ContextDrawerValues, id: string): string {
 
 function booleanValue(values: ContextDrawerValues, id: string): boolean {
   return values[id] === true
+}
+
+function positiveDaysValue(values: ContextDrawerValues, id: string): number {
+  const value = Number(textValue(values, id))
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${id} must be a positive whole number of days`)
+  }
+  return value
 }
 
 export function dateOrNeverLabel(value: string | null): string {
@@ -446,10 +457,87 @@ export function focusDrawerAdapter({
   }
 }
 
-export function threadDrawerAdapter(
-  thread: ThreadSnapshot,
-  parentTitle: string,
-  onSave: (input: UpdateThreadInput) => Promise<void>,
+interface NestedScopeEditor {
+  mode: string
+  subjects: readonly { id: number; name: string }[]
+  parentSubjects: readonly { id: number; name: string }[]
+  availableSubjects: readonly { id: number; name: string }[]
+  parentLabel: 'Focus' | 'Thread'
+  onCustomize: () => Promise<void>
+  onFollowParent: () => Promise<void>
+  onAddSubject: (name: string) => Promise<void>
+  onRemoveSubject: (subjectId: number) => Promise<void>
+}
+
+function nestedScopeEditorSection(editor: NestedScopeEditor): ContextDrawerSectionModel {
+  const selectedSubjectIds = new Set(editor.subjects.map(({ id }) => id))
+  const availableSubjects = [...new Map(
+    editor.availableSubjects.map((subject) => [subject.id, subject])
+  ).values()]
+  const parentSuppliesSubjects = editor.parentSubjects.length > 0
+  return {
+    id: 'scope',
+    fields: [
+      {
+        kind: 'choice',
+        id: 'scope-mode',
+        label: 'Scope definition',
+        value: editor.mode === 'inherited' ? 'inherited' : 'custom',
+        options: [
+          {
+            value: 'inherited',
+            label: `Inherit ${editor.parentLabel} scope`,
+            description: parentSuppliesSubjects
+              ? `Follow the ${editor.parentLabel} Subject set as it changes.`
+              : `${editor.parentLabel} currently supplies no Subjects; inheritance remains item-wide until that changes.`
+          },
+          {
+            value: 'custom',
+            label: 'Custom scope',
+            description: editor.mode === 'open'
+              ? 'Currently open and item-wide. Add Subjects below to create a custom boundary.'
+              : `Override the ${editor.parentLabel} Subject set for this item.`
+          }
+        ],
+        errorMessage: 'The scope mode could not be changed.',
+        onValueChange: (value) =>
+          value === 'inherited'
+            ? editor.onFollowParent()
+            : editor.onCustomize()
+      },
+      {
+        kind: 'token-list',
+        id: 'scope-subjects',
+        label: 'Subjects in custom scope',
+        items: editor.subjects.map(({ id, name }) => ({ id: String(id), label: name })),
+        suggestions: availableSubjects
+          .filter(({ id }) => !selectedSubjectIds.has(id))
+          .map(({ id, name }) => ({ id: String(id), label: name })),
+        inputLabel: 'Add a Subject to custom scope',
+        placeholder: 'Add a Subject…',
+        errorMessage: 'The custom Subject set could not be changed.',
+        visibleWhen: { fieldId: 'scope-mode', equals: 'custom' },
+        onAdd: editor.onAddSubject,
+        onRemove: (subjectId) => editor.onRemoveSubject(Number(subjectId))
+      }
+    ],
+    note: parentSuppliesSubjects
+      ? 'Scope changes apply immediately. Existing Updates retain their original cell attribution.'
+      : `The ${editor.parentLabel} has no Subjects to inherit. Use the available Focus Subjects below for a custom scope, or define the ${editor.parentLabel} scope first.`
+  }
+}
+
+export function threadDrawerAdapter({
+  thread,
+  parentTitle,
+  onSave,
+  onDelete,
+  scopeEditor
+}: {
+  thread: ThreadSnapshot
+  parentTitle: string
+  onSave: (input: UpdateThreadInput) => Promise<void>
+  onDelete: () => Promise<void>
   scopeEditor?: {
     scope: ThreadScopeSnapshot
     onCustomize: () => Promise<void>
@@ -457,8 +545,7 @@ export function threadDrawerAdapter(
     onAddSubject: (name: string) => Promise<void>
     onRemoveSubject: (subjectId: number) => Promise<void>
   }
-): ContextDrawerAdapter {
-  const selectedSubjectIds = new Set(scopeEditor?.scope.subjects.map(({ id }) => id) ?? [])
+}): ContextDrawerAdapter {
   return {
     id: `thread:${thread.id}`,
     revision: `${thread.updatedAt}:${thread.sensitive}`,
@@ -471,7 +558,13 @@ export function threadDrawerAdapter(
         {
           id: 'details',
           fields: [
-            { kind: 'static', id: 'title', label: 'Title', value: thread.title },
+            {
+              kind: 'text',
+              id: 'title',
+              label: 'Title',
+              value: thread.title,
+              required: true
+            },
             { kind: 'static', id: 'parent', label: 'Parent', value: `Focus — ${parentTitle}` },
             {
               kind: 'static',
@@ -481,10 +574,14 @@ export function threadDrawerAdapter(
               capitalization: 'capitalize'
             },
             {
-              kind: 'static',
+              kind: 'number',
               id: 'review-frequency',
-              label: 'Review frequency',
-              value: `${thread.reviewFrequencyDays} days`
+              label: 'Review every (days)',
+              value: String(thread.reviewFrequencyDays),
+              required: true,
+              min: 1,
+              step: 1,
+              integer: true
             },
             {
               kind: 'static',
@@ -508,63 +605,53 @@ export function threadDrawerAdapter(
             }
           ]
         },
-        ...(scopeEditor ? [{
-          id: 'scope',
-          fields: [
-            {
-              kind: 'choice' as const,
-              id: 'scope-mode',
-              label: 'Scope definition',
-              value: scopeEditor.scope.mode === 'inherited' ? 'inherited' : 'custom',
-              options: [
-                {
-                  value: 'inherited',
-                  label: 'Inherit Focus scope',
-                  description: 'Follow the Focus Subject set as it changes.'
-                },
-                {
-                  value: 'custom',
-                  label: 'Custom scope',
-                  description: 'Override the Focus Subject set for this Thread.'
-                }
-              ],
-              errorMessage: 'The Thread scope mode could not be changed.',
-              onValueChange: (value: string) =>
-                value === 'inherited'
-                  ? scopeEditor.onFollowFocus()
-                  : scopeEditor.onCustomize()
-            },
-            {
-              kind: 'token-list' as const,
-              id: 'scope-subjects',
-              label: 'Subjects in custom scope',
-              items: scopeEditor.scope.subjects.map(({ id, name }) => ({
-                id: String(id),
-                label: name
-              })),
-              suggestions: scopeEditor.scope.focusSubjects
-                .filter(({ id }) => !selectedSubjectIds.has(id))
-                .map(({ id, name }) => ({ id: String(id), label: name })),
-              inputLabel: 'Add a Subject to custom scope',
-              placeholder: 'Add a Subject…',
-              errorMessage: 'The custom Subject set could not be changed.',
-              visibleWhen: { fieldId: 'scope-mode', equals: 'custom' },
-              onAdd: scopeEditor.onAddSubject,
-              onRemove: (subjectId: string) =>
-                scopeEditor.onRemoveSubject(Number(subjectId))
-            }
-          ],
-          note: 'Scope changes apply immediately. Existing Updates retain their original cell attribution.'
-        }] : [])
+        ...(scopeEditor ? [nestedScopeEditorSection({
+          mode: scopeEditor.scope.mode,
+          subjects: scopeEditor.scope.subjects,
+          parentSubjects: scopeEditor.scope.focusSubjects,
+          availableSubjects: scopeEditor.scope.focusSubjects,
+          parentLabel: 'Focus',
+          onCustomize: scopeEditor.onCustomize,
+          onFollowParent: scopeEditor.onFollowFocus,
+          onAddSubject: scopeEditor.onAddSubject,
+          onRemoveSubject: scopeEditor.onRemoveSubject
+        })] : [])
       ],
+      autosave: {
+        fieldIds: ['title', 'review-frequency'],
+        errorMessage: 'The thread details could not be saved. Please try again.',
+        onInvoke: (values) => onSave({
+          title: textValue(values, 'title'),
+          reviewFrequencyDays: positiveDaysValue(values, 'review-frequency')
+        })
+      },
       actions: [
+        {
+          id: 'delete',
+          label: 'Delete',
+          pendingLabel: 'Deleting…',
+          variant: 'destructive',
+          align: 'start',
+          confirmation: {
+            title: 'Delete thread?',
+            description: `“${thread.title}” and everything beneath it will be permanently deleted.`,
+            body: 'This includes its Commitments, Updates, Scope application, and history. This action cannot be undone.',
+            confirmLabel: 'Delete thread'
+          },
+          errorMessage: 'The thread could not be deleted. Please try again.',
+          onInvoke: onDelete
+        },
         {
           id: 'save',
           label: 'Save changes',
           pendingLabel: 'Saving…',
+          requiresValidFields: true,
+          includesAutosaveFields: true,
           errorMessage: 'The thread could not be updated. Please try again.',
           onInvoke: (values) =>
             onSave({
+              title: textValue(values, 'title'),
+              reviewFrequencyDays: positiveDaysValue(values, 'review-frequency'),
               needsReview: booleanValue(values, 'needs-review'),
               sensitive: booleanValue(values, 'sensitive')
             })
@@ -578,11 +665,22 @@ export function commitmentDrawerAdapter({
   commitment,
   parentTitle,
   onSave,
+  onDelete,
+  scopeEditor,
   ancestorKeys = []
 }: {
   commitment: CommitmentSnapshot
   parentTitle: string
-  onSave: (input: { sensitive: boolean }) => Promise<void>
+  onSave: (input: UpdateCommitmentInput) => Promise<void>
+  onDelete: () => Promise<void>
+  scopeEditor?: {
+    scope: CommitmentScopeSnapshot
+    parentLabel: 'Focus' | 'Thread'
+    onCustomize: () => Promise<void>
+    onFollowParent: () => Promise<void>
+    onAddSubject: (name: string) => Promise<void>
+    onRemoveSubject: (subjectId: number) => Promise<void>
+  }
   ancestorKeys?: readonly string[]
 }): ContextDrawerAdapter {
   const parentKind = commitment.parent.type === 'focus' ? 'Focus' : 'Thread'
@@ -604,7 +702,13 @@ export function commitmentDrawerAdapter({
         {
           id: 'details',
           fields: [
-            { kind: 'static', id: 'title', label: 'Title', value: commitment.title },
+            {
+              kind: 'text',
+              id: 'title',
+              label: 'Title',
+              value: commitment.title,
+              required: true
+            },
             {
               kind: 'static',
               id: 'parent',
@@ -651,16 +755,55 @@ export function commitmentDrawerAdapter({
               description: 'Hide this Commitment and its Updates from lists.'
             }
           ]
-        }
+        },
+        ...(scopeEditor ? [nestedScopeEditorSection({
+          mode: scopeEditor.scope.mode,
+          subjects: scopeEditor.scope.subjects,
+          parentSubjects: scopeEditor.scope.parentSubjects,
+          availableSubjects: [
+            ...scopeEditor.scope.parentSubjects,
+            ...scopeEditor.scope.focusSubjects
+          ],
+          parentLabel: scopeEditor.parentLabel,
+          onCustomize: scopeEditor.onCustomize,
+          onFollowParent: scopeEditor.onFollowParent,
+          onAddSubject: scopeEditor.onAddSubject,
+          onRemoveSubject: scopeEditor.onRemoveSubject
+        })] : [])
       ],
+      autosave: {
+        fieldIds: ['title'],
+        errorMessage: 'The commitment title could not be saved. Please try again.',
+        onInvoke: (values) => onSave({ title: textValue(values, 'title') })
+      },
       actions: [
+        {
+          id: 'delete',
+          label: 'Delete',
+          pendingLabel: 'Deleting…',
+          variant: 'destructive',
+          align: 'start',
+          confirmation: {
+            title: 'Delete commitment?',
+            description: `“${commitment.title}” and its Updates will be permanently deleted.`,
+            body: 'This includes its Scope application and history. This action cannot be undone.',
+            confirmLabel: 'Delete commitment'
+          },
+          errorMessage: 'The commitment could not be deleted. Please try again.',
+          onInvoke: onDelete
+        },
         {
           id: 'save',
           label: 'Save changes',
           pendingLabel: 'Saving…',
+          requiresValidFields: true,
+          includesAutosaveFields: true,
           errorMessage: 'The commitment could not be updated. Please try again.',
           onInvoke: (values) =>
-            onSave({ sensitive: booleanValue(values, 'sensitive') })
+            onSave({
+              title: textValue(values, 'title'),
+              sensitive: booleanValue(values, 'sensitive')
+            })
         }
       ]
     }

@@ -43,6 +43,18 @@ export type ContextDrawerFieldModel = (
       placeholder?: string
     }
   | {
+      kind: 'number'
+      id: string
+      label: string
+      value: string
+      required?: boolean
+      min?: number
+      max?: number
+      step?: number
+      integer?: boolean
+      placeholder?: string
+    }
+  | {
       kind: 'rich-text'
       id: string
       label: string
@@ -355,6 +367,17 @@ export function validateContextDrawerModel(model: ContextDrawerModel): void {
       if (field.kind === 'checkbox' && typeof field.value !== 'boolean') {
         throw new Error(`Context drawer checkbox field "${fieldId}" requires a boolean value.`)
       }
+      if (
+        field.kind === 'number' &&
+        (
+          (field.min !== undefined && !Number.isFinite(field.min)) ||
+          (field.max !== undefined && !Number.isFinite(field.max)) ||
+          (field.step !== undefined && (!Number.isFinite(field.step) || field.step <= 0)) ||
+          (field.min !== undefined && field.max !== undefined && field.min > field.max)
+        )
+      ) {
+        throw new Error(`Context drawer number field "${fieldId}" has invalid constraints.`)
+      }
       fieldIds.add(fieldId)
     }
   }
@@ -389,8 +412,8 @@ export function validateContextDrawerModel(model: ContextDrawerModel): void {
       const field = model.sections.flatMap((section) => section.fields).find(
         (candidate) => candidate.id === fieldId
       )
-      if (!field || (field.kind !== 'text' && field.kind !== 'rich-text')) {
-        throw new Error(`Context drawer autosave field "${fieldId}" must be editable text.`)
+      if (!field || !['text', 'rich-text', 'number'].includes(field.kind)) {
+        throw new Error(`Context drawer autosave field "${fieldId}" must be editable.`)
       }
     }
   }
@@ -428,9 +451,17 @@ function requiredFieldValid(
     field.kind === 'checkbox' ||
     field.kind === 'choice' ||
     field.kind === 'token-list' ||
+    field.kind !== 'number' &&
     !field.required
   ) return true
-  return drawerStringValue(values, field.id).trim().length > 0
+  const rawValue = drawerStringValue(values, field.id).trim()
+  if (field.kind !== 'number') return rawValue.length > 0
+  if (rawValue.length === 0) return !field.required
+  const value = Number(rawValue)
+  return Number.isFinite(value) &&
+    (!field.integer || Number.isSafeInteger(value)) &&
+    (field.min === undefined || value >= field.min) &&
+    (field.max === undefined || value <= field.max)
 }
 
 type ContextDrawerTokenListFieldModel = Extract<
@@ -770,6 +801,7 @@ function ContextDrawerInspector({
                           >
                             <input
                               type="radio"
+                              aria-label={option.label}
                               name={inputId}
                               value={option.value}
                               checked={drawerStringValue(values, field.id) === option.value}
@@ -830,6 +862,18 @@ function ContextDrawerInspector({
                           value={drawerStringValue(values, field.id)}
                           onChange={(value) => updateValue(field.id, value)}
                           compact
+                        />
+                      ) : field.kind === 'number' ? (
+                        <Input
+                          id={inputId}
+                          type="number"
+                          required={field.required}
+                          min={field.min}
+                          max={field.max}
+                          step={field.step}
+                          placeholder={field.placeholder}
+                          value={drawerStringValue(values, field.id)}
+                          onChange={(event) => updateValue(field.id, event.target.value)}
                         />
                       ) : (
                         <Input

@@ -121,10 +121,32 @@ export function registerAppIpc(
   ipcMain.handle(IPC_CHANNELS.updateThread, (_event, id: number, input: UpdateThreadInput) =>
     database.domain.threads.requireModel(id).update(input).snapshot()
   )
+  ipcMain.handle(IPC_CHANNELS.deleteThread, (_event, id: number) =>
+    database.domain.threads.delete(id)
+  )
   ipcMain.handle(IPC_CHANNELS.listCommitments, (_event, parent: CommitmentParent) =>
     parent.type === 'focus'
       ? database.domain.commitments.listForFocus(parent.id)
       : database.domain.commitments.listForThread(parent.id)
+  )
+  ipcMain.handle(IPC_CHANNELS.getCommitmentScope, (_event, commitmentId: number) =>
+    database.domain.commitmentScopes.get(commitmentId)
+  )
+  ipcMain.handle(IPC_CHANNELS.customizeCommitmentScope, (_event, commitmentId: number) =>
+    database.domain.commitmentScopes.customize(commitmentId)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.addCommitmentScopeSubject,
+    (_event, commitmentId: number, input: AddFocusScopeSubjectInput) =>
+      database.domain.commitmentScopes.addSubject(commitmentId, input)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.removeCommitmentScopeSubject,
+    (_event, commitmentId: number, subjectId: number) =>
+      database.domain.commitmentScopes.removeSubject(commitmentId, subjectId)
+  )
+  ipcMain.handle(IPC_CHANNELS.followParentCommitmentScope, (_event, commitmentId: number) =>
+    database.domain.commitmentScopes.followParent(commitmentId)
   )
   ipcMain.handle(IPC_CHANNELS.getCommitmentWorkingContext, (_event, id: number) => {
     const commitment = database.domain.commitments.requireModel(id)
@@ -141,6 +163,9 @@ export function registerAppIpc(
     IPC_CHANNELS.updateCommitment,
     (_event, id: number, input: UpdateCommitmentInput) =>
       database.domain.commitments.requireModel(id).update(input).snapshot()
+  )
+  ipcMain.handle(IPC_CHANNELS.deleteCommitment, (_event, id: number) =>
+    database.domain.commitments.delete(id)
   )
   ipcMain.handle(IPC_CHANNELS.listUpdates, (_event, parent: UpdateParent) => {
     if (parent.type === 'focus') return database.domain.updates.listForFocus(parent.id)

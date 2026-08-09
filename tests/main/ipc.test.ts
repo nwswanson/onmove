@@ -134,7 +134,8 @@ describe('registerAppIpc', () => {
             update: vi.fn(() => ({
               snapshot: () => ({ id: 21, focusId: 12, title: 'Sprint execution', needsReview: false })
             }))
-          }))
+          })),
+          delete: vi.fn(() => true)
         },
         commitments: {
           listForFocus: vi.fn(() => [
@@ -160,6 +161,43 @@ describe('registerAppIpc', () => {
           })),
           create: vi.fn(() => ({
             snapshot: () => ({ id: 33, title: 'Align sponsors' })
+          })),
+          delete: vi.fn(() => true)
+        },
+        commitmentScopes: {
+          get: vi.fn(() => ({
+            commitmentId: 31,
+            focusId: 12,
+            parent: { type: 'thread', id: 21 },
+            mode: 'open',
+            scopeId: null,
+            subjects: [],
+            parentSubjects: [],
+            focusSubjects: [{ id: 61, name: 'Customer Operations' }]
+          })),
+          customize: vi.fn(() => ({
+            commitmentId: 31,
+            mode: 'explicit',
+            scopeId: 55,
+            subjects: []
+          })),
+          addSubject: vi.fn(() => ({
+            commitmentId: 31,
+            mode: 'explicit',
+            scopeId: 56,
+            subjects: [{ id: 61, name: 'Customer Operations' }]
+          })),
+          removeSubject: vi.fn(() => ({
+            commitmentId: 31,
+            mode: 'explicit',
+            scopeId: 57,
+            subjects: []
+          })),
+          followParent: vi.fn(() => ({
+            commitmentId: 31,
+            mode: 'inherited',
+            scopeId: 51,
+            subjects: [{ id: 61, name: 'Customer Operations' }]
           }))
         },
         updates: {
@@ -279,6 +317,7 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.updateThread)?.(undefined, 21, {
       needsReview: false
     })).toMatchObject({ id: 21, needsReview: false })
+    expect(await handlers.get(IPC_CHANNELS.deleteThread)?.(undefined, 21)).toBe(true)
     expect(await handlers.get(IPC_CHANNELS.listCommitments)?.(undefined, {
       type: 'focus',
       id: 12
@@ -287,6 +326,30 @@ describe('registerAppIpc', () => {
       type: 'thread',
       id: 21
     })).toMatchObject([{ id: 32, title: 'Refine weekly' }])
+    expect(await handlers.get(IPC_CHANNELS.getCommitmentScope)?.(undefined, 31)).toMatchObject({
+      commitmentId: 31,
+      mode: 'open',
+      parentSubjects: [],
+      focusSubjects: [{ id: 61 }]
+    })
+    expect(await handlers.get(IPC_CHANNELS.customizeCommitmentScope)?.(
+      undefined,
+      31
+    )).toMatchObject({ mode: 'explicit', scopeId: 55 })
+    expect(await handlers.get(IPC_CHANNELS.addCommitmentScopeSubject)?.(
+      undefined,
+      31,
+      { name: 'Customer Operations' }
+    )).toMatchObject({ mode: 'explicit', subjects: [{ id: 61 }] })
+    expect(await handlers.get(IPC_CHANNELS.removeCommitmentScopeSubject)?.(
+      undefined,
+      31,
+      61
+    )).toMatchObject({ mode: 'explicit', subjects: [] })
+    expect(await handlers.get(IPC_CHANNELS.followParentCommitmentScope)?.(
+      undefined,
+      31
+    )).toMatchObject({ mode: 'inherited', scopeId: 51 })
     expect(await handlers.get(IPC_CHANNELS.getCommitmentWorkingContext)?.(
       undefined,
       31
@@ -303,6 +366,7 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.updateCommitment)?.(undefined, 31, {
       status: 'paused'
     })).toMatchObject({ id: 31, status: 'paused' })
+    expect(await handlers.get(IPC_CHANNELS.deleteCommitment)?.(undefined, 31)).toBe(true)
     expect(await handlers.get(IPC_CHANNELS.listUpdates)?.(undefined, {
       type: 'commitment',
       id: 31

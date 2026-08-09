@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type {
   CommitmentParent,
+  CommitmentScopeSnapshot,
   CommitmentSnapshot,
   CreateCommitmentInput,
   CreateThreadInput,
@@ -560,24 +561,53 @@ export function FocusWorkspace({
   ])
 
   function adapterForCommitment(
-    commitment: CommitmentSnapshot
+    commitment: CommitmentSnapshot,
+    scope = model.commitmentScopes[commitment.id]
   ): ContextDrawerAdapter {
     if (commitment.parent.type === 'focus') {
       return commitmentDrawerAdapter({
         commitment,
         parentTitle: focusTitle,
         ancestorKeys: [`focus:${focus.id}`],
-        onSave: (input) => model.updateCommitment(commitment.id, input).then(() => undefined)
+        onSave: (input) => saveCommitmentFromDrawer(commitment.id, input),
+        onDelete: () => deleteCommitmentFromDrawer(commitment)
       })
     }
     const thread = model.threads.find(
       (candidate) => candidate.id === commitment.parent.id
     )
+    async function mutateScope(
+      operation: () => Promise<CommitmentScopeSnapshot>
+    ): Promise<void> {
+      const nextScope = await operation()
+      if (
+        selectedSubjectId !== null &&
+        !nextScope.subjects.some(({ id }) => id === selectedSubjectId)
+      ) onSelectedSubjectChange(null)
+      if (selectedCommitment?.id === commitment.id) {
+        await commitmentWorkingContext.refresh()
+      }
+      if (contextDrawer.pinnedAdapter?.id === `commitment:${commitment.id}`) {
+        contextDrawer.onPin(adapterForCommitment(commitment, nextScope))
+      }
+    }
     return commitmentDrawerAdapter({
       commitment,
       parentTitle: thread?.title ?? 'Thread',
       ancestorKeys: [`focus:${focus.id}`, `thread:${commitment.parent.id}`],
-      onSave: (input) => model.updateCommitment(commitment.id, input).then(() => undefined)
+      onSave: (input) => saveCommitmentFromDrawer(commitment.id, input),
+      onDelete: () => deleteCommitmentFromDrawer(commitment),
+      scopeEditor: scope ? {
+        scope,
+        parentLabel: 'Thread',
+        onCustomize: () => mutateScope(() => model.customizeCommitmentScope(commitment.id)),
+        onFollowParent: () =>
+          mutateScope(() => model.followParentCommitmentScope(commitment.id)),
+        onAddSubject: (name) =>
+          mutateScope(() => model.addCommitmentScopeSubject(commitment.id, name)),
+        onRemoveSubject: (subjectId) =>
+          mutateScope(() => model.removeCommitmentScopeSubject(commitment.id, subjectId))
+      } : undefined
     })
   }
 
@@ -598,11 +628,12 @@ export function FocusWorkspace({
       }
     }
 
-    return threadDrawerAdapter(
+    return threadDrawerAdapter({
       thread,
-      focusTitle,
-      (input) => model.updateThread(thread.id, input).then(() => undefined),
-      scope ? {
+      parentTitle: focusTitle,
+      onSave: (input) => saveThreadFromDrawer(thread.id, input),
+      onDelete: () => deleteThreadFromDrawer(thread.id),
+      scopeEditor: scope ? {
         scope,
         onCustomize: () => mutateScope(() => model.customizeThreadScope(thread.id)),
         onFollowFocus: () => mutateScope(() => model.followFocusThreadScope(thread.id)),
@@ -611,7 +642,79 @@ export function FocusWorkspace({
         onRemoveSubject: (subjectId) =>
           mutateScope(() => model.removeThreadScopeSubject(thread.id, subjectId))
       } : undefined
-    )
+    })
+  }
+
+  async function saveThreadFromDrawer(
+    threadId: number,
+    input: UpdateThreadInput
+  ): Promise<void> {
+    const updated = await model.updateThread(threadId, input)
+    if (contextDrawer.pinnedAdapter?.id === `thread:${threadId}`) {
+      contextDrawer.onPin(adapterForThread(updated))
+    }
+  }
+
+  async function saveCommitmentFromDrawer(
+    commitmentId: number,
+    input: UpdateCommitmentInput
+  ): Promise<void> {
+    const updated = await model.updateCommitment(commitmentId, input)
+    await onRefreshStatusSummary()
+    if (contextDrawer.pinnedAdapter?.id === `commitment:${commitmentId}`) {
+      contextDrawer.onPin(adapterForCommitment(updated))
+    }
+  }
+
+  function currentRouteUsesThread(threadId: number): boolean {
+    const snapshot = navigation.getSnapshot()
+    const itemId = threadSidebarItemId(threadId)
+    return snapshot.selectedItemId === itemId ||
+      snapshot.selectedChild?.parentItemId === itemId ||
+      snapshot.level.id === `thread:${threadId}:commitments`
+  }
+
+  async function deleteThreadFromDrawer(threadId: number): Promise<void> {
+    const routeUsesThread = currentRouteUsesThread(threadId)
+    const deleted = await model.deleteThread(threadId)
+    if (!deleted) throw new Error('Thread deletion did not remove a record.')
+
+    contextDrawer.onInvalidate([`thread:${threadId}`])
+    if (routeUsesThread) {
+      navigation.reset()
+      navigation.select('overall')
+    }
+    try {
+      await onRefreshStatusSummary()
+    } catch {
+      // The record is already deleted and local collections are authoritative;
+      // a later refresh can repair a stale aggregate summary.
+    }
+  }
+
+  async function deleteCommitmentFromDrawer(
+    commitment: CommitmentSnapshot
+  ): Promise<void> {
+    const snapshot = navigation.getSnapshot()
+    const commitmentId = String(commitment.id)
+    const selectedAsChild = snapshot.selectedChild?.childItemId === commitmentId
+    const selectedInLevel = snapshot.level !== focusLevel &&
+      snapshot.selectedItemId === commitmentId
+    const deleted = await model.deleteCommitment(commitment.id)
+    if (!deleted) throw new Error('Commitment deletion did not remove a record.')
+
+    contextDrawer.onInvalidate([`commitment:${commitment.id}`])
+    if (selectedAsChild) {
+      navigation.select(contextItemIdForCommitmentParent(commitment.parent))
+    } else if (selectedInLevel) {
+      navigation.back()
+    }
+    try {
+      await onRefreshStatusSummary()
+    } catch {
+      // The record is already deleted and local collections are authoritative;
+      // a later refresh can repair a stale aggregate summary.
+    }
   }
 
   const contextDrawerAdapter: ContextDrawerAdapter | null = selectedCommitment

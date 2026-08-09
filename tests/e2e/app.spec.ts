@@ -315,6 +315,21 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     return row ? { mode: row.mode, transitionCount: Number(row.transitionCount) } : undefined
   }
 
+  function storedCommitmentScopeMode(title: string): string | undefined {
+    const database = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
+      readOnly: true
+    })
+    const row = database.prepare(
+      `SELECT application.mode
+       FROM commitment_scope_applications application
+       JOIN commitments commitment ON commitment.id = application.commitment_id
+       WHERE commitment.title = ?
+       ORDER BY commitment.id LIMIT 1`
+    ).get(title) as { mode: string } | undefined
+    database.close()
+    return row?.mode
+  }
+
   try {
     application = await launch()
     let window = await application.firstWindow()
@@ -702,10 +717,6 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       name: 'Thread context drawer'
     })
     await expect(preSubjectScopeDrawer.getByRole('radio', { name: /Custom scope/ })).toBeChecked()
-    await preSubjectScopeDrawer.getByRole('radio', { name: /Inherit Focus scope/ }).click()
-    await expect(
-      preSubjectScopeDrawer.getByRole('radio', { name: /Inherit Focus scope/ })
-    ).toBeChecked()
     await window.getByRole('button', { name: 'Overall', exact: true }).click()
     const focusSubjectInput = window.getByRole('textbox', { name: 'Add a Subject' })
     for (const subject of ['Customer Operations', 'Enterprise Accounts', 'Platform Team']) {
@@ -732,6 +743,28 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       .getByRole('button', { name: 'Sprint execution, paused', exact: true })
       .click()
     await expect(window.getByRole('main').getByText('Scope definition')).toHaveCount(0)
+    await expect(window.getByRole('tablist', { name: 'Thread working context' })).toHaveCount(0)
+    await window
+      .getByRole('button', { name: 'Open commitment Improve ticket quality' })
+      .click()
+    const openCommitmentDrawer = window.getByRole('complementary', {
+      name: 'Commitment context drawer'
+    })
+    await expect(openCommitmentDrawer.getByText(/Thread has no Subjects to inherit/))
+      .toBeVisible()
+    await expect(openCommitmentDrawer.getByRole('button', {
+      name: 'Add Customer Operations'
+    })).toBeVisible()
+    await expect(openCommitmentDrawer.getByRole('button', {
+      name: 'Add Enterprise Accounts'
+    })).toBeVisible()
+    await window
+      .getByRole('button', { name: 'Sprint execution, paused', exact: true })
+      .click()
+    const inheritedThreadDrawer = window.getByRole('complementary', {
+      name: 'Thread context drawer'
+    })
+    await inheritedThreadDrawer.getByRole('radio', { name: /Inherit Focus scope/ }).click()
     await expect(window.getByRole('tab', { name: 'Work in Customer Operations' })).toBeVisible()
     await expect(window.getByRole('tab', { name: 'Work in Enterprise Accounts' })).toBeVisible()
     await expect(window.getByRole('tab', { name: 'Work in Platform Team' })).toBeVisible()
@@ -816,6 +849,31 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       'Enterprise Accounts',
       'Platform Team'
     ])
+
+    await window
+      .getByRole('button', { name: 'Open commitment Improve ticket quality' })
+      .click()
+    const inheritedCommitmentDrawer = window.getByRole('complementary', {
+      name: 'Commitment context drawer'
+    })
+    await expect(window.getByRole('main').getByRole('button', { name: 'Add update' }))
+      .toBeVisible()
+    await expect(inheritedCommitmentDrawer.getByRole('radio', { name: 'Custom scope' }))
+      .toBeChecked()
+    await inheritedCommitmentDrawer
+      .getByRole('radio', { name: 'Inherit Thread scope' })
+      .click()
+    await expect.poll(() => storedCommitmentScopeMode('Improve ticket quality'))
+      .toBe('inherited')
+    await expect(window.getByRole('tablist', { name: 'Commitment working context' }))
+      .toBeVisible()
+    await expect(window.getByRole('main').getByRole('button', { name: 'Add update' }))
+      .toHaveCount(0)
+    await expect(window.getByRole('combobox', { name: 'Add update for Subject…' }))
+      .toBeVisible()
+    await window
+      .getByRole('button', { name: 'Sprint execution, paused', exact: true })
+      .click()
 
     await window
       .getByRole('button', { name: 'Add commitment to Sprint execution' })

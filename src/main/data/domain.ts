@@ -16,6 +16,7 @@ import {
 import type { SqliteAdapter } from './sqlite-adapter'
 import { FocusRepository } from './focus'
 import {
+  CommitmentScopeRepository,
   FocusScopeRepository,
   ScopeApplicationRepository,
   ScopeMembershipRepository,
@@ -534,6 +535,7 @@ export class DomainStore {
   readonly focuses: FocusRepository
   readonly focusScopes: FocusScopeRepository
   readonly threadScopes: ThreadScopeRepository
+  readonly commitmentScopes: CommitmentScopeRepository
   readonly subjects: SubjectRepository
   readonly scopes: ScopeRepository
   readonly scopeMemberships: ScopeMembershipRepository
@@ -548,6 +550,7 @@ export class DomainStore {
     this.focuses = new FocusRepository(database)
     this.focusScopes = new FocusScopeRepository(database)
     this.threadScopes = new ThreadScopeRepository(database)
+    this.commitmentScopes = new CommitmentScopeRepository(database)
     this.subjects = new SubjectRepository(database)
     this.scopes = new ScopeRepository(database)
     this.scopeMemberships = new ScopeMembershipRepository(database)

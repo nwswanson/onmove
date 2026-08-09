@@ -169,6 +169,51 @@ describe('Thread, Commitment, and Update models', () => {
     expect(() => update.update({ state: 'red' })).toThrow('has been deleted')
   })
 
+  it('deletes Commitments and cascades Thread deletion through owned work', () => {
+    const focus = database!.domain.focuses.create({ title: 'Project execution' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Sprint execution',
+      reviewFrequencyDays: 7
+    })
+    const nestedCommitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Improve ticket quality'
+    })
+    const nestedUpdate = database!.domain.updates.create({
+      parent: { type: 'commitment', id: nestedCommitment.id },
+      observation: 'Acceptance criteria are uneven',
+      state: 'yellow'
+    })
+    const directUpdate = database!.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      observation: 'Sprint execution is unstable',
+      state: 'red'
+    })
+    const focusCommitment = database!.domain.commitments.create({
+      parent: { type: 'focus', id: focus.id },
+      type: 'ongoing',
+      title: 'Align sponsors'
+    })
+    const focusCommitmentUpdate = database!.domain.updates.create({
+      parent: { type: 'commitment', id: focusCommitment.id },
+      observation: 'Sponsors are aligned',
+      state: 'green'
+    })
+
+    expect(database!.domain.commitments.delete(focusCommitment.id)).toBe(true)
+    expect(database!.domain.commitments.findModel(focusCommitment.id)).toBeNull()
+    expect(database!.domain.updates.findModel(focusCommitmentUpdate.id)).toBeNull()
+
+    expect(database!.domain.threads.delete(thread.id)).toBe(true)
+    expect(database!.domain.threads.findModel(thread.id)).toBeNull()
+    expect(database!.domain.commitments.findModel(nestedCommitment.id)).toBeNull()
+    expect(database!.domain.updates.findModel(nestedUpdate.id)).toBeNull()
+    expect(database!.domain.updates.findModel(directUpdate.id)).toBeNull()
+    expect(database!.domain.threads.delete(thread.id)).toBe(false)
+  })
+
   it('derives thread health from the latest direct update and active commitment states', () => {
     const focus = database!.domain.focuses.create({ title: 'Project execution' })
     const thread = database!.domain.threads.create({

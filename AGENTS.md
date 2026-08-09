@@ -63,6 +63,20 @@
 - Give each drawer adapter invalidation keys for itself and its owning ancestors. Report successful
   deletions through the shared drawer controller: invalidated pins clear without closing the drawer,
   while unrelated or failed deletions preserve drawer and selection state.
+- Expose confirmed destructive actions for Focus, Thread, and Commitment through the receiver-owned
+  drawer action contract. Thread and Commitment titles autosave through the shared throttle. Thread
+  review frequency uses the drawer's generic required positive-whole-number field (`min=1`,
+  `step=1`) and the model repeats that validation. After deleting the active Thread or Commitment,
+  navigate to its surviving parent; deleting a pinned item off-route must not disturb the active
+  route.
+- Expose Thread-owned Commitment applicability through the same receiver-owned drawer choice and
+  token-list contracts used for Thread scope. Use named Commitment Scope model/IPC operations;
+  switching between Open/custom applicability and inheritance must refresh the selected
+  Commitment's working-context cells immediately so bounded Update creation requires an exact
+  Subject. Keep Focus-owned Commitment presentation unchanged unless its own workflow calls for a
+  scope editor. A Thread-owned Commitment snapshot must expose direct-parent Subjects separately
+  from owning-Focus Subject candidates: an Open Thread has nothing to inherit, but its Commitment
+  must still be able to create a custom boundary from the Focus's current Subjects.
 
 ## Color system
 

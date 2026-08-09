@@ -155,7 +155,22 @@ function installApi(
     listThreads: vi.fn().mockResolvedValue([]),
     createThread: vi.fn(),
     updateThread: vi.fn(),
+    deleteThread: vi.fn(),
     listCommitments: vi.fn().mockResolvedValue([]),
+    getCommitmentScope: vi.fn(async (commitmentId) => ({
+      commitmentId,
+      focusId: 1,
+      parent: { type: 'thread' as const, id: 10 },
+      mode: 'open' as const,
+      scopeId: null,
+      subjects: [],
+      parentSubjects: [],
+      focusSubjects: []
+    })),
+    customizeCommitmentScope: vi.fn(),
+    addCommitmentScopeSubject: vi.fn(),
+    removeCommitmentScopeSubject: vi.fn(),
+    followParentCommitmentScope: vi.fn(),
     getCommitmentWorkingContext: vi.fn(async (commitmentId) => ({
       commitmentId,
       scopeId: null,
@@ -163,6 +178,7 @@ function installApi(
     })),
     createCommitment: vi.fn(),
     updateCommitment: vi.fn(),
+    deleteCommitment: vi.fn(),
     listUpdates: vi.fn().mockResolvedValue([]),
     createUpdate: vi.fn(),
     updateUpdate: vi.fn(),
@@ -1126,6 +1142,195 @@ describe('App', () => {
     })
   })
 
+  it('moves an open Thread Commitment into inherited scope from its drawer', async () => {
+    const current = focus({ title: 'Project Atlas' })
+    const sprint = thread({ title: 'Sprint execution' })
+    const customer = subject(40, 'Customer Operations')
+    const scopedCommitment = commitment({
+      id: 21,
+      parent: { type: 'thread', id: sprint.id },
+      title: 'Improve ticket quality'
+    })
+    const openScope = {
+      commitmentId: scopedCommitment.id,
+      focusId: current.id,
+      parent: scopedCommitment.parent,
+      mode: 'open' as const,
+      scopeId: null,
+      subjects: [],
+      parentSubjects: [customer],
+      focusSubjects: [customer]
+    }
+    const inheritedScope = {
+      ...openScope,
+      mode: 'inherited' as const,
+      scopeId: 50,
+      subjects: [customer]
+    }
+    let currentScope = openScope as typeof openScope | typeof inheritedScope
+    const getCommitmentScope = vi.fn(async () => currentScope)
+    const followParentCommitmentScope = vi.fn(async () => {
+      currentScope = inheritedScope
+      return inheritedScope
+    })
+    const getCommitmentWorkingContext = vi.fn(async () => ({
+      commitmentId: scopedCommitment.id,
+      scopeId: currentScope.scopeId,
+      cells: currentScope.scopeId === null ? [] : [{
+        scopeId: 50,
+        subjectId: customer.id,
+        subject: customer,
+        state: 'none' as const,
+        lastUpdateDate: null,
+        nextUpdateDate: null,
+        needsUpdate: false
+      }]
+    }))
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listThreads: vi.fn().mockResolvedValue([sprint]),
+      listCommitments: vi.fn(async (parent) =>
+        parent.type === 'thread' ? [scopedCommitment] : []
+      ),
+      getThreadScope: vi.fn().mockResolvedValue({
+        threadId: sprint.id,
+        focusId: current.id,
+        mode: 'inherited',
+        scopeId: 50,
+        subjects: [customer],
+        focusSubjects: [customer]
+      }),
+      getCommitmentScope,
+      followParentCommitmentScope,
+      getCommitmentWorkingContext
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
+    await user.click(await screen.findByRole('button', {
+      name: 'Open commitment Improve ticket quality'
+    }))
+    expect(await screen.findByRole('button', { name: 'Add update' })).toBeVisible()
+    expect(screen.queryByRole('combobox', { name: 'Add update for Subject…' }))
+      .not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Toggle context drawer' }))
+    const drawer = screen.getByRole('complementary', { name: 'Commitment context drawer' })
+    expect(within(drawer).getByRole('radio', { name: /^Custom scope/ })).toBeChecked()
+    await user.click(within(drawer).getByRole('radio', { name: /^Inherit Thread scope/ }))
+
+    await waitFor(() => expect(followParentCommitmentScope)
+      .toHaveBeenCalledWith(scopedCommitment.id))
+    expect(await screen.findByRole('tablist', { name: 'Commitment working context' }))
+      .toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Add update' })).not.toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Add update for Subject…' })).toBeVisible()
+    expect(screen.getByRole('radio', { name: /^Inherit Thread scope/ })).toBeChecked()
+  })
+
+  it('offers Focus Subjects to an open Commitment whose Thread is still open', async () => {
+    const current = focus({ title: 'Project Atlas' })
+    const sprint = thread({ title: 'Sprint execution' })
+    const customer = subject(40, 'Customer Operations')
+    const platform = subject(41, 'Platform Team')
+    const openCommitment = commitment({
+      id: 21,
+      parent: { type: 'thread', id: sprint.id },
+      title: 'Improve ticket quality'
+    })
+    let focusSubjects = [customer, platform].slice(0, 0)
+    let commitmentSubjects = [customer, platform].slice(0, 0)
+    const getFocusScope = vi.fn(async () => ({
+      focusId: current.id,
+      mode: focusSubjects.length === 0 ? 'open' as const : 'explicit' as const,
+      scopeId: focusSubjects.length === 0 ? null : 50,
+      subjects: focusSubjects
+    }))
+    const addFocusScopeSubject = vi.fn(async (_focusId, input) => {
+      const next = [customer, platform].find(({ name }) => name === input.name)
+      if (next) focusSubjects = [...focusSubjects, next]
+      return getFocusScope()
+    })
+    const getCommitmentScope = vi.fn(async () => ({
+      commitmentId: openCommitment.id,
+      focusId: current.id,
+      parent: openCommitment.parent,
+      mode: commitmentSubjects.length === 0 ? 'open' as const : 'explicit' as const,
+      scopeId: commitmentSubjects.length === 0 ? null : 60,
+      subjects: commitmentSubjects,
+      parentSubjects: [],
+      focusSubjects
+    }))
+    const addCommitmentScopeSubject = vi.fn(async (_commitmentId, input) => {
+      const next = [customer, platform].find(({ name }) => name === input.name)
+      if (next) commitmentSubjects = [...commitmentSubjects, next]
+      return getCommitmentScope()
+    })
+    const getCommitmentWorkingContext = vi.fn(async () => ({
+      commitmentId: openCommitment.id,
+      scopeId: commitmentSubjects.length === 0 ? null : 60,
+      cells: commitmentSubjects.map((currentSubject) => ({
+        scopeId: 60,
+        subjectId: currentSubject.id,
+        subject: currentSubject,
+        state: 'none' as const,
+        lastUpdateDate: null,
+        nextUpdateDate: null,
+        needsUpdate: false
+      }))
+    }))
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listThreads: vi.fn().mockResolvedValue([sprint]),
+      listCommitments: vi.fn(async (parent) =>
+        parent.type === 'thread' ? [openCommitment] : []
+      ),
+      getFocusScope,
+      addFocusScopeSubject,
+      getThreadScope: vi.fn(async () => ({
+        threadId: sprint.id,
+        focusId: current.id,
+        mode: 'open' as const,
+        scopeId: null,
+        subjects: [],
+        focusSubjects
+      })),
+      getCommitmentScope,
+      addCommitmentScopeSubject,
+      getCommitmentWorkingContext
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    const subjectInput = await screen.findByRole('textbox', { name: 'Add a Subject' })
+    await user.type(subjectInput, 'Customer Operations{Enter}')
+    await user.type(subjectInput, 'Platform Team{Enter}')
+    await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
+    await user.click(await screen.findByRole('button', {
+      name: 'Open commitment Improve ticket quality'
+    }))
+    expect(await screen.findByRole('button', { name: 'Add update' })).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: 'Toggle context drawer' }))
+    const drawer = screen.getByRole('complementary', { name: 'Commitment context drawer' })
+    expect(within(drawer).getByText(/Thread has no Subjects to inherit/)).toBeVisible()
+    expect(within(drawer).getByRole('button', { name: 'Add Customer Operations' })).toBeVisible()
+    expect(within(drawer).getByRole('button', { name: 'Add Platform Team' })).toBeVisible()
+    await user.click(within(drawer).getByRole('button', { name: 'Add Customer Operations' }))
+
+    await waitFor(() => expect(addCommitmentScopeSubject).toHaveBeenCalledWith(
+      openCommitment.id,
+      { name: 'Customer Operations' }
+    ))
+    expect(await screen.findByRole('tablist', { name: 'Commitment working context' }))
+      .toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Add update' })).not.toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Add update for Subject…' })).toBeVisible()
+  })
+
   it('reuses parent-aware Commitment and Update flows inside a Thread', async () => {
     const current = focus({ title: 'Project Atlas' })
     const sprint = thread()
@@ -1984,11 +2189,13 @@ describe('App', () => {
     )
     const threadDrawer = screen.getByRole('complementary', { name: 'Thread context drawer' })
     expect(within(threadDrawer).getByRole('heading', { name: 'Thread' })).toBeInTheDocument()
-    expect(within(threadDrawer).getAllByText('Sprint execution')).toHaveLength(2)
+    expect(within(threadDrawer).getByDisplayValue('Sprint execution')).toBeInTheDocument()
     expect(within(threadDrawer).getByText('2026-01-03')).toBeInTheDocument()
     await user.click(within(threadDrawer).getByLabelText('Needs review'))
     await user.click(within(threadDrawer).getByRole('button', { name: 'Save changes' }))
     expect(updateThread).toHaveBeenCalledWith(10, {
+      title: 'Sprint execution',
+      reviewFrequencyDays: 7,
       needsReview: false,
       sensitive: false
     })
@@ -2002,7 +2209,7 @@ describe('App', () => {
       name: 'Commitment context drawer'
     })
     expect(within(commitmentDrawer).getByRole('heading', { name: 'Commitment' })).toBeInTheDocument()
-    expect(within(commitmentDrawer).getAllByText('Keep sponsors aligned')).toHaveLength(2)
+    expect(within(commitmentDrawer).getByDisplayValue('Keep sponsors aligned')).toBeInTheDocument()
     expect(within(commitmentDrawer).getByText('Last updated')).toBeInTheDocument()
     expect(within(commitmentDrawer).getByText('Never')).toBeInTheDocument()
     expect(screen.getByLabelText('Commitment last updated')).toHaveTextContent(
@@ -2055,6 +2262,194 @@ describe('App', () => {
     expect(richTextPlainText(drawerInput.description)).toBe(' plus new notesOld notes')
     expect(await screen.findByRole('heading', { name: 'Revised plan' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Revised plan, paused' })).toHaveClass('opacity-55')
+  })
+
+  it('edits Thread cadence and Thread and Commitment titles through typed drawer fields', async () => {
+    const current = focus({ title: 'Project Atlas' })
+    const sprint = thread({ title: 'Sprint execution', reviewFrequencyDays: 7 })
+    const focusCommitment = commitment({ title: 'Keep sponsors aligned' })
+    const updateThread = vi.fn().mockResolvedValue(thread({
+      title: 'Sprint reliability',
+      reviewFrequencyDays: 14
+    }))
+    const updateCommitment = vi.fn().mockResolvedValue(commitment({
+      title: 'Keep sponsors closely aligned'
+    }))
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listThreads: vi.fn().mockResolvedValue([sprint]),
+      listCommitments: vi.fn(async (parent) =>
+        parent.type === 'focus' ? [focusCommitment] : []
+      ),
+      updateThread,
+      updateCommitment
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
+    await user.click(screen.getByRole('button', { name: 'Toggle context drawer' }))
+    let drawer = screen.getByRole('complementary', { name: 'Thread context drawer' })
+    const threadTitle = within(drawer).getByLabelText(/^Title/)
+    await user.clear(threadTitle)
+    await user.type(threadTitle, 'Sprint reliability')
+    const frequency = within(drawer).getByRole('spinbutton', {
+      name: /^Review every \(days\)/
+    })
+    await user.clear(frequency)
+    await user.type(frequency, '14')
+    await user.click(within(drawer).getByRole('button', { name: 'Save changes' }))
+
+    expect(updateThread).toHaveBeenCalledWith(sprint.id, {
+      title: 'Sprint reliability',
+      reviewFrequencyDays: 14,
+      needsReview: true,
+      sensitive: false
+    })
+    expect(await screen.findByRole('button', { name: 'Sprint reliability' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Overall' }))
+    await user.click(screen.getByRole('button', {
+      name: 'Open commitment Keep sponsors aligned'
+    }))
+    drawer = screen.getByRole('complementary', { name: 'Commitment context drawer' })
+    const commitmentTitle = within(drawer).getByLabelText(/^Title/)
+    await user.clear(commitmentTitle)
+    await user.type(commitmentTitle, 'Keep sponsors closely aligned')
+    await user.click(within(drawer).getByRole('button', { name: 'Save changes' }))
+
+    expect(updateCommitment).toHaveBeenCalledWith(focusCommitment.id, {
+      title: 'Keep sponsors closely aligned',
+      sensitive: false
+    })
+    expect(await screen.findByRole('heading', { name: 'Keep sponsors closely aligned' }))
+      .toBeInTheDocument()
+  })
+
+  it('confirms Thread and Commitment deletion and moves active routes to their parents', async () => {
+    const current = focus({ title: 'Project Atlas' })
+    const sprint = thread({ title: 'Sprint execution' })
+    const focusCommitment = commitment({ title: 'Keep sponsors aligned' })
+    const deleteThread = vi.fn().mockResolvedValue(true)
+    const deleteCommitment = vi.fn().mockResolvedValue(true)
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listThreads: vi.fn().mockResolvedValue([sprint]),
+      listCommitments: vi.fn(async (parent) =>
+        parent.type === 'focus' ? [focusCommitment] : []
+      ),
+      deleteThread,
+      deleteCommitment
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
+    await user.click(screen.getByRole('button', { name: 'Toggle context drawer' }))
+    await user.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(screen.getByRole('dialog', { name: 'Delete thread?' })).toBeInTheDocument()
+    expect(deleteThread).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Delete thread' }))
+
+    expect(deleteThread).toHaveBeenCalledWith(sprint.id)
+    expect(await screen.findByRole('button', { name: 'Overall' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    expect(screen.queryByRole('button', { name: 'Sprint execution' })).not.toBeInTheDocument()
+    expect(screen.getByRole('complementary', { name: 'Focus context drawer' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', {
+      name: 'Open commitment Keep sponsors aligned'
+    }))
+    expect(screen.getByRole('complementary', { name: 'Commitment context drawer' }))
+      .toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(screen.getByRole('dialog', { name: 'Delete commitment?' })).toBeInTheDocument()
+    expect(deleteCommitment).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Delete commitment' }))
+
+    expect(deleteCommitment).toHaveBeenCalledWith(focusCommitment.id)
+    expect(await screen.findByRole('button', { name: 'Overall' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    expect(screen.queryByRole('button', {
+      name: 'Open commitment Keep sponsors aligned'
+    })).not.toBeInTheDocument()
+    expect(screen.getByRole('complementary', { name: 'Focus context drawer' })).toBeInTheDocument()
+  })
+
+  it('preserves an unrelated active route when deleting a pinned Commitment', async () => {
+    const current = focus({ title: 'Project Atlas' })
+    const sprint = thread({ title: 'Sprint execution' })
+    const focusCommitment = commitment({ title: 'Keep sponsors aligned' })
+    const deleteCommitment = vi.fn().mockResolvedValue(true)
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listThreads: vi.fn().mockResolvedValue([sprint]),
+      listCommitments: vi.fn(async (parent) =>
+        parent.type === 'focus' ? [focusCommitment] : []
+      ),
+      deleteCommitment
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    await user.click(await screen.findByRole('button', {
+      name: 'Pin commitment Keep sponsors aligned in context drawer'
+    }))
+    await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
+    expect(screen.getByRole('complementary', { name: 'Commitment context drawer' }))
+      .toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Delete' }))
+    await user.click(screen.getByRole('button', { name: 'Delete commitment' }))
+
+    expect(deleteCommitment).toHaveBeenCalledWith(focusCommitment.id)
+    expect(screen.getByRole('button', { name: 'Sprint execution' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    expect(screen.getByRole('complementary', { name: 'Thread context drawer' }))
+      .toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Unpin drawer and follow current selection' }))
+      .not.toBeInTheDocument()
+  })
+
+  it('keeps the active Thread and drawer intact when Thread deletion fails', async () => {
+    const current = focus({ title: 'Project Atlas' })
+    const sprint = thread({ title: 'Sprint execution' })
+    const deleteThread = vi.fn().mockResolvedValue(false)
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listThreads: vi.fn().mockResolvedValue([sprint]),
+      deleteThread
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
+    await user.click(screen.getByRole('button', { name: 'Toggle context drawer' }))
+    await user.click(screen.getByRole('button', { name: 'Delete' }))
+    await user.click(screen.getByRole('button', { name: 'Delete thread' }))
+
+    expect(deleteThread).toHaveBeenCalledWith(sprint.id)
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The thread could not be deleted. Please try again.'
+    )
+    expect(screen.getByRole('button', { name: 'Sprint execution' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    expect(screen.getByRole('complementary', { name: 'Thread context drawer' }))
+      .toBeInTheDocument()
   })
 
   it('filters a newly cancelled or completed selection and redirects to Home', async () => {

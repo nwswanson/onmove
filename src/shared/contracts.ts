@@ -30,10 +30,17 @@ export const IPC_CHANNELS = {
   listThreads: 'domain:list-threads',
   createThread: 'domain:create-thread',
   updateThread: 'domain:update-thread',
+  deleteThread: 'domain:delete-thread',
   listCommitments: 'domain:list-commitments',
+  getCommitmentScope: 'domain:get-commitment-scope',
+  customizeCommitmentScope: 'domain:customize-commitment-scope',
+  addCommitmentScopeSubject: 'domain:add-commitment-scope-subject',
+  removeCommitmentScopeSubject: 'domain:remove-commitment-scope-subject',
+  followParentCommitmentScope: 'domain:follow-parent-commitment-scope',
   getCommitmentWorkingContext: 'domain:get-commitment-working-context',
   createCommitment: 'domain:create-commitment',
   updateCommitment: 'domain:update-commitment',
+  deleteCommitment: 'domain:delete-commitment',
   listUpdates: 'domain:list-updates',
   createUpdate: 'domain:create-update',
   updateUpdate: 'domain:update-update',
@@ -314,6 +321,18 @@ export interface ThreadScopeSnapshot {
   focusSubjects: SubjectSnapshot[]
 }
 
+/** A Commitment's applicability plus Subject choices from its direct parent and owning Focus. */
+export interface CommitmentScopeSnapshot {
+  commitmentId: number
+  focusId: number
+  parent: CommitmentParent
+  mode: ScopeMode
+  scopeId: number | null
+  subjects: SubjectSnapshot[]
+  parentSubjects: SubjectSnapshot[]
+  focusSubjects: SubjectSnapshot[]
+}
+
 export interface UpdateScopeCell {
   scopeId: number
   subjectId: number
@@ -523,12 +542,25 @@ export interface DomainApi {
   listThreads: (focusId: number) => Promise<ThreadSnapshot[]>
   createThread: (input: CreateThreadInput) => Promise<ThreadSnapshot>
   updateThread: (id: number, input: UpdateThreadInput) => Promise<ThreadSnapshot>
+  deleteThread: (id: number) => Promise<boolean>
   listCommitments: (parent: CommitmentParent) => Promise<CommitmentSnapshot[]>
+  getCommitmentScope: (commitmentId: number) => Promise<CommitmentScopeSnapshot>
+  customizeCommitmentScope: (commitmentId: number) => Promise<CommitmentScopeSnapshot>
+  addCommitmentScopeSubject: (
+    commitmentId: number,
+    input: AddFocusScopeSubjectInput
+  ) => Promise<CommitmentScopeSnapshot>
+  removeCommitmentScopeSubject: (
+    commitmentId: number,
+    subjectId: number
+  ) => Promise<CommitmentScopeSnapshot>
+  followParentCommitmentScope: (commitmentId: number) => Promise<CommitmentScopeSnapshot>
   getCommitmentWorkingContext: (
     commitmentId: number
   ) => Promise<CommitmentWorkingContextSnapshot>
   createCommitment: (input: CreateCommitmentInput) => Promise<CommitmentSnapshot>
   updateCommitment: (id: number, input: UpdateCommitmentInput) => Promise<CommitmentSnapshot>
+  deleteCommitment: (id: number) => Promise<boolean>
   listUpdates: (parent: UpdateParent) => Promise<UpdateSnapshot[]>
   createUpdate: (input: CreateUpdateInput) => Promise<UpdateSnapshot>
   updateUpdate: (id: number, input: EditUpdateInput) => Promise<UpdateSnapshot>

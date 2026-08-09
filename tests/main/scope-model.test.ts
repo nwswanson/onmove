@@ -1198,6 +1198,102 @@ describe('Subject, Scope, and scoped Update models', () => {
     ])
   })
 
+  it('moves an open Thread Commitment into inheritance and an independent custom overlay', () => {
+    const now = new Date('2026-08-08T12:00:00.000Z')
+    const focus = database!.domain.focuses.create({ title: 'Project Atlas' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Sprint execution',
+      reviewFrequencyDays: 7
+    }, now)
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Improve ticket quality'
+    }, now)
+    const customCommitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Keep refinement healthy'
+    }, now)
+    const bounded = database!.domain.focusScopes.addSubject(
+      focus.id,
+      { name: 'Customer Operations' },
+      now
+    )
+    database!.domain.focusScopes.addSubject(focus.id, { name: 'Platform Team' }, now)
+
+    expect(database!.domain.commitmentScopes.get(commitment.id, '2026-08-08')).toMatchObject({
+      mode: 'open',
+      scopeId: null,
+      subjects: [],
+      parentSubjects: [],
+      focusSubjects: [{ name: 'Customer Operations' }, { name: 'Platform Team' }]
+    })
+    expect(database!.domain.commitmentScopes.addSubject(
+      customCommitment.id,
+      { name: 'Customer Operations' },
+      now
+    )).toMatchObject({
+      mode: 'explicit',
+      subjects: [{ name: 'Customer Operations' }],
+      parentSubjects: [],
+      focusSubjects: [{ name: 'Customer Operations' }, { name: 'Platform Team' }]
+    })
+
+    database!.domain.threadScopes.followFocus(thread.id, now)
+
+    expect(database!.domain.commitmentScopes.get(commitment.id, '2026-08-08')).toMatchObject({
+      parent: { type: 'thread', id: thread.id },
+      mode: 'open',
+      scopeId: null,
+      subjects: [],
+      parentSubjects: [{ name: 'Customer Operations' }, { name: 'Platform Team' }],
+      focusSubjects: [{ name: 'Customer Operations' }, { name: 'Platform Team' }]
+    })
+
+    const inherited = database!.domain.commitmentScopes.followParent(commitment.id, now)
+    expect(inherited).toMatchObject({
+      mode: 'inherited',
+      scopeId: bounded.scopeId,
+      subjects: [{ name: 'Customer Operations' }, { name: 'Platform Team' }]
+    })
+    expect(commitment.scopeMatrix('2026-08-08').map(({ subject }) => subject.name)).toEqual([
+      'Customer Operations',
+      'Platform Team'
+    ])
+
+    const customerOperationsId = bounded.subjects[0].id
+    const narrowed = database!.domain.commitmentScopes.removeSubject(
+      commitment.id,
+      customerOperationsId,
+      now
+    )
+    expect(narrowed).toMatchObject({
+      mode: 'explicit',
+      subjects: [{ name: 'Platform Team' }],
+      parentSubjects: [{ name: 'Customer Operations' }, { name: 'Platform Team' }]
+    })
+    expect(database!.domain.threadScopes.get(thread.id, '2026-08-08').subjects.map(({ name }) => name))
+      .toEqual(['Customer Operations', 'Platform Team'])
+
+    const restored = database!.domain.commitmentScopes.addSubject(
+      commitment.id,
+      { name: 'customer operations' },
+      now
+    )
+    expect(restored.subjects.map(({ name }) => name)).toEqual([
+      'Customer Operations',
+      'Platform Team'
+    ])
+    expect(commitment.scopeApplicationHistory().map(({ to }) => to.mode)).toEqual([
+      'open',
+      'inherited',
+      'explicit',
+      'explicit'
+    ])
+  })
+
   it('cascades an active Thread and its nested overlay Scope chain with its Focus', () => {
     const now = new Date('2026-08-08T12:00:00.000Z')
     const focus = database!.domain.focuses.create({ title: 'Launch quality' })

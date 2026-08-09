@@ -183,6 +183,74 @@ describe('ContextDrawerOutlet', () => {
     }
   })
 
+  it('owns positive whole-number validation for editable drawer fields', async () => {
+    vi.useFakeTimers()
+    const autosave = vi.fn().mockResolvedValue(undefined)
+    try {
+      render(
+        <ContextDrawerOutlet
+          open
+          adapter={{
+            id: 'thread:2',
+            invalidationKeys: ['thread:2'],
+            model: {
+              title: 'Thread',
+              ariaLabel: 'Thread drawer',
+              sections: [{
+                id: 'details',
+                fields: [{
+                  kind: 'number',
+                  id: 'review-frequency',
+                  label: 'Review every (days)',
+                  value: '7',
+                  required: true,
+                  min: 1,
+                  step: 1,
+                  integer: true
+                }]
+              }],
+              autosave: {
+                fieldIds: ['review-frequency'],
+                errorMessage: 'Could not autosave.',
+                onInvoke: autosave
+              },
+              actions: [{
+                id: 'save',
+                label: 'Save',
+                requiresValidFields: true,
+                errorMessage: 'Could not save.',
+                onInvoke: vi.fn()
+              }]
+            }
+          }}
+          pinnedAdapter={null}
+          width={320}
+          minWidth={280}
+          maxWidth={384}
+          onWidthChange={vi.fn()}
+          onClose={vi.fn()}
+          onUnpin={vi.fn()}
+        />
+      )
+
+      const frequency = screen.getByRole('spinbutton', { name: /^Review every \(days\)/ })
+      fireEvent.change(frequency, { target: { value: '0' } })
+      expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+      fireEvent.change(frequency, { target: { value: '1.5' } })
+      expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+      expect(autosave).not.toHaveBeenCalled()
+
+      fireEvent.change(frequency, { target: { value: '14' } })
+      expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(TEXT_AUTOSAVE_INTERVAL_MS)
+      })
+      expect(autosave).toHaveBeenCalledWith({ 'review-frequency': '14' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('owns immediate choice cards and conditionally visible token-list editing', async () => {
     const changeMode = vi.fn().mockResolvedValue(undefined)
     const add = vi.fn().mockResolvedValue(undefined)
