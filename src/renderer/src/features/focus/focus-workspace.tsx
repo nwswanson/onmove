@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type {
   CommitmentParent,
-  CommitmentScopeSnapshot,
   CommitmentSnapshot,
   CreateCommitmentInput,
   CreateThreadInput,
@@ -560,10 +559,7 @@ export function FocusWorkspace({
     activeParentThread
   ])
 
-  function adapterForCommitment(
-    commitment: CommitmentSnapshot,
-    scope = model.commitmentScopes[commitment.id]
-  ): ContextDrawerAdapter {
+  function adapterForCommitment(commitment: CommitmentSnapshot): ContextDrawerAdapter {
     if (commitment.parent.type === 'focus') {
       return commitmentDrawerAdapter({
         commitment,
@@ -576,38 +572,12 @@ export function FocusWorkspace({
     const thread = model.threads.find(
       (candidate) => candidate.id === commitment.parent.id
     )
-    async function mutateScope(
-      operation: () => Promise<CommitmentScopeSnapshot>
-    ): Promise<void> {
-      const nextScope = await operation()
-      if (
-        selectedSubjectId !== null &&
-        !nextScope.subjects.some(({ id }) => id === selectedSubjectId)
-      ) onSelectedSubjectChange(null)
-      if (selectedCommitment?.id === commitment.id) {
-        await commitmentWorkingContext.refresh()
-      }
-      if (contextDrawer.pinnedAdapter?.id === `commitment:${commitment.id}`) {
-        contextDrawer.onPin(adapterForCommitment(commitment, nextScope))
-      }
-    }
     return commitmentDrawerAdapter({
       commitment,
       parentTitle: thread?.title ?? 'Thread',
       ancestorKeys: [`focus:${focus.id}`, `thread:${commitment.parent.id}`],
       onSave: (input) => saveCommitmentFromDrawer(commitment.id, input),
-      onDelete: () => deleteCommitmentFromDrawer(commitment),
-      scopeEditor: scope ? {
-        scope,
-        parentLabel: 'Thread',
-        onCustomize: () => mutateScope(() => model.customizeCommitmentScope(commitment.id)),
-        onFollowParent: () =>
-          mutateScope(() => model.followParentCommitmentScope(commitment.id)),
-        onAddSubject: (name) =>
-          mutateScope(() => model.addCommitmentScopeSubject(commitment.id, name)),
-        onRemoveSubject: (subjectId) =>
-          mutateScope(() => model.removeCommitmentScopeSubject(commitment.id, subjectId))
-      } : undefined
+      onDelete: () => deleteCommitmentFromDrawer(commitment)
     })
   }
 

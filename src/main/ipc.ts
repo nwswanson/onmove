@@ -129,25 +129,6 @@ export function registerAppIpc(
       ? database.domain.commitments.listForFocus(parent.id)
       : database.domain.commitments.listForThread(parent.id)
   )
-  ipcMain.handle(IPC_CHANNELS.getCommitmentScope, (_event, commitmentId: number) =>
-    database.domain.commitmentScopes.get(commitmentId)
-  )
-  ipcMain.handle(IPC_CHANNELS.customizeCommitmentScope, (_event, commitmentId: number) =>
-    database.domain.commitmentScopes.customize(commitmentId)
-  )
-  ipcMain.handle(
-    IPC_CHANNELS.addCommitmentScopeSubject,
-    (_event, commitmentId: number, input: AddFocusScopeSubjectInput) =>
-      database.domain.commitmentScopes.addSubject(commitmentId, input)
-  )
-  ipcMain.handle(
-    IPC_CHANNELS.removeCommitmentScopeSubject,
-    (_event, commitmentId: number, subjectId: number) =>
-      database.domain.commitmentScopes.removeSubject(commitmentId, subjectId)
-  )
-  ipcMain.handle(IPC_CHANNELS.followParentCommitmentScope, (_event, commitmentId: number) =>
-    database.domain.commitmentScopes.followParent(commitmentId)
-  )
   ipcMain.handle(IPC_CHANNELS.getCommitmentWorkingContext, (_event, id: number) => {
     const commitment = database.domain.commitments.requireModel(id)
     return {

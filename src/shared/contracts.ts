@@ -32,11 +32,6 @@ export const IPC_CHANNELS = {
   updateThread: 'domain:update-thread',
   deleteThread: 'domain:delete-thread',
   listCommitments: 'domain:list-commitments',
-  getCommitmentScope: 'domain:get-commitment-scope',
-  customizeCommitmentScope: 'domain:customize-commitment-scope',
-  addCommitmentScopeSubject: 'domain:add-commitment-scope-subject',
-  removeCommitmentScopeSubject: 'domain:remove-commitment-scope-subject',
-  followParentCommitmentScope: 'domain:follow-parent-commitment-scope',
   getCommitmentWorkingContext: 'domain:get-commitment-working-context',
   createCommitment: 'domain:create-commitment',
   updateCommitment: 'domain:update-commitment',
@@ -321,18 +316,6 @@ export interface ThreadScopeSnapshot {
   focusSubjects: SubjectSnapshot[]
 }
 
-/** A Commitment's applicability plus Subject choices from its direct parent and owning Focus. */
-export interface CommitmentScopeSnapshot {
-  commitmentId: number
-  focusId: number
-  parent: CommitmentParent
-  mode: ScopeMode
-  scopeId: number | null
-  subjects: SubjectSnapshot[]
-  parentSubjects: SubjectSnapshot[]
-  focusSubjects: SubjectSnapshot[]
-}
-
 export interface UpdateScopeCell {
   scopeId: number
   subjectId: number
@@ -442,7 +425,6 @@ export interface CreateCommitmentInput {
   dueDate?: string | null
   cadenceDays?: number | null
   sensitive?: boolean
-  scope?: SetScopeApplicationInput
 }
 
 export interface UpdateCommitmentInput {
@@ -484,6 +466,57 @@ export interface EditUpdateInput {
   observation?: string
   state?: HealthState
   sensitive?: boolean
+}
+
+export type TodoEntityParent =
+  | { type: 'focus'; id: number }
+  | { type: 'thread'; id: number }
+  | { type: 'commitment'; id: number }
+
+/**
+ * A Todo can belong to an aggregate entity or to one exact Subject cell under
+ * a Thread/Commitment. Focus-level Todos are always aggregate.
+ */
+export type TodoParent =
+  | TodoEntityParent
+  | { type: 'thread-scope'; id: number; scope: UpdateScopeCell }
+  | { type: 'commitment-scope'; id: number; scope: UpdateScopeCell }
+
+export interface TodoSortPlacementSnapshot {
+  context: TodoParent
+  position: number
+}
+
+export interface TodoSnapshot {
+  id: number
+  name: string
+  parent: TodoParent
+  dueDate: string | null
+  done: boolean
+  /** Independent positions for the exact context and its aggregate rollup. */
+  sort: TodoSortPlacementSnapshot[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateTodoInput {
+  name: string
+  parent: TodoParent
+  dueDate?: string | null
+  done?: boolean
+}
+
+export interface UpdateTodoInput {
+  name?: string
+  dueDate?: string | null
+  done?: boolean
+}
+
+/** Filtering never creates a new ordering domain; it preserves the context order. */
+export interface TodoListOptions {
+  done?: boolean
+  dueOnOrBefore?: string
+  dueOnOrAfter?: string
 }
 
 export interface ThreadStatusTransition {
@@ -544,17 +577,6 @@ export interface DomainApi {
   updateThread: (id: number, input: UpdateThreadInput) => Promise<ThreadSnapshot>
   deleteThread: (id: number) => Promise<boolean>
   listCommitments: (parent: CommitmentParent) => Promise<CommitmentSnapshot[]>
-  getCommitmentScope: (commitmentId: number) => Promise<CommitmentScopeSnapshot>
-  customizeCommitmentScope: (commitmentId: number) => Promise<CommitmentScopeSnapshot>
-  addCommitmentScopeSubject: (
-    commitmentId: number,
-    input: AddFocusScopeSubjectInput
-  ) => Promise<CommitmentScopeSnapshot>
-  removeCommitmentScopeSubject: (
-    commitmentId: number,
-    subjectId: number
-  ) => Promise<CommitmentScopeSnapshot>
-  followParentCommitmentScope: (commitmentId: number) => Promise<CommitmentScopeSnapshot>
   getCommitmentWorkingContext: (
     commitmentId: number
   ) => Promise<CommitmentWorkingContextSnapshot>

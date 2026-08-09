@@ -69,13 +69,15 @@ these operations only through named IPC methods. Threads and Commitments use nam
 and update methods; Updates use named list, create, edit, and delete methods. Repository dispatch and SQL
 remain unavailable to the renderer.
 
-The model beneath Focus—Subjects, Focus-owned Scopes, Threads, Commitments, dated Updates, health,
-reviews, and cadence—is specified as a unified whole in
+The model beneath Focus—Subjects, Focus-owned Scopes, Threads, Commitments, dated Updates, Todos,
+health, reviews, and cadence—is specified as a unified whole in
 [`focus-thread-commitment-model.md`](focus-thread-commitment-model.md). The schema and repository work
 introduced for Scope is summarized separately in
 [`scope-data-model-addition.md`](scope-data-model-addition.md). Removal, deletion, and audit behavior
 is specified in
 [`scope-lifecycle-and-observability.md`](scope-lifecycle-and-observability.md).
+The executable reminder and contextual sorting contract is specified in
+[`todo-model.md`](todo-model.md).
 
 ## Subjects, Scopes, and exact Update cells
 
@@ -83,12 +85,13 @@ Subjects are global canonical records for anything managed or observed. A Scope 
 Focus-owned applicability expression resolving to Subjects on a given date. Membership intervals
 are effective-dated, so changing populations does not rewrite historical meaning.
 
-Focuses, Threads, and Commitments each have an explicit Scope application. `open` means no boundary;
-Threads and Commitments may use `inherited`; `explicit` and `derived` select a Scope owned by the
-same Focus. A bounded Thread or Commitment Update must store the exact effective Scope and Subject
-cell. Direct Focus Updates remain aggregate and unscoped. A Thread whose effective Scope has zero
-Subjects is operationally Thread-wide and may record a direct unscoped Update; Commitments retain
-the strict exact-cell rule.
+Focuses and Threads have editable Scope applications. `open` means no boundary; a Thread may use
+`inherited`, while `explicit` and `derived` select a Scope owned by the same Focus. Commitment
+application rows are enforced projections: Thread-owned Commitments always inherit the Thread's
+effective Scope, and Focus-owned Commitments remain open. A bounded Thread or Commitment Update must
+store the exact effective Scope and Subject cell. Direct Focus Updates remain aggregate and
+unscoped. A Thread whose effective Scope has zero Subjects is operationally Thread-wide and may
+record a direct unscoped Update; Commitments retain the strict exact-cell rule.
 
 Scope is applicability, not tagging or current attention. Current exception sets can later be
 derived from cell state without pretending that healthy Subjects have left the Scope.
@@ -98,7 +101,8 @@ state and update cadence. Thread cells own state and review cadence. A bounded T
 effective Subject cell is due; its next date is the earliest cell deadline, and its aggregate last
 review date represents complete current-Scope coverage rather than merely the newest observation.
 
-Declared Scope applications have immutable transition history. Membership is ended with an
+Declared Focus and Thread Scope applications have immutable transition history. Commitment rows
+record their enforced initial mode but cannot be directly changed. Membership is ended with an
 effective date rather than deleted once used, and structural changes to a used Scope require a new
 Scope definition. Hard-deleting a Thread or Commitment erases that owner's evidence and audit rows
 but leaves Focus-owned Scopes, memberships, and global Subjects intact.

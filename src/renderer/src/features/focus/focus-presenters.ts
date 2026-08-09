@@ -1,6 +1,5 @@
 import type {
   CommitmentSnapshot,
-  CommitmentScopeSnapshot,
   CommitmentWorkingContextSnapshot,
   CommitmentType,
   FocusSnapshot,
@@ -494,9 +493,7 @@ function nestedScopeEditorSection(editor: NestedScopeEditor): ContextDrawerSecti
           {
             value: 'custom',
             label: 'Custom scope',
-            description: editor.mode === 'open'
-              ? 'Currently open and item-wide. Add Subjects below to create a custom boundary.'
-              : `Override the ${editor.parentLabel} Subject set for this item.`
+            description: `Override the ${editor.parentLabel} Subject set for this item.`
           }
         ],
         errorMessage: 'The scope mode could not be changed.',
@@ -666,21 +663,12 @@ export function commitmentDrawerAdapter({
   parentTitle,
   onSave,
   onDelete,
-  scopeEditor,
   ancestorKeys = []
 }: {
   commitment: CommitmentSnapshot
   parentTitle: string
   onSave: (input: UpdateCommitmentInput) => Promise<void>
   onDelete: () => Promise<void>
-  scopeEditor?: {
-    scope: CommitmentScopeSnapshot
-    parentLabel: 'Focus' | 'Thread'
-    onCustomize: () => Promise<void>
-    onFollowParent: () => Promise<void>
-    onAddSubject: (name: string) => Promise<void>
-    onRemoveSubject: (subjectId: number) => Promise<void>
-  }
   ancestorKeys?: readonly string[]
 }): ContextDrawerAdapter {
   const parentKind = commitment.parent.type === 'focus' ? 'Focus' : 'Thread'
@@ -755,21 +743,7 @@ export function commitmentDrawerAdapter({
               description: 'Hide this Commitment and its Updates from lists.'
             }
           ]
-        },
-        ...(scopeEditor ? [nestedScopeEditorSection({
-          mode: scopeEditor.scope.mode,
-          subjects: scopeEditor.scope.subjects,
-          parentSubjects: scopeEditor.scope.parentSubjects,
-          availableSubjects: [
-            ...scopeEditor.scope.parentSubjects,
-            ...scopeEditor.scope.focusSubjects
-          ],
-          parentLabel: scopeEditor.parentLabel,
-          onCustomize: scopeEditor.onCustomize,
-          onFollowParent: scopeEditor.onFollowParent,
-          onAddSubject: scopeEditor.onAddSubject,
-          onRemoveSubject: scopeEditor.onRemoveSubject
-        })] : [])
+        }
       ],
       autosave: {
         fieldIds: ['title'],

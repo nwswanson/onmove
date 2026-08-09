@@ -237,7 +237,89 @@ describe('database migrations', () => {
     expect(foreignKeyViolations).toEqual([])
   })
 
-  it('enforces Scope ownership and complete scoped Update cells at the SQLite boundary', () => {
+  it('backfills Commitment applicability and enforces its derived invariant', () => {
+    const database = new AppDatabase(databasePath)
+    const focus = database.domain.focuses.create({ title: 'Project Atlas' })
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Sprint execution',
+      reviewFrequencyDays: 7
+    })
+    const threadCommitment = database.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Improve ticket quality'
+    })
+    const focusCommitment = database.domain.commitments.create({
+      parent: { type: 'focus', id: focus.id },
+      type: 'ongoing',
+      title: 'Align sponsors'
+    })
+    const threadScope = database.domain.threadScopes.addSubject(
+      thread.id,
+      { name: 'Customer Operations' }
+    )
+    database.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      DROP TRIGGER commitment_scope_application_is_derived_insert;
+      DROP TRIGGER commitment_scope_application_is_derived_update;
+      DROP TRIGGER commitments_create_scope_application;
+      UPDATE commitment_scope_applications
+      SET mode = 'explicit', scope_id = ${threadScope.scopeId}
+      WHERE commitment_id = ${threadCommitment.id};
+      UPDATE commitment_scope_applications
+      SET mode = 'inherited', scope_id = NULL
+      WHERE commitment_id = ${focusCommitment.id};
+      DELETE FROM schema_migrations WHERE version = 12;
+    `)
+    legacy.close()
+
+    const migrated = new AppDatabase(databasePath)
+    expect(migrated.domain.commitments.requireModel(threadCommitment.id).scopeApplication())
+      .toMatchObject({
+        mode: 'inherited',
+        declaredScopeId: null,
+        effectiveScopeId: threadScope.scopeId,
+        inheritedFrom: { type: 'thread', id: thread.id }
+      })
+    expect(migrated.domain.commitments.requireModel(focusCommitment.id).scopeApplication())
+      .toMatchObject({
+        mode: 'open',
+        effectiveScopeId: null,
+        inheritedFrom: null
+      })
+    migrated.close()
+
+    const raw = new DatabaseSync(databasePath)
+    raw.exec('PRAGMA foreign_keys = ON;')
+    expect(() => raw.prepare(
+      `UPDATE commitment_scope_applications
+       SET mode = 'open', scope_id = NULL WHERE commitment_id = ?`
+    ).run(threadCommitment.id)).toThrow(/Commitment Scope is derived/)
+    expect(() => raw.prepare(
+      `UPDATE commitment_scope_applications
+       SET mode = 'inherited', scope_id = NULL WHERE commitment_id = ?`
+    ).run(focusCommitment.id)).toThrow(/Commitment Scope is derived/)
+
+    const transition = raw.prepare(
+      `SELECT id FROM scope_application_transitions
+       WHERE commitment_id = ? ORDER BY id DESC LIMIT 1`
+    ).get(threadCommitment.id) as { id: number }
+    expect(() => raw.prepare(
+      'UPDATE scope_application_transitions SET to_mode = to_mode WHERE id = ?'
+    ).run(transition.id)).toThrow(/immutable/)
+    expect(() => raw.prepare(
+      'DELETE FROM scope_application_transitions WHERE id = ?'
+    ).run(transition.id)).toThrow(/immutable/)
+    expect(() => raw.prepare(
+      'DELETE FROM commitment_scope_applications WHERE commitment_id = ?'
+    ).run(threadCommitment.id)).toThrow(/must retain its Scope application/)
+    raw.close()
+  })
+
+  it('enforces complete scoped Update cells and Scope ownership at the SQLite boundary', () => {
     const database = new AppDatabase(databasePath)
     const firstFocus = database.domain.focuses.create({ title: 'First' })
     const secondFocus = database.domain.focuses.create({ title: 'Second' })
@@ -262,10 +344,6 @@ describe('database migrations', () => {
     const raw = new DatabaseSync(databasePath)
     raw.exec('PRAGMA foreign_keys = ON;')
     expect(() => raw.prepare(
-      `UPDATE commitment_scope_applications
-       SET mode = 'explicit', scope_id = ? WHERE commitment_id = ?`
-    ).run(secondScope.id, commitment.id)).toThrow(/matching scope owned by its focus/)
-    expect(() => raw.prepare(
       `INSERT INTO updates (
          focus_id, thread_id, commitment_id, scope_id, subject_id,
          recorded_on, observation, state, sensitive, created_at
@@ -282,37 +360,86 @@ describe('database migrations', () => {
       subject.id,
       '2026-08-08T12:00:00.000Z'
     )).toThrow(/scope owned by its parent focus/)
+    raw.close()
+  })
 
-    raw.prepare(
-      `UPDATE commitment_scope_applications
-       SET mode = 'explicit', scope_id = ? WHERE commitment_id = ?`
-    ).run(firstScope.id, commitment.id)
-    const transition = raw.prepare(
-      `SELECT id, from_mode, from_scope_id, to_mode, to_scope_id
-       FROM scope_application_transitions
-       WHERE commitment_id = ? ORDER BY id DESC LIMIT 1`
-    ).get(commitment.id) as {
-      id: number
-      from_mode: string
-      from_scope_id: number | null
-      to_mode: string
-      to_scope_id: number
-    }
-    expect(transition).toMatchObject({
-      from_mode: 'open',
-      from_scope_id: null,
-      to_mode: 'explicit',
-      to_scope_id: firstScope.id
-    })
+  it('enforces Todo parent, Scope, and sort-placement integrity at the SQLite boundary', () => {
+    const now = new Date('2026-08-09T12:00:00.000Z')
+    const database = new AppDatabase(databasePath)
+    const firstFocus = database.domain.focuses.create({ title: 'First' })
+    const secondFocus = database.domain.focuses.create({ title: 'Second' })
+    const thread = database.domain.threads.create({
+      focusId: firstFocus.id,
+      title: 'Sprint execution',
+      reviewFrequencyDays: 7
+    }, now)
+    const scoped = database.domain.threadScopes.addSubject(
+      thread.id,
+      { name: 'Customer Operations' },
+      now
+    )
+    const otherSubject = database.domain.subjects.create({ name: 'Other Subject' })
+    const otherScope = database.domain.scopes.create({
+      focusId: secondFocus.id,
+      name: 'Other Scope',
+      dimension: 'subject'
+    }, now)
+    const focusTodo = database.domain.todos.create({
+      parent: { type: 'focus', id: firstFocus.id },
+      name: 'Focus Todo'
+    }, now)
+    const scopedTodo = database.domain.todos.create({
+      parent: {
+        type: 'thread-scope',
+        id: thread.id,
+        scope: { scopeId: scoped.scopeId as number, subjectId: scoped.subjects[0].id }
+      },
+      name: 'Scoped Todo'
+    }, now)
+    database.close()
+
+    const raw = new DatabaseSync(databasePath)
+    raw.exec('PRAGMA foreign_keys = ON;')
     expect(() => raw.prepare(
-      'UPDATE scope_application_transitions SET to_mode = to_mode WHERE id = ?'
-    ).run(transition.id)).toThrow(/immutable/)
+      `INSERT INTO todos (
+         focus_id, thread_id, commitment_id, scope_id, subject_id,
+         name, due_on, done, created_at, updated_at
+       ) VALUES (NULL, ?, NULL, ?, ?, 'Cross Focus', NULL, 0, ?, ?)`
+    ).run(
+      thread.id,
+      otherScope.id,
+      otherSubject.id,
+      now.toISOString(),
+      now.toISOString()
+    )).toThrow(/Scope owned by its parent focus/)
     expect(() => raw.prepare(
-      'DELETE FROM scope_application_transitions WHERE id = ?'
-    ).run(transition.id)).toThrow(/immutable/)
+      `INSERT INTO todos (
+         focus_id, thread_id, commitment_id, scope_id, subject_id,
+         name, due_on, done, created_at, updated_at
+       ) VALUES (?, NULL, NULL, ?, ?, 'Scoped Focus', NULL, 0, ?, ?)`
+    ).run(
+      firstFocus.id,
+      scoped.scopeId,
+      scoped.subjects[0].id,
+      now.toISOString(),
+      now.toISOString()
+    )).toThrow()
     expect(() => raw.prepare(
-      'DELETE FROM commitment_scope_applications WHERE commitment_id = ?'
-    ).run(commitment.id)).toThrow(/must retain its Scope application/)
+      "UPDATE todos SET due_on = '2026-02-30' WHERE id = ?"
+    ).run(focusTodo.id)).toThrow()
+    expect(() => raw.prepare(
+      'UPDATE todos SET focus_id = ?, thread_id = NULL WHERE id = ?'
+    ).run(firstFocus.id, scopedTodo.id)).toThrow(/parent context is immutable/)
+
+    const focusList = raw.prepare(
+      'SELECT id FROM todo_lists WHERE focus_id = ?'
+    ).get(firstFocus.id) as { id: number }
+    expect(() => raw.prepare(
+      `INSERT INTO todo_sort_placements (
+         todo_id, list_id, sort_key, created_at, updated_at
+       ) VALUES (?, ?, 9999, ?, ?)`
+    ).run(scopedTodo.id, focusList.id, now.toISOString(), now.toISOString()))
+      .toThrow(/must match its parent context/)
     raw.close()
   })
 })

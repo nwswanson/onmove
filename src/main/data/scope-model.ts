@@ -3,8 +3,6 @@ import {
   SCOPE_MODES,
   SCOPE_SOURCE_TYPES,
   type AddFocusScopeSubjectInput,
-  type CommitmentParent,
-  type CommitmentScopeSnapshot,
   type CreateScopeInput,
   type CreateScopeMembershipInput,
   type CreateSubjectInput,
@@ -311,8 +309,9 @@ export class SubjectRepository extends BaseRepository<SubjectSnapshot, SubjectMo
       `SELECT 1 AS found
        WHERE EXISTS (SELECT 1 FROM scope_memberships WHERE subject_id = ?)
           OR EXISTS (SELECT 1 FROM scopes WHERE context_subject_id = ?)
-          OR EXISTS (SELECT 1 FROM updates WHERE subject_id = ?)`,
-      [id, id, id]
+          OR EXISTS (SELECT 1 FROM updates WHERE subject_id = ?)
+          OR EXISTS (SELECT 1 FROM todos WHERE subject_id = ?)`,
+      [id, id, id, id]
     )
     if (referenced) {
       throw new ModelValidationError(
@@ -512,11 +511,12 @@ export class ScopeRepository extends BaseRepository<ScopeSnapshot, ScopeModel> {
     const historical = this.database.get<ExistsRow>(
       `SELECT 1 AS found
        WHERE EXISTS (SELECT 1 FROM updates WHERE scope_id = ?)
+          OR EXISTS (SELECT 1 FROM todos WHERE scope_id = ?)
           OR EXISTS (
             SELECT 1 FROM scope_application_transitions
             WHERE from_scope_id = ? OR to_scope_id = ?
           )`,
-      [id, id, id]
+      [id, id, id, id]
     )
     if (historical) {
       throw new ModelValidationError(
@@ -531,6 +531,7 @@ export class ScopeRepository extends BaseRepository<ScopeSnapshot, ScopeModel> {
       `SELECT 1 AS found
        WHERE EXISTS (SELECT 1 FROM scope_memberships WHERE scope_id = ?)
           OR EXISTS (SELECT 1 FROM updates WHERE scope_id = ?)
+          OR EXISTS (SELECT 1 FROM todos WHERE scope_id = ?)
           OR EXISTS (SELECT 1 FROM scopes WHERE base_scope_id = ?)
           OR EXISTS (SELECT 1 FROM focus_scope_applications WHERE scope_id = ?)
           OR EXISTS (SELECT 1 FROM thread_scope_applications WHERE scope_id = ?)
@@ -539,7 +540,7 @@ export class ScopeRepository extends BaseRepository<ScopeSnapshot, ScopeModel> {
             SELECT 1 FROM scope_application_transitions
             WHERE from_scope_id = ? OR to_scope_id = ?
           )`,
-      [id, id, id, id, id, id, id, id]
+      [id, id, id, id, id, id, id, id, id]
     ))
   }
 
@@ -815,14 +816,23 @@ export class ScopeMembershipRepository extends BaseRepository<
        WHERE EXISTS (
          SELECT 1 FROM updates WHERE scope_id = ? AND subject_id = ?
        ) OR EXISTS (
+         SELECT 1 FROM todos WHERE scope_id = ? AND subject_id = ?
+       ) OR EXISTS (
          SELECT 1 FROM scope_application_transitions
          WHERE from_scope_id = ? OR to_scope_id = ?
        )`,
-      [current.scopeId, current.subjectId, current.scopeId, current.scopeId]
+      [
+        current.scopeId,
+        current.subjectId,
+        current.scopeId,
+        current.subjectId,
+        current.scopeId,
+        current.scopeId
+      ]
     )
     if (historical) {
       throw new ModelValidationError(
-        'Scope membership cannot be deleted after scoped Update or applicability history exists; end it instead'
+        'Scope membership cannot be deleted after scoped Update, Todo, or applicability history exists; end it instead'
       )
     }
     return this.database.run('DELETE FROM scope_memberships WHERE id = ?', [id]).changes > 0
@@ -861,6 +871,11 @@ export class ScopeApplicationRepository {
     }
     if (owner.type === 'focus' && mode === 'inherited') {
       throw new ModelValidationError('a Focus cannot inherit Scope')
+    }
+    if (owner.type === 'commitment') {
+      throw new ModelValidationError(
+        'a Commitment cannot define Scope; Thread-owned Commitments derive their Thread Scope'
+      )
     }
 
     const scopeId = input.scopeId ?? null
@@ -1309,179 +1324,5 @@ export class ThreadScopeRepository {
     )
     if (!thread) throw new ModelNotFoundError('Thread', threadId)
     return { focus_id: Number(thread.focus_id), title: thread.title }
-  }
-}
-
-/**
- * Coordinates Commitment-local applicability without mutating the Scope used
- * by its Thread or Focus parent. Like Thread customization, every local change
- * creates a Focus-owned overlay so retained Update cells remain attributable.
- */
-export class CommitmentScopeRepository {
-  private readonly subjects: SubjectRepository
-  private readonly scopes: ScopeRepository
-  private readonly memberships: ScopeMembershipRepository
-  private readonly applications: ScopeApplicationRepository
-
-  constructor(private readonly database: SqliteAdapter) {
-    this.subjects = new SubjectRepository(database)
-    this.scopes = new ScopeRepository(database)
-    this.memberships = new ScopeMembershipRepository(database)
-    this.applications = new ScopeApplicationRepository(database)
-  }
-
-  get(commitmentId: number, on = today()): CommitmentScopeSnapshot {
-    const commitment = this.requireCommitment(commitmentId)
-    const application = this.applications.get({ type: 'commitment', id: commitmentId })
-    const parentApplication = this.applications.get(commitment.parent)
-    const focusApplication = this.applications.get({ type: 'focus', id: commitment.focusId })
-    return {
-      commitmentId,
-      focusId: commitment.focusId,
-      parent: commitment.parent,
-      mode: application.mode,
-      scopeId: application.effectiveScopeId,
-      subjects: application.effectiveScopeId === null
-        ? []
-        : this.scopes.effectiveSubjects(application.effectiveScopeId, on),
-      parentSubjects: parentApplication.effectiveScopeId === null
-        ? []
-        : this.scopes.effectiveSubjects(parentApplication.effectiveScopeId, on),
-      focusSubjects: focusApplication.effectiveScopeId === null
-        ? []
-        : this.scopes.effectiveSubjects(focusApplication.effectiveScopeId, on)
-    }
-  }
-
-  addSubject(
-    commitmentId: number,
-    input: AddFocusScopeSubjectInput,
-    now = new Date()
-  ): CommitmentScopeSnapshot {
-    const name = normalizeRequiredText(input.name, 'subject name')
-    const on = today(now)
-    return this.database.transaction(() => {
-      const current = this.get(commitmentId, on)
-      const subject = this.subjects.list().find(
-        (candidate) => candidate.name.localeCompare(name, undefined, { sensitivity: 'accent' }) === 0
-      ) ?? this.subjects.create({ name }, now).toSnapshot()
-      if (current.subjects.some(({ id }) => id === subject.id)) return current
-
-      const scope = this.createOverlay(commitmentId, current, now)
-      this.memberships.create({
-        scopeId: scope.id,
-        subjectId: subject.id,
-        effect: 'include',
-        effectiveFrom: on
-      }, now)
-      this.applications.set(
-        { type: 'commitment', id: commitmentId },
-        { mode: 'explicit', scopeId: scope.id },
-        now
-      )
-      return this.get(commitmentId, on)
-    })
-  }
-
-  removeSubject(
-    commitmentId: number,
-    subjectId: number,
-    now = new Date()
-  ): CommitmentScopeSnapshot {
-    assertId(subjectId, 'subject id')
-    const on = today(now)
-    return this.database.transaction(() => {
-      const current = this.get(commitmentId, on)
-      if (
-        current.scopeId === null ||
-        !current.subjects.some(({ id }) => id === subjectId)
-      ) return current
-
-      const scope = this.createOverlay(commitmentId, current, now)
-      this.memberships.create({
-        scopeId: scope.id,
-        subjectId,
-        effect: 'exclude',
-        effectiveFrom: on
-      }, now)
-      this.applications.set(
-        { type: 'commitment', id: commitmentId },
-        { mode: 'explicit', scopeId: scope.id },
-        now
-      )
-      return this.get(commitmentId, on)
-    })
-  }
-
-  customize(commitmentId: number, now = new Date()): CommitmentScopeSnapshot {
-    const on = today(now)
-    return this.database.transaction(() => {
-      const current = this.get(commitmentId, on)
-      if (current.mode === 'explicit') return current
-
-      const scope = this.createOverlay(commitmentId, current, now)
-      this.applications.set(
-        { type: 'commitment', id: commitmentId },
-        { mode: 'explicit', scopeId: scope.id },
-        now
-      )
-      return this.get(commitmentId, on)
-    })
-  }
-
-  followParent(commitmentId: number, now = new Date()): CommitmentScopeSnapshot {
-    return this.database.transaction(() => {
-      this.requireCommitment(commitmentId)
-      this.applications.set(
-        { type: 'commitment', id: commitmentId },
-        { mode: 'inherited' },
-        now
-      )
-      return this.get(commitmentId, today(now))
-    })
-  }
-
-  private createOverlay(
-    commitmentId: number,
-    current: CommitmentScopeSnapshot,
-    now: Date
-  ): ScopeModel {
-    const commitment = this.requireCommitment(commitmentId)
-    const base = current.scopeId === null ? null : this.scopes.find(current.scopeId)
-    return this.scopes.create({
-      focusId: commitment.focusId,
-      name: `${commitment.title} subjects`,
-      dimension: base?.dimension ?? 'subject',
-      baseScopeId: base?.id ?? null
-    }, now)
-  }
-
-  private requireCommitment(commitmentId: number): {
-    focusId: number
-    parent: CommitmentParent
-    title: string
-  } {
-    assertId(commitmentId, 'commitment id')
-    const row = this.database.get<{
-      focus_id: number | null
-      thread_id: number | null
-      thread_focus_id: number | null
-      title: string
-    }>(
-      `SELECT commitment.focus_id, commitment.thread_id,
-              thread.focus_id AS thread_focus_id, commitment.title
-       FROM commitments commitment
-       LEFT JOIN threads thread ON thread.id = commitment.thread_id
-       WHERE commitment.id = ?`,
-      [commitmentId]
-    )
-    if (!row) throw new ModelNotFoundError('Commitment', commitmentId)
-    return {
-      focusId: Number(row.focus_id ?? row.thread_focus_id),
-      parent: row.thread_id === null
-        ? { type: 'focus', id: Number(row.focus_id) }
-        : { type: 'thread', id: Number(row.thread_id) },
-      title: row.title
-    }
   }
 }

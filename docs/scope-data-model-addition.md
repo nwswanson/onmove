@@ -1,6 +1,6 @@
 # Scope data-model addition
 
-This note records the data-model work introduced in schema migrations 10 and 11. For the complete
+This note records the data-model work introduced in schema migrations 10 through 12. For the complete
 current domain specification, read
 [`focus-thread-commitment-model.md`](focus-thread-commitment-model.md).
 Lifecycle and deletion behavior is specified in
@@ -17,7 +17,8 @@ The addition introduces three separate concepts:
 
 1. **Subject** — the canonical thing being managed or observed.
 2. **Scope** — a Focus-owned expression describing which Subjects are applicable on a date.
-3. **Scope application** — how a Focus, Thread, or Commitment obtains its effective Scope.
+3. **Scope application** — how a Focus or Thread obtains its effective Scope, plus the enforced
+   derived application row used to resolve a Commitment's Thread context.
 
 A bounded Thread or Commitment Update now identifies the exact Scope/Subject cell. The one exception
 is direct Thread evidence recorded while no Subjects are effective, which is Thread-wide and
@@ -67,16 +68,19 @@ The migration creates one application table per owner type:
 - `thread_scope_applications`
 - `commitment_scope_applications`
 
-Every owner receives exactly one row. Focus rows accept `open`, `explicit`, or `derived`. Thread and
-Commitment rows additionally accept `inherited`. Database triggers enforce Focus ownership and
-require application mode to match the selected Scope's source type.
+Every owner receives exactly one row. Focus rows accept `open`, `explicit`, or `derived`, and Thread
+rows additionally accept `inherited`. Commitment rows are not an editable declaration: Thread-owned
+Commitments must be `inherited`, while Focus-owned Commitments must be `open`. Database triggers
+enforce these derived modes, Focus ownership, and selected Scope source type.
 
 Existing Focuses, Threads, and Commitments are backfilled as Open. This preserves every existing
 Update stream without inventing historical Subject attribution.
 
-New Threads and Commitments default to inheritance only when their direct parent is currently
-bounded; otherwise they default to Open. The repository resolves inheritance dynamically, so later
-parent application changes flow to inheriting descendants without rewriting their rows.
+New Threads use the application declared by their creation input or the model default. Every new
+Thread-owned Commitment is always initialized as inherited, even if its Thread is currently Open;
+every Focus-owned Commitment is initialized Open. The repository resolves inheritance dynamically,
+so later Thread application changes flow to both existing and future Commitments without rewriting
+their rows.
 
 ### Scoped `updates`
 
@@ -112,9 +116,10 @@ ThreadScopeCellSnapshot
 CommitmentScopeCellSnapshot
 ```
 
-`CreateThreadInput` and `CreateCommitmentInput` accept an optional application declaration so object
-creation and Scope selection can occur in one transaction. `UpdateSnapshot` always exposes `scope`
-as either an exact cell or `null`; the shape is never ambiguous.
+`CreateThreadInput` accepts an optional application declaration so Thread creation and Scope
+selection can occur in one transaction. `CreateCommitmentInput` deliberately does not: Commitment
+applicability is derived from ownership. `UpdateSnapshot` always exposes `scope` as either an exact
+cell or `null`; the shape is never ambiguous.
 
 These are domain contracts, not a new renderer capability. Named IPC methods can be added when the
 Scope UI is designed.
@@ -136,6 +141,19 @@ The same integrity review tightened membership interval edits and used Scope def
 new storage shape: interval edits now validate the resulting effective membership against every
 retained cell Update, and used Scope structure must be replaced rather than rewritten.
 
+## Migration 12: Commitment Scope derives from its Thread
+
+Migration 12, `commitments_derive_thread_scope`, removes order-dependent Commitment applicability.
+It backfills every Thread-owned Commitment application to `inherited` and every Focus-owned
+Commitment application to `open`, then replaces the creation trigger with the same unconditional
+rule. Guard triggers reject later inserts or updates that would give a Commitment a different mode
+or a declared Scope id.
+
+This matters when a user creates Commitments before defining a custom Thread Scope. Those existing
+Commitments now resolve the new Thread Scope immediately, exactly like Commitments created after it.
+The migration preserves old application transitions for observability and appends the corrective
+transition where an existing declaration changed.
+
 ## New repositories and model helpers
 
 `DomainStore` now provides:
@@ -149,7 +167,8 @@ retained cell Update, and used Scope structure must be replaced rather than rewr
 | `focusScopes` | Return the Focus's current Subject set and coordinate atomic inline add/remove mutations. |
 | `threadScopes` | Return effective and Focus-offered Subjects, fork isolated Thread overlays, edit isolated Subject membership, and restore live Focus inheritance. |
 
-Focus, Thread, and Commitment models expose `scopeApplication()` and `setScope()`. Scope models expose
+Focus and Thread models expose `scopeApplication()` and `setScope()`. Commitment models expose a
+read-only `scopeApplication()` derived through ownership. Scope models expose
 `effectiveSubjects(date)`. Thread and Commitment models additionally expose `scopeMatrix(date)`.
 `scopeApplications.history(owner)` and each owner's `scopeApplicationHistory()` helper return the
 immutable declared transition stream.
@@ -181,9 +200,10 @@ state. A missing Subject assessment contributes `none`.
 
 ### Open objects
 
-Open Focuses, Threads, and Commitments retain the prior aggregate behavior. Their Updates have
-`scope: null`. Direct Focus Updates always use this form even if the Focus has a bounded application,
-because they are currently aggregate Focus judgments.
+Open Focuses and Threads retain the prior aggregate behavior. Their Updates have `scope: null`.
+A Thread-owned Commitment is effectively open whenever its inherited Thread is open; a Focus-owned
+Commitment is always open. Direct Focus Updates always use this form even if the Focus has a bounded
+application, because they are currently aggregate Focus judgments.
 
 ## Validation coverage
 
@@ -202,6 +222,8 @@ The new automated tests cover:
 - preservation of historical cell attribution after applicability changes;
 - guarded Scope, Subject, and membership deletion;
 - immutable Scope-application history, no-op reassignment, and below-repository auditing;
+- creation-order independence for Commitments whose Thread later becomes custom-scoped;
+- rejection of direct Commitment Scope declarations at repository and SQLite boundaries;
 - exact membership-end validation across include, exclude, and base resolution;
 - owner-deletion cascades that retain shared Scope and Subject records;
 - complete Focus cascade behavior; and
@@ -211,10 +233,10 @@ The new automated tests cover:
 
 The preload exposes named Focus- and Thread-Scope operations rather than generic Subject, Scope,
 membership, or application CRUD. Focus Overall edits its direct Subject set through chips. A
-Thread's context drawer owns its Scope definition: mutually exclusive `Inherit Focus scope` and
-`Custom scope` choices declare the application mode. Custom mode reveals an inline token editor,
-offers missing Focus Subjects as one-click suggestions, and forks a Focus-owned overlay before any
-Thread-local membership change. Returning to inheritance is one immediate action.
+Thread's context drawer owns its Scope definition through mutually exclusive `Inherit Focus scope`
+and `Custom scope` choices. Custom mode reveals an inline token editor, offers missing Focus Subjects
+as one-click suggestions, and forks a Focus-owned overlay before any Thread-local membership change.
+There are no Commitment Scope operations or Commitment drawer controls.
 
 These IPC calls are typed request/response operations; SQLite changes do not push a reactive result
 into renderer state. After either Focus Subject mutation, the Focus workspace invalidates and reloads
@@ -244,20 +266,14 @@ the user switches Focuses. If the selected Subject is absent from the new destin
 matrix, the Focus's selection becomes All Subjects. The tab receiver has no visible heading, renders
 All Subjects without a subtitle, and is hidden entirely when there are no Subject tabs.
 
-The named `getThreadSubjectMatrix` projection joins each Thread review cell to bounded child
-Commitment cells containing the same canonical Subject. In a Subject working context, the renderer
-therefore shows only applicable bounded Commitments and substitutes their cell-specific state,
-last-Update date, cadence date, and due flag for aggregate rollups. Open Commitments have no Subject
-cell and remain visible only in All Subjects. Commitment creation remains in All Subjects so a
-Thread-wide creation is never presented as Subject-specific. A Thread-owned Commitment's context
-drawer exposes its own applicability: it can follow the Thread's effective scope or fork a
-Focus-owned custom overlay. Switching an Open Commitment to inheritance immediately replaces its
-single unscoped Update stream with one exact cell per effective Thread Subject for subsequent
-evidence; retained unscoped Updates remain historical evidence rather than being rewritten.
-If the Thread itself is still Open, inheritance remains unscoped. The Commitment aggregate therefore
-returns the Focus's effective Subjects separately from the direct parent's effective Subjects; the
-drawer explains that the Thread has nothing to inherit and offers those Focus Subjects as one-click
-custom-scope candidates.
+The named `getThreadSubjectMatrix` projection joins each Thread review cell to child Commitment cells
+containing the same canonical Subject. In a Subject working context, the renderer substitutes each
+Commitment's cell-specific state, last-Update date, cadence date, and due flag for aggregate rollups.
+Commitment creation remains in All Subjects so creation is never presented as Subject-specific.
+Every Thread-owned Commitment follows the Thread automatically: an Open Thread yields one unscoped
+Commitment stream, and a bounded Thread yields one exact cell per effective Subject. This remains
+true when the Commitments existed before the Thread Scope was defined. Retained unscoped or former
+cell Updates remain historical evidence rather than being rewritten.
 
 Former-Scope and ended-membership direct Thread Updates remain durable and visible in All Subjects.
 The visible `Former scope` classification follows current canonical Subject applicability rather

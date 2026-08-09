@@ -1,16 +1,16 @@
 # OnMove work-domain model
 
 This document is the unified specification for the durable model beneath a Focus. It describes the
-model as it exists now, including Subjects, Focus-owned Scopes, Threads, Commitments, Updates,
+model as it exists now, including Subjects, Focus-owned Scopes, Threads, Commitments, Updates, Todos,
 derived health, review cadence, lifecycle history, and deletion behavior. It is intentionally a
 domain and persistence document; renderer layouts and future workflows are outside its contract.
 
 The central idea is:
 
 > A Focus defines a pursuit. Threads identify independently meaningful dimensions of that pursuit.
-> Subjects identify the things being managed or observed. Scopes state where the pursuit, Thread,
-> or Commitment applies. Updates record reality in an exact context, and Commitments state what is
-> expected.
+> Subjects identify the things being managed or observed. Scopes state where the pursuit or Thread
+> applies. Updates record reality in an exact context, and Commitments state what is expected within
+> their owning Thread's context.
 
 ## Core invariants
 
@@ -21,10 +21,11 @@ The central idea is:
 - A Scope belongs to exactly one Focus and resolves to a set of Subjects on a given date.
 - Context, Scope, and attention are different concepts. Scope means applicability; it is not a tag
   or a list of exceptions.
-- Focus, Thread, and Commitment applicability is always explicit through a Scope application. The
-  absence of a bounded Scope is represented by `open`, never by a missing row.
-- Threads and Commitments may inherit their parent's effective Scope, select another Scope owned by
-  the same Focus, or remain Open. A Focus cannot inherit.
+- Focus and Thread applicability is explicit through a Scope application. The absence of a bounded
+  Scope is represented by `open`, never by a missing row.
+- Threads either inherit their Focus's effective Scope or use a custom Focus-owned Scope. A Focus
+  cannot inherit. A Thread-owned Commitment always derives the Thread's current effective Scope;
+  a Focus-owned Commitment is always unscoped.
 - A bounded Thread or Commitment Update belongs to one exact Scope/Subject cell. The cell is required
   and is retained as historical attribution. A Thread with zero effective Subjects is operationally
   Thread-wide and may record direct unscoped evidence until Subjects become effective.
@@ -47,7 +48,7 @@ Subject (canonical, global)
    │                         │
    │                         ├── Focus Scope application
    │                         ├── Thread Scope application
-   │                         └── Commitment Scope application
+   │                         └── derived Commitment application row
    │
    └── exact cell attribution on scoped Updates
 
@@ -55,10 +56,12 @@ Focus
 ├── Threads[]
 │   ├── Commitments[]
 │   │   └── Updates[]
-│   └── Updates[]
+│   ├── Updates[]
+│   └── Todos[] (aggregate or exact Scope/Subject cell)
 ├── Commitments[]
 │   └── Updates[]
-└── Updates[]
+├── Updates[]
+└── Todos[]
 ```
 
 A Commitment has exactly one parent: a Focus or a Thread. An Update has exactly one parent: a
@@ -178,13 +181,14 @@ unused setup mistakes; after Update or application history exists, end the inter
 
 ### Scope application
 
-A Scope application states how a particular Focus, Thread, or Commitment obtains applicability. It
-has a separate row for every owner, including Open owners.
+A Scope application states how a Focus or Thread obtains applicability. The database also keeps one
+Commitment application row as an enforced projection so existing resolution, history, and exact-cell
+queries have one consistent representation; callers cannot mutate that row.
 
 | Mode | Declared Scope | Effective behavior |
 | --- | --- | --- |
 | `open` | none | No applicability boundary; Updates on the owner are aggregate/unscoped. |
-| `inherited` | none | Resolves the current effective Scope of the direct parent. Threads and Commitments only. |
+| `inherited` | none | Resolves the current effective Scope of the direct parent. Editable for Threads; mandatory for Thread-owned Commitments. |
 | `explicit` | required | Uses a Focus-owned explicit Scope definition. |
 | `derived` | required | Uses a Focus-owned derived Scope definition. |
 
@@ -201,14 +205,15 @@ Inheritance is a live relationship. If a parent changes from a bounded Scope to 
 child becomes effectively Open. If the parent selects another Scope, the child follows it. This does
 not mutate the child's application row or silently mutate the parent.
 
-When a new Thread or Commitment is created:
+When a new Thread is created, it may inherit its Focus or declare a valid custom application. When a
+Commitment is created, creation order is deliberately irrelevant: a Thread-owned Commitment is
+always stored as `inherited`, even while the Thread is Open, so a later Thread Scope immediately
+materializes on every existing Commitment. A Focus-owned Commitment is always stored as `open`.
+`CreateCommitmentInput` has no Scope field, and both repository validation and SQLite triggers reject
+direct Commitment application changes.
 
-- it defaults to `inherited` if its direct parent currently has a bounded application;
-- it defaults to `open` if its direct parent is Open; and
-- an explicit creation input may choose any valid mode instead.
-
-A child may select a local Scope that extends or narrows the parent's population, or uses a different
-dimension. This never expands the parent application. All selected Scopes still belong to the same
+A Thread may select a custom Scope that extends or narrows its Focus population, or uses a different
+dimension. This never expands the Focus application. All selected Scopes still belong to the same
 Focus, which prevents cross-Focus leakage.
 
 ### Thread
@@ -356,6 +361,18 @@ future-dated Update as the latest evidence immediately, preserving the existing 
 Focus and Thread review projections are evaluated as of a supplied date and ignore observations
 after that projection date.
 
+### Todo
+
+A Todo is an executable reminder, not evidence and not a Commitment. It has a required name, one
+immutable parent context, an optional due date, a boolean `done`, and independent sort placements.
+It may belong to a Focus, Thread, Commitment, Thread Scope/Subject cell, or Commitment Scope/Subject
+cell. A scoped Todo is returned both in its exact-cell list and its entity aggregate list.
+
+Sort is modeled as a relation rather than a scalar column because those two lists may have different
+orders. Reordering a filtered subset only rearranges the supplied Todos among their existing slots,
+so hidden done/not-due records remain stable. The complete contract is documented in
+[`todo-model.md`](todo-model.md).
+
 ## State, health, status, and attention
 
 These terms are deliberately not interchangeable:
@@ -441,36 +458,34 @@ database.domain.scopeMemberships
 database.domain.scopeApplications
 database.domain.focusScopes
 database.domain.threadScopes
-database.domain.commitmentScopes
 database.domain.focuses
 database.domain.threads
 database.domain.commitments
 database.domain.updates
+database.domain.todos
 ```
 
 Models expose ordinary update/delete/refresh behavior plus domain helpers such as
 `scopeApplication()`, `setScope()`, `effectiveSubjects()`, and the Thread and Commitment
-`scopeMatrix()` projections. Focus, Thread, and Commitment models expose
+`scopeMatrix()` projections. Only Focus and Thread models expose `setScope()`; Commitment Scope is
+read-only and derived. Focus, Thread, and Commitment models expose
 `scopeApplicationHistory()`, while `scopeApplications.history(owner)` provides the generic audit
 surface. Repository methods return JSON-compatible snapshots; they never return SQLite handles.
+The Todo repository owns its contextual list and filtered-subset reorder operations; Todo sort
+placements are never inferred in renderer code.
 
-The Focus, Thread, and Commitment Scope aggregate repositories expose the current application,
-effective Subjects, and parent-provided Subject choices without leaking lower-level Scope rows to
-the renderer. Thread and Commitment customization creates a new Focus-owned overlay instead of
-mutating the parent's Scope. A Commitment can explicitly follow its direct parent, add or remove a
-Subject in a local overlay, and return a typed snapshot containing both its effective Subjects and
-its parent's effective Subjects. Its snapshot also carries the owning Focus's current Subjects as
-custom-scope candidates. This distinction matters when a Thread remains Open after its Focus becomes
-bounded: inheritance remains Open, while the Commitment can still form an independent boundary from
-the Focus's canonical choices.
+The Focus and Thread Scope aggregate repositories expose current applications and effective Subjects
+without leaking lower-level Scope rows to the renderer. Thread customization creates a new
+Focus-owned overlay instead of mutating the Focus Scope. Commitments have no Scope aggregate or
+mutation surface; their working-context projection resolves the owning Thread application live.
 
 Removal, deletion, and every supported observation surface are specified in
 [`scope-lifecycle-and-observability.md`](scope-lifecycle-and-observability.md).
 
-The renderer reaches these aggregates only through named, typed IPC methods. The Thread-owned
-Commitment drawer uses those operations to change applicability, then reloads the Commitment's
-working-context cells so Update creation immediately obeys the new boundary. No generic repository
-dispatch or SQL crosses the preload boundary.
+The renderer reaches the Focus and Thread aggregates only through named, typed IPC methods. The
+Thread drawer offers only inheritance and custom Scope definition. Commitment screens consume a
+named read-only working-context projection and never expose application controls. No generic
+repository dispatch or SQL crosses the preload boundary.
 
 ## End-to-end example
 

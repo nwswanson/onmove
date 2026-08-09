@@ -16,7 +16,6 @@ import {
 import type { SqliteAdapter } from './sqlite-adapter'
 import { FocusRepository } from './focus'
 import {
-  CommitmentScopeRepository,
   FocusScopeRepository,
   ScopeApplicationRepository,
   ScopeMembershipRepository,
@@ -24,6 +23,7 @@ import {
   SubjectRepository,
   ThreadScopeRepository
 } from './scope-model'
+import { TodoRepository } from './todo-model'
 import { CommitmentRepository, ThreadRepository, UpdateRepository } from './work-model'
 
 type RelationRecord = RelationSnapshot
@@ -535,7 +535,6 @@ export class DomainStore {
   readonly focuses: FocusRepository
   readonly focusScopes: FocusScopeRepository
   readonly threadScopes: ThreadScopeRepository
-  readonly commitmentScopes: CommitmentScopeRepository
   readonly subjects: SubjectRepository
   readonly scopes: ScopeRepository
   readonly scopeMemberships: ScopeMembershipRepository
@@ -543,6 +542,7 @@ export class DomainStore {
   readonly threads: ThreadRepository
   readonly commitments: CommitmentRepository
   readonly updates: UpdateRepository
+  readonly todos: TodoRepository
 
   constructor(database: SqliteAdapter) {
     this.relations = new RelationRepository(database)
@@ -550,7 +550,6 @@ export class DomainStore {
     this.focuses = new FocusRepository(database)
     this.focusScopes = new FocusScopeRepository(database)
     this.threadScopes = new ThreadScopeRepository(database)
-    this.commitmentScopes = new CommitmentScopeRepository(database)
     this.subjects = new SubjectRepository(database)
     this.scopes = new ScopeRepository(database)
     this.scopeMemberships = new ScopeMembershipRepository(database)
@@ -558,5 +557,6 @@ export class DomainStore {
     this.threads = new ThreadRepository(database)
     this.commitments = new CommitmentRepository(database)
     this.updates = new UpdateRepository(database)
+    this.todos = new TodoRepository(database)
   }
 }

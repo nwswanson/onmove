@@ -113,7 +113,7 @@ describe('registerAppIpc', () => {
             scopeId: 54,
             subjects: [{ id: 61, name: 'Customer Operations' }],
             focusSubjects: [{ id: 61, name: 'Customer Operations' }]
-          }))
+          })),
         },
         threads: {
           listForFocus: vi.fn(() => [{ id: 21, focusId: 12, title: 'Sprint execution' }]),
@@ -163,42 +163,6 @@ describe('registerAppIpc', () => {
             snapshot: () => ({ id: 33, title: 'Align sponsors' })
           })),
           delete: vi.fn(() => true)
-        },
-        commitmentScopes: {
-          get: vi.fn(() => ({
-            commitmentId: 31,
-            focusId: 12,
-            parent: { type: 'thread', id: 21 },
-            mode: 'open',
-            scopeId: null,
-            subjects: [],
-            parentSubjects: [],
-            focusSubjects: [{ id: 61, name: 'Customer Operations' }]
-          })),
-          customize: vi.fn(() => ({
-            commitmentId: 31,
-            mode: 'explicit',
-            scopeId: 55,
-            subjects: []
-          })),
-          addSubject: vi.fn(() => ({
-            commitmentId: 31,
-            mode: 'explicit',
-            scopeId: 56,
-            subjects: [{ id: 61, name: 'Customer Operations' }]
-          })),
-          removeSubject: vi.fn(() => ({
-            commitmentId: 31,
-            mode: 'explicit',
-            scopeId: 57,
-            subjects: []
-          })),
-          followParent: vi.fn(() => ({
-            commitmentId: 31,
-            mode: 'inherited',
-            scopeId: 51,
-            subjects: [{ id: 61, name: 'Customer Operations' }]
-          }))
         },
         updates: {
           listForFocus: vi.fn(() => [{ id: 41, observation: 'Focus update' }]),
@@ -326,30 +290,6 @@ describe('registerAppIpc', () => {
       type: 'thread',
       id: 21
     })).toMatchObject([{ id: 32, title: 'Refine weekly' }])
-    expect(await handlers.get(IPC_CHANNELS.getCommitmentScope)?.(undefined, 31)).toMatchObject({
-      commitmentId: 31,
-      mode: 'open',
-      parentSubjects: [],
-      focusSubjects: [{ id: 61 }]
-    })
-    expect(await handlers.get(IPC_CHANNELS.customizeCommitmentScope)?.(
-      undefined,
-      31
-    )).toMatchObject({ mode: 'explicit', scopeId: 55 })
-    expect(await handlers.get(IPC_CHANNELS.addCommitmentScopeSubject)?.(
-      undefined,
-      31,
-      { name: 'Customer Operations' }
-    )).toMatchObject({ mode: 'explicit', subjects: [{ id: 61 }] })
-    expect(await handlers.get(IPC_CHANNELS.removeCommitmentScopeSubject)?.(
-      undefined,
-      31,
-      61
-    )).toMatchObject({ mode: 'explicit', subjects: [] })
-    expect(await handlers.get(IPC_CHANNELS.followParentCommitmentScope)?.(
-      undefined,
-      31
-    )).toMatchObject({ mode: 'inherited', scopeId: 51 })
     expect(await handlers.get(IPC_CHANNELS.getCommitmentWorkingContext)?.(
       undefined,
       31

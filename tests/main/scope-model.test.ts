@@ -105,11 +105,16 @@ describe('Subject, Scope, and scoped Update models', () => {
       effectiveFrom: '2026-01-10',
       effectiveUntil: '2026-01-20'
     })
-    const commitment = database!.domain.commitments.create({
-      parent: { type: 'focus', id: focus.id },
-      type: 'ongoing',
-      title: 'Hold a career conversation',
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Career direction',
+      reviewFrequencyDays: 7,
       scope: { mode: 'explicit', scopeId: reports.id }
+    })
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Hold a career conversation'
     })
     database!.domain.updates.create({
       parent: { type: 'commitment', id: commitment.id },
@@ -449,10 +454,9 @@ describe('Subject, Scope, and scoped Update models', () => {
       title: 'Hold career conversations'
     })
     const directCommitment = database!.domain.commitments.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       type: 'ongoing',
-      title: 'Review growth plans',
-      scope: { mode: 'explicit', scopeId: reports.id }
+      title: 'Review growth plans'
     })
     const threadUpdate = database!.domain.updates.create({
       parent: { type: 'thread', id: thread.id },
@@ -508,11 +512,16 @@ describe('Subject, Scope, and scoped Update models', () => {
       subjectId: alex.id,
       effectiveFrom: '2026-01-01'
     })
-    const commitment = database!.domain.commitments.create({
-      parent: { type: 'focus', id: focus.id },
-      type: 'ongoing',
-      title: 'Hold a career conversation',
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Career direction',
+      reviewFrequencyDays: 7,
       scope: { mode: 'explicit', scopeId: reports.id }
+    })
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Hold a career conversation'
     })
 
     expect(() => database!.domain.updates.create({
@@ -591,8 +600,7 @@ describe('Subject, Scope, and scoped Update models', () => {
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
       type: 'ongoing',
-      title: 'Subject-specific work',
-      scope: { mode: 'explicit', scopeId: emptyScope.id }
+      title: 'Subject-specific work'
     }, now)
     expect(() => database!.domain.updates.create({
       parent: { type: 'commitment', id: commitment.id },
@@ -616,13 +624,18 @@ describe('Subject, Scope, and scoped Update models', () => {
         effectiveFrom: '2026-01-01'
       })
     }
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Career direction',
+      reviewFrequencyDays: 7,
+      scope: { mode: 'explicit', scopeId: reports.id }
+    })
     const commitment = database!.domain.commitments.create(
       {
-        parent: { type: 'focus', id: focus.id },
+        parent: { type: 'thread', id: thread.id },
         type: 'ongoing',
         title: 'Hold substantive one-on-ones',
-        cadenceDays: 7,
-        scope: { mode: 'explicit', scopeId: reports.id }
+        cadenceDays: 7
       },
       new Date('2026-01-01T12:00:00.000Z')
     )
@@ -691,12 +704,6 @@ describe('Subject, Scope, and scoped Update models', () => {
       type: 'ongoing',
       title: 'Improve ticket quality'
     }, now)
-    const open = database!.domain.commitments.create({
-      parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
-      title: 'Unscoped coordination',
-      scope: { mode: 'open' }
-    }, now)
     database!.domain.updates.create({
       parent: { type: 'commitment', id: inherited.id },
       date: '2026-01-08',
@@ -729,8 +736,6 @@ describe('Subject, Scope, and scoped Update models', () => {
         lastUpdateDate: '2026-01-07'
       })
     ])
-    expect(matrix.flatMap(({ commitments }) => commitments)
-      .some(({ commitmentId }) => commitmentId === open.id)).toBe(false)
   })
 
   it('derives scoped Thread health across assessed and unassessed Subjects', () => {
@@ -926,11 +931,16 @@ describe('Subject, Scope, and scoped Update models', () => {
       effectiveFrom: '2026-01-01',
       effectiveUntil: '2026-02-01'
     })
-    const commitment = database!.domain.commitments.create({
-      parent: { type: 'focus', id: focus.id },
-      type: 'ongoing',
-      title: 'Discuss career direction',
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Career direction',
+      reviewFrequencyDays: 7,
       scope: { mode: 'explicit', scopeId: reports.id }
+    })
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Discuss career direction'
     })
     const update = database!.domain.updates.create({
       parent: { type: 'commitment', id: commitment.id },
@@ -939,10 +949,7 @@ describe('Subject, Scope, and scoped Update models', () => {
       state: 'green'
     })
 
-    database!.domain.scopeApplications.set(
-      { type: 'commitment', id: commitment.id },
-      { mode: 'open' }
-    )
+    thread.setScope({ mode: 'open' })
     expect(database!.domain.updates.listForCommitment(commitment.id)[0]).toMatchObject({
       id: update.id,
       scope: { scopeId: reports.id, subjectId: alex.id }
@@ -1198,100 +1205,58 @@ describe('Subject, Scope, and scoped Update models', () => {
     ])
   })
 
-  it('moves an open Thread Commitment into inheritance and an independent custom overlay', () => {
-    const now = new Date('2026-08-08T12:00:00.000Z')
+  it('applies a later custom Thread Scope to both existing Commitments', () => {
+    const now = new Date('2026-08-09T12:00:00.000Z')
     const focus = database!.domain.focuses.create({ title: 'Project Atlas' })
     const thread = database!.domain.threads.create({
       focusId: focus.id,
       title: 'Sprint execution',
       reviewFrequencyDays: 7
     }, now)
-    const commitment = database!.domain.commitments.create({
+    const firstCommitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
       type: 'ongoing',
       title: 'Improve ticket quality'
     }, now)
-    const customCommitment = database!.domain.commitments.create({
+    const secondCommitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
       type: 'ongoing',
       title: 'Keep refinement healthy'
     }, now)
-    const bounded = database!.domain.focusScopes.addSubject(
-      focus.id,
-      { name: 'Customer Operations' },
+
+    database!.domain.threadScopes.addSubject(thread.id, { name: 'Customer Operations' }, now)
+    const customThreadScope = database!.domain.threadScopes.addSubject(
+      thread.id,
+      { name: 'Platform Team' },
       now
     )
-    database!.domain.focusScopes.addSubject(focus.id, { name: 'Platform Team' }, now)
 
-    expect(database!.domain.commitmentScopes.get(commitment.id, '2026-08-08')).toMatchObject({
+    expect(database!.domain.focusScopes.get(focus.id, '2026-08-09')).toMatchObject({
       mode: 'open',
       scopeId: null,
-      subjects: [],
-      parentSubjects: [],
-      focusSubjects: [{ name: 'Customer Operations' }, { name: 'Platform Team' }]
+      subjects: []
     })
-    expect(database!.domain.commitmentScopes.addSubject(
-      customCommitment.id,
-      { name: 'Customer Operations' },
-      now
-    )).toMatchObject({
+    expect(customThreadScope).toMatchObject({
       mode: 'explicit',
-      subjects: [{ name: 'Customer Operations' }],
-      parentSubjects: [],
-      focusSubjects: [{ name: 'Customer Operations' }, { name: 'Platform Team' }]
+      subjects: [{ name: 'Customer Operations' }, { name: 'Platform Team' }],
+      focusSubjects: []
     })
-
-    database!.domain.threadScopes.followFocus(thread.id, now)
-
-    expect(database!.domain.commitmentScopes.get(commitment.id, '2026-08-08')).toMatchObject({
-      parent: { type: 'thread', id: thread.id },
-      mode: 'open',
-      scopeId: null,
-      subjects: [],
-      parentSubjects: [{ name: 'Customer Operations' }, { name: 'Platform Team' }],
-      focusSubjects: [{ name: 'Customer Operations' }, { name: 'Platform Team' }]
-    })
-
-    const inherited = database!.domain.commitmentScopes.followParent(commitment.id, now)
-    expect(inherited).toMatchObject({
-      mode: 'inherited',
-      scopeId: bounded.scopeId,
-      subjects: [{ name: 'Customer Operations' }, { name: 'Platform Team' }]
-    })
-    expect(commitment.scopeMatrix('2026-08-08').map(({ subject }) => subject.name)).toEqual([
-      'Customer Operations',
-      'Platform Team'
-    ])
-
-    const customerOperationsId = bounded.subjects[0].id
-    const narrowed = database!.domain.commitmentScopes.removeSubject(
-      commitment.id,
-      customerOperationsId,
-      now
-    )
-    expect(narrowed).toMatchObject({
-      mode: 'explicit',
-      subjects: [{ name: 'Platform Team' }],
-      parentSubjects: [{ name: 'Customer Operations' }, { name: 'Platform Team' }]
-    })
-    expect(database!.domain.threadScopes.get(thread.id, '2026-08-08').subjects.map(({ name }) => name))
-      .toEqual(['Customer Operations', 'Platform Team'])
-
-    const restored = database!.domain.commitmentScopes.addSubject(
-      commitment.id,
-      { name: 'customer operations' },
-      now
-    )
-    expect(restored.subjects.map(({ name }) => name)).toEqual([
-      'Customer Operations',
-      'Platform Team'
-    ])
-    expect(commitment.scopeApplicationHistory().map(({ to }) => to.mode)).toEqual([
-      'open',
-      'inherited',
-      'explicit',
-      'explicit'
-    ])
+    for (const commitment of [firstCommitment, secondCommitment]) {
+      expect(commitment.scopeApplication()).toMatchObject({
+        mode: 'inherited',
+        effectiveScopeId: customThreadScope.scopeId,
+        inheritedFrom: { type: 'thread', id: thread.id }
+      })
+      expect(commitment.scopeMatrix('2026-08-09').map(({ subject }) => subject.name)).toEqual([
+        'Customer Operations',
+        'Platform Team'
+      ])
+      expect(() => database!.domain.scopeApplications.set(
+        { type: 'commitment', id: commitment.id },
+        { mode: 'open' },
+        now
+      )).toThrow('Commitment cannot define Scope')
+    }
   })
 
   it('cascades an active Thread and its nested overlay Scope chain with its Focus', () => {

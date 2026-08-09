@@ -69,14 +69,11 @@
   `step=1`) and the model repeats that validation. After deleting the active Thread or Commitment,
   navigate to its surviving parent; deleting a pinned item off-route must not disturb the active
   route.
-- Expose Thread-owned Commitment applicability through the same receiver-owned drawer choice and
-  token-list contracts used for Thread scope. Use named Commitment Scope model/IPC operations;
-  switching between Open/custom applicability and inheritance must refresh the selected
-  Commitment's working-context cells immediately so bounded Update creation requires an exact
-  Subject. Keep Focus-owned Commitment presentation unchanged unless its own workflow calls for a
-  scope editor. A Thread-owned Commitment snapshot must expose direct-parent Subjects separately
-  from owning-Focus Subject candidates: an Open Thread has nothing to inherit, but its Commitment
-  must still be able to create a custom boundary from the Focus's current Subjects.
+- Scope definition belongs to Focus and Thread only. Never expose a Commitment Scope editor or
+  Commitment Scope mutation IPC. Every Thread-owned Commitment derives the Thread's current
+  effective Scope, including Commitments created before that Thread becomes bounded; Focus-owned
+  Commitments remain unscoped. Commitment working-context tabs and exact-cell Update creation are
+  projections of that Thread boundary, not a separate Commitment choice.
 
 ## Color system
 
@@ -193,9 +190,10 @@ and do not rely on color alone to communicate selection or status.
 - Keep Focus Subject applicability in the shared feature-level chip editor on the Focus screen.
   Configure Thread applicability only through the Thread context drawer: a receiver-owned choice
   switches between `Inherit Focus scope` and `Custom scope`, and a conditional receiver-owned token
-  list edits the custom Subject set. The Thread main screen owns only the operational Subject working
-  context. Views consume presenter-owned models and never coordinate Subject, Scope, membership, or
-  application writes themselves.
+  list edits the custom Subject set. Do not add a third Open choice; an as-yet unbounded custom
+  Thread is the nonscoped case. The Thread main screen owns only the operational Subject working
+  context. Views consume presenter-owned models and never coordinate Subject, Scope, membership,
+  or application writes themselves.
 - Treat named preload IPC as request/response, not a live query subscription. After a Focus Subject
   mutation succeeds, invalidate and reload every Thread snapshot, effective Scope, Subject matrix,
   direct-Update summary, and owned Commitment collection for that Focus. Use one request generation
@@ -232,8 +230,9 @@ and do not rely on color alone to communicate selection or status.
 - A Commitment must have exactly one Focus or Thread parent. An Update must have exactly one Focus,
   Thread, or Commitment parent. Preserve these SQLite constraints and cascades.
 - Treat Subject, Scope, and Scope application as distinct model concepts. Subjects are canonical and
-  generic; Scopes are Focus-owned applicability expressions; applications state whether a Focus,
-  Thread, or Commitment is Open, inherited, explicit, or derived.
+  generic; Scopes are Focus-owned applicability expressions; editable applications belong to Focus
+  and Thread. Persist Commitment application rows only as enforced derived projections:
+  Thread-owned Commitments are always `inherited`, and Focus-owned Commitments are always `open`.
 - Route Focus and Thread applicability through their aggregate repositories and named IPC. Focus
   edits are inline on its main screen; Thread edits originate in its context drawer. A Thread
   customization must create and apply a new Focus-owned overlay Scope based on its current effective
@@ -260,6 +259,14 @@ and do not rely on color alone to communicate selection or status.
   effective Subjects is operationally Thread-wide and may store direct unscoped Updates; this
   exception does not apply to Commitments. Preserve cell attribution when applications or membership
   later change.
+- Never accept a Scope declaration when creating or mutating a Commitment. Changing a Thread Scope
+  must immediately change the effective working context of all its Commitments regardless of
+  whether those Commitments were created before or after the Thread Scope.
+- Model Todos separately from Commitments. A Todo has a required name, immutable Focus/Thread/
+  Commitment or exact Thread/Commitment Scope-cell parent, optional due date, boolean done state,
+  and contextual sort placements. Scoped Todos must receive independent placements in both their
+  exact cell and entity rollup. Reordering a filtered subset may only permute that subset's occupied
+  slots; never use one scalar sort column that lets one view corrupt another view's order.
 - Store `sensitive` as a strict non-null boolean flag that defaults to false on every Focus, Thread,
   Commitment, and Update. Visibility is a presentation preference, not a database filter or a
   lifecycle state.

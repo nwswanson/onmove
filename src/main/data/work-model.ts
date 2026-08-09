@@ -655,11 +655,6 @@ export class CommitmentModel extends BaseModel<CommitmentRecord> {
   scopeApplicationHistory(): ScopeApplicationTransition[] {
     return this.repository.scopeApplicationHistory(this.id)
   }
-
-  setScope(input: SetScopeApplicationInput): this {
-    this.repository.setScope(this.id, input)
-    return this.refresh()
-  }
 }
 
 export class CommitmentRepository extends BaseRepository<CommitmentRecord, CommitmentModel> {
@@ -699,13 +694,6 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
           createdAt
         ]
       )
-      if (input.scope) {
-        this.scopeApplications.set(
-          { type: 'commitment', id: result.lastInsertRowid },
-          input.scope,
-          now
-        )
-      }
       return result.lastInsertRowid
     })
     return this.requireModel(commitmentId)
@@ -786,10 +774,6 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
 
   scopeApplicationHistory(id: number): ScopeApplicationTransition[] {
     return this.scopeApplications.history({ type: 'commitment', id })
-  }
-
-  setScope(id: number, input: SetScopeApplicationInput): ScopeApplicationSnapshot {
-    return this.scopeApplications.set({ type: 'commitment', id }, input)
   }
 
   scopeMatrix(id: number, asOf = today()): CommitmentScopeCellSnapshot[] {

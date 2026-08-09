@@ -1066,6 +1066,322 @@ const migrations: readonly Migration[] = [
         END;
       `)
     }
+  },
+  {
+    version: 12,
+    name: 'commitments_derive_thread_scope',
+    up(database) {
+      const requiredTables = [
+        'commitments',
+        'commitment_scope_applications',
+        'thread_scope_applications'
+      ]
+      const hasCompleteScopeDomain = requiredTables.every((table) => database.get<{ found: number }>(
+        "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?",
+        [table]
+      ))
+      if (!hasCompleteScopeDomain) return
+
+      database.exec(`
+        DROP TRIGGER IF EXISTS commitments_create_scope_application;
+
+        UPDATE commitment_scope_applications
+        SET
+          mode = CASE
+            WHEN EXISTS (
+              SELECT 1 FROM commitments
+              WHERE commitments.id = commitment_scope_applications.commitment_id
+                AND commitments.thread_id IS NOT NULL
+            ) THEN 'inherited'
+            ELSE 'open'
+          END,
+          scope_id = NULL,
+          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE
+          scope_id IS NOT NULL OR
+          mode IS NOT CASE
+            WHEN EXISTS (
+              SELECT 1 FROM commitments
+              WHERE commitments.id = commitment_scope_applications.commitment_id
+                AND commitments.thread_id IS NOT NULL
+            ) THEN 'inherited'
+            ELSE 'open'
+          END;
+
+        CREATE TRIGGER commitments_create_scope_application
+        AFTER INSERT ON commitments
+        BEGIN
+          INSERT INTO commitment_scope_applications (
+            commitment_id, mode, scope_id, updated_at
+          ) VALUES (
+            NEW.id,
+            CASE WHEN NEW.thread_id IS NOT NULL THEN 'inherited' ELSE 'open' END,
+            NULL,
+            strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          );
+        END;
+
+        CREATE TRIGGER commitment_scope_application_is_derived_insert
+        BEFORE INSERT ON commitment_scope_applications
+        WHEN
+          (
+            EXISTS (
+              SELECT 1 FROM commitments
+              WHERE commitments.id = NEW.commitment_id
+                AND commitments.thread_id IS NOT NULL
+            ) AND (NEW.mode IS NOT 'inherited' OR NEW.scope_id IS NOT NULL)
+          ) OR (
+            EXISTS (
+              SELECT 1 FROM commitments
+              WHERE commitments.id = NEW.commitment_id
+                AND commitments.focus_id IS NOT NULL
+            ) AND (NEW.mode IS NOT 'open' OR NEW.scope_id IS NOT NULL)
+          )
+        BEGIN
+          SELECT RAISE(
+            ABORT,
+            'Commitment Scope is derived: Thread-owned Commitments inherit and Focus-owned Commitments are open'
+          );
+        END;
+
+        CREATE TRIGGER commitment_scope_application_is_derived_update
+        BEFORE UPDATE OF mode, scope_id ON commitment_scope_applications
+        WHEN
+          (
+            EXISTS (
+              SELECT 1 FROM commitments
+              WHERE commitments.id = NEW.commitment_id
+                AND commitments.thread_id IS NOT NULL
+            ) AND (NEW.mode IS NOT 'inherited' OR NEW.scope_id IS NOT NULL)
+          ) OR (
+            EXISTS (
+              SELECT 1 FROM commitments
+              WHERE commitments.id = NEW.commitment_id
+                AND commitments.focus_id IS NOT NULL
+            ) AND (NEW.mode IS NOT 'open' OR NEW.scope_id IS NOT NULL)
+          )
+        BEGIN
+          SELECT RAISE(
+            ABORT,
+            'Commitment Scope is derived: Thread-owned Commitments inherit and Focus-owned Commitments are open'
+          );
+        END;
+      `)
+    }
+  },
+  {
+    version: 13,
+    name: 'contextual_todos',
+    up(database) {
+      const requiredTables = ['focuses', 'threads', 'commitments', 'scopes', 'subjects']
+      const hasCompleteWorkDomain = requiredTables.every((table) => database.get<{ found: number }>(
+        "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?",
+        [table]
+      ))
+      if (!hasCompleteWorkDomain) return
+
+      database.exec(`
+        CREATE TABLE todos (
+          id INTEGER PRIMARY KEY,
+          focus_id INTEGER REFERENCES focuses(id) ON DELETE CASCADE,
+          thread_id INTEGER REFERENCES threads(id) ON DELETE CASCADE,
+          commitment_id INTEGER REFERENCES commitments(id) ON DELETE CASCADE,
+          scope_id INTEGER REFERENCES scopes(id)
+            ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED,
+          subject_id INTEGER REFERENCES subjects(id)
+            ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED,
+          name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+          due_on TEXT CHECK (
+            due_on IS NULL OR (length(due_on) = 10 AND due_on = date(due_on))
+          ),
+          done INTEGER NOT NULL DEFAULT 0 CHECK (done IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          CHECK (
+            (focus_id IS NOT NULL AND thread_id IS NULL AND commitment_id IS NULL) OR
+            (focus_id IS NULL AND thread_id IS NOT NULL AND commitment_id IS NULL) OR
+            (focus_id IS NULL AND thread_id IS NULL AND commitment_id IS NOT NULL)
+          ),
+          CHECK (
+            (scope_id IS NULL AND subject_id IS NULL) OR
+            (scope_id IS NOT NULL AND subject_id IS NOT NULL AND focus_id IS NULL)
+          )
+        ) STRICT;
+
+        CREATE INDEX todos_focus_index ON todos(focus_id, id);
+        CREATE INDEX todos_thread_index ON todos(thread_id, id);
+        CREATE INDEX todos_commitment_index ON todos(commitment_id, id);
+        CREATE INDEX todos_scope_cell_index ON todos(scope_id, subject_id, id);
+        CREATE INDEX todos_due_index ON todos(due_on, done, id);
+
+        CREATE TABLE todo_lists (
+          id INTEGER PRIMARY KEY,
+          focus_id INTEGER REFERENCES focuses(id) ON DELETE CASCADE,
+          thread_id INTEGER REFERENCES threads(id) ON DELETE CASCADE,
+          commitment_id INTEGER REFERENCES commitments(id) ON DELETE CASCADE,
+          scope_id INTEGER REFERENCES scopes(id)
+            ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED,
+          subject_id INTEGER REFERENCES subjects(id)
+            ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED,
+          created_at TEXT NOT NULL,
+          CHECK (
+            (focus_id IS NOT NULL AND thread_id IS NULL AND commitment_id IS NULL) OR
+            (focus_id IS NULL AND thread_id IS NOT NULL AND commitment_id IS NULL) OR
+            (focus_id IS NULL AND thread_id IS NULL AND commitment_id IS NOT NULL)
+          ),
+          CHECK (
+            (scope_id IS NULL AND subject_id IS NULL) OR
+            (scope_id IS NOT NULL AND subject_id IS NOT NULL AND focus_id IS NULL)
+          )
+        ) STRICT;
+
+        CREATE UNIQUE INDEX todo_lists_focus_unique
+          ON todo_lists(focus_id) WHERE focus_id IS NOT NULL;
+        CREATE UNIQUE INDEX todo_lists_thread_aggregate_unique
+          ON todo_lists(thread_id) WHERE thread_id IS NOT NULL AND scope_id IS NULL;
+        CREATE UNIQUE INDEX todo_lists_thread_scope_unique
+          ON todo_lists(thread_id, scope_id, subject_id)
+          WHERE thread_id IS NOT NULL AND scope_id IS NOT NULL;
+        CREATE UNIQUE INDEX todo_lists_commitment_aggregate_unique
+          ON todo_lists(commitment_id) WHERE commitment_id IS NOT NULL AND scope_id IS NULL;
+        CREATE UNIQUE INDEX todo_lists_commitment_scope_unique
+          ON todo_lists(commitment_id, scope_id, subject_id)
+          WHERE commitment_id IS NOT NULL AND scope_id IS NOT NULL;
+
+        CREATE TABLE todo_sort_placements (
+          todo_id INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+          list_id INTEGER NOT NULL REFERENCES todo_lists(id) ON DELETE CASCADE,
+          sort_key INTEGER NOT NULL CHECK (sort_key >= 0),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (todo_id, list_id)
+        ) STRICT;
+
+        CREATE INDEX todo_sort_placements_list_order_index
+          ON todo_sort_placements(list_id, sort_key, todo_id);
+
+        CREATE TRIGGER todos_scope_matches_parent_focus_insert
+        BEFORE INSERT ON todos
+        WHEN NEW.scope_id IS NOT NULL AND NOT EXISTS (
+          SELECT 1
+          FROM scopes scope
+          LEFT JOIN threads thread ON thread.id = NEW.thread_id
+          LEFT JOIN commitments commitment ON commitment.id = NEW.commitment_id
+          LEFT JOIN threads commitment_thread ON commitment_thread.id = commitment.thread_id
+          WHERE scope.id = NEW.scope_id
+            AND scope.focus_id = COALESCE(
+              thread.focus_id,
+              commitment.focus_id,
+              commitment_thread.focus_id
+            )
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'scoped Todo must use a Scope owned by its parent focus');
+        END;
+
+        CREATE TRIGGER todos_scope_matches_parent_focus_update
+        BEFORE UPDATE OF focus_id, thread_id, commitment_id, scope_id ON todos
+        WHEN NEW.scope_id IS NOT NULL AND NOT EXISTS (
+          SELECT 1
+          FROM scopes scope
+          LEFT JOIN threads thread ON thread.id = NEW.thread_id
+          LEFT JOIN commitments commitment ON commitment.id = NEW.commitment_id
+          LEFT JOIN threads commitment_thread ON commitment_thread.id = commitment.thread_id
+          WHERE scope.id = NEW.scope_id
+            AND scope.focus_id = COALESCE(
+              thread.focus_id,
+              commitment.focus_id,
+              commitment_thread.focus_id
+            )
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'scoped Todo must use a Scope owned by its parent focus');
+        END;
+
+        CREATE TRIGGER todos_parent_is_immutable
+        BEFORE UPDATE OF focus_id, thread_id, commitment_id, scope_id, subject_id ON todos
+        WHEN
+          OLD.focus_id IS NOT NEW.focus_id OR
+          OLD.thread_id IS NOT NEW.thread_id OR
+          OLD.commitment_id IS NOT NEW.commitment_id OR
+          OLD.scope_id IS NOT NEW.scope_id OR
+          OLD.subject_id IS NOT NEW.subject_id
+        BEGIN
+          SELECT RAISE(ABORT, 'Todo parent context is immutable');
+        END;
+
+        CREATE TRIGGER todo_lists_scope_matches_parent_focus_insert
+        BEFORE INSERT ON todo_lists
+        WHEN NEW.scope_id IS NOT NULL AND NOT EXISTS (
+          SELECT 1
+          FROM scopes scope
+          LEFT JOIN threads thread ON thread.id = NEW.thread_id
+          LEFT JOIN commitments commitment ON commitment.id = NEW.commitment_id
+          LEFT JOIN threads commitment_thread ON commitment_thread.id = commitment.thread_id
+          WHERE scope.id = NEW.scope_id
+            AND scope.focus_id = COALESCE(
+              thread.focus_id,
+              commitment.focus_id,
+              commitment_thread.focus_id
+            )
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Todo list Scope must be owned by its parent focus');
+        END;
+
+        CREATE TRIGGER todo_list_context_is_immutable
+        BEFORE UPDATE OF focus_id, thread_id, commitment_id, scope_id, subject_id ON todo_lists
+        WHEN
+          OLD.focus_id IS NOT NEW.focus_id OR
+          OLD.thread_id IS NOT NEW.thread_id OR
+          OLD.commitment_id IS NOT NEW.commitment_id OR
+          OLD.scope_id IS NOT NEW.scope_id OR
+          OLD.subject_id IS NOT NEW.subject_id
+        BEGIN
+          SELECT RAISE(ABORT, 'Todo list context is immutable');
+        END;
+
+        CREATE TRIGGER todo_sort_placement_matches_context_insert
+        BEFORE INSERT ON todo_sort_placements
+        WHEN NOT EXISTS (
+          SELECT 1
+          FROM todos todo
+          JOIN todo_lists list ON list.id = NEW.list_id
+          WHERE todo.id = NEW.todo_id
+            AND todo.focus_id IS list.focus_id
+            AND todo.thread_id IS list.thread_id
+            AND todo.commitment_id IS list.commitment_id
+            AND (
+              list.scope_id IS NULL OR (
+                todo.scope_id IS list.scope_id AND todo.subject_id IS list.subject_id
+              )
+            )
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Todo sort placement must match its parent context');
+        END;
+
+        CREATE TRIGGER todo_sort_placement_matches_context_update
+        BEFORE UPDATE OF todo_id, list_id ON todo_sort_placements
+        WHEN NOT EXISTS (
+          SELECT 1
+          FROM todos todo
+          JOIN todo_lists list ON list.id = NEW.list_id
+          WHERE todo.id = NEW.todo_id
+            AND todo.focus_id IS list.focus_id
+            AND todo.thread_id IS list.thread_id
+            AND todo.commitment_id IS list.commitment_id
+            AND (
+              list.scope_id IS NULL OR (
+                todo.scope_id IS list.scope_id AND todo.subject_id IS list.subject_id
+              )
+            )
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Todo sort placement must match its parent context');
+        END;
+      `)
+    }
   }
 ]
 

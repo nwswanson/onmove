@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 import type {
-  CommitmentScopeSnapshot,
   CommitmentSnapshot,
   FocusScopeSnapshot,
   FocusSnapshot,
@@ -627,73 +626,4 @@ describe('Focus presentation adapters', () => {
     expect(onDelete).toHaveBeenCalledOnce()
   })
 
-  it('maps a Thread-owned Commitment scope into the receiver-owned drawer contract', async () => {
-    const scopedCommitment: CommitmentSnapshot = {
-      ...commitment,
-      parent: { type: 'thread', id: thread.id }
-    }
-    const scope: CommitmentScopeSnapshot = {
-      commitmentId: scopedCommitment.id,
-      focusId: focus.id,
-      parent: scopedCommitment.parent,
-      mode: 'open',
-      scopeId: null,
-      subjects: [],
-      parentSubjects: [],
-      focusSubjects: [customerOperations, platformTeam]
-    }
-    const onCustomize = vi.fn().mockResolvedValue(undefined)
-    const onFollowParent = vi.fn().mockResolvedValue(undefined)
-    const onAddSubject = vi.fn().mockResolvedValue(undefined)
-    const onRemoveSubject = vi.fn().mockResolvedValue(undefined)
-    const adapter = commitmentDrawerAdapter({
-      commitment: scopedCommitment,
-      parentTitle: thread.title,
-      onSave: vi.fn().mockResolvedValue(undefined),
-      onDelete: vi.fn().mockResolvedValue(undefined),
-      scopeEditor: {
-        scope,
-        parentLabel: 'Thread',
-        onCustomize,
-        onFollowParent,
-        onAddSubject,
-        onRemoveSubject
-      }
-    })
-    const section = adapter.model.sections.find(({ id }) => id === 'scope')
-    const mode = section?.fields.find(({ id }) => id === 'scope-mode')
-    const subjects = section?.fields.find(({ id }) => id === 'scope-subjects')
-
-    expect(mode).toMatchObject({
-      kind: 'choice',
-      label: 'Scope definition',
-      value: 'custom',
-      options: [
-        expect.objectContaining({ value: 'inherited', label: 'Inherit Thread scope' }),
-        expect.objectContaining({ value: 'custom', label: 'Custom scope' })
-      ]
-    })
-    expect(subjects).toMatchObject({
-      kind: 'token-list',
-      items: [],
-      suggestions: [
-        { id: String(customerOperations.id), label: customerOperations.name },
-        { id: String(platformTeam.id), label: platformTeam.name }
-      ],
-      visibleWhen: { fieldId: 'scope-mode', equals: 'custom' }
-    })
-    expect(section?.note).toContain('Thread has no Subjects to inherit')
-    if (mode?.kind !== 'choice' || subjects?.kind !== 'token-list') {
-      throw new Error('Expected scope choice and token-list drawer fields')
-    }
-    await mode.onValueChange('inherited')
-    await mode.onValueChange('custom')
-    await subjects.onAdd('Customer Operations')
-    await subjects.onRemove(String(customerOperations.id))
-
-    expect(onFollowParent).toHaveBeenCalledOnce()
-    expect(onCustomize).toHaveBeenCalledOnce()
-    expect(onAddSubject).toHaveBeenCalledWith('Customer Operations')
-    expect(onRemoveSubject).toHaveBeenCalledWith(customerOperations.id)
-  })
 })

@@ -22,16 +22,16 @@ Scope resolves to effective-dated Subjects
 
 Focus
 ├── Thread ─────── applies one effective Scope or remains Open
-│   └── Commitment ─ applies one effective Scope or remains Open
-└── Commitment ─── applies one effective Scope or remains Open
+│   └── Commitment ─ derives the Thread's effective Scope
+└── Commitment ─── remains Open/unscoped
 
 Thread/Commitment × Scope × Subject = current matrix cell
 Update = durable evidence attributed to one exact cell
 ```
 
-Subjects are global canonical records. Scopes belong to a Focus. Threads and Commitments consume a
-Scope; they do not own it. Consequently, deleting a Thread or Commitment never deletes a Scope or
-Subject.
+Subjects are global canonical records. Scopes belong to a Focus. Threads consume a Scope but do not
+own it; their Commitments consume that Thread context without a separate applicability choice.
+Consequently, deleting a Thread or Commitment never deletes a Scope or Subject.
 
 ## Removing a Subject from an applicable Scope
 
@@ -44,6 +44,7 @@ When the Subject stops being effective:
 - it no longer contributes current Thread health, review coverage, Commitment state, or cadence;
 - the Thread, Commitment, Scope, and Subject remain durable;
 - existing Updates retain their exact `{scopeId, subjectId}` attribution;
+- existing scoped Todos retain their exact parent cell and aggregate-list placement;
 - application history is unchanged because the owner still applies the same Scope expression; and
 - historical membership intervals remain queryable.
 
@@ -65,11 +66,11 @@ A later include interval makes the Subject current again. Old exact-cell Updates
 and may once again supply the cell's most recent evidence. Review or cadence calculations will show
 the cell as due if that retained evidence is stale. Re-entry does not clone or rewrite history.
 
-## Removing a Thread or Commitment from a Scope
+## Changing a Thread Scope and its Commitments
 
-A Thread or Commitment has one declared application mode: `open`, `inherited`, `explicit`, or
-`derived`. “Remove from Scope” means changing that application to Open, inherited, or another
-Focus-owned Scope. It does not delete the owner.
+A Thread has one declared application mode: `open`, `inherited`, `explicit`, or `derived`. The UI
+expresses the user-owned choice as inheriting the Focus or using a custom Thread Scope. Changing it
+does not delete the Thread.
 
 Every actual declared application change appends an immutable transition:
 
@@ -85,9 +86,10 @@ Every actual declared application change appends an immutable transition:
 Assigning the same declaration again is a no-op: it does not change `updatedAt` or append a duplicate
 transition.
 
-Every surviving Focus, Thread, and Commitment must retain exactly one current application row.
-Direct deletion of that row is rejected at the SQLite boundary; callers change its declared mode
-instead. The row and its transitions disappear only with their owning entity's hard-delete cascade.
+Every surviving Focus, Thread, and Commitment retains exactly one current application row. A
+Commitment row is an enforced projection rather than a user declaration: Thread-owned Commitments
+must be `inherited`, and Focus-owned Commitments must be `open`. Direct mutation or deletion of that
+row is rejected. Rows and transitions disappear only with their owner's hard-delete cascade.
 
 After changing application:
 
@@ -95,16 +97,17 @@ After changing application:
 - evidence stored under the former Scope remains returned by the owner's Update repository;
 - former evidence does not participate in the new current matrix;
 - switching back to the former Scope makes its retained exact-cell evidence relevant again; and
-- an inheriting descendant follows the parent's new effective Scope without changing its own
-  declared application row.
+- every Thread-owned Commitment follows the Thread's new effective Scope without changing its own
+  derived application row.
 
-An inherited descendant's history records that it chose `inherited`; changes to its effective Scope
-are observable through the application history of the ancestor that actually changed. The model
-does not manufacture duplicate transitions on every inheriting descendant.
+The Commitment's initial history records its enforced `inherited` state. Changes to its effective
+Scope are observable through the Thread application history that actually changed. The model does
+not manufacture duplicate transitions on every Commitment.
 
-There is no independent “remove this Thread only for Subject A” record. To narrow one owner without
-changing every consumer of a shared Scope, create a Focus-owned Scope expression based on the broader
-Scope, add a Subject exclusion, and apply that narrower Scope to the Thread or Commitment.
+There is no independent “remove this Thread only for Subject A” record. To narrow one Thread without
+changing every consumer of a shared Focus Scope, create a Focus-owned expression based on the
+broader Scope, add a Subject exclusion, and apply that narrower Scope to the Thread. Its Commitments
+follow automatically.
 
 ## Deleting a Subject
 
@@ -113,6 +116,7 @@ Subject deletion is intentionally restrictive. It is rejected while the Subject 
 - any active or ended Scope membership;
 - any Scope as derived context; or
 - any scoped Update.
+- any scoped Todo.
 
 This means a Subject that participated in durable applicability or evidence normally cannot be hard
 deleted. Ending membership removes it from current work but preserves identity and history. A future
@@ -201,7 +205,7 @@ their projection date.
 ## UI implications for the next phase
 
 - Present “remove Subject from Scope” as an effective-date operation, not record deletion.
-- Present “change Scope” separately from deleting the Thread or Commitment.
+- Present “change Scope” separately from deleting the Thread. A Commitment has no Scope action.
 - Show application history alongside membership history when explaining former evidence.
 - Warn that hard-delete removes the owner, evidence, and its audit trails; offer `done` or
   `cancelled` when preservation is likely intended.
@@ -217,7 +221,7 @@ evidence entry are deliberately separate controls and locations:
 
 1. The Thread context drawer owns Scope definition. `Inherit Focus scope` follows the Focus's
    effective Subject set; `Custom scope` exposes an inline Subject token editor for the Thread's
-   override.
+   override. There is no third Scope choice.
 2. All Subjects displays currently applicable direct Thread Updates in its main list. Retained
    evidence for Subjects that are no longer applicable, plus old unscoped evidence after the owner
    becomes bounded, remains editable in a bottom Former scope updates accordion that is closed by
@@ -238,13 +242,10 @@ evidence entry are deliberately separate controls and locations:
 7. The selected canonical Subject follows navigation among Threads and Commitments in the same
    Focus. Each Focus remembers its own selection for the current application session. A destination
    that does not contain that Subject normalizes the Focus selection to All Subjects.
-8. A Thread-owned Commitment uses the same drawer-owned scope-definition interaction. `Inherit
-   Thread scope` establishes a live inherited application; `Custom scope` creates and edits a
-   Focus-owned overlay using direct-parent and owning-Focus Subjects as suggestions. The mutation refreshes
-   the selected Commitment working-context projection immediately, so bounded evidence creation
-   requires a Subject instead of continuing to offer the unscoped Add Update action.
-   When the Thread is Open, the drawer explicitly says that it has no Subjects to inherit and offers
-   the owning Focus's effective Subjects as custom-scope candidates instead.
+8. A Thread-owned Commitment has no Scope controls. Its working-context projection always resolves
+   the Thread's current effective Scope. Commitments created before a custom Thread Scope therefore
+   gain the same tabs and exact-cell Update creation as Commitments created afterward. If the Thread
+   is unbounded, its Commitments use an unscoped stream.
 
 The working selector and Commitment projection remain current-matrix views. The All Subjects Update
 list is deliberately broader. Its current/former label describes canonical Subject applicability,
@@ -253,6 +254,6 @@ former. The persisted Update still retains its original exact cell, and new evid
 replacement Scope id; no evidence silently crosses an application boundary.
 
 The main Thread canvas never renders Scope-definition controls. It only consumes the resulting
-matrix as an operational working context. Scope mutations cross named Thread or Commitment Scope
-IPC methods; generic drawer choice and token-list fields own the interaction markup while feature
+matrix as an operational working context. Scope mutations cross named Focus or Thread Scope IPC
+methods; generic drawer choice and token-list fields own the interaction markup while feature
 presenters own the mapping to typed domain operations.
