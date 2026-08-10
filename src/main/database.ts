@@ -5,6 +5,7 @@ import { DomainStore } from './data/domain'
 import { DataArchiveRepository } from './data/data-archive'
 import { runMigrations } from './data/migrations'
 import { SqliteAdapter } from './data/sqlite-adapter'
+import { RollingBackupRepository } from './data/rolling-backup'
 
 interface CountRow {
   count: number
@@ -18,6 +19,7 @@ export class AppDatabase {
   private readonly database: SqliteAdapter
   readonly domain: DomainStore
   readonly dataArchive: DataArchiveRepository
+  readonly backups: RollingBackupRepository
 
   constructor(private readonly databasePath: string) {
     mkdirSync(dirname(databasePath), { recursive: true })
@@ -26,6 +28,7 @@ export class AppDatabase {
       runMigrations(this.database)
       this.domain = new DomainStore(this.database)
       this.dataArchive = new DataArchiveRepository(this.database)
+      this.backups = new RollingBackupRepository(this.database, databasePath)
     } catch (error) {
       this.database.close()
       throw error

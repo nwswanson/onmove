@@ -17,6 +17,11 @@ const api: OnMoveApi = {
   },
   recordGreeting: () => ipcRenderer.invoke(IPC_CHANNELS.recordGreeting),
   showDataFolder: () => ipcRenderer.invoke(IPC_CHANNELS.showDataFolder),
+  backups: {
+    getState: () => ipcRenderer.invoke(IPC_CHANNELS.getBackupState),
+    createNow: () => ipcRenderer.invoke(IPC_CHANNELS.createBackup),
+    showFolder: () => ipcRenderer.invoke(IPC_CHANNELS.showBackupFolder)
+  },
   domain: {
     createRelation: (input) => ipcRenderer.invoke(IPC_CHANNELS.createRelation, input),
     deleteRelation: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteRelation, id),

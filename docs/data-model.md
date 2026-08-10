@@ -107,6 +107,8 @@ is specified in
 [`scope-lifecycle-and-observability.md`](scope-lifecycle-and-observability.md).
 The executable reminder and contextual sorting contract is specified in
 [`todo-model.md`](todo-model.md).
+The internal SQLite recovery policy is specified in
+[`rolling-backups.md`](rolling-backups.md).
 
 ## Subjects, Scopes, and exact Update cells
 

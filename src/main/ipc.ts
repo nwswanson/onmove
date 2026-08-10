@@ -28,7 +28,7 @@ import {
 import type { AppDatabase } from './database'
 
 type IpcRegistrar = Pick<IpcMain, 'handle' | 'removeHandler' | 'on' | 'removeListener'>
-type FolderOpener = Pick<Shell, 'showItemInFolder'>
+type FolderOpener = Pick<Shell, 'showItemInFolder' | 'openPath'>
 
 export interface RichTextWindowCoordinator {
   open: (reference: RichTextDocumentReference) => void
@@ -53,6 +53,12 @@ export function registerAppIpc(
   ipcMain.handle(IPC_CHANNELS.getSensitiveContentHidden, getSensitiveContentHidden)
   ipcMain.handle(IPC_CHANNELS.recordGreeting, () => database.recordGreeting())
   ipcMain.handle(IPC_CHANNELS.showDataFolder, () => shell.showItemInFolder(database.getState().databasePath))
+  ipcMain.handle(IPC_CHANNELS.getBackupState, () => database.backups.getState())
+  ipcMain.handle(IPC_CHANNELS.createBackup, () => database.backups.create())
+  ipcMain.handle(IPC_CHANNELS.showBackupFolder, async () => {
+    const error = await shell.openPath(database.backups.ensureDirectory())
+    if (error) throw new Error(error)
+  })
   ipcMain.handle(IPC_CHANNELS.createRelation, (_event, input: CreateRelationInput) =>
     database.domain.relations.create(input).toSnapshot()
   )

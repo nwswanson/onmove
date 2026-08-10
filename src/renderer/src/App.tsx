@@ -31,6 +31,7 @@ import { useApplicationModel } from '@/features/application/use-application-mode
 import { NewFocusDialog } from '@/features/focus/focus-ui'
 import { focusPrimaryNavigationItems } from '@/features/focus/focus-presenters'
 import { FocusWorkspace } from '@/features/focus/focus-workspace'
+import { SettingsWorkspace } from '@/features/settings/settings-workspace'
 
 interface HomeExample {
   title: string
@@ -95,9 +96,11 @@ function AppToolbar({
 interface AppSidebarProps {
   focusItems: readonly SidebarNavigationItemModel[]
   selectedFocusId: string | null
+  selectedView: 'home' | 'focus' | 'settings'
   enabled: boolean
   width: number
   onHome: () => void
+  onSettings: () => void
   onSelectFocus: (focusId: string) => void
   onNewFocus: () => void
   onShowData: () => void
@@ -106,14 +109,16 @@ interface AppSidebarProps {
 function AppSidebar({
   focusItems,
   selectedFocusId,
+  selectedView,
   enabled,
   width,
   onHome,
+  onSettings,
   onSelectFocus,
   onNewFocus,
   onShowData
 }: AppSidebarProps): React.JSX.Element {
-  const homeActive = selectedFocusId === null
+  const homeActive = selectedView === 'home'
 
   return (
     <Sidebar aria-label="Primary sidebar" style={{ width }}>
@@ -166,12 +171,15 @@ function AppSidebar({
         <Separator className="mb-1" />
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton type="button" disabled title="Settings will be available here">
+            <SidebarMenuButton
+              type="button"
+              isActive={selectedView === 'settings'}
+              aria-current={selectedView === 'settings' ? 'page' : undefined}
+              disabled={!enabled}
+              onClick={onSettings}
+            >
               <Settings aria-hidden="true" />
               <span>Settings</span>
-              <span className="ml-auto text-[0.625rem] font-semibold tracking-wide text-muted-foreground uppercase">
-                Soon
-              </span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
@@ -319,7 +327,9 @@ export function App(): React.JSX.Element {
     application.focusStatusSummaries,
     application.sensitiveContentHidden
   )
-  const toolbarTitle = selectedFocus?.title ?? 'Home'
+  const toolbarTitle = application.selectedView === 'settings'
+    ? 'Settings'
+    : (selectedFocus?.title ?? 'Home')
   const contextDrawer = {
     open: contextDrawerState.open,
     pinnedAdapter: contextDrawerState.pinnedAdapter,
@@ -356,9 +366,11 @@ export function App(): React.JSX.Element {
           <AppSidebar
             focusItems={focusItems}
             selectedFocusId={selectedFocus ? String(selectedFocus.id) : null}
+            selectedView={application.selectedView}
             enabled={application.enabled}
             width={sidebarWidth}
             onHome={application.goHome}
+            onSettings={application.goSettings}
             onSelectFocus={(focusId) => application.selectFocus(Number(focusId))}
             onNewFocus={() => setNewFocusOpen(true)}
             onShowData={() => void application.showDataFolder()}
@@ -375,7 +387,9 @@ export function App(): React.JSX.Element {
       >
 
         {application.state ? (
-          selectedFocus ? (
+          application.selectedView === 'settings' ? (
+            <SettingsWorkspace contextDrawer={contextDrawer} />
+          ) : selectedFocus ? (
             <FocusWorkspace
               key={selectedFocus.id}
               focus={selectedFocus}

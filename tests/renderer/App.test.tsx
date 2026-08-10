@@ -210,6 +210,35 @@ function installApi(
     onSensitiveContentVisibilityChanged: vi.fn(() => () => undefined),
     recordGreeting: vi.fn().mockResolvedValue(initialState),
     showDataFolder: vi.fn().mockResolvedValue(undefined),
+    backups: {
+      getState: vi.fn().mockResolvedValue({
+        automatic: true,
+        intervalHours: 24,
+        retentionLimit: 10,
+        directoryPath: '/Users/test/Library/Application Support/OnMove/Backups',
+        lastBackupAt: '2026-08-10T12:00:00.000Z',
+        nextBackupAt: '2026-08-11T12:00:00.000Z',
+        backups: [{
+          fileName: 'onmove-backup-20260810T120000000Z-test.sqlite3',
+          createdAt: '2026-08-10T12:00:00.000Z',
+          sizeBytes: 65_536
+        }]
+      }),
+      createNow: vi.fn().mockResolvedValue({
+        automatic: true,
+        intervalHours: 24,
+        retentionLimit: 10,
+        directoryPath: '/Users/test/Library/Application Support/OnMove/Backups',
+        lastBackupAt: '2026-08-10T13:00:00.000Z',
+        nextBackupAt: '2026-08-11T13:00:00.000Z',
+        backups: [{
+          fileName: 'onmove-backup-20260810T130000000Z-test.sqlite3',
+          createdAt: '2026-08-10T13:00:00.000Z',
+          sizeBytes: 65_536
+        }]
+      }),
+      showFolder: vi.fn().mockResolvedValue(undefined)
+    },
     domain,
     richText: {
       getDocument: vi.fn(() => new Promise<RichTextDocumentSnapshot>(() => undefined)),
@@ -2582,14 +2611,30 @@ describe('App', () => {
     })
   })
 
-  it('keeps Settings and data actions in the footer', async () => {
+  it('opens backup settings and runs named backup and storage actions from the footer', async () => {
     const api = installApi()
     const user = userEvent.setup()
     render(<App />)
 
-    expect(await screen.findByRole('button', { name: /Settings/ })).toBeDisabled()
+    const settings = await screen.findByRole('button', { name: 'Settings' })
+    expect(settings).toBeEnabled()
+    await user.click(settings)
+    expect(await screen.findByRole('heading', { name: 'Settings' })).toBeVisible()
+    expect(settings).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByText('Automatic database backups')).toBeVisible()
+    expect(screen.getByText('1 of 10 snapshots')).toBeVisible()
+    expect(screen.getByRole('list', { name: 'Recent backups' })).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: 'Back up now' }))
+    expect(api.backups.createNow).toHaveBeenCalledOnce()
+    await user.click(screen.getByRole('button', { name: 'Show backups' }))
+    expect(api.backups.showFolder).toHaveBeenCalledOnce()
+
     await user.click(screen.getByRole('button', { name: 'Data & storage' }))
     expect(api.showDataFolder).toHaveBeenCalledOnce()
+
+    await user.click(screen.getByRole('button', { name: 'Home' }))
+    expect(await screen.findByRole('heading', { name: 'Home' })).toBeVisible()
   })
 
   it('shows a useful error if focus storage fails to load', async () => {

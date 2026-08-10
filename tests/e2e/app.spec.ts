@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -1214,6 +1214,48 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     expect(storedCommitment()).toBeUndefined()
     expect(storedFocusUpdate()).toBeUndefined()
     expect(storedCommitmentUpdate()).toBeUndefined()
+  } finally {
+    await application?.close()
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
+test('creates and exposes verified rolling backups in Settings', async () => {
+  test.setTimeout(45_000)
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-backups-e2e-'))
+  let application: ElectronApplication | undefined
+
+  try {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    const window = await application.firstWindow()
+    await expect(window.getByRole('heading', { name: 'Home' })).toBeVisible()
+
+    await window.getByRole('button', { name: 'Settings' }).click()
+    await expect(window.getByRole('heading', { name: 'Settings' })).toBeVisible()
+    await expect(window.getByText('Automatic database backups')).toBeVisible()
+    await expect(window.getByText('1 of 10 snapshots')).toBeVisible()
+
+    const backupDirectory = join(userDataDirectory, 'Backups')
+    await expect.poll(() =>
+      readdirSync(backupDirectory).filter((name) => name.endsWith('.sqlite3')).length
+    ).toBe(1)
+
+    await window.getByRole('button', { name: 'Back up now' }).click()
+    await expect(window.getByText('2 of 10 snapshots')).toBeVisible()
+    await expect.poll(() =>
+      readdirSync(backupDirectory).filter((name) => name.endsWith('.sqlite3')).length
+    ).toBe(2)
+
+    for (const fileName of readdirSync(backupDirectory).filter((name) => name.endsWith('.sqlite3'))) {
+      const backup = new DatabaseSync(join(backupDirectory, fileName), { readOnly: true })
+      expect(backup.prepare('PRAGMA quick_check').get()).toMatchObject({ quick_check: 'ok' })
+      backup.close()
+    }
   } finally {
     await application?.close()
     rmSync(userDataDirectory, { recursive: true, force: true })

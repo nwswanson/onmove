@@ -12,6 +12,9 @@
   from navigation.
 - Put workspace utilities such as Settings, help, and data/storage actions at the bottom of the
   sidebar.
+- Keep Settings selectable in the primary sidebar. Its backup pane exposes the fixed automatic
+  policy, last/next backup dates, retained snapshots, `Back up now`, and `Show backups`; it must use
+  only the typed backup preload contract and must not expose arbitrary filesystem paths or SQL.
 - Build sidebar primitives and other interface elements using the local shadcn/ui conventions in
   `src/renderer/src/components/ui`. Extend those primitives instead of adding one-off navigation
   markup.
@@ -319,6 +322,13 @@ and do not rely on color alone to communicate selection or status.
   Replace data only inside one transaction with triggers restored and foreign-key/integrity checks
   passing; a fatal import must leave the existing database unchanged and a successful import must
   relaunch all windows onto the new snapshot.
+- Keep rolling backups in the main process under the `Backups` directory beside the live database.
+  Use SQLite `VACUUM INTO` to produce a live, consistent pending snapshot, run `PRAGMA quick_check`
+  against both source and destination, apply private file permissions, then atomically rename it.
+  Only after a verified snapshot is complete may retention remove older recognized backups. Create
+  at most one automatic snapshot per 24 hours, check hourly while open, retain the newest ten, and
+  take an unconditional safety snapshot immediately before confirmed import replacement. Ignore
+  unknown files and remove only interrupted OnMove pending files and recognized expired snapshots.
 - Store `sensitive` as a strict non-null boolean flag that defaults to false on every Focus, Thread,
   Commitment, and Update. Visibility is a presentation preference, not a database filter or a
   lifecycle state.

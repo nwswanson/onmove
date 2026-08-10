@@ -3,6 +3,9 @@ export const IPC_CHANNELS = {
   getSensitiveContentHidden: 'app:get-sensitive-content-hidden',
   recordGreeting: 'app:record-greeting',
   showDataFolder: 'app:show-data-folder',
+  getBackupState: 'backup:get-state',
+  createBackup: 'backup:create',
+  showBackupFolder: 'backup:show-folder',
   createRelation: 'domain:create-relation',
   deleteRelation: 'domain:delete-relation',
   createItem: 'domain:create-item',
@@ -680,12 +683,35 @@ export interface AppState {
   databasePath: string
 }
 
+export interface BackupSnapshot {
+  fileName: string
+  createdAt: string
+  sizeBytes: number
+}
+
+export interface BackupStateSnapshot {
+  automatic: true
+  intervalHours: number
+  retentionLimit: number
+  directoryPath: string
+  lastBackupAt: string | null
+  nextBackupAt: string | null
+  backups: BackupSnapshot[]
+}
+
+export interface BackupApi {
+  getState: () => Promise<BackupStateSnapshot>
+  createNow: () => Promise<BackupStateSnapshot>
+  showFolder: () => Promise<void>
+}
+
 export interface OnMoveApi {
   getAppState: () => Promise<AppState>
   getSensitiveContentHidden: () => Promise<boolean>
   onSensitiveContentVisibilityChanged: (listener: (hidden: boolean) => void) => () => void
   recordGreeting: () => Promise<AppState>
   showDataFolder: () => Promise<void>
+  backups: BackupApi
   domain: DomainApi
   richText: RichTextApi
 }

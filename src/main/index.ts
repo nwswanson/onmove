@@ -24,6 +24,8 @@ let sensitiveContentHidden = false
 const richTextWindowTargets = new Map<number, RichTextDocumentReference>()
 const MAX_IMPORT_BYTES = 512 * 1024 * 1024
 let dataTransferInProgress = false
+let backupMaintenanceTimer: NodeJS.Timeout | undefined
+const BACKUP_MAINTENANCE_CHECK_MS = 60 * 60 * 1000
 
 function createWindow(richTextTarget?: RichTextDocumentReference): BrowserWindow {
   const window = new BrowserWindow({
@@ -82,6 +84,14 @@ function broadcastRichTextChange(change: RichTextDocumentChange): void {
 function showDataFolder(): void {
   if (database) {
     shell.showItemInFolder(database.getState().databasePath)
+  }
+}
+
+function maintainRollingBackup(): void {
+  try {
+    database?.backups.createIfDue()
+  } catch (error) {
+    console.error('OnMove automatic backup failed:', error)
   }
 }
 
@@ -164,6 +174,7 @@ async function importData(): Promise<void> {
     })
     if (confirmation.response !== 1) return
 
+    database.backups.create()
     const summary = database.dataArchive.import(source)
     importCommitted = true
     const compatibility = [
@@ -216,6 +227,9 @@ function setSensitiveContentHidden(hidden: boolean): void {
 app.whenReady().then(() => {
   database = new AppDatabase(resolveDatabasePath(app.getPath('userData')))
   database.recordLaunch()
+  maintainRollingBackup()
+  backupMaintenanceTimer = setInterval(maintainRollingBackup, BACKUP_MAINTENANCE_CHECK_MS)
+  backupMaintenanceTimer.unref()
   unregisterIpc = registerAppIpc(
     ipcMain,
     database,
@@ -256,6 +270,8 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  if (backupMaintenanceTimer) clearInterval(backupMaintenanceTimer)
+  backupMaintenanceTimer = undefined
   unregisterIpc?.()
   unregisterIpc = undefined
   database?.close()

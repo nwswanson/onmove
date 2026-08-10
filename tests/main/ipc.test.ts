@@ -26,6 +26,11 @@ describe('registerAppIpc', () => {
     const database = {
       getState: vi.fn(() => state),
       recordGreeting: vi.fn(() => ({ ...state, greetingCount: 3 })),
+      backups: {
+        getState: vi.fn(() => ({ retentionLimit: 10, backups: [{ fileName: 'backup.sqlite3' }] })),
+        create: vi.fn(() => ({ retentionLimit: 10, backups: [{ fileName: 'new.sqlite3' }] })),
+        ensureDirectory: vi.fn(() => '/tmp/Backups')
+      },
       domain: {
         relations: {
           create: vi.fn(() => ({ toSnapshot: () => ({ id: 4, name: 'blocks' }) })),
@@ -230,7 +235,7 @@ describe('registerAppIpc', () => {
         }
       }
     }
-    const shell = { showItemInFolder: vi.fn() }
+    const shell = { showItemInFolder: vi.fn(), openPath: vi.fn().mockResolvedValue('') }
 
     const cleanup = registerAppIpc(
       ipcMain as never,
@@ -245,6 +250,15 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.recordGreeting)?.()).toMatchObject({ greetingCount: 3 })
     await handlers.get(IPC_CHANNELS.showDataFolder)?.()
     expect(shell.showItemInFolder).toHaveBeenCalledWith('/tmp/onmove.sqlite3')
+    expect(await handlers.get(IPC_CHANNELS.getBackupState)?.()).toMatchObject({
+      retentionLimit: 10,
+      backups: [{ fileName: 'backup.sqlite3' }]
+    })
+    expect(await handlers.get(IPC_CHANNELS.createBackup)?.()).toMatchObject({
+      backups: [{ fileName: 'new.sqlite3' }]
+    })
+    await handlers.get(IPC_CHANNELS.showBackupFolder)?.()
+    expect(shell.openPath).toHaveBeenCalledWith('/tmp/Backups')
 
     expect(await handlers.get(IPC_CHANNELS.createRelation)?.(undefined, { name: 'blocks' })).toEqual({
       id: 4,
