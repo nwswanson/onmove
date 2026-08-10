@@ -884,6 +884,15 @@ describe('Subject, Scope, and scoped Update models', () => {
       })
     ])
     expect(thread.snapshot('2026-01-20').lastReviewDate).toBeNull()
+    thread.pokeReview(new Date('2026-01-20T12:00:00.000Z'))
+    expect(thread.snapshot('2026-01-20')).toMatchObject({
+      lastReviewDate: '2026-01-20',
+      nextReviewDate: '2026-01-08',
+      reviewDue: true
+    })
+    expect(thread.scopeMatrix('2026-01-20')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ subjectId: morgan.id, lastReviewDate: null, reviewDue: true })
+    ]))
     expect(thread.scopeMatrix('2026-01-25').map(({ subjectId }) => subjectId)).toEqual([
       alex.id,
       jamie.id
@@ -898,7 +907,7 @@ describe('Subject, Scope, and scoped Update models', () => {
       }),
       expect.objectContaining({ subjectId: jamie.id, lastReviewDate: '2026-01-10' })
     ])
-    expect(thread.snapshot('2026-01-25').lastReviewDate).toBeNull()
+    expect(thread.snapshot('2026-01-25').lastReviewDate).toBe('2026-01-20')
 
     thread.update({ needsReview: false })
     expect(thread.scopeMatrix('2026-01-20').every(({ reviewDue }) => !reviewDue)).toBe(true)

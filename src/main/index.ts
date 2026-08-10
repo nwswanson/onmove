@@ -1,10 +1,16 @@
 import { join } from 'node:path'
-import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron'
+import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
 import { AppDatabase } from './database'
 import { registerAppIpc } from './ipc'
 import { createMenuTemplate } from './menu'
 import { resolveDatabasePath } from './paths'
-import { IPC_EVENTS } from '../shared/contracts'
+import { isAllowedExternalLink } from './external-links'
+import {
+  IPC_EVENTS,
+  type RichTextDocumentChange,
+  type RichTextDocumentReference
+} from '../shared/contracts'
 
 app.setName('OnMove')
 
@@ -15,13 +21,16 @@ if (process.env.ONMOVE_USER_DATA_DIR) {
 let database: AppDatabase | undefined
 let unregisterIpc: (() => void) | undefined
 let sensitiveContentHidden = false
+const richTextWindowTargets = new Map<number, RichTextDocumentReference>()
+const MAX_IMPORT_BYTES = 512 * 1024 * 1024
+let dataTransferInProgress = false
 
-function createWindow(): BrowserWindow {
+function createWindow(richTextTarget?: RichTextDocumentReference): BrowserWindow {
   const window = new BrowserWindow({
-    width: 1120,
-    height: 760,
-    minWidth: 1040,
-    minHeight: 600,
+    width: richTextTarget ? 820 : 1120,
+    height: richTextTarget ? 720 : 760,
+    minWidth: richTextTarget ? 520 : 1040,
+    minHeight: richTextTarget ? 420 : 600,
     show: false,
     backgroundColor: '#f7f7f5',
     titleBarStyle: 'hiddenInset',
@@ -35,8 +44,19 @@ function createWindow(): BrowserWindow {
     }
   })
 
+  if (richTextTarget) {
+    const webContentsId = window.webContents.id
+    richTextWindowTargets.set(webContentsId, structuredClone(richTextTarget))
+    window.on('closed', () => richTextWindowTargets.delete(webContentsId))
+  }
+
   window.once('ready-to-show', () => window.show())
-  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (isAllowedExternalLink(url)) {
+      void shell.openExternal(url)
+    }
+    return { action: 'deny' }
+  })
 
   if (process.env.ELECTRON_RENDERER_URL) {
     void window.loadURL(process.env.ELECTRON_RENDERER_URL)
@@ -47,9 +67,142 @@ function createWindow(): BrowserWindow {
   return window
 }
 
+function openRichTextDocumentWindow(reference: RichTextDocumentReference): void {
+  createWindow(reference)
+}
+
+function broadcastRichTextChange(change: RichTextDocumentChange): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(IPC_EVENTS.richTextDocumentChanged, change)
+    }
+  }
+}
+
 function showDataFolder(): void {
   if (database) {
     shell.showItemInFolder(database.getState().databasePath)
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'An unexpected error occurred.'
+}
+
+async function exportData(): Promise<void> {
+  if (!database || dataTransferInProgress) return
+  dataTransferInProgress = true
+  let temporaryPath: string | null = null
+  try {
+    const date = new Date().toISOString().slice(0, 10)
+    const result = await dialog.showSaveDialog({
+      title: 'Export OnMove Data',
+      defaultPath: join(app.getPath('documents'), `OnMove Export ${date}.json`),
+      message: 'The export includes all records, including content marked sensitive.',
+      filters: [{ name: 'OnMove data archive', extensions: ['json'] }]
+    })
+    if (result.canceled || !result.filePath) return
+
+    const archive = database.dataArchive.export(app.getVersion())
+    temporaryPath = `${result.filePath}.onmove-export-${process.pid}.tmp`
+    await writeFile(temporaryPath, `${JSON.stringify(archive, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600
+    })
+    await rename(temporaryPath, result.filePath)
+    temporaryPath = null
+    await dialog.showMessageBox({
+      type: 'info',
+      title: 'Export Complete',
+      message: 'OnMove data was exported successfully.',
+      detail: result.filePath,
+      buttons: ['OK']
+    })
+  } catch (error) {
+    await dialog.showMessageBox({
+      type: 'error',
+      title: 'Export Failed',
+      message: 'OnMove could not export your data.',
+      detail: errorMessage(error),
+      buttons: ['OK']
+    })
+  } finally {
+    if (temporaryPath) await rm(temporaryPath, { force: true }).catch(() => undefined)
+    dataTransferInProgress = false
+  }
+}
+
+async function importData(): Promise<void> {
+  if (!database || dataTransferInProgress) return
+  dataTransferInProgress = true
+  let importCommitted = false
+  try {
+    const selected = await dialog.showOpenDialog({
+      title: 'Import OnMove Data',
+      message: 'Choose an OnMove JSON data archive.',
+      properties: ['openFile'],
+      filters: [{ name: 'OnMove data archive', extensions: ['json'] }]
+    })
+    const filePath = selected.filePaths[0]
+    if (selected.canceled || !filePath) return
+
+    const file = await stat(filePath)
+    if (!file.isFile() || file.size > MAX_IMPORT_BYTES) {
+      throw new Error('The selected archive is not a regular file or is larger than 512 MB.')
+    }
+    const source = JSON.parse(await readFile(filePath, 'utf8')) as unknown
+    const confirmation = await dialog.showMessageBox({
+      type: 'warning',
+      title: 'Replace OnMove Data?',
+      message: 'Importing replaces the data currently stored in OnMove.',
+      detail:
+        'The import is transactional: incompatible records are skipped, and the existing database is left unchanged if the archive cannot be made safe.',
+      buttons: ['Cancel', 'Import and Replace'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true
+    })
+    if (confirmation.response !== 1) return
+
+    const summary = database.dataArchive.import(source)
+    importCommitted = true
+    const compatibility = [
+      summary.skippedRows > 0 ? `${summary.skippedRows} incompatible records skipped` : null,
+      summary.repairedRows > 0 ? `${summary.repairedRows} required records repaired` : null,
+      summary.ignoredTables.length > 0
+        ? `${summary.ignoredTables.length} unknown tables ignored`
+        : null,
+      summary.ignoredFields.length > 0
+        ? `${summary.ignoredFields.length} unknown fields ignored`
+        : null
+    ].filter((part): part is string => part !== null)
+    await dialog.showMessageBox({
+      type: 'info',
+      title: 'Import Complete',
+      message: 'OnMove imported the archive safely and will now reopen.',
+      detail: compatibility.length > 0
+        ? compatibility.join(' · ')
+        : `${summary.importedRows} records imported`,
+      buttons: ['Reopen OnMove']
+    })
+    app.relaunch()
+    app.quit()
+  } catch (error) {
+    await dialog.showMessageBox({
+      type: 'error',
+      title: 'Import Failed',
+      message: importCommitted
+        ? 'The data was imported, but OnMove could not finish reopening.'
+        : 'No OnMove data was changed.',
+      detail: errorMessage(error),
+      buttons: ['OK']
+    })
+    if (importCommitted) {
+      app.relaunch()
+      app.quit()
+    }
+  } finally {
+    dataTransferInProgress = false
   }
 }
 
@@ -63,12 +216,24 @@ function setSensitiveContentHidden(hidden: boolean): void {
 app.whenReady().then(() => {
   database = new AppDatabase(resolveDatabasePath(app.getPath('userData')))
   database.recordLaunch()
-  unregisterIpc = registerAppIpc(ipcMain, database, shell, () => sensitiveContentHidden)
+  unregisterIpc = registerAppIpc(
+    ipcMain,
+    database,
+    shell,
+    () => sensitiveContentHidden,
+    {
+      open: openRichTextDocumentWindow,
+      targetFor: (webContentsId) => richTextWindowTargets.get(webContentsId) ?? null,
+      broadcast: broadcastRichTextChange
+    }
+  )
 
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(
       createMenuTemplate({
         createWindow,
+        importData: () => void importData(),
+        exportData: () => void exportData(),
         showDataFolder,
         sensitiveContentHidden,
         setSensitiveContentHidden
@@ -79,7 +244,10 @@ app.whenReady().then(() => {
   createWindow()
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    const hasMainWindow = BrowserWindow.getAllWindows().some(
+      (window) => !richTextWindowTargets.has(window.webContents.id)
+    )
+    if (!hasMainWindow) createWindow()
   })
 })
 

@@ -113,16 +113,23 @@ and do not rely on color alone to communicate selection or status.
   render callbacks, or domain records to those receivers.
 - Use the shared Lexical-backed `RichTextEditor` for every multiline user-authored field, currently
   Focus description/notes, Focus goal, and Update observation. Keep titles, dates, statuses, and
-  other compact values as native controls. Rich text is limited to text formatting, lists, and
-  color; do not add images or other embedded media. Within bulleted or numbered lists, Tab nests
-  the selected item and Shift+Tab outdents it; outside lists, preserve normal keyboard focus
-  navigation.
+  other compact values as native controls. Rich text is limited to bold, italic, underline,
+  strikethrough, yellow highlight, a conventional readable text-color palette, bulleted, numbered,
+  and check lists, and safe external links; do not add images or other embedded media. Strikethrough
+  uses `Command-Shift-X` and highlight uses `Command-Y`, with both shortcuts exposed on their
+  toolbar controls. Color changes must restore the complete pre-toolbar selection and replace the
+  color across mixed-style text without removing its other formats. Link creation accepts only
+  `http`, `https`, and `mailto` destinations, and link clicks must leave Electron through the
+  main-process external-link policy. Within any list, Tab nests the selected item and Shift+Tab
+  outdents it; outside lists, preserve normal keyboard focus navigation.
 - Persist rich text as the versioned `onmove-rich-text:1:` Lexical JSON envelope in the existing
   text fields. Continue accepting legacy plain text and render it through the same component; do
   not require a destructive content migration.
-- Route edits to existing text records through the shared throttled-autosave hook. Coalesce the
-  latest draft into at most one save per 750 ms, flush it on blur, and serialize overlapping writes;
-  creation dialogs remain explicit because no persistent record exists before Create succeeds.
+- Persist every change from an existing rich-text editor synchronously through the typed
+  `richText` preload contract. The main process commits it with `DatabaseSync` before the renderer
+  call returns, increments its durable revision, and broadcasts the committed snapshot to every
+  window. Use the shared 750 ms throttled-autosave hook for compact metadata fields; creation
+  dialogs remain explicit because no persistent record exists before Create succeeds.
 - Keep domain-to-UI translation in plain feature presenter `.ts` modules. Presenters may import
   domain types and UI contract types but must not render React. Domain snapshots and model hooks
   must not expose UI fields, icons, styling, or render methods.
@@ -134,7 +141,8 @@ and do not rely on color alone to communicate selection or status.
   reintroduce tabular columns. Updates must expose editable date, optional multi-line observation,
   and state plus add/delete actions. `Add update` must immediately persist a blank Update using the
   current local date and `none` state; do not introduce a second Create/Cancel draft step. All
-  persisted Update fields autosave through the shared throttle; do not render a manual save action.
+  date, state, and sensitivity autosave through the shared throttle; observation text uses the
+  synchronous rich-text document path. Do not render a manual save action.
   Blank and state-only Updates are valid. State must always have a text label as well as semantic color
   (`destructive` for red/warning, `success` for green, muted for none).
 - Treat a bounded Thread's Subject selector as an operational working-context lens, distinct from
@@ -187,6 +195,23 @@ and do not rely on color alone to communicate selection or status.
   only on Action Commitment list rows. Checking an active or paused Action sends `status: done`
   through the existing typed mutation so transition auditing remains intact; closed Actions cannot
   be reopened through the checkbox, and Ongoing rows never expose it.
+- Render Focus, Thread, and Commitment Todos through the shared receiver-owned `TodoList`. The
+  receiver owns inline creation, editable name/due date/done controls, overdue presentation, delete,
+  and dnd-kit sortable ordering. Overdue means incomplete with a due date before the current local
+  date; always show the `Overdue` text in destructive color instead of relying on color alone.
+- Todo dragging begins only from the row grip and supports pointer and keyboard sensors. Use a
+  complete-row `DragOverlay` and reflow the list around a visible insertion placeholder during
+  sorting; never make the editable row or its form controls draggable.
+- A Thread or Commitment Subject tab lists and creates Todos in its exact Scope/Subject cell. Its
+  All Subjects view uses the aggregate ordering context and offers only current Subjects as creation
+  targets whenever at least one exists; never offer an aggregate target alongside them. If no
+  Subjects exist, allow direct unscoped fallback Todos. Keep the main aggregate list limited to
+  current canonical Subjects and put retained work from removed Subjects—plus old unscoped work
+  when Subjects are now present—in the receiver-owned `Orphaned Todos` accordion below it, closed by
+  default. Render that accordion only in the aggregate All Subjects view, never in an exact Subject
+  tab. Reapplying the same canonical Subject returns its historical Todos to the current aggregate
+  list even when the effective Scope id changed. Reorder through named IPC in the active context;
+  do not calculate or mutate sort positions in React.
 - Keep Focus Subject applicability in the shared feature-level chip editor on the Focus screen.
   Configure Thread applicability only through the Thread context drawer: a receiver-owned choice
   switches between `Inherit Focus scope` and `Custom scope`, and a conditional receiver-owned token
@@ -217,16 +242,23 @@ and do not rely on color alone to communicate selection or status.
 - Add schema changes as new numbered migrations; never edit a migration already released to users.
 - Preserve hierarchy cascades, relation `SET NULL` behavior, and automatic status-transition
   auditing.
-- Treat Thread health, review dates, Commitment state, and cadence deadlines as model projections.
-  Do not add writable columns or UI mutations for those derived values.
+- Treat Thread health, materialized review dates, Commitment state, and cadence deadlines as model
+  projections. Do not add writable columns or UI mutations for those derived values. The nullable
+  `review_poked_on` evidence field is the deliberate exception: mutate it only through each
+  aggregate's typed `pokeReview` operation, never as a caller-supplied review projection.
 - Order Commitment Updates by their recorded date without capping them at today. A future-dated
   Update immediately supplies the Commitment's state and cadence baseline.
-- Derive Focus `lastReviewDate` from its newest effective direct Update. For an Open or zero-Subject
-  Thread, use its newest effective direct unscoped Update. For a bounded Thread with Subjects, expose one independent review cell per
-  effective Subject: aggregate `reviewDue` with any due cell, `nextReviewDate` with the earliest cell
-  deadline, and `lastReviewDate` as the oldest latest-review date across all current cells (or null
-  while any current Subject is unreviewed). Keep persisted `needsReview` separate from lifecycle
-  status and from all derived review projections.
+- Derive every aggregate `lastReviewDate` as the later of its persisted explicit review poke and its
+  applicable direct Update evidence. For Focus, applicable evidence is the newest effective direct
+  Update. For an Open or zero-Subject Thread, it is the newest effective direct unscoped Update, and
+  the later poke also advances the aggregate review deadline. For a bounded Thread with Subjects,
+  expose one independent review cell per effective Subject: aggregate `reviewDue` with any due cell,
+  `nextReviewDate` with the earliest cell deadline, and Update-derived coverage as the oldest latest
+  review date across all current cells (or null while any current Subject is unreviewed). A global
+  Thread poke may advance the aggregate `lastReviewDate`, but must not fabricate cell evidence or
+  satisfy cell deadlines. Commitment `lastReviewDate` uses its later poke or `lastUpdateDate`, while
+  state, `lastUpdateDate`, and cadence remain Update-only projections. Keep persisted `needsReview`
+  separate from lifecycle status and from all derived review projections.
 - A Commitment must have exactly one Focus or Thread parent. An Update must have exactly one Focus,
   Thread, or Commitment parent. Preserve these SQLite constraints and cascades.
 - Treat Subject, Scope, and Scope application as distinct model concepts. Subjects are canonical and
@@ -267,6 +299,26 @@ and do not rely on color alone to communicate selection or status.
   and contextual sort placements. Scoped Todos must receive independent placements in both their
   exact cell and entity rollup. Reordering a filtered subset may only permute that subset's occupied
   slots; never use one scalar sort column that lets one view corrupt another view's order.
+- Reject direct unscoped Thread and Commitment Todo creation whenever the owner's current effective
+  Scope has at least one Subject. Require an exact current Scope/Subject cell in that state. When no
+  Subjects are effective, permit the unscoped fallback without rewriting retained scoped history.
+- Expose Todo persistence only through named list/query/create/update/reorder/delete IPC. The global
+  query returns each Todo once for future cross-context screens; contextual list order remains in
+  each snapshot's sort placements and must not be replaced with an invented global ordering.
+- Model Notes as ordered children of exactly one Focus, Thread, or Commitment. Current inserts create
+  one hardcoded `Default` Note through database triggers, but the schema and snapshots must tolerate
+  zero or multiple Notes for future document organization. Parent deletion cascades Notes.
+- Treat Focus goal, Focus description, Update observation, and Note content as addressable rich-text
+  documents. Save each changed value before returning to its editor, append a numbered full-value
+  revision, and broadcast the committed revision across renderer windows. Dedicated document
+  windows use the same sandboxed preload contract and SQLite path; they must not own a second cache
+  or delayed persistence queue.
+- Keep native File-menu import/export in the main process. Export a versioned, named-field JSON
+  archive rather than renderer view models or an opaque SQLite copy. Import must intersect known
+  fields, default missing older fields, ignore unknown future fields/tables, and prune unsafe rows.
+  Replace data only inside one transaction with triggers restored and foreign-key/integrity checks
+  passing; a fatal import must leave the existing database unchanged and a successful import must
+  relaunch all windows onto the new snapshot.
 - Store `sensitive` as a strict non-null boolean flag that defaults to false on every Focus, Thread,
   Commitment, and Update. Visibility is a presentation preference, not a database filter or a
   lifecycle state.

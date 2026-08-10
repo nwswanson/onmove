@@ -36,6 +36,14 @@
   --cerulean: #9bb7d4;
   --tigerlily: #e2583e;
   --greenery: #88b04b;
+  --rich-text-gray: #4b5563;
+  --rich-text-red: #b42318;
+  --rich-text-orange: #944600;
+  --rich-text-yellow: #6f5900;
+  --rich-text-green: #216e3a;
+  --rich-text-blue: #2457c5;
+  --rich-text-purple: #7040a0;
+  --rich-text-highlight: #fff0a6;
   --radius: 0.625rem;
   --background: oklch(0.978 0.002 80);
   --foreground: oklch(0.2 0.01 270);
@@ -89,6 +97,14 @@
     --sidebar-accent: color-mix(in srgb, var(--cerulean) 14%, transparent);
     --sidebar-accent-foreground: oklch(0.96 0.004 270);
     --sidebar-primary-foreground: #dce9f5;
+    --rich-text-gray: #c4cad4;
+    --rich-text-red: #ff9188;
+    --rich-text-orange: #ffb36b;
+    --rich-text-yellow: #f5d76e;
+    --rich-text-green: #91d4a2;
+    --rich-text-blue: #94baff;
+    --rich-text-purple: #d2adff;
+    --rich-text-highlight: #493d00;
   }
 }
 
@@ -114,6 +130,66 @@ body {
 
 button {
   -webkit-app-region: no-drag;
+}
+
+.onmove-rich-text-highlight {
+  border-radius: 0.15rem;
+  background: var(--rich-text-highlight);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.onmove-checklist {
+  list-style: none;
+  padding-left: 0;
+}
+
+.onmove-checklist-item:not(.onmove-nested-list-item) {
+  position: relative;
+  margin-left: 0;
+  padding-left: 1.75rem;
+  cursor: pointer;
+}
+
+.onmove-checklist-item:not(.onmove-nested-list-item)::before {
+  position: absolute;
+  top: 0.36rem;
+  left: 0;
+  width: 0.9rem;
+  height: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  background: var(--background);
+  content: '';
+}
+
+.onmove-checklist-item-checked:not(.onmove-nested-list-item) {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.onmove-checklist-item-checked:not(.onmove-nested-list-item)::before {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+.onmove-checklist-item-checked:not(.onmove-nested-list-item)::after {
+  position: absolute;
+  top: 0.47rem;
+  left: 0.32rem;
+  width: 0.27rem;
+  height: 0.5rem;
+  border: solid var(--primary-foreground);
+  border-width: 0 2px 2px 0;
+  content: '';
+  transform: rotate(45deg);
+}
+
+.onmove-checklist-item[role='checkbox']:focus-visible {
+  border-radius: 0.25rem;
+  outline: 2px solid color-mix(in srgb, var(--ring) 60%, transparent);
+  outline-offset: 2px;
 }
 
 .drag-region {

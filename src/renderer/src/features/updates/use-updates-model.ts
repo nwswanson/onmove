@@ -50,6 +50,8 @@ export interface UpdatesModel {
     input: Omit<CreateUpdateInput, 'parent'>
   ) => Promise<UpdateSnapshot>
   editUpdate: (id: number, input: EditUpdateInput) => Promise<UpdateSnapshot>
+  saveObservation: (id: number, value: string) => void
+  openObservation: (id: number) => void
   deleteUpdate: (id: number) => Promise<void>
 }
 
@@ -83,6 +85,15 @@ export function useUpdatesModel(
     }
   }, [parentId, parentType])
 
+  useEffect(() => window.onmove.richText.onDocumentChanged(({ document }) => {
+    if (document.reference.type !== 'update' || document.reference.field !== 'observation') return
+    setUpdates((current) => sortUpdates(current.map((update) =>
+      update.id === document.reference.id
+        ? { ...update, observation: document.value, updatedAt: document.updatedAt }
+        : update
+    )))
+  }), [])
+
   async function createUpdate(
     input: Omit<CreateUpdateInput, 'parent'>
   ): Promise<UpdateSnapshot> {
@@ -114,12 +125,29 @@ export function useUpdatesModel(
     setUpdates((current) => current.filter((candidate) => candidate.id !== id))
   }
 
+  function saveObservation(id: number, value: string): void {
+    const document = window.onmove.richText.saveDocument(
+      { type: 'update', id, field: 'observation' },
+      value
+    )
+    setUpdates((current) => sortUpdates(current.map((update) => update.id === id
+      ? { ...update, observation: document.value, updatedAt: document.updatedAt }
+      : update
+    )))
+  }
+
+  function openObservation(id: number): void {
+    void window.onmove.richText.openWindow({ type: 'update', id, field: 'observation' })
+  }
+
   return {
     updates: sortUpdates(updatesForWorkingContext(updates, workingContext)),
     loading,
     loadError,
     createUpdate,
     editUpdate,
+    saveObservation,
+    openObservation,
     deleteUpdate
   }
 }

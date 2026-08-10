@@ -15,6 +15,7 @@ export const IPC_CHANNELS = {
   listFocuses: 'domain:list-focuses',
   createFocus: 'domain:create-focus',
   updateFocus: 'domain:update-focus',
+  pokeFocusReview: 'domain:poke-focus-review',
   setFocusStatus: 'domain:set-focus-status',
   deleteFocus: 'domain:delete-focus',
   getFocusStatusHistory: 'domain:get-focus-status-history',
@@ -30,20 +31,37 @@ export const IPC_CHANNELS = {
   listThreads: 'domain:list-threads',
   createThread: 'domain:create-thread',
   updateThread: 'domain:update-thread',
+  pokeThreadReview: 'domain:poke-thread-review',
   deleteThread: 'domain:delete-thread',
   listCommitments: 'domain:list-commitments',
   getCommitmentWorkingContext: 'domain:get-commitment-working-context',
   createCommitment: 'domain:create-commitment',
   updateCommitment: 'domain:update-commitment',
+  pokeCommitmentReview: 'domain:poke-commitment-review',
   deleteCommitment: 'domain:delete-commitment',
   listUpdates: 'domain:list-updates',
   createUpdate: 'domain:create-update',
   updateUpdate: 'domain:update-update',
-  deleteUpdate: 'domain:delete-update'
+  deleteUpdate: 'domain:delete-update',
+  listTodos: 'domain:list-todos',
+  queryTodos: 'domain:query-todos',
+  createTodo: 'domain:create-todo',
+  updateTodo: 'domain:update-todo',
+  reorderTodos: 'domain:reorder-todos',
+  deleteTodo: 'domain:delete-todo',
+  listNotes: 'domain:list-notes',
+  getRichTextDocument: 'rich-text:get-document',
+  openRichTextDocumentWindow: 'rich-text:open-window',
+  getRichTextWindowTarget: 'rich-text:get-window-target'
+} as const
+
+export const IPC_SYNC_CHANNELS = {
+  saveRichTextDocument: 'rich-text:save-document-sync'
 } as const
 
 export const IPC_EVENTS = {
-  sensitiveContentVisibilityChanged: 'app:sensitive-content-visibility-changed'
+  sensitiveContentVisibilityChanged: 'app:sensitive-content-visibility-changed',
+  richTextDocumentChanged: 'rich-text:document-changed'
 } as const
 
 export type JsonPrimitive = string | number | boolean | null
@@ -130,6 +148,7 @@ export interface FocusSnapshot {
   lastReviewDate: string | null
   needsReview: boolean
   sensitive: boolean
+  notes: NoteSnapshot[]
   createdAt: string
   updatedAt: string
 }
@@ -374,6 +393,7 @@ export interface ThreadSnapshot {
   needsReview: boolean
   reviewDue: boolean
   sensitive: boolean
+  notes: NoteSnapshot[]
   createdAt: string
   updatedAt: string
 }
@@ -409,10 +429,13 @@ export interface CommitmentSnapshot {
   state: HealthState
   dueDate: string | null
   cadenceDays: number | null
+  /** Latest direct Update date or explicit review poke, whichever is later. */
+  lastReviewDate: string | null
   lastUpdateDate: string | null
   nextUpdateDate: string | null
   needsUpdate: boolean
   sensitive: boolean
+  notes: NoteSnapshot[]
   createdAt: string
   updatedAt: string
 }
@@ -450,6 +473,41 @@ export interface UpdateSnapshot {
   sensitive: boolean
   scope: UpdateScopeCell | null
   createdAt: string
+  updatedAt: string
+}
+
+export type NoteParent =
+  | { type: 'focus'; id: number }
+  | { type: 'thread'; id: number }
+  | { type: 'commitment'; id: number }
+
+export interface NoteSnapshot {
+  id: number
+  parent: NoteParent
+  title: string
+  content: string
+  revision: number
+  sort: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type RichTextDocumentReference =
+  | { type: 'focus'; id: number; field: 'goal' | 'description' }
+  | { type: 'update'; id: number; field: 'observation' }
+  | { type: 'note'; id: number; field: 'content' }
+
+export interface RichTextDocumentSnapshot {
+  reference: RichTextDocumentReference
+  title: string
+  value: string
+  revision: number
+  updatedAt: string
+}
+
+export interface RichTextDocumentChange {
+  document: RichTextDocumentSnapshot
+  sourceWindowId: number
 }
 
 export interface CreateUpdateInput {
@@ -491,6 +549,8 @@ export interface TodoSnapshot {
   id: number
   name: string
   parent: TodoParent
+  /** Resolved canonical Subject for scoped Todos; null for aggregate Todos. */
+  subject: SubjectSnapshot | null
   dueDate: string | null
   done: boolean
   /** Independent positions for the exact context and its aggregate rollup. */
@@ -548,6 +608,7 @@ export interface DomainApi {
   listFocuses: () => Promise<FocusSnapshot[]>
   createFocus: (input: CreateFocusInput) => Promise<FocusSnapshot>
   updateFocus: (id: number, input: UpdateFocusInput) => Promise<FocusSnapshot>
+  pokeFocusReview: (id: number) => Promise<FocusSnapshot>
   setFocusStatus: (id: number, status: FocusStatus) => Promise<FocusSnapshot>
   deleteFocus: (id: number) => Promise<boolean>
   getFocusStatusHistory: (id: number) => Promise<FocusStatusTransition[]>
@@ -575,6 +636,7 @@ export interface DomainApi {
   listThreads: (focusId: number) => Promise<ThreadSnapshot[]>
   createThread: (input: CreateThreadInput) => Promise<ThreadSnapshot>
   updateThread: (id: number, input: UpdateThreadInput) => Promise<ThreadSnapshot>
+  pokeThreadReview: (id: number) => Promise<ThreadSnapshot>
   deleteThread: (id: number) => Promise<boolean>
   listCommitments: (parent: CommitmentParent) => Promise<CommitmentSnapshot[]>
   getCommitmentWorkingContext: (
@@ -582,11 +644,32 @@ export interface DomainApi {
   ) => Promise<CommitmentWorkingContextSnapshot>
   createCommitment: (input: CreateCommitmentInput) => Promise<CommitmentSnapshot>
   updateCommitment: (id: number, input: UpdateCommitmentInput) => Promise<CommitmentSnapshot>
+  pokeCommitmentReview: (id: number) => Promise<CommitmentSnapshot>
   deleteCommitment: (id: number) => Promise<boolean>
   listUpdates: (parent: UpdateParent) => Promise<UpdateSnapshot[]>
   createUpdate: (input: CreateUpdateInput) => Promise<UpdateSnapshot>
   updateUpdate: (id: number, input: EditUpdateInput) => Promise<UpdateSnapshot>
   deleteUpdate: (id: number) => Promise<boolean>
+  listTodos: (context: TodoParent, options?: TodoListOptions) => Promise<TodoSnapshot[]>
+  /** Cross-context query for future aggregate screens; each Todo appears once. */
+  queryTodos: (options?: TodoListOptions) => Promise<TodoSnapshot[]>
+  createTodo: (input: CreateTodoInput) => Promise<TodoSnapshot>
+  updateTodo: (id: number, input: UpdateTodoInput) => Promise<TodoSnapshot>
+  reorderTodos: (context: TodoParent, orderedTodoIds: readonly number[]) => Promise<TodoSnapshot[]>
+  deleteTodo: (id: number) => Promise<boolean>
+  listNotes: (parent: NoteParent) => Promise<NoteSnapshot[]>
+}
+
+export interface RichTextApi {
+  getDocument: (reference: RichTextDocumentReference) => Promise<RichTextDocumentSnapshot>
+  /** A local SQLite commit completes before this method returns. */
+  saveDocument: (
+    reference: RichTextDocumentReference,
+    value: string
+  ) => RichTextDocumentSnapshot
+  openWindow: (reference: RichTextDocumentReference) => Promise<void>
+  getWindowTarget: () => Promise<RichTextDocumentReference | null>
+  onDocumentChanged: (listener: (change: RichTextDocumentChange) => void) => () => void
 }
 
 export interface AppState {
@@ -604,4 +687,5 @@ export interface OnMoveApi {
   recordGreeting: () => Promise<AppState>
   showDataFolder: () => Promise<void>
   domain: DomainApi
+  richText: RichTextApi
 }

@@ -89,16 +89,16 @@ describe('Todo model', () => {
       type: 'ongoing',
       title: 'Improve ticket quality'
     }, now)
+    const aggregate = database!.domain.todos.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Prepare aggregate report'
+    }, now)
     const scoped = database!.domain.threadScopes.addSubject(
       thread.id,
       { name: 'Customer Operations' },
       now
     )
     const cell = { scopeId: scoped.scopeId as number, subjectId: scoped.subjects[0].id }
-    const aggregate = database!.domain.todos.create({
-      parent: { type: 'thread', id: thread.id },
-      name: 'Prepare aggregate report'
-    }, now)
     const first = database!.domain.todos.create({
       parent: { type: 'thread-scope', id: thread.id, scope: cell },
       name: 'Review customer tickets'
@@ -126,6 +126,10 @@ describe('Todo model', () => {
         position: 1024
       }
     ])
+    expect(first.toSnapshot().subject).toMatchObject({
+      id: cell.subjectId,
+      name: 'Customer Operations'
+    })
     expect(database!.domain.todos.list({ type: 'thread', id: thread.id }).map(({ id }) => id))
       .toEqual([aggregate.id, first.id, second.id])
     expect(database!.domain.todos.list({
@@ -144,6 +148,11 @@ describe('Todo model', () => {
       id: thread.id,
       scope: cell
     }).map(({ id }) => id)).toEqual([second.id, first.id])
+    expect(database!.domain.todos.query().filter(({ id }) =>
+      [aggregate.id, first.id, second.id, commitmentTodo.id].includes(id)
+    ).map(({ id }) => id).sort((left, right) => left - right)).toEqual(
+      [aggregate.id, first.id, second.id, commitmentTodo.id].sort((left, right) => left - right)
+    )
     expect(database!.domain.todos.list({ type: 'thread', id: thread.id }).map(({ id }) => id))
       .toEqual([aggregate.id, first.id, second.id])
 
@@ -239,6 +248,20 @@ describe('Todo model', () => {
       } },
       name: 'Cross-Focus Scope'
     }, now)).toThrow('belong to its parent Focus')
+    expect(() => database!.domain.todos.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Unscoped Thread Todo'
+    }, now)).toThrow('requires a Scope and Subject cell')
+
+    const scopedCommitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Scoped commitment'
+    }, now)
+    expect(() => database!.domain.todos.create({
+      parent: { type: 'commitment', id: scopedCommitment.id },
+      name: 'Unscoped Commitment Todo'
+    }, now)).toThrow('requires a Scope and Subject cell')
 
     const valid = database!.domain.todos.create({
       parent: { type: 'thread-scope', id: thread.id, scope: {
@@ -273,6 +296,11 @@ describe('Todo model', () => {
       title: 'Sprint execution',
       reviewFrequencyDays: 7
     }, now)
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Improve ticket quality'
+    }, now)
     const original = database!.domain.threadScopes.addSubject(
       thread.id,
       { name: 'Customer Operations' },
@@ -287,6 +315,14 @@ describe('Todo model', () => {
       parent: oldContext,
       name: 'Retained scoped work'
     }, now)
+    const commitmentTodo = database!.domain.todos.create({
+      parent: {
+        type: 'commitment-scope',
+        id: commitment.id,
+        scope: oldContext.scope
+      },
+      name: 'Retained scoped commitment work'
+    }, now)
 
     database!.domain.threadScopes.removeSubject(thread.id, original.subjects[0].id, now)
 
@@ -297,6 +333,73 @@ describe('Todo model', () => {
       parent: oldContext,
       name: 'New work in former context'
     }, now)).toThrow('current effective Scope')
+    expect(database!.domain.todos.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Thread fallback work'
+    }, now).parent).toEqual({ type: 'thread', id: thread.id })
+    expect(database!.domain.todos.create({
+      parent: { type: 'commitment', id: commitment.id },
+      name: 'Commitment fallback work'
+    }, now).parent).toEqual({ type: 'commitment', id: commitment.id })
+    expect(database!.domain.todos.find(commitmentTodo.id)).toMatchObject({
+      id: commitmentTodo.id,
+      subject: { id: original.subjects[0].id, name: 'Customer Operations' }
+    })
+    expect(() => database!.domain.subjects.delete(original.subjects[0].id)).toThrow(
+      'cannot be deleted'
+    )
+    expect(database!.domain.todos.find(todo.id)).toMatchObject({
+      id: todo.id,
+      subject: { id: original.subjects[0].id, name: 'Customer Operations' }
+    })
+  })
+
+  it('queries due work once across all contexts and cascades each owner boundary', () => {
+    const focus = database!.domain.focuses.create({ title: 'Project Atlas' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Sprint execution',
+      reviewFrequencyDays: 7
+    })
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Improve ticket quality'
+    })
+    const focusTodo = database!.domain.todos.create({
+      parent: { type: 'focus', id: focus.id },
+      name: 'Due focus item',
+      dueDate: '2026-08-08'
+    })
+    const threadTodo = database!.domain.todos.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Later thread item',
+      dueDate: '2026-08-12'
+    })
+    const commitmentTodo = database!.domain.todos.create({
+      parent: { type: 'commitment', id: commitment.id },
+      name: 'Completed item',
+      dueDate: '2026-08-07',
+      done: true
+    })
+
+    expect(database!.domain.todos.query({
+      done: false,
+      dueOnOrBefore: '2026-08-09'
+    }).map(({ id }) => id)).toEqual([focusTodo.id])
+    expect(database!.domain.todos.query().map(({ id }) => id)).toEqual([
+      focusTodo.id,
+      threadTodo.id,
+      commitmentTodo.id
+    ])
+
+    expect(commitment.delete()).toBe(true)
+    expect(database!.domain.todos.find(commitmentTodo.id)).toBeNull()
+    expect(thread.delete()).toBe(true)
+    expect(database!.domain.todos.find(threadTodo.id)).toBeNull()
+    expect(focus.delete()).toBe(true)
+    expect(database!.domain.todos.find(focusTodo.id)).toBeNull()
+    expect(database!.domain.todos.query()).toEqual([])
   })
 
   it('cascades Todo records and placements with their owner but retains shared Scope data', () => {

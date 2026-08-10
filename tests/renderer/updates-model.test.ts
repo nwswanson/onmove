@@ -14,7 +14,8 @@ function update(
     state: 'none',
     sensitive: false,
     scope,
-    createdAt: '2026-08-08T12:00:00.000Z'
+    createdAt: '2026-08-08T12:00:00.000Z',
+    updatedAt: '2026-08-08T12:00:00.000Z'
   }
 }
 

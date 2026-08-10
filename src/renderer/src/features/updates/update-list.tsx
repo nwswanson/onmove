@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { ChevronDown, Plus, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -27,11 +27,15 @@ function UpdateEditorCard({
   item,
   stateOptions,
   onSave,
+  onObservationChange,
+  onOpenObservation,
   onDelete
 }: {
   item: UpdateListItemModel
   stateOptions: readonly UpdateListStateOptionModel[]
   onSave: (draft: UpdateListDraft) => Promise<void>
+  onObservationChange?: (value: string) => void
+  onOpenObservation?: () => void
   onDelete: () => Promise<void>
 }): React.JSX.Element {
   const initialDraft: UpdateListDraft = {
@@ -50,6 +54,18 @@ function UpdateEditorCard({
     onSave
   })
 
+  useEffect(() => {
+    const nextDraft = {
+      date: item.date,
+      observation: item.observation,
+      state: item.state,
+      sensitive: item.sensitive
+    }
+    if (updateDraftsEqual(draftRef.current, nextDraft)) return
+    draftRef.current = nextDraft
+    setDraft(nextDraft)
+  }, [item.date, item.observation, item.sensitive, item.state])
+
   const selectedState =
     stateOptions.find((option) => option.value === draft.state) ?? stateOptions.at(-1)
 
@@ -58,6 +74,22 @@ function UpdateEditorCard({
     draftRef.current = nextDraft
     setDraft(nextDraft)
     autosave.schedule(nextDraft)
+  }
+
+  function updateObservation(observation: string): void {
+    const nextDraft = { ...draftRef.current, observation }
+    draftRef.current = nextDraft
+    setDraft(nextDraft)
+    setError(null)
+    if (onObservationChange) {
+      try {
+        onObservationChange(observation)
+      } catch {
+        setError('The update observation could not be saved. Keep editing to retry.')
+      }
+    } else {
+      autosave.schedule(nextDraft)
+    }
   }
 
   async function remove(): Promise<void> {
@@ -162,7 +194,9 @@ function UpdateEditorCard({
           ariaLabel="Update observation"
           placeholder="What changed?"
           value={draft.observation}
-          onChange={(observation) => updateDraft({ observation })}
+          externalRevision={item.externalRevision}
+          onChange={updateObservation}
+          onOpenInWindow={onOpenObservation}
           compact
         />
         {(error !== null || autosave.error !== null) && (
@@ -193,6 +227,8 @@ export function UpdateList({
   createOptionsLabel = 'Add update for…',
   onCreateFor,
   onUpdate,
+  onObservationChange,
+  onOpenObservation,
   onDelete
 }: UpdateListProps): React.JSX.Element {
   if (ariaLabel.trim().length === 0) throw new Error('An Update list requires an accessible label.')
@@ -309,6 +345,12 @@ export function UpdateList({
             item={item}
             stateOptions={stateOptions}
             onSave={(draft) => onUpdate(item.id, draft)}
+            onObservationChange={onObservationChange
+              ? (value) => onObservationChange(item.id, value)
+              : undefined}
+            onOpenObservation={onOpenObservation
+              ? () => onOpenObservation(item.id)
+              : undefined}
             onDelete={() => onDelete(item.id)}
           />
         ))}
@@ -356,6 +398,12 @@ export function UpdateList({
                 item={item}
                 stateOptions={stateOptions}
                 onSave={(draft) => onUpdate(item.id, draft)}
+                onObservationChange={onObservationChange
+                  ? (value) => onObservationChange(item.id, value)
+                  : undefined}
+                onOpenObservation={onOpenObservation
+                  ? () => onOpenObservation(item.id)
+                  : undefined}
                 onDelete={() => onDelete(item.id)}
               />
             ))}

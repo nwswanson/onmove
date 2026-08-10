@@ -192,8 +192,10 @@ the Thread's review frequency. Child Commitment Updates do not complete Thread r
 The ordinary Thread snapshot rolls the matrix up for list and review surfaces: `reviewDue` means any
 cell is due, `nextReviewDate` is the earliest cell deadline, and `lastReviewDate` is the oldest latest
 review across all effective cells. It remains `null` while any current Subject has never been
-reviewed. This projection required no additional schema migration because scoped Updates already
-store the exact Thread/Scope/Subject attribution.
+reviewed. A later aggregate review poke may advance the Thread snapshot's `lastReviewDate`, but it
+does not alter these cells, their deadlines, or their evidence. The cell projection itself required
+no additional schema migration because scoped Updates already store the exact
+Thread/Scope/Subject attribution.
 
 Thread health includes each cell's direct state plus every active child Commitment's materialized
 state. A missing Subject assessment contributes `none`.

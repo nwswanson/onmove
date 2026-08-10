@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC_CHANNELS, IPC_EVENTS, type OnMoveApi } from '../shared/contracts'
+import {
+  IPC_CHANNELS,
+  IPC_EVENTS,
+  IPC_SYNC_CHANNELS,
+  type OnMoveApi,
+  type RichTextDocumentSnapshot
+} from '../shared/contracts'
 
 const api: OnMoveApi = {
   getAppState: () => ipcRenderer.invoke(IPC_CHANNELS.getAppState),
@@ -26,6 +32,7 @@ const api: OnMoveApi = {
     listFocuses: () => ipcRenderer.invoke(IPC_CHANNELS.listFocuses),
     createFocus: (input) => ipcRenderer.invoke(IPC_CHANNELS.createFocus, input),
     updateFocus: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateFocus, id, input),
+    pokeFocusReview: (id) => ipcRenderer.invoke(IPC_CHANNELS.pokeFocusReview, id),
     setFocusStatus: (id, status) =>
       ipcRenderer.invoke(IPC_CHANNELS.setFocusStatus, id, status),
     deleteFocus: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteFocus, id),
@@ -50,6 +57,7 @@ const api: OnMoveApi = {
     listThreads: (focusId) => ipcRenderer.invoke(IPC_CHANNELS.listThreads, focusId),
     createThread: (input) => ipcRenderer.invoke(IPC_CHANNELS.createThread, input),
     updateThread: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateThread, id, input),
+    pokeThreadReview: (id) => ipcRenderer.invoke(IPC_CHANNELS.pokeThreadReview, id),
     deleteThread: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteThread, id),
     listCommitments: (parent) => ipcRenderer.invoke(IPC_CHANNELS.listCommitments, parent),
     getCommitmentWorkingContext: (commitmentId) =>
@@ -57,11 +65,48 @@ const api: OnMoveApi = {
     createCommitment: (input) => ipcRenderer.invoke(IPC_CHANNELS.createCommitment, input),
     updateCommitment: (id, input) =>
       ipcRenderer.invoke(IPC_CHANNELS.updateCommitment, id, input),
+    pokeCommitmentReview: (id) =>
+      ipcRenderer.invoke(IPC_CHANNELS.pokeCommitmentReview, id),
     deleteCommitment: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteCommitment, id),
     listUpdates: (parent) => ipcRenderer.invoke(IPC_CHANNELS.listUpdates, parent),
     createUpdate: (input) => ipcRenderer.invoke(IPC_CHANNELS.createUpdate, input),
     updateUpdate: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateUpdate, id, input),
-    deleteUpdate: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteUpdate, id)
+    deleteUpdate: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteUpdate, id),
+    listTodos: (context, options) =>
+      ipcRenderer.invoke(IPC_CHANNELS.listTodos, context, options),
+    queryTodos: (options) => ipcRenderer.invoke(IPC_CHANNELS.queryTodos, options),
+    createTodo: (input) => ipcRenderer.invoke(IPC_CHANNELS.createTodo, input),
+    updateTodo: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateTodo, id, input),
+    reorderTodos: (context, orderedTodoIds) =>
+      ipcRenderer.invoke(IPC_CHANNELS.reorderTodos, context, orderedTodoIds),
+    deleteTodo: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteTodo, id),
+    listNotes: (parent) => ipcRenderer.invoke(IPC_CHANNELS.listNotes, parent)
+  },
+  richText: {
+    getDocument: (reference) =>
+      ipcRenderer.invoke(IPC_CHANNELS.getRichTextDocument, reference),
+    saveDocument: (reference, value) => {
+      const result = ipcRenderer.sendSync(
+        IPC_SYNC_CHANNELS.saveRichTextDocument,
+        reference,
+        value
+      ) as
+        | { ok: true; document: RichTextDocumentSnapshot }
+        | { ok: false; message: string }
+      if (!result.ok) throw new Error(result.message)
+      return result.document
+    },
+    openWindow: (reference) =>
+      ipcRenderer.invoke(IPC_CHANNELS.openRichTextDocumentWindow, reference),
+    getWindowTarget: () => ipcRenderer.invoke(IPC_CHANNELS.getRichTextWindowTarget),
+    onDocumentChanged: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        change: Parameters<typeof listener>[0]
+      ): void => listener(change)
+      ipcRenderer.on(IPC_EVENTS.richTextDocumentChanged, handler)
+      return () => ipcRenderer.removeListener(IPC_EVENTS.richTextDocumentChanged, handler)
+    }
   }
 }
 

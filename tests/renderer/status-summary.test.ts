@@ -22,10 +22,12 @@ function commitment(overrides: Partial<CommitmentSnapshot>): CommitmentSnapshot 
     state: 'none',
     dueDate: null,
     cadenceDays: null,
+    lastReviewDate: null,
     lastUpdateDate: null,
     nextUpdateDate: null,
     needsUpdate: false,
     sensitive: false,
+    notes: [],
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides
@@ -42,6 +44,7 @@ function update(overrides: Partial<UpdateSnapshot>): UpdateSnapshot {
     sensitive: false,
     scope: null,
     createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides
   }
 }
@@ -59,6 +62,7 @@ function thread(id: number): ThreadSnapshot {
     needsReview: true,
     reviewDue: false,
     sensitive: false,
+    notes: [],
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z'
   }

@@ -61,13 +61,42 @@ Titles are required but intentionally not unique. Status is materialized on the 
 every actual change is appended by SQLite triggers to `focus_status_transitions`. Active and paused
 records appear in sidebar navigation; paused records are visually muted. Cancelled and done records
 remain durable and queryable but are omitted from navigation. `needsReview` is a durable inclusion
-flag independent of status. `lastReviewDate` is derived from the newest effective Update directly
-on the Focus; descendant Thread and Commitment Updates do not advance it.
+flag independent of status. `lastReviewDate` is derived from the later of the newest effective
+Update directly on the Focus and its explicit `review_poked_on` date; descendant Thread and
+Commitment Updates do not advance it.
+
+Focuses, Threads, and Commitments can be explicitly “poked” as reviewed without creating a
+synthetic Update. Each aggregate stores only its monotonic latest `review_poked_on` calendar date;
+the named `pokeReview` repository/model operation supplies the local current date and does not let
+callers write the derived snapshot field. Focus and Thread temporal projections ignore a poke after
+their requested projection date. A Commitment exposes `lastReviewDate` separately from
+`lastUpdateDate`: poking it never changes state, cadence, or the meaning of its latest observation.
 
 `FocusModel` supplies update, status, history, refresh, and deletion helpers. The renderer reaches
 these operations only through named IPC methods. Threads and Commitments use named list and create
-and update methods; Updates use named list, create, edit, and delete methods. Repository dispatch and SQL
-remain unavailable to the renderer.
+and update methods; Updates use named list, create, edit, and delete methods. Todos use named
+contextual list, cross-context query, create, update, reorder, and delete methods. Repository
+dispatch and SQL remain unavailable to the renderer.
+
+## Notes and durable rich-text documents
+
+Every Focus, Thread, and Commitment snapshot contains an ordered `notes` array. A Note belongs to
+exactly one of those parents, has a title, opaque rich-text content, independent sort key, revision,
+and timestamps, and cascades with its parent. Migration 14 backfills and insert triggers create one
+Note titled `Default` for every current aggregate. The database does not require an aggregate to
+have a Note and does not cap the array at one, so later document organization can remove the default
+or introduce multiple named documents without changing parent shape.
+
+Focus goal, Focus description, Update observation, and Note content implement one addressable
+`RichTextDocumentReference` contract. A changed value is committed synchronously on the main
+process's single SQLite connection. SQLite triggers increment the field-specific revision and append
+the complete committed value to `rich_text_history`; saving the identical value is a no-op. Parent
+and Update deletion also removes the corresponding polymorphic history rows.
+
+The active record remains the materialized value used by normal snapshots. Revision history is the
+safety trail, not something the UI must replay. A commit returns its new materialized snapshot and
+is broadcast to every renderer window, allowing the main workspace and any detached editor window
+to converge on the same persisted revision without a renderer-owned cache or close-time flush.
 
 The model beneath Focus—Subjects, Focus-owned Scopes, Threads, Commitments, dated Updates, Todos,
 health, reviews, and cadence—is specified as a unified whole in
@@ -99,7 +128,9 @@ derived from cell state without pretending that healthy Subjects have left the S
 Bounded Threads and Commitments both expose per-Subject matrix projections. Commitment cells own
 state and update cadence. Thread cells own state and review cadence. A bounded Thread is due when any
 effective Subject cell is due; its next date is the earliest cell deadline, and its aggregate last
-review date represents complete current-Scope coverage rather than merely the newest observation.
+review date starts with complete current-Scope coverage rather than merely the newest observation.
+A later aggregate Thread poke can advance that displayed date, but does not fabricate a review for
+any Subject cell or change the cell-derived due and next-review projections.
 
 Declared Focus and Thread Scope applications have immutable transition history. Commitment rows
 record their enforced initial mode but cannot be directly changed. Membership is ended with an
@@ -168,6 +199,24 @@ Models support `refresh()`, `delete()`, and `isDeleted`. `ItemModel` adds `moveT
 To introduce another entity type, subclass `BaseModel` and `BaseRepository`, add its schema in a
 new numbered migration, and expose only specific operations over IPC. Avoid generic renderer-driven
 SQL or arbitrary model method dispatch; named IPC operations keep the sandbox boundary auditable.
+
+## Portable data archives
+
+The native File menu exports a versioned `onmove-data` JSON archive. It contains named raw fields
+for durable domain tables plus archive, schema, application, and timestamp metadata. Runtime-only
+preferences and launch counters are not user data and are not exported.
+
+Import is a replacement operation, never a blind SQL restore. The importer intersects archived
+fields with columns known to the running version, accepts snake_case and camelCase field names,
+uses current defaults for absent older fields, and ignores unknown future fields and tables.
+Malformed scalar values are normalized where doing so is unambiguous. Invalid records and orphaned
+relationships are skipped, while required Scope applications, lifecycle baselines, and Default
+Notes are repaired.
+
+The entire replacement—including temporarily removing and restoring invariant triggers—runs in one
+SQLite transaction followed by foreign-key and integrity checks. A fatal archive rolls back the
+data, schema triggers, and repairs together, leaving the pre-import application state untouched.
+After a successful import the app relaunches so every window reads one coherent database snapshot.
 
 ## Migration rules
 

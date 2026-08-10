@@ -56,6 +56,21 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     return row
   }
 
+  function storedFocusDefaultNote(): { content: string; revision: number } | undefined {
+    const database = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
+      readOnly: true
+    })
+    const row = database.prepare(
+      `SELECT note.content, note.content_revision AS revision
+       FROM notes note
+       JOIN focuses focus ON focus.id = note.focus_id
+       WHERE note.title = 'Default'
+       ORDER BY note.id LIMIT 1`
+    ).get() as { content: string; revision: number } | undefined
+    database.close()
+    return row ? { content: row.content, revision: Number(row.revision) } : undefined
+  }
+
   function storedThread(): {
     title: string
     reviewFrequencyDays: number
@@ -318,6 +333,10 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
   try {
     application = await launch()
     let window = await application.firstWindow()
+    await expect.poll(() => application?.evaluate(({ Menu }) => ({
+      importLabel: Menu.getApplicationMenu()?.getMenuItemById('import-data')?.label,
+      exportLabel: Menu.getApplicationMenu()?.getMenuItemById('export-data')?.label
+    }))).toEqual({ importLabel: 'Import Data…', exportLabel: 'Export Data…' })
     await expect(window.getByRole('heading', { name: 'Home', exact: true })).toBeVisible()
     await expect(window.getByRole('toolbar', { name: 'Application toolbar' })).toBeVisible()
     await expect(window.getByText('Overview')).toBeVisible()
@@ -331,11 +350,79 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       .getByRole('dialog', { name: 'New focus' })
       .getByRole('button', { name: 'Italic' })
       .click()
+    await window
+      .getByRole('dialog', { name: 'New focus' })
+      .getByRole('button', { name: 'Insert link' })
+      .click()
+    const descriptionLinkEditor = window
+      .getByRole('dialog', { name: 'New focus' })
+      .getByRole('group', { name: 'Link editor' })
+    await descriptionLinkEditor.getByLabel('Link URL').fill('notes.example.com')
+    await descriptionLinkEditor.getByRole('button', { name: 'Insert' }).click()
     await window.getByRole('button', { name: 'Create focus' }).click()
     await expect(window.getByRole('heading', { name: 'Persistent focus' })).toBeVisible()
     await expect(window.getByLabel('Focus last reviewed')).toContainText('Last reviewed · Never')
     await expect(window.getByRole('combobox', { name: 'Focus status' })).toHaveValue('active')
     await expect(window.getByLabel('Focus description').locator('em')).toContainText('Stored notes')
+    const descriptionLink = window
+      .getByLabel('Focus description')
+      .getByRole('link', { name: 'Stored notes' })
+    await expect(descriptionLink).toHaveAttribute('href', 'https://notes.example.com/')
+    await window.evaluate(() => {
+      const capturedWindow = window as typeof window & { __onmoveOpenedLink?: string }
+      capturedWindow.__onmoveOpenedLink = ''
+      window.open = ((url) => {
+        capturedWindow.__onmoveOpenedLink = String(url)
+        return null
+      }) as typeof window.open
+    })
+    await descriptionLink.click()
+    await expect
+      .poll(() =>
+        window.evaluate(
+          () =>
+            (window as typeof window & { __onmoveOpenedLink?: string }).__onmoveOpenedLink
+        )
+      )
+      .toBe('https://notes.example.com/')
+    const defaultNote = window.getByRole('textbox', { name: 'Default note' })
+    await defaultNote.fill('A durable working note')
+    await expect.poll(() => storedFocusDefaultNote()?.content).toContain('A durable working note')
+    await expect.poll(() => storedFocusDefaultNote()?.revision).toBeGreaterThan(0)
+
+    const documentWindowPromise = application.waitForEvent('window')
+    await defaultNote
+      .locator('xpath=../..')
+      .getByRole('button', { name: 'Open in new window' })
+      .click()
+    const documentWindow = await documentWindowPromise
+    await expect(documentWindow.locator('[data-slot="rich-text-window-titlebar"]'))
+      .toHaveCSS('-webkit-app-region', 'drag')
+    await expect(
+      documentWindow.getByRole('heading', { name: 'Persistent focus — Default' })
+    ).toBeVisible()
+    const detachedEditor = documentWindow.getByRole('textbox', { name: 'Document content' })
+    await expect(detachedEditor).toContainText('A durable working note')
+    await detachedEditor.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A')
+    await detachedEditor.press('Backspace')
+    await expect(defaultNote).toHaveText('')
+    for (const expected of ['a', 'as', 'asd', 'asdf']) {
+      await detachedEditor.type(expected.at(-1)!)
+      await expect(defaultNote).toHaveText(expected)
+    }
+    await detachedEditor.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A')
+    await detachedEditor.press('Backspace')
+    await expect(defaultNote).toHaveText('')
+    await detachedEditor.type('asdf')
+    expect(await defaultNote.textContent()).toBe('asdf')
+    await detachedEditor.fill('Changed safely in the document window')
+    await expect(defaultNote).toContainText('Changed safely in the document window')
+    await detachedEditor.press('End')
+    await detachedEditor.type('!')
+    await documentWindow.close()
+    await expect.poll(() => storedFocusDefaultNote()?.content)
+      .toContain('Changed safely in the document window!')
+
     const drawerToggle = window.getByRole('button', { name: 'Toggle context drawer' })
     await expect(drawerToggle).toHaveAttribute('aria-pressed', 'false')
     await drawerToggle.click()
@@ -352,6 +439,27 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await goal.press('Meta+A')
     await goal.locator('xpath=../..').getByRole('button', { name: 'Bold' }).click()
     await expect(goal.locator('strong')).toContainText('Deliver predictable customer value')
+    await goal.press('Meta+A')
+    await goal.locator('xpath=../..').getByRole('button', { name: 'Insert link' }).click()
+    const goalLinkEditor = goal.locator('xpath=../..').getByRole('group', {
+      name: 'Link editor'
+    })
+    await goalLinkEditor.getByLabel('Link URL').fill('handbook.example.com')
+    await goalLinkEditor.getByRole('button', { name: 'Insert' }).click()
+    const goalLink = goal.getByRole('link', { name: 'Deliver predictable customer value' })
+    await expect(goalLink).toHaveAttribute('href', 'https://handbook.example.com/')
+    const goalToolbar = goal.locator('xpath=../..')
+    await goal.press('Meta+A')
+    await goal.press('Meta+Shift+X')
+    await expect(goalToolbar.getByRole('button', { name: 'Strikethrough' }))
+      .toHaveAttribute('aria-pressed', 'true')
+    await goal.press('Meta+Y')
+    await expect(goalToolbar.getByRole('button', { name: 'Highlight' }))
+      .toHaveAttribute('aria-pressed', 'true')
+    await goalToolbar.getByLabel('Text color').selectOption({ label: 'Blue' })
+    await expect(goal.locator('[style*="--rich-text-blue"]')).toContainText(
+      'Deliver predictable customer value'
+    )
     await goal.press('Meta+A')
     await goal.locator('xpath=../..').getByRole('button', { name: 'Numbered list' }).click()
     await goal.evaluate((editor) => {
@@ -388,6 +496,15 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     expect(storedFocusUpdate()?.observation).toBe('')
     await expect(window.getByRole('button', { name: 'Create update' })).toHaveCount(0)
     await focusUpdates.getByLabel('Update observation').fill('Overall review completed')
+    const focusUpdateObservation = focusUpdates.getByLabel('Update observation')
+    await focusUpdateObservation.press('Meta+A')
+    await focusUpdateObservation
+      .locator('xpath=../..')
+      .getByRole('button', { name: 'Checklist' })
+      .click()
+    const focusUpdateChecklistItem = focusUpdateObservation.getByRole('checkbox')
+    await focusUpdateChecklistItem.click({ position: { x: 7, y: 10 } })
+    await expect(focusUpdateChecklistItem).toHaveAttribute('aria-checked', 'true')
     await focusUpdates.getByLabel('Update state').selectOption('green')
     await expect.poll(() => storedFocusUpdate()?.state, { timeout: 3_000 }).toBe('green')
     await expect
@@ -748,8 +865,11 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(window.getByRole('tab', { name: 'Work in Platform Team' })).toBeVisible()
     const scopeDrawer = window.getByRole('complementary', { name: 'Thread context drawer' })
     await expect(scopeDrawer.getByRole('radio', { name: /Inherit Focus scope/ })).toBeChecked()
-    await scopeDrawer.getByRole('radio', { name: /Custom scope/ }).click()
-    await expect(scopeDrawer.getByRole('radio', { name: /Custom scope/ })).toBeChecked()
+    const customScopeChoice = scopeDrawer.getByRole('radio', { name: /Custom scope/ })
+    await customScopeChoice.click()
+    await expect(customScopeChoice).toBeChecked()
+    await expect(customScopeChoice).toBeEnabled()
+    await expect.poll(() => storedThreadScopeState()?.mode).toBe('explicit')
     await expect(window.getByRole('tab', { name: 'All subjects' }))
       .toHaveAttribute('aria-selected', 'true')
     await window
@@ -930,6 +1050,9 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(window.getByRole('heading', { name: 'Home', exact: true })).toBeVisible()
     await window.getByRole('button', { name: 'Persistent focus, paused' }).click()
     await expect(window.getByRole('heading', { name: 'Persistent focus' })).toBeVisible()
+    await expect(
+      window.getByLabel('Focus description').getByRole('link', { name: 'Stored notes' })
+    ).toHaveAttribute('href', 'https://notes.example.com/')
     await expect(window.getByLabel('Goal')).toContainText('Deliver predictable customer value')
     await expect(
       window
@@ -938,6 +1061,19 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
         .filter({ hasText: 'Deliver predictable customer value' })
     ).toBeVisible()
     await expect(window.getByLabel('Goal').locator('ol ol')).toContainText('With aligned teams')
+    await expect(
+      window.getByLabel('Goal').getByRole('link', { name: 'Deliver predictable customer value' })
+    ).toHaveAttribute('href', 'https://handbook.example.com/')
+    const reloadedPrimaryGoal = window
+      .getByLabel('Goal')
+      .getByText('Deliver predictable customer value', { exact: true })
+    await expect(reloadedPrimaryGoal).toHaveClass(/line-through/)
+    await expect(reloadedPrimaryGoal).toHaveClass(/onmove-rich-text-highlight/)
+    await expect(
+      reloadedPrimaryGoal.locator(
+        'xpath=ancestor-or-self::*[contains(@style, "--rich-text-blue")][1]'
+      )
+    ).toHaveAttribute('style', /--rich-text-blue/)
     await expect(window.getByRole('list', { name: 'Subjects in scope' })).toContainText(
       'Customer Operations'
     )
@@ -952,6 +1088,11 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(window.getByRole('list', { name: 'Focus updates' })).toContainText(
       'Overall review completed'
     )
+    await expect(
+      window
+        .getByRole('list', { name: 'Focus updates' })
+        .getByRole('checkbox', { name: 'Overall review completed' })
+    ).toHaveAttribute('aria-checked', 'true')
     await expect(
       window.getByRole('button', { name: 'Sprint execution, paused', exact: true })
     ).toBeVisible()
@@ -1184,6 +1325,200 @@ test('applies a custom Thread Scope to Commitments created before that Scope', a
       }
       await window.getByRole('button', { name: 'Sprint execution', exact: true }).click()
     }
+  } finally {
+    await application?.close()
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
+test('sorts and preserves contextual Todos through Scope changes', async () => {
+  test.setTimeout(45_000)
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-todos-e2e-'))
+  let application: ElectronApplication | undefined
+
+  function storedTodos(): Array<{
+    name: string
+    focusId: number | null
+    threadId: number | null
+    commitmentId: number | null
+    subjectName: string | null
+  }> {
+    const database = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
+      readOnly: true
+    })
+    const rows = database.prepare(
+      `SELECT todo.name, todo.focus_id AS focusId, todo.thread_id AS threadId,
+              todo.commitment_id AS commitmentId, subject.name AS subjectName
+       FROM todos todo
+       LEFT JOIN subjects subject ON subject.id = todo.subject_id
+       ORDER BY todo.id`
+    ).all() as Array<{
+      name: string
+      focusId: number | null
+      threadId: number | null
+      commitmentId: number | null
+      subjectName: string | null
+    }>
+    database.close()
+    return rows
+  }
+
+  try {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    const window = await application.firstWindow()
+
+    await window.getByRole('button', { name: 'New focus' }).click()
+    await window.getByLabel(/^Title/).fill('Todo Focus')
+    await window.getByRole('button', { name: 'Create focus' }).click()
+
+    const newTodoName = window.getByLabel('New Todo name')
+    await newTodoName.fill('Overdue sponsor review')
+    await window.getByLabel('New Todo due date').fill('2000-01-01')
+    await window.getByRole('button', { name: 'Add Todo' }).click()
+    await newTodoName.fill('Prepare next brief')
+    await window.getByRole('button', { name: 'Add Todo' }).click()
+    const focusTodoList = window.getByRole('list', { name: 'focus Todos sortable list' })
+    const overdueHandle = window.getByLabel('Drag Overdue sponsor review')
+    const overdueTodo = overdueHandle.locator('..').locator('..')
+    await expect(overdueTodo).toHaveAttribute('data-overdue', 'true')
+    await expect(overdueTodo.getByText('Overdue')).toBeVisible()
+    const nextBriefTodo = window.getByLabel('Drag Prepare next brief').locator('..').locator('..')
+    const overdueHandleBounds = await overdueHandle.boundingBox()
+    const nextBriefBounds = await nextBriefTodo.boundingBox()
+    if (!overdueHandleBounds) throw new Error('Todo drag handle has no layout bounds')
+    if (!nextBriefBounds) throw new Error('Todo drag target has no layout bounds')
+    await window.mouse.move(
+      overdueHandleBounds.x + overdueHandleBounds.width / 2,
+      overdueHandleBounds.y + overdueHandleBounds.height / 2
+    )
+    await window.mouse.down()
+    await window.mouse.move(
+      nextBriefBounds.x + nextBriefBounds.width / 2,
+      nextBriefBounds.y + nextBriefBounds.height / 2,
+      { steps: 12 }
+    )
+    await expect(window.getByText('Drop Todo here')).toBeVisible()
+    await expect(nextBriefTodo).not.toHaveCSS('transform', 'none')
+    await window.mouse.up()
+    await expect(window.getByText('Drop Todo here')).toBeHidden()
+    await expect(overdueTodo).toHaveAttribute('data-dragging', 'false')
+    await expect(focusTodoList.locator('[data-todo-id]').first().getByLabel('Todo name'))
+      .toHaveValue('Prepare next brief')
+    // dnd-kit briefly captures the click synthesized by the pointer-up so it cannot
+    // activate a control underneath the dropped row.
+    await window.waitForTimeout(75)
+
+    await window.getByRole('button', { name: 'New thread' }).click()
+    const threadDialog = window.getByRole('dialog', { name: 'New thread' })
+    await threadDialog.getByLabel(/^Title/).fill('Scoped delivery')
+    await threadDialog.getByRole('button', { name: 'Create thread' }).click()
+    await window.getByRole('button', { name: 'Scoped delivery', exact: true }).click()
+    const todoDrawerToggle = window.getByRole('button', { name: 'Toggle context drawer' })
+    if (await todoDrawerToggle.getAttribute('aria-pressed') === 'false') {
+      await todoDrawerToggle.click()
+    }
+    const threadDrawer = window.getByRole('complementary', { name: 'Thread context drawer' })
+    const subjectInput = threadDrawer.getByLabel('Add a Subject to custom scope')
+    for (const subject of ['Customer Operations', 'Platform Team']) {
+      await subjectInput.fill(subject)
+      await subjectInput.press('Enter')
+      await expect(threadDrawer.getByRole('button', { name: `Remove ${subject}` })).toBeVisible()
+    }
+
+    await window.getByLabel('New Todo name').fill('Call customer owner')
+    const threadTodoContext = window.getByLabel('New Todo context')
+    await expect(threadTodoContext.locator('option')).toHaveText([
+      'Customer Operations',
+      'Platform Team'
+    ])
+    await threadTodoContext.selectOption({ label: 'Customer Operations' })
+    await window.getByRole('button', { name: 'Add Todo' }).click()
+    await window.getByRole('tab', { name: 'Work in Customer Operations' }).click()
+    const scopedThreadTodos = window.getByRole('list', { name: 'thread Todos sortable list' })
+    await expect(scopedThreadTodos.getByLabel('Todo name', { exact: true }))
+      .toHaveValue('Call customer owner')
+    await expect(scopedThreadTodos).toContainText('Customer Operations')
+    await expect(window.getByRole('button', { name: /Orphaned Todos/ })).toHaveCount(0)
+
+    await window.getByRole('tab', { name: 'All subjects' }).click()
+    await window.getByLabel('New Todo name').fill('Coordinate platform owner')
+    await window.getByLabel('New Todo context').selectOption({ label: 'Platform Team' })
+    await window.getByRole('button', { name: 'Add Todo' }).click()
+    await window.getByRole('button', { name: 'Add commitment to Scoped delivery' }).click()
+    const commitmentDialog = window.getByRole('dialog', { name: 'New commitment' })
+    await commitmentDialog.getByLabel(/^Title/).fill('Improve ticket quality')
+    await commitmentDialog.getByRole('button', { name: 'Create commitment' }).click()
+    await window.getByRole('tab', { name: 'Work in Platform Team' }).click()
+    await window.getByLabel('New Todo name').fill('Rewrite platform examples')
+    await window.getByRole('button', { name: 'Add Todo' }).click()
+    await expect.poll(() => storedTodos().map(({ name, subjectName }) => ({ name, subjectName })))
+      .toContainEqual({ name: 'Rewrite platform examples', subjectName: 'Platform Team' })
+
+    await window.getByRole('button', { name: 'Scoped delivery', exact: true }).click()
+    await threadDrawer.getByRole('button', { name: 'Remove Platform Team' }).click()
+    await expect(window.getByRole('tab', { name: 'All subjects' }))
+      .toHaveAttribute('aria-selected', 'true')
+    const threadOrphanedToggle = window.getByRole('button', { name: /Orphaned Todos/ })
+    await expect(threadOrphanedToggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(window.getByRole('list', { name: 'Orphaned Todos' })).toHaveCount(0)
+    await threadOrphanedToggle.click()
+    const threadOrphanedTodos = window.getByRole('list', { name: 'Orphaned Todos' })
+    await expect(threadOrphanedTodos.getByLabel('Todo name', { exact: true }))
+      .toHaveValue('Coordinate platform owner')
+    await expect(threadOrphanedTodos).toContainText('Platform Team · Orphaned')
+
+    await window.getByRole('button', {
+      name: 'Open commitment Improve ticket quality'
+    }).click()
+    const commitmentOrphanedToggle = window.getByRole('button', { name: /Orphaned Todos/ })
+    await expect(commitmentOrphanedToggle).toHaveAttribute('aria-expanded', 'false')
+    await commitmentOrphanedToggle.click()
+    const commitmentOrphanedTodos = window.getByRole('list', { name: 'Orphaned Todos' })
+    await expect(commitmentOrphanedTodos).toContainText('Platform Team · Orphaned')
+    await expect(commitmentOrphanedTodos.getByLabel('Todo name', { exact: true }))
+      .toHaveValue('Rewrite platform examples')
+
+    await expect.poll(() => storedTodos()).toContainEqual(expect.objectContaining({
+      name: 'Rewrite platform examples',
+      subjectName: 'Platform Team'
+    }))
+
+    await application.close()
+    application = undefined
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    const reloadedWindow = await application.firstWindow()
+    await reloadedWindow.getByRole('button', { name: 'Todo Focus' }).click()
+    const reloadedFocusTodos = reloadedWindow.getByRole('list', {
+      name: 'focus Todos sortable list'
+    })
+    await expect(reloadedFocusTodos.locator('[data-todo-id]').first().getByLabel('Todo name'))
+      .toHaveValue('Prepare next brief')
+    await expect(reloadedWindow.getByLabel('Drag Overdue sponsor review')
+      .locator('..').locator('..')).toHaveAttribute('data-overdue', 'true')
+    await reloadedWindow.getByRole('button', { name: 'Scoped delivery', exact: true }).click()
+    await reloadedWindow.getByRole('button', {
+      name: 'Open commitment Improve ticket quality'
+    }).click()
+    const reloadedOrphanedToggle = reloadedWindow.getByRole('button', {
+      name: /Orphaned Todos/
+    })
+    await expect(reloadedOrphanedToggle).toHaveAttribute('aria-expanded', 'false')
+    await reloadedOrphanedToggle.click()
+    const reloadedOrphanedTodos = reloadedWindow.getByRole('list', {
+      name: 'Orphaned Todos'
+    })
+    await expect(reloadedOrphanedTodos).toContainText('Platform Team · Orphaned')
+    await expect(reloadedOrphanedTodos.getByLabel('Todo name', { exact: true }))
+      .toHaveValue('Rewrite platform examples')
   } finally {
     await application?.close()
     rmSync(userDataDirectory, { recursive: true, force: true })

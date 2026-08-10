@@ -1382,6 +1382,202 @@ const migrations: readonly Migration[] = [
         END;
       `)
     }
+  },
+  {
+    version: 14,
+    name: 'notes_and_durable_rich_text',
+    up(database) {
+      const requiredTables = ['focuses', 'threads', 'commitments', 'updates']
+      const hasCompleteWorkDomain = requiredTables.every((table) => database.get<{ found: number }>(
+        "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?",
+        [table]
+      ))
+      if (!hasCompleteWorkDomain) return
+
+      database.exec(`
+        ALTER TABLE focuses ADD COLUMN goal_revision INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE focuses ADD COLUMN description_revision INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE updates ADD COLUMN observation_revision INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE updates ADD COLUMN updated_at TEXT;
+        UPDATE updates SET updated_at = created_at WHERE updated_at IS NULL;
+
+        CREATE TABLE notes (
+          id INTEGER PRIMARY KEY,
+          focus_id INTEGER REFERENCES focuses(id) ON DELETE CASCADE,
+          thread_id INTEGER REFERENCES threads(id) ON DELETE CASCADE,
+          commitment_id INTEGER REFERENCES commitments(id) ON DELETE CASCADE,
+          title TEXT NOT NULL CHECK (length(trim(title)) > 0),
+          content TEXT NOT NULL DEFAULT '',
+          content_revision INTEGER NOT NULL DEFAULT 0 CHECK (content_revision >= 0),
+          sort_key INTEGER NOT NULL DEFAULT 0 CHECK (sort_key >= 0),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          CHECK (
+            (focus_id IS NOT NULL AND thread_id IS NULL AND commitment_id IS NULL) OR
+            (focus_id IS NULL AND thread_id IS NOT NULL AND commitment_id IS NULL) OR
+            (focus_id IS NULL AND thread_id IS NULL AND commitment_id IS NOT NULL)
+          )
+        ) STRICT;
+
+        CREATE INDEX notes_focus_index ON notes(focus_id, sort_key, id);
+        CREATE INDEX notes_thread_index ON notes(thread_id, sort_key, id);
+        CREATE INDEX notes_commitment_index ON notes(commitment_id, sort_key, id);
+
+        CREATE TABLE rich_text_history (
+          document_type TEXT NOT NULL CHECK (
+            document_type IN ('focus-goal', 'focus-description', 'update-observation', 'note-content')
+          ),
+          entity_id INTEGER NOT NULL CHECK (entity_id > 0),
+          revision INTEGER NOT NULL CHECK (revision > 0),
+          value TEXT NOT NULL,
+          changed_at TEXT NOT NULL,
+          PRIMARY KEY (document_type, entity_id, revision)
+        ) STRICT, WITHOUT ROWID;
+
+        CREATE INDEX rich_text_history_changed_index
+          ON rich_text_history(changed_at, document_type, entity_id);
+
+        INSERT INTO notes (focus_id, title, created_at, updated_at)
+          SELECT id, 'Default', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                 strftime('%Y-%m-%dT%H:%M:%fZ', 'now') FROM focuses;
+        INSERT INTO notes (thread_id, title, created_at, updated_at)
+          SELECT id, 'Default', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                 strftime('%Y-%m-%dT%H:%M:%fZ', 'now') FROM threads;
+        INSERT INTO notes (commitment_id, title, created_at, updated_at)
+          SELECT id, 'Default', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                 strftime('%Y-%m-%dT%H:%M:%fZ', 'now') FROM commitments;
+
+        CREATE TRIGGER focuses_create_default_note
+        AFTER INSERT ON focuses
+        BEGIN
+          INSERT INTO notes (focus_id, title, created_at, updated_at)
+          VALUES (
+            NEW.id, 'Default', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+            strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          );
+        END;
+
+        CREATE TRIGGER threads_create_default_note
+        AFTER INSERT ON threads
+        BEGIN
+          INSERT INTO notes (thread_id, title, created_at, updated_at)
+          VALUES (
+            NEW.id, 'Default', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+            strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          );
+        END;
+
+        CREATE TRIGGER commitments_create_default_note
+        AFTER INSERT ON commitments
+        BEGIN
+          INSERT INTO notes (commitment_id, title, created_at, updated_at)
+          VALUES (
+            NEW.id, 'Default', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+            strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          );
+        END;
+
+        CREATE TRIGGER focuses_version_goal
+        AFTER UPDATE OF goal ON focuses
+        WHEN OLD.goal IS NOT NEW.goal
+        BEGIN
+          UPDATE focuses SET goal_revision = OLD.goal_revision + 1 WHERE id = NEW.id;
+          INSERT INTO rich_text_history (document_type, entity_id, revision, value, changed_at)
+          VALUES ('focus-goal', NEW.id, OLD.goal_revision + 1, NEW.goal, NEW.updated_at);
+        END;
+
+        CREATE TRIGGER focuses_version_description
+        AFTER UPDATE OF description ON focuses
+        WHEN OLD.description IS NOT NEW.description
+        BEGIN
+          UPDATE focuses SET description_revision = OLD.description_revision + 1 WHERE id = NEW.id;
+          INSERT INTO rich_text_history (document_type, entity_id, revision, value, changed_at)
+          VALUES (
+            'focus-description', NEW.id, OLD.description_revision + 1,
+            COALESCE(NEW.description, ''), NEW.updated_at
+          );
+        END;
+
+        CREATE TRIGGER updates_version_observation
+        AFTER UPDATE OF observation ON updates
+        WHEN OLD.observation IS NOT NEW.observation
+        BEGIN
+          UPDATE updates SET observation_revision = OLD.observation_revision + 1 WHERE id = NEW.id;
+          INSERT INTO rich_text_history (document_type, entity_id, revision, value, changed_at)
+          VALUES (
+            'update-observation', NEW.id, OLD.observation_revision + 1,
+            NEW.observation, NEW.updated_at
+          );
+        END;
+
+        CREATE TRIGGER updates_fill_updated_at
+        AFTER INSERT ON updates
+        WHEN NEW.updated_at IS NULL
+        BEGIN
+          UPDATE updates SET updated_at = NEW.created_at WHERE id = NEW.id;
+        END;
+
+        CREATE TRIGGER notes_version_content
+        AFTER UPDATE OF content ON notes
+        WHEN OLD.content IS NOT NEW.content
+        BEGIN
+          UPDATE notes SET content_revision = OLD.content_revision + 1 WHERE id = NEW.id;
+          INSERT INTO rich_text_history (document_type, entity_id, revision, value, changed_at)
+          VALUES ('note-content', NEW.id, OLD.content_revision + 1, NEW.content, NEW.updated_at);
+        END;
+
+        CREATE TRIGGER focuses_delete_rich_text_history
+        AFTER DELETE ON focuses
+        BEGIN
+          DELETE FROM rich_text_history
+          WHERE entity_id = OLD.id AND document_type IN ('focus-goal', 'focus-description');
+        END;
+
+        CREATE TRIGGER updates_delete_rich_text_history
+        AFTER DELETE ON updates
+        BEGIN
+          DELETE FROM rich_text_history
+          WHERE entity_id = OLD.id AND document_type = 'update-observation';
+        END;
+
+        CREATE TRIGGER notes_delete_rich_text_history
+        AFTER DELETE ON notes
+        BEGIN
+          DELETE FROM rich_text_history
+          WHERE entity_id = OLD.id AND document_type = 'note-content';
+        END;
+      `)
+    }
+  },
+  {
+    version: 15,
+    name: 'review_pokes',
+    up(database) {
+      const requiredTables = ['focuses', 'threads', 'commitments']
+      const hasCompleteWorkDomain = requiredTables.every((table) => database.get<{ found: number }>(
+        "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?",
+        [table]
+      ))
+      if (!hasCompleteWorkDomain) return
+
+      database.exec(`
+        ALTER TABLE focuses ADD COLUMN review_poked_on TEXT CHECK (
+          review_poked_on IS NULL OR (
+            length(review_poked_on) = 10 AND review_poked_on = date(review_poked_on)
+          )
+        );
+        ALTER TABLE threads ADD COLUMN review_poked_on TEXT CHECK (
+          review_poked_on IS NULL OR (
+            length(review_poked_on) = 10 AND review_poked_on = date(review_poked_on)
+          )
+        );
+        ALTER TABLE commitments ADD COLUMN review_poked_on TEXT CHECK (
+          review_poked_on IS NULL OR (
+            length(review_poked_on) = 10 AND review_poked_on = date(review_poked_on)
+          )
+        );
+      `)
+    }
   }
 ]
 

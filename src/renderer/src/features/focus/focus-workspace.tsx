@@ -59,7 +59,9 @@ import { useFocusWorkspaceModel } from '@/features/focus/use-focus-workspace-mod
 import { WorkStatusSelect } from '@/features/shared/work-status-select'
 import { visibleSensitiveRecords } from '@/features/shared/sensitivity'
 import { SensitivityToggle } from '@/features/shared/sensitivity-toggle'
+import { DirectTodos } from '@/features/todos/direct-todos'
 import { DirectUpdates } from '@/features/updates/direct-updates'
+import { DirectNotes } from '@/features/notes/direct-notes'
 
 const CONTEXTUAL_SIDEBAR_MIN = 220
 const CONTEXTUAL_SIDEBAR_MAX = 320
@@ -192,7 +194,7 @@ export function FocusWorkspace({
   onSelectedSubjectChange,
   hideSensitiveContent = false
 }: FocusWorkspaceProps): React.JSX.Element {
-  const model = useFocusWorkspaceModel({ focus, onUpdateFocus })
+  const model = useFocusWorkspaceModel({ focus })
   const [newThreadOpen, setNewThreadOpen] = useState(false)
   const [newCommitmentParent, setNewCommitmentParent] =
     useState<CommitmentParent | null>(null)
@@ -696,6 +698,8 @@ export function FocusWorkspace({
         : focusDrawerAdapter({
             focus,
             onSave: onUpdateFocus,
+            onDescriptionChange: model.saveDescription,
+            onOpenDescription: model.openDescriptionInWindow,
             onDelete: onDeleteFocus
           })
 
@@ -807,6 +811,8 @@ export function FocusWorkspace({
         focusDrawerAdapter({
           focus: updated,
           onSave: onUpdateFocus,
+          onDescriptionChange: model.saveDescription,
+          onOpenDescription: model.openDescriptionInWindow,
           onDelete: onDeleteFocus
         })
       )
@@ -915,41 +921,61 @@ export function FocusWorkspace({
                     {commitmentWorkingContext.error}
                   </p>
                 ) : commitmentWorkingContext.snapshot ? (
-                  <DirectUpdates
-                    key={`${selectedCommitment.id}:${commitmentWorkingContext.snapshot.scopeId ?? 'open'}:${selectedCommitmentCell?.subjectId ?? 'all'}`}
-                    parent={{ type: 'commitment', id: selectedCommitment.id }}
-                    context={selectedCommitmentCell
-                      ? {
-                          mode: 'subject',
-                          cell: {
-                            scopeId: selectedCommitmentCell.scopeId,
-                            subjectId: selectedCommitmentCell.subjectId
-                          },
-                          subject: selectedCommitmentCell.subject
-                        }
-                      : commitmentWorkingContext.snapshot.scopeId === null
-                        ? { mode: 'aggregate' }
-                        : {
-                            mode: 'scope-overview',
-                            currentScopeId: commitmentWorkingContext.snapshot.scopeId,
-                            subjects: commitmentWorkingContext.snapshot.cells.map(
-                              ({ subject }) => subject
-                            )
-                          }}
-                    hideSensitiveContent={hideSensitiveContent}
-                    ancestorSensitive={
-                      focus.sensitive ||
-                      selectedCommitment.sensitive ||
-                      (selectedCommitment.parent.type === 'thread' &&
-                        (model.threads.find(
-                          (thread) => thread.id === selectedCommitment.parent.id
-                        )?.sensitive ?? true))
-                    }
-                    onUpdatesChanged={() => Promise.all([
-                      refreshCommitmentsAfterUpdates(selectedCommitment.parent),
-                      commitmentWorkingContext.refresh()
-                    ]).then(() => undefined)}
-                  />
+                  <>
+                    <DirectTodos
+                      key={`commitment-todos:${selectedCommitment.id}:${selectedCommitmentCell?.subjectId ?? 'all'}`}
+                      context={selectedCommitmentCell
+                        ? {
+                            type: 'commitment-scope',
+                            id: selectedCommitment.id,
+                            scope: {
+                              scopeId: selectedCommitmentCell.scopeId,
+                              subjectId: selectedCommitmentCell.subjectId
+                            }
+                          }
+                        : { type: 'commitment', id: selectedCommitment.id }}
+                      currentCells={commitmentWorkingContext.snapshot.cells.map((cell) => ({
+                        cell: { scopeId: cell.scopeId, subjectId: cell.subjectId },
+                        subjectName: cell.subject.name
+                      }))}
+                    />
+                    <DirectNotes notes={selectedCommitment.notes} />
+                    <DirectUpdates
+                      key={`${selectedCommitment.id}:${commitmentWorkingContext.snapshot.scopeId ?? 'open'}:${selectedCommitmentCell?.subjectId ?? 'all'}`}
+                      parent={{ type: 'commitment', id: selectedCommitment.id }}
+                      context={selectedCommitmentCell
+                        ? {
+                            mode: 'subject',
+                            cell: {
+                              scopeId: selectedCommitmentCell.scopeId,
+                              subjectId: selectedCommitmentCell.subjectId
+                            },
+                            subject: selectedCommitmentCell.subject
+                          }
+                        : commitmentWorkingContext.snapshot.scopeId === null
+                          ? { mode: 'aggregate' }
+                          : {
+                              mode: 'scope-overview',
+                              currentScopeId: commitmentWorkingContext.snapshot.scopeId,
+                              subjects: commitmentWorkingContext.snapshot.cells.map(
+                                ({ subject }) => subject
+                              )
+                            }}
+                      hideSensitiveContent={hideSensitiveContent}
+                      ancestorSensitive={
+                        focus.sensitive ||
+                        selectedCommitment.sensitive ||
+                        (selectedCommitment.parent.type === 'thread' &&
+                          (model.threads.find(
+                            (thread) => thread.id === selectedCommitment.parent.id
+                          )?.sensitive ?? true))
+                      }
+                      onUpdatesChanged={() => Promise.all([
+                        refreshCommitmentsAfterUpdates(selectedCommitment.parent),
+                        commitmentWorkingContext.refresh()
+                      ]).then(() => undefined)}
+                    />
+                  </>
                 ) : null}
               </>
             ) : (
@@ -1071,6 +1097,24 @@ export function FocusWorkspace({
                         void updateCommitmentDetails(commitmentId, { status: 'done' })
                       }
                     />
+                    <DirectTodos
+                      key={`thread-todos:${displayedThread.id}:${subjectCell?.subjectId ?? 'all'}`}
+                      context={subjectCell
+                        ? {
+                            type: 'thread-scope',
+                            id: displayedThread.id,
+                            scope: {
+                              scopeId: subjectCell.scopeId,
+                              subjectId: subjectCell.subjectId
+                            }
+                          }
+                        : { type: 'thread', id: displayedThread.id }}
+                      currentCells={displayedThreadSubjectMatrix.map((cell) => ({
+                        cell: { scopeId: cell.scopeId, subjectId: cell.subjectId },
+                        subjectName: cell.subject.name
+                      }))}
+                    />
+                    <DirectNotes notes={displayedThread.notes} />
                     <DirectUpdates
                       key={`thread-updates:${displayedThread.id}:${scope.scopeId ?? 'open'}:${selectedSubject?.id ?? 'all'}`}
                       parent={{ type: 'thread', id: displayedThread.id }}
@@ -1102,6 +1146,7 @@ export function FocusWorkspace({
                     value={focus.description}
                     ariaLabel="Focus description"
                     className="mt-1.5 max-w-2xl text-muted-foreground"
+                    onOpenInWindow={model.openDescriptionInWindow}
                   />
                 ) : (
                   <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
@@ -1142,8 +1187,10 @@ export function FocusWorkspace({
                 ariaLabel="Goal"
                 placeholder="What should this focus accomplish?"
                 value={model.goal}
+                externalRevision={model.goalRevision}
                 onChange={model.setGoal}
                 onBlur={(value) => void model.saveGoal(value)}
+                onOpenInWindow={model.openGoalInWindow}
               />
               {model.goalError && <p role="alert" className="mt-2 text-xs text-destructive">{model.goalError}</p>}
             </div>
@@ -1188,6 +1235,10 @@ export function FocusWorkspace({
                 void updateCommitmentDetails(commitmentId, { status: 'done' })
               }
             />
+
+            <DirectTodos context={{ type: 'focus', id: focus.id }} />
+
+            <DirectNotes notes={focus.notes} />
 
             <DirectUpdates
               key={`focus-updates:${focus.id}`}

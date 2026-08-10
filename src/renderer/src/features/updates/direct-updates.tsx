@@ -142,12 +142,15 @@ export function DirectUpdates({
       onUpdate={async (rowId, draft) => {
         await model.editUpdate(Number(rowId), {
           date: draft.date,
-          observation: draft.observation,
           state: draft.state as HealthState,
           sensitive: draft.sensitive
         })
         await changed()
       }}
+      onObservationChange={(rowId, value) => {
+        model.saveObservation(Number(rowId), value)
+      }}
+      onOpenObservation={(rowId) => model.openObservation(Number(rowId))}
       onDelete={async (rowId) => {
         await model.deleteUpdate(Number(rowId))
         await changed()

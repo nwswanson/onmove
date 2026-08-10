@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { AppState } from '../shared/contracts'
 import { DomainStore } from './data/domain'
+import { DataArchiveRepository } from './data/data-archive'
 import { runMigrations } from './data/migrations'
 import { SqliteAdapter } from './data/sqlite-adapter'
 
@@ -16,6 +17,7 @@ interface TimestampRow {
 export class AppDatabase {
   private readonly database: SqliteAdapter
   readonly domain: DomainStore
+  readonly dataArchive: DataArchiveRepository
 
   constructor(private readonly databasePath: string) {
     mkdirSync(dirname(databasePath), { recursive: true })
@@ -23,6 +25,7 @@ export class AppDatabase {
     try {
       runMigrations(this.database)
       this.domain = new DomainStore(this.database)
+      this.dataArchive = new DataArchiveRepository(this.database)
     } catch (error) {
       this.database.close()
       throw error

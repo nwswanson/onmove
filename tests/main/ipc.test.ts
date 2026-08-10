@@ -1,15 +1,20 @@
 import { describe, expect, it, vi } from 'vitest'
-import { IPC_CHANNELS } from '../../src/shared/contracts'
+import { IPC_CHANNELS, IPC_SYNC_CHANNELS } from '../../src/shared/contracts'
 import { registerAppIpc } from '../../src/main/ipc'
 
 describe('registerAppIpc', () => {
   it('registers typed application handlers and removes them during cleanup', async () => {
     const handlers = new Map<string, (...arguments_: unknown[]) => unknown>()
+    const listeners = new Map<string, (...arguments_: unknown[]) => unknown>()
     const ipcMain = {
       handle: vi.fn((channel: string, handler: (...arguments_: unknown[]) => unknown) =>
         handlers.set(channel, handler)
       ),
-      removeHandler: vi.fn((channel: string) => handlers.delete(channel))
+      removeHandler: vi.fn((channel: string) => handlers.delete(channel)),
+      on: vi.fn((channel: string, handler: (...arguments_: unknown[]) => unknown) =>
+        listeners.set(channel, handler)
+      ),
+      removeListener: vi.fn((channel: string) => listeners.delete(channel))
     }
     const state = {
       greeting: 'Hello, world.',
@@ -50,6 +55,9 @@ describe('registerAppIpc', () => {
             })),
             setStatus: vi.fn(() => ({
               toSnapshot: () => ({ id: 12, title: 'Launch', status: 'paused' })
+            })),
+            pokeReview: vi.fn(() => ({
+              toSnapshot: () => ({ id: 12, title: 'Launch', lastReviewDate: '2026-08-10' })
             }))
           })),
           delete: vi.fn(() => true),
@@ -133,6 +141,9 @@ describe('registerAppIpc', () => {
           requireModel: vi.fn(() => ({
             update: vi.fn(() => ({
               snapshot: () => ({ id: 21, focusId: 12, title: 'Sprint execution', needsReview: false })
+            })),
+            pokeReview: vi.fn(() => ({
+              snapshot: () => ({ id: 21, focusId: 12, lastReviewDate: '2026-08-10' })
             }))
           })),
           delete: vi.fn(() => true)
@@ -157,6 +168,9 @@ describe('registerAppIpc', () => {
             }]),
             update: vi.fn(() => ({
               snapshot: () => ({ id: 31, title: 'Ship safely', status: 'paused' })
+            })),
+            pokeReview: vi.fn(() => ({
+              snapshot: () => ({ id: 31, title: 'Ship safely', lastReviewDate: '2026-08-10' })
             }))
           })),
           create: vi.fn(() => ({
@@ -177,6 +191,42 @@ describe('registerAppIpc', () => {
             }))
           })),
           delete: vi.fn(() => true)
+        },
+        todos: {
+          list: vi.fn(() => [{ id: 71, name: 'Review plan', done: false }]),
+          query: vi.fn(() => [{ id: 72, name: 'Cross-context Todo', done: false }]),
+          create: vi.fn(() => ({
+            toSnapshot: () => ({ id: 73, name: 'Created Todo', done: false })
+          })),
+          requireModel: vi.fn(() => ({
+            update: vi.fn(() => ({
+              toSnapshot: () => ({ id: 71, name: 'Edited Todo', done: true })
+            }))
+          })),
+          reorder: vi.fn(() => [
+            { id: 72, name: 'Second Todo' },
+            { id: 71, name: 'Review plan' }
+          ]),
+          delete: vi.fn(() => true)
+        },
+        notes: {
+          list: vi.fn(() => [{ id: 81, title: 'Default', content: '' }])
+        },
+        richTextDocuments: {
+          get: vi.fn((reference) => ({
+            reference,
+            title: 'Launch — Goal',
+            value: 'Ship',
+            revision: 1,
+            updatedAt: '2026-08-09T12:00:00.000Z'
+          })),
+          save: vi.fn((reference, value) => ({
+            reference,
+            title: 'Launch — Goal',
+            value,
+            revision: 2,
+            updatedAt: '2026-08-09T12:01:00.000Z'
+          }))
         }
       }
     }
@@ -219,6 +269,9 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.updateFocus)?.(undefined, 12, {
       title: 'Updated'
     })).toMatchObject({ title: 'Updated' })
+    expect(await handlers.get(IPC_CHANNELS.pokeFocusReview)?.(undefined, 12)).toMatchObject({
+      lastReviewDate: '2026-08-10'
+    })
     expect(await handlers.get(IPC_CHANNELS.setFocusStatus)?.(undefined, 12, 'paused')).toMatchObject({
       status: 'paused'
     })
@@ -281,6 +334,10 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.updateThread)?.(undefined, 21, {
       needsReview: false
     })).toMatchObject({ id: 21, needsReview: false })
+    expect(await handlers.get(IPC_CHANNELS.pokeThreadReview)?.(undefined, 21)).toMatchObject({
+      id: 21,
+      lastReviewDate: '2026-08-10'
+    })
     expect(await handlers.get(IPC_CHANNELS.deleteThread)?.(undefined, 21)).toBe(true)
     expect(await handlers.get(IPC_CHANNELS.listCommitments)?.(undefined, {
       type: 'focus',
@@ -306,6 +363,10 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.updateCommitment)?.(undefined, 31, {
       status: 'paused'
     })).toMatchObject({ id: 31, status: 'paused' })
+    expect(await handlers.get(IPC_CHANNELS.pokeCommitmentReview)?.(undefined, 31)).toMatchObject({
+      id: 31,
+      lastReviewDate: '2026-08-10'
+    })
     expect(await handlers.get(IPC_CHANNELS.deleteCommitment)?.(undefined, 31)).toBe(true)
     expect(await handlers.get(IPC_CHANNELS.listUpdates)?.(undefined, {
       type: 'commitment',
@@ -321,9 +382,49 @@ describe('registerAppIpc', () => {
       state: 'yellow'
     })).toMatchObject({ id: 43, observation: 'Edited update', state: 'yellow' })
     expect(await handlers.get(IPC_CHANNELS.deleteUpdate)?.(undefined, 43)).toBe(true)
+    expect(await handlers.get(IPC_CHANNELS.listTodos)?.(undefined, {
+      type: 'thread',
+      id: 21
+    }, { done: false })).toMatchObject([{ id: 71, name: 'Review plan' }])
+    expect(await handlers.get(IPC_CHANNELS.queryTodos)?.(undefined, {
+      dueOnOrBefore: '2026-08-09'
+    })).toMatchObject([{ id: 72, name: 'Cross-context Todo' }])
+    expect(await handlers.get(IPC_CHANNELS.createTodo)?.(undefined, {
+      parent: { type: 'thread', id: 21 },
+      name: 'Created Todo'
+    })).toMatchObject({ id: 73, name: 'Created Todo' })
+    expect(await handlers.get(IPC_CHANNELS.updateTodo)?.(undefined, 71, {
+      done: true
+    })).toMatchObject({ id: 71, done: true })
+    expect(await handlers.get(IPC_CHANNELS.reorderTodos)?.(undefined, {
+      type: 'thread',
+      id: 21
+    }, [72, 71])).toMatchObject([{ id: 72 }, { id: 71 }])
+    expect(await handlers.get(IPC_CHANNELS.deleteTodo)?.(undefined, 71)).toBe(true)
+    expect(await handlers.get(IPC_CHANNELS.listNotes)?.(undefined, {
+      type: 'focus', id: 12
+    })).toEqual([{ id: 81, title: 'Default', content: '' }])
+    expect(await handlers.get(IPC_CHANNELS.getRichTextDocument)?.(undefined, {
+      type: 'focus', id: 12, field: 'goal'
+    })).toMatchObject({ value: 'Ship', revision: 1 })
+
+    const syncEvent = { sender: { id: 7 }, returnValue: undefined as unknown }
+    listeners.get(IPC_SYNC_CHANNELS.saveRichTextDocument)?.(
+      syncEvent,
+      { type: 'focus', id: 12, field: 'goal' },
+      'Ship now'
+    )
+    expect(syncEvent.returnValue).toMatchObject({
+      ok: true,
+      document: { value: 'Ship now', revision: 2 }
+    })
 
     cleanup()
     expect(ipcMain.removeHandler).toHaveBeenCalledTimes(Object.keys(IPC_CHANNELS).length)
+    expect(ipcMain.removeListener).toHaveBeenCalledWith(
+      IPC_SYNC_CHANNELS.saveRichTextDocument,
+      expect.any(Function)
+    )
     expect(handlers.size).toBe(0)
   })
 })

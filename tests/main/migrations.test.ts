@@ -67,6 +67,37 @@ describe('database migrations', () => {
     expect(() => new AppDatabase(databasePath)).toThrow(/newer than supported/)
   })
 
+  it('adds nullable, calendar-validated review poke dates to every reviewable aggregate', () => {
+    const database = new AppDatabase(databasePath)
+    const focus = database.domain.focuses.create({ title: 'Reviewable focus' })
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Reviewable thread',
+      reviewFrequencyDays: 7
+    })
+    const commitment = database.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Reviewable commitment'
+    })
+    database.close()
+
+    const migrated = new DatabaseSync(databasePath)
+    expect(migrated.prepare('SELECT review_poked_on FROM focuses WHERE id = ?').get(focus.id))
+      .toMatchObject({ review_poked_on: null })
+    expect(migrated.prepare('SELECT review_poked_on FROM threads WHERE id = ?').get(thread.id))
+      .toMatchObject({ review_poked_on: null })
+    expect(migrated.prepare('SELECT review_poked_on FROM commitments WHERE id = ?').get(commitment.id))
+      .toMatchObject({ review_poked_on: null })
+
+    for (const table of ['focuses', 'threads', 'commitments']) {
+      expect(() => migrated.prepare(
+        `UPDATE ${table} SET review_poked_on = '2026-02-30' WHERE id = 1`
+      ).run()).toThrow()
+    }
+    migrated.close()
+  })
+
   it('adds an empty goal to focuses created before the goal migration', () => {
     const legacy = new DatabaseSync(databasePath)
     legacy.exec(`

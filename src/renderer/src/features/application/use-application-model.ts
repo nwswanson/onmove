@@ -64,6 +64,20 @@ export function useApplicationModel(): ApplicationModel {
     const unsubscribe = window.onmove.onSensitiveContentVisibilityChanged(
       applySensitiveContentVisibility
     )
+    const unsubscribeRichText = window.onmove.richText.onDocumentChanged(({ document }) => {
+      if (document.reference.type !== 'focus') return
+      setFocuses((current) => {
+        const next = current.map((focus) => focus.id === document.reference.id
+          ? {
+              ...focus,
+              [document.reference.field]: document.value,
+              updatedAt: document.updatedAt
+            }
+          : focus)
+        focusesRef.current = next
+        return next
+      })
+    })
 
     Promise.all([
       window.onmove.getAppState(),
@@ -100,6 +114,7 @@ export function useApplicationModel(): ApplicationModel {
     return () => {
       active = false
       unsubscribe()
+      unsubscribeRichText()
     }
   }, [])
 

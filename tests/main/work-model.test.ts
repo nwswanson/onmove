@@ -405,6 +405,74 @@ describe('Thread, Commitment, and Update models', () => {
     expect(thread.snapshot('2026-01-10').lastReviewDate).toBe('2026-01-02')
   })
 
+  it('pokes Thread and Commitment reviews without fabricating Update evidence', () => {
+    const focus = database!.domain.focuses.create({ title: 'Project execution' })
+    const thread = database!.domain.threads.create(
+      { focusId: focus.id, title: 'Sprint execution', reviewFrequencyDays: 7 },
+      new Date('2026-01-01T12:00:00.000Z')
+    )
+    const commitment = database!.domain.commitments.create(
+      {
+        parent: { type: 'thread', id: thread.id },
+        type: 'ongoing',
+        title: 'Improve ticket quality',
+        cadenceDays: 7
+      },
+      new Date('2026-01-01T12:00:00.000Z')
+    )
+    database!.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2026-01-03',
+      state: 'green'
+    })
+    database!.domain.updates.create({
+      parent: { type: 'commitment', id: commitment.id },
+      date: '2026-01-04',
+      state: 'red'
+    })
+
+    thread.pokeReview(new Date('2026-01-06T12:00:00.000Z'))
+    commitment.pokeReview(new Date('2026-01-06T12:00:00.000Z'))
+
+    expect(thread.snapshot('2026-01-05')).toMatchObject({
+      lastReviewDate: '2026-01-03',
+      nextReviewDate: '2026-01-10'
+    })
+    expect(thread.snapshot('2026-01-10')).toMatchObject({
+      lastReviewDate: '2026-01-06',
+      nextReviewDate: '2026-01-13',
+      reviewDue: false
+    })
+    expect(commitment.snapshot('2026-01-10')).toMatchObject({
+      state: 'red',
+      lastReviewDate: '2026-01-06',
+      lastUpdateDate: '2026-01-04',
+      nextUpdateDate: '2026-01-11',
+      needsUpdate: false
+    })
+    expect(database!.domain.updates.listForThread(thread.id)).toHaveLength(1)
+    expect(database!.domain.updates.listForCommitment(commitment.id)).toHaveLength(1)
+
+    commitment.pokeReview(new Date('2026-01-02T12:00:00.000Z'))
+    expect(commitment.snapshot('2026-01-10').lastReviewDate).toBe('2026-01-06')
+    const laterUpdate = database!.domain.updates.create({
+      parent: { type: 'commitment', id: commitment.id },
+      date: '2026-01-09',
+      state: 'green'
+    })
+    expect(commitment.snapshot('2026-01-10')).toMatchObject({
+      state: 'green',
+      lastReviewDate: '2026-01-09',
+      lastUpdateDate: '2026-01-09'
+    })
+    laterUpdate.delete()
+    expect(commitment.snapshot('2026-01-10')).toMatchObject({
+      state: 'red',
+      lastReviewDate: '2026-01-06',
+      lastUpdateDate: '2026-01-04'
+    })
+  })
+
   it('derives cadence deadlines from the highest-dated commitment update', () => {
     const focus = database!.domain.focuses.create({ title: 'Project execution' })
     const commitment = database!.domain.commitments.create(
@@ -667,6 +735,8 @@ describe('Thread, Commitment, and Update models', () => {
       observation: 'Ticket quality improved',
       state: 'green'
     })
+    thread.pokeReview(new Date('2026-01-02T12:00:00.000Z'))
+    commitment.pokeReview(new Date('2026-01-03T12:00:00.000Z'))
     const threadId = thread.id
     const commitmentId = commitment.id
     database!.close()
@@ -674,10 +744,11 @@ describe('Thread, Commitment, and Update models', () => {
     database = new AppDatabase(databasePath)
     expect(database.domain.threads.materialize(threadId, '2026-01-02')).toMatchObject({
       health: 'green',
-      lastReviewDate: '2026-01-01'
+      lastReviewDate: '2026-01-02'
     })
-    expect(database.domain.commitments.materialize(commitmentId, '2026-01-02')).toMatchObject({
+    expect(database.domain.commitments.materialize(commitmentId, '2026-01-03')).toMatchObject({
       state: 'green',
+      lastReviewDate: '2026-01-03',
       lastUpdateDate: '2026-01-01',
       nextUpdateDate: '2026-01-08'
     })

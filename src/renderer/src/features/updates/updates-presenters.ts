@@ -47,6 +47,7 @@ export function updateListProjection(
       id: String(update.id),
       date: update.date,
       observation: update.observation,
+      externalRevision: update.updatedAt,
       state: update.state,
       sensitive: update.sensitive,
       ...(contextLabel ? { contextLabel } : {})

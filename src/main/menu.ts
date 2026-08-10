@@ -2,6 +2,8 @@ import type { MenuItemConstructorOptions } from 'electron'
 
 export interface MenuActions {
   createWindow: () => void
+  importData: () => void
+  exportData: () => void
   showDataFolder: () => void
   sensitiveContentHidden: boolean
   setSensitiveContentHidden: (hidden: boolean) => void
@@ -19,6 +21,17 @@ export function createMenuTemplate(
           label: 'New Window',
           accelerator: 'CmdOrCtrl+N',
           click: actions.createWindow
+        },
+        { type: 'separator' },
+        {
+          id: 'import-data',
+          label: 'Import Data…',
+          click: actions.importData
+        },
+        {
+          id: 'export-data',
+          label: 'Export Data…',
+          click: actions.exportData
         },
         { type: 'separator' },
         isMac ? { role: 'close' } : { role: 'quit' }

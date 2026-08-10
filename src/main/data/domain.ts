@@ -25,6 +25,8 @@ import {
 } from './scope-model'
 import { TodoRepository } from './todo-model'
 import { CommitmentRepository, ThreadRepository, UpdateRepository } from './work-model'
+import { NoteRepository } from './note-model'
+import { RichTextDocumentRepository } from './rich-text-model'
 
 type RelationRecord = RelationSnapshot
 
@@ -543,6 +545,8 @@ export class DomainStore {
   readonly commitments: CommitmentRepository
   readonly updates: UpdateRepository
   readonly todos: TodoRepository
+  readonly notes: NoteRepository
+  readonly richTextDocuments: RichTextDocumentRepository
 
   constructor(database: SqliteAdapter) {
     this.relations = new RelationRepository(database)
@@ -558,5 +562,7 @@ export class DomainStore {
     this.commitments = new CommitmentRepository(database)
     this.updates = new UpdateRepository(database)
     this.todos = new TodoRepository(database)
+    this.notes = new NoteRepository(database)
+    this.richTextDocuments = new RichTextDocumentRepository(database)
   }
 }

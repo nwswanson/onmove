@@ -1,6 +1,7 @@
-import type { IpcMain, Shell } from 'electron'
+import type { IpcMain, IpcMainEvent, Shell } from 'electron'
 import {
   IPC_CHANNELS,
+  IPC_SYNC_CHANNELS,
   type AddFocusScopeSubjectInput,
   type CommitmentParent,
   type CreateCommitmentInput,
@@ -8,25 +9,45 @@ import {
   type CreateItemInput,
   type CreateRelationInput,
   type CreateThreadInput,
+  type CreateTodoInput,
   type CreateUpdateInput,
   type EditUpdateInput,
   type FocusStatus,
   type SetItemStatusInput,
+  type TodoListOptions,
+  type TodoParent,
+  type NoteParent,
+  type RichTextDocumentChange,
+  type RichTextDocumentReference,
   type UpdateParent,
   type UpdateCommitmentInput,
   type UpdateFocusInput,
-  type UpdateThreadInput
+  type UpdateThreadInput,
+  type UpdateTodoInput
 } from '../shared/contracts'
 import type { AppDatabase } from './database'
 
-type IpcRegistrar = Pick<IpcMain, 'handle' | 'removeHandler'>
+type IpcRegistrar = Pick<IpcMain, 'handle' | 'removeHandler' | 'on' | 'removeListener'>
 type FolderOpener = Pick<Shell, 'showItemInFolder'>
+
+export interface RichTextWindowCoordinator {
+  open: (reference: RichTextDocumentReference) => void
+  targetFor: (webContentsId: number) => RichTextDocumentReference | null
+  broadcast: (change: RichTextDocumentChange) => void
+}
+
+const emptyRichTextWindows: RichTextWindowCoordinator = {
+  open: () => undefined,
+  targetFor: () => null,
+  broadcast: () => undefined
+}
 
 export function registerAppIpc(
   ipcMain: IpcRegistrar,
   database: AppDatabase,
   shell: FolderOpener,
-  getSensitiveContentHidden: () => boolean = () => false
+  getSensitiveContentHidden: () => boolean = () => false,
+  richTextWindows: RichTextWindowCoordinator = emptyRichTextWindows
 ): () => void {
   ipcMain.handle(IPC_CHANNELS.getAppState, () => database.getState())
   ipcMain.handle(IPC_CHANNELS.getSensitiveContentHidden, getSensitiveContentHidden)
@@ -67,6 +88,9 @@ export function registerAppIpc(
   )
   ipcMain.handle(IPC_CHANNELS.updateFocus, (_event, id: number, input: UpdateFocusInput) =>
     database.domain.focuses.requireModel(id).update(input).toSnapshot()
+  )
+  ipcMain.handle(IPC_CHANNELS.pokeFocusReview, (_event, id: number) =>
+    database.domain.focuses.requireModel(id).pokeReview().toSnapshot()
   )
   ipcMain.handle(IPC_CHANNELS.setFocusStatus, (_event, id: number, status: FocusStatus) =>
     database.domain.focuses.requireModel(id).setStatus(status).toSnapshot()
@@ -121,6 +145,9 @@ export function registerAppIpc(
   ipcMain.handle(IPC_CHANNELS.updateThread, (_event, id: number, input: UpdateThreadInput) =>
     database.domain.threads.requireModel(id).update(input).snapshot()
   )
+  ipcMain.handle(IPC_CHANNELS.pokeThreadReview, (_event, id: number) =>
+    database.domain.threads.requireModel(id).pokeReview().snapshot()
+  )
   ipcMain.handle(IPC_CHANNELS.deleteThread, (_event, id: number) =>
     database.domain.threads.delete(id)
   )
@@ -145,6 +172,9 @@ export function registerAppIpc(
     (_event, id: number, input: UpdateCommitmentInput) =>
       database.domain.commitments.requireModel(id).update(input).snapshot()
   )
+  ipcMain.handle(IPC_CHANNELS.pokeCommitmentReview, (_event, id: number) =>
+    database.domain.commitments.requireModel(id).pokeReview().snapshot()
+  )
   ipcMain.handle(IPC_CHANNELS.deleteCommitment, (_event, id: number) =>
     database.domain.commitments.delete(id)
   )
@@ -162,10 +192,70 @@ export function registerAppIpc(
   ipcMain.handle(IPC_CHANNELS.deleteUpdate, (_event, id: number) =>
     database.domain.updates.delete(id)
   )
+  ipcMain.handle(
+    IPC_CHANNELS.listTodos,
+    (_event, context: TodoParent, options?: TodoListOptions) =>
+      database.domain.todos.list(context, options)
+  )
+  ipcMain.handle(IPC_CHANNELS.queryTodos, (_event, options?: TodoListOptions) =>
+    database.domain.todos.query(options)
+  )
+  ipcMain.handle(IPC_CHANNELS.createTodo, (_event, input: CreateTodoInput) =>
+    database.domain.todos.create(input).toSnapshot()
+  )
+  ipcMain.handle(IPC_CHANNELS.updateTodo, (_event, id: number, input: UpdateTodoInput) =>
+    database.domain.todos.requireModel(id).update(input).toSnapshot()
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.reorderTodos,
+    (_event, context: TodoParent, orderedTodoIds: readonly number[]) =>
+      database.domain.todos.reorder(context, orderedTodoIds)
+  )
+  ipcMain.handle(IPC_CHANNELS.deleteTodo, (_event, id: number) =>
+    database.domain.todos.delete(id)
+  )
+  ipcMain.handle(IPC_CHANNELS.listNotes, (_event, parent: NoteParent) =>
+    database.domain.notes.list(parent)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.getRichTextDocument,
+    (_event, reference: RichTextDocumentReference) =>
+      database.domain.richTextDocuments.get(reference)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.openRichTextDocumentWindow,
+    (_event, reference: RichTextDocumentReference) => {
+      database.domain.richTextDocuments.get(reference)
+      richTextWindows.open(reference)
+    }
+  )
+  ipcMain.handle(IPC_CHANNELS.getRichTextWindowTarget, (event) =>
+    richTextWindows.targetFor(event.sender.id)
+  )
+
+  const saveRichTextDocument = (
+    event: IpcMainEvent,
+    reference: RichTextDocumentReference,
+    value: string
+  ): void => {
+    try {
+      const document = database.domain.richTextDocuments.save(reference, value)
+      const change = { document, sourceWindowId: event.sender.id }
+      richTextWindows.broadcast(change)
+      event.returnValue = { ok: true, document }
+    } catch (error) {
+      event.returnValue = {
+        ok: false,
+        message: error instanceof Error ? error.message : 'The document could not be saved.'
+      }
+    }
+  }
+  ipcMain.on(IPC_SYNC_CHANNELS.saveRichTextDocument, saveRichTextDocument)
 
   return () => {
     for (const channel of Object.values(IPC_CHANNELS)) {
       ipcMain.removeHandler(channel)
     }
+    ipcMain.removeListener(IPC_SYNC_CHANNELS.saveRichTextDocument, saveRichTextDocument)
   }
 }

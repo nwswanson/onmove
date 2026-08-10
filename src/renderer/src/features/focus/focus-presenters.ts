@@ -343,15 +343,26 @@ export function commitmentCollectionModel(
 export function focusDrawerAdapter({
   focus,
   onSave,
+  onDescriptionChange,
+  onOpenDescription,
   onDelete
 }: {
   focus: FocusSnapshot
   onSave: (input: UpdateFocusInput) => Promise<void>
+  onDescriptionChange?: (value: string) => void
+  onOpenDescription?: () => void
   onDelete: () => Promise<void>
 }): ContextDrawerAdapter {
   return {
     id: `focus:${focus.id}`,
-    revision: `${focus.updatedAt}:${focus.sensitive}`,
+    revision: [
+      focus.title,
+      focus.status,
+      focus.statusChangedAt,
+      focus.lastReviewDate ?? 'never',
+      focus.needsReview,
+      focus.sensitive
+    ].join(':'),
     invalidationKeys: [`focus:${focus.id}`],
     model: {
       title: 'Focus',
@@ -400,21 +411,21 @@ export function focusDrawerAdapter({
               kind: 'rich-text',
               id: 'description',
               label: 'Description / notes',
-              value: focus.description ?? ''
+              value: focus.description ?? '',
+              onValueChange: onDescriptionChange,
+              onOpenInWindow: onOpenDescription,
+              errorMessage: 'The description could not be saved. Keep editing to retry.',
+              externalRevision: focus.updatedAt
             }
           ]
         }
       ],
       autosave: {
-        fieldIds: ['title', 'description'],
+        fieldIds: ['title'],
         errorMessage: 'The focus text could not be saved. Please try again.',
         onInvoke: (values: ContextDrawerValues) =>
           onSave({
-            title: textValue(values, 'title'),
-            description:
-              textValue(values, 'description').trim().length === 0
-                ? null
-                : textValue(values, 'description')
+            title: textValue(values, 'title')
           })
       },
       actions: [

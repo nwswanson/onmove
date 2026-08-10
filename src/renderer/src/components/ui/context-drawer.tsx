@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Plus, Undo2, X } from 'lucide-react'
 import type * as React from 'react'
 import { Button } from '@/components/ui/button'
@@ -61,6 +61,10 @@ export type ContextDrawerFieldModel = (
       value: string
       required?: boolean
       placeholder?: string
+      onValueChange?: (value: string) => void
+      onOpenInWindow?: () => void
+      errorMessage?: string
+      externalRevision?: string | number
     }
   | {
       kind: 'select'
@@ -604,6 +608,7 @@ function ContextDrawerInspector({
   const [confirmingAction, setConfirmingAction] = useState<ContextDrawerActionModel | null>(null)
   const [pendingFieldId, setPendingFieldId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const richTextRevisionRef = useRef(new Map<string, string | number | undefined>())
   const actions = model.actions ?? []
   const fieldsValid = model.sections.every((section) =>
     section.fields.every((field) => requiredFieldValid(field, values))
@@ -613,6 +618,23 @@ function ContextDrawerInspector({
     isEqual: drawerValuesEqual,
     onSave: (nextValues) => model.autosave?.onInvoke(nextValues)
   })
+
+  useEffect(() => {
+    const changes: Record<string, ContextDrawerValue> = {}
+    for (const section of model.sections) {
+      for (const field of section.fields) {
+        if (field.kind !== 'rich-text' || field.externalRevision === undefined) continue
+        const previous = richTextRevisionRef.current.get(field.id)
+        richTextRevisionRef.current.set(field.id, field.externalRevision)
+        if (previous === undefined || previous === field.externalRevision) continue
+        if (valuesRef.current[field.id] !== field.value) changes[field.id] = field.value
+      }
+    }
+    if (Object.keys(changes).length === 0) return
+    const nextValues = { ...valuesRef.current, ...changes }
+    valuesRef.current = nextValues
+    setValues(nextValues)
+  }, [model])
 
   function autosaveFieldsValid(nextValues: ContextDrawerValues): boolean {
     const autosaveIds = new Set(model.autosave?.fieldIds ?? [])
@@ -635,6 +657,20 @@ function ContextDrawerInspector({
       return
     }
     autosave.schedule(autosaveValues(model, nextValues))
+  }
+
+  function updateRichText(
+    field: Extract<ContextDrawerFieldModel, { kind: 'rich-text' }>,
+    value: string
+  ): void {
+    updateValue(field.id, value)
+    if (!field.onValueChange) return
+    try {
+      field.onValueChange(value)
+      setError(null)
+    } catch {
+      setError(field.errorMessage ?? 'The text could not be saved. Keep editing to retry.')
+    }
   }
 
   async function updateChoice(
@@ -860,7 +896,9 @@ function ContextDrawerInspector({
                           ariaLabel={field.label}
                           placeholder={field.placeholder}
                           value={drawerStringValue(values, field.id)}
-                          onChange={(value) => updateValue(field.id, value)}
+                          onChange={(value) => updateRichText(field, value)}
+                          onOpenInWindow={field.onOpenInWindow}
+                          externalRevision={field.externalRevision}
                           compact
                         />
                       ) : field.kind === 'number' ? (

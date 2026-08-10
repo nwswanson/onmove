@@ -34,6 +34,7 @@ import {
   ScopeRepository
 } from './scope-model'
 import type { SqliteAdapter } from './sqlite-adapter'
+import { NoteRepository } from './note-model'
 
 type ThreadRecord = ThreadSnapshot
 type CommitmentRecord = CommitmentSnapshot
@@ -47,6 +48,7 @@ interface ThreadRow {
   review_frequency_days: number
   needs_review: number
   sensitive: number
+  review_poked_on: string | null
   created_at: string
   updated_at: string
 }
@@ -61,6 +63,7 @@ interface CommitmentRow {
   due_on: string | null
   cadence_days: number | null
   sensitive: number
+  review_poked_on: string | null
   created_at: string
   updated_at: string
 }
@@ -77,6 +80,7 @@ interface UpdateRow {
   state: string
   sensitive: number
   created_at: string
+  updated_at: string
 }
 
 interface StateRow {
@@ -207,6 +211,15 @@ function addDays(value: string, days: number): string {
   return date.toISOString().slice(0, 10)
 }
 
+function latestDate(...values: Array<string | null | undefined>): string | null {
+  return values.reduce<string | null>(
+    (latest, value) => value !== null && value !== undefined && (latest === null || value > latest)
+      ? value
+      : latest,
+    null
+  )
+}
+
 function timestamp(now = new Date()): string {
   return now.toISOString()
 }
@@ -279,6 +292,11 @@ export class ThreadModel extends BaseModel<ThreadRecord> {
     return this.replace(this.repository.setStatus(this.id, status))
   }
 
+  /** Records an aggregate review without inventing per-Subject Update evidence. */
+  pokeReview(now = new Date()): this {
+    return this.replace(this.repository.pokeReview(this.id, now))
+  }
+
   snapshot(asOf?: string): ThreadSnapshot {
     return this.repository.materialize(this.id, asOf)
   }
@@ -312,11 +330,13 @@ export class ThreadModel extends BaseModel<ThreadRecord> {
 export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> {
   private readonly scopeApplications: ScopeApplicationRepository
   private readonly scopes: ScopeRepository
+  private readonly notes: NoteRepository
 
   constructor(private readonly database: SqliteAdapter) {
     super()
     this.scopeApplications = new ScopeApplicationRepository(database)
     this.scopes = new ScopeRepository(database)
+    this.notes = new NoteRepository(database)
   }
 
   protected instantiate(record: ThreadRecord): ThreadModel {
@@ -401,6 +421,24 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
 
   setStatus(id: number, status: ThreadStatus): ThreadRecord {
     return this.update(id, { status })
+  }
+
+  pokeReview(id: number, now = new Date()): ThreadRecord {
+    assertId(id, 'thread')
+    const reviewDate = today(now)
+    const result = this.database.run(
+      `UPDATE threads
+       SET review_poked_on = ?, updated_at = ?
+       WHERE id = ? AND (review_poked_on IS NULL OR review_poked_on < ?)`,
+      [reviewDate, timestamp(now), id, reviewDate]
+    )
+    if (result.changes === 0 && !this.database.get<ExistsRow>(
+      'SELECT 1 AS found FROM threads WHERE id = ?',
+      [id]
+    )) {
+      throw new ModelNotFoundError('Thread', id)
+    }
+    return this.materialize(id, reviewDate)
   }
 
   delete(id: number): boolean {
@@ -513,16 +551,20 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
       .map(({ id: commitmentId }) =>
         new CommitmentRepository(this.database).materialize(Number(commitmentId), asOf).state
       )
-    const lastReviewDate = threadWide
+    const updateReviewDate = threadWide
       ? (threadWideEvidence?.recorded_on ?? null)
       : this.scopeCoverageDate(scopeCells)
+    const reviewPokeDate = row.review_poked_on !== null && row.review_poked_on <= asOf
+      ? row.review_poked_on
+      : null
+    const lastReviewDate = latestDate(updateReviewDate, reviewPokeDate)
     const defaultNextReviewDate = addDays(
       row.created_at.slice(0, 10),
       Number(row.review_frequency_days)
     )
     const nextReviewDate = threadWide
       ? addDays(
-          threadWideEvidence?.recorded_on ?? row.created_at.slice(0, 10),
+          lastReviewDate ?? row.created_at.slice(0, 10),
           Number(row.review_frequency_days)
         )
       : scopeCells.reduce(
@@ -541,6 +583,7 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
       nextReviewDate,
       needsReview: Boolean(row.needs_review),
       sensitive: Boolean(row.sensitive),
+      notes: this.notes.list({ type: 'thread', id: Number(row.id) }),
       reviewDue: threadWide
         ? Boolean(row.needs_review) && row.status === 'active' && nextReviewDate <= asOf
         : scopeCells.some((cell) => cell.reviewDue),
@@ -592,7 +635,8 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
   private findRow(id: number): ThreadRow | undefined {
     assertId(id, 'thread')
     return this.database.get<ThreadRow>(
-      `SELECT id, focus_id, title, status, review_frequency_days, needs_review, sensitive, created_at, updated_at
+      `SELECT id, focus_id, title, status, review_frequency_days, needs_review, sensitive,
+              review_poked_on, created_at, updated_at
        FROM threads WHERE id = ?`,
       [id]
     )
@@ -636,6 +680,11 @@ export class CommitmentModel extends BaseModel<CommitmentRecord> {
     return this.replace(this.repository.setStatus(this.id, status))
   }
 
+  /** Records a review independently from Update state and cadence evidence. */
+  pokeReview(now = new Date()): this {
+    return this.replace(this.repository.pokeReview(this.id, now))
+  }
+
   snapshot(asOf?: string): CommitmentSnapshot {
     return this.repository.materialize(this.id, asOf)
   }
@@ -660,11 +709,13 @@ export class CommitmentModel extends BaseModel<CommitmentRecord> {
 export class CommitmentRepository extends BaseRepository<CommitmentRecord, CommitmentModel> {
   private readonly scopeApplications: ScopeApplicationRepository
   private readonly scopes: ScopeRepository
+  private readonly notes: NoteRepository
 
   constructor(private readonly database: SqliteAdapter) {
     super()
     this.scopeApplications = new ScopeApplicationRepository(database)
     this.scopes = new ScopeRepository(database)
+    this.notes = new NoteRepository(database)
   }
 
   protected instantiate(record: CommitmentRecord): CommitmentModel {
@@ -746,6 +797,24 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
     return this.update(id, { status })
   }
 
+  pokeReview(id: number, now = new Date()): CommitmentRecord {
+    assertId(id, 'commitment')
+    const reviewDate = today(now)
+    const result = this.database.run(
+      `UPDATE commitments
+       SET review_poked_on = ?, updated_at = ?
+       WHERE id = ? AND (review_poked_on IS NULL OR review_poked_on < ?)`,
+      [reviewDate, timestamp(now), id, reviewDate]
+    )
+    if (result.changes === 0 && !this.database.get<ExistsRow>(
+      'SELECT 1 AS found FROM commitments WHERE id = ?',
+      [id]
+    )) {
+      throw new ModelNotFoundError('Commitment', id)
+    }
+    return this.materialize(id, reviewDate)
+  }
+
   delete(id: number): boolean {
     assertId(id, 'commitment')
     return this.database.run('DELETE FROM commitments WHERE id = ?', [id]).changes > 0
@@ -780,7 +849,7 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
     const date = normalizeDate(asOf, 'asOf')
     const row = this.database.get<CommitmentRow>(
       `SELECT id, focus_id, thread_id, commitment_type, title, status,
-              due_on, cadence_days, sensitive, created_at, updated_at
+              due_on, cadence_days, sensitive, review_poked_on, created_at, updated_at
        FROM commitments WHERE id = ?`,
       [id]
     )
@@ -817,7 +886,7 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
     assertId(id, 'commitment')
     const row = this.database.get<CommitmentRow>(
       `SELECT id, focus_id, thread_id, commitment_type, title, status,
-              due_on, cadence_days, sensitive, created_at, updated_at
+              due_on, cadence_days, sensitive, review_poked_on, created_at, updated_at
        FROM commitments WHERE id = ?`,
       [id]
     )
@@ -866,12 +935,14 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
         : calculateHealth(cells.map((cell) => cell.state)),
       dueDate: row.due_on,
       cadenceDays,
+      lastReviewDate: latestDate(row.review_poked_on, lastUpdateDate),
       lastUpdateDate,
       nextUpdateDate,
       needsUpdate: application.effectiveScopeId === null
         ? row.status === 'active' && nextUpdateDate !== null && nextUpdateDate <= asOf
         : cells.some((cell) => cell.needsUpdate),
       sensitive: Boolean(row.sensitive),
+      notes: this.notes.list({ type: 'commitment', id: Number(row.id) }),
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }
@@ -943,8 +1014,8 @@ export class UpdateRepository extends BaseRepository<UpdateRecord, UpdateModel> 
     const result = this.database.run(
       `INSERT INTO updates (
          focus_id, thread_id, commitment_id, scope_id, subject_id,
-         recorded_on, observation, state, sensitive, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         recorded_on, observation, state, sensitive, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         focusId,
         threadId,
@@ -955,6 +1026,7 @@ export class UpdateRepository extends BaseRepository<UpdateRecord, UpdateModel> 
         normalizeObservation(input.observation),
         normalizeState(input.state),
         normalizeSensitive(input.sensitive, 'sensitive') ? 1 : 0,
+        timestamp(now),
         timestamp(now)
       ]
     )
@@ -965,7 +1037,7 @@ export class UpdateRepository extends BaseRepository<UpdateRecord, UpdateModel> 
     assertId(id, 'update')
     const row = this.database.get<UpdateRow>(
       `SELECT id, focus_id, thread_id, commitment_id, scope_id, subject_id, recorded_on,
-              observation, state, sensitive, created_at
+              observation, state, sensitive, created_at, updated_at
        FROM updates WHERE id = ?`,
       [id]
     )
@@ -992,8 +1064,10 @@ export class UpdateRepository extends BaseRepository<UpdateRecord, UpdateModel> 
       this.assertEffectiveMember(current.scope, input.date)
     }
     const result = this.database.run(
-      `UPDATE updates SET recorded_on = ?, observation = ?, state = ?, sensitive = ? WHERE id = ?`,
-      [input.date, input.observation, input.state, input.sensitive ? 1 : 0, id]
+      `UPDATE updates
+       SET recorded_on = ?, observation = ?, state = ?, sensitive = ?, updated_at = ?
+       WHERE id = ?`,
+      [input.date, input.observation, input.state, input.sensitive ? 1 : 0, timestamp(), id]
     )
     if (result.changes === 0) throw new ModelNotFoundError('Update', id)
   }
@@ -1008,7 +1082,7 @@ export class UpdateRepository extends BaseRepository<UpdateRecord, UpdateModel> 
     return this.database
       .all<UpdateRow>(
         `SELECT id, focus_id, thread_id, commitment_id, scope_id, subject_id, recorded_on,
-                observation, state, sensitive, created_at
+                observation, state, sensitive, created_at, updated_at
          FROM updates WHERE ${column} = ? ORDER BY recorded_on, id`,
         [id]
       )
@@ -1026,7 +1100,8 @@ export class UpdateRepository extends BaseRepository<UpdateRecord, UpdateModel> 
       scope: row.scope_id === null
         ? null
         : { scopeId: Number(row.scope_id), subjectId: Number(row.subject_id) },
-      createdAt: row.created_at
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
     }
   }
 

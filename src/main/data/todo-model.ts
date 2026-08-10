@@ -5,11 +5,12 @@ import type {
   TodoParent,
   TodoSnapshot,
   TodoSortPlacementSnapshot,
+  SubjectSnapshot,
   UpdateScopeCell,
   UpdateTodoInput
 } from '../../shared/contracts'
 import { BaseModel, BaseRepository, ModelNotFoundError, ModelValidationError } from './model'
-import { ScopeApplicationRepository, ScopeRepository } from './scope-model'
+import { ScopeApplicationRepository, ScopeRepository, SubjectRepository } from './scope-model'
 import type { SqliteAdapter } from './sqlite-adapter'
 
 type TodoRecord = TodoSnapshot
@@ -223,11 +224,13 @@ export class TodoModel extends BaseModel<TodoRecord> {
 export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
   private readonly applications: ScopeApplicationRepository
   private readonly scopes: ScopeRepository
+  private readonly subjects: SubjectRepository
 
   constructor(private readonly database: SqliteAdapter) {
     super()
     this.applications = new ScopeApplicationRepository(database)
     this.scopes = new ScopeRepository(database)
+    this.subjects = new SubjectRepository(database)
   }
 
   protected instantiate(record: TodoRecord): TodoModel {
@@ -312,6 +315,36 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
        JOIN todos todo ON todo.id = placement.todo_id
        WHERE ${clauses.join(' AND ')}
        ORDER BY placement.sort_key, todo.id`,
+      parameters
+    ).map((row) => this.snapshotFromRow(row))
+  }
+
+  /**
+   * Returns each Todo once without imposing one contextual list's ordering.
+   * Callers can inspect `sort` to project it into any aggregate or exact list.
+   */
+  query(options: TodoListOptions = {}): TodoSnapshot[] {
+    this.validateListOptions(options)
+    const clauses: string[] = []
+    const parameters: Array<number | string> = []
+    if (options.done !== undefined) {
+      clauses.push('done = ?')
+      parameters.push(options.done ? 1 : 0)
+    }
+    if (options.dueOnOrBefore !== undefined) {
+      clauses.push('due_on IS NOT NULL AND due_on <= ?')
+      parameters.push(normalizeDate(options.dueOnOrBefore, 'dueOnOrBefore'))
+    }
+    if (options.dueOnOrAfter !== undefined) {
+      clauses.push('due_on IS NOT NULL AND due_on >= ?')
+      parameters.push(normalizeDate(options.dueOnOrAfter, 'dueOnOrAfter'))
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''
+    return this.database.all<TodoRow>(
+      `SELECT id, focus_id, thread_id, commitment_id, scope_id, subject_id,
+              name, due_on, done, created_at, updated_at
+       FROM todos ${where}
+       ORDER BY done, CASE WHEN due_on IS NULL THEN 1 ELSE 0 END, due_on, id`,
       parameters
     ).map((row) => this.snapshotFromRow(row))
   }
@@ -407,6 +440,9 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
       id: Number(row.id),
       name: row.name,
       parent: parentFromColumns(columnsFromTodoRow(row)),
+      subject: row.subject_id === null
+        ? null
+        : this.subjects.find(Number(row.subject_id)) as SubjectSnapshot | null,
       dueDate: row.due_on,
       done: Boolean(row.done),
       sort: this.sortPlacements(Number(row.id)),
@@ -435,7 +471,22 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
     const entity = entityParent(parent)
     const focusId = this.requireEntityParent(entity)
     const scope = scopeCell(parent)
-    if (!scope) return parentColumns(parent)
+    if (!scope) {
+      if (entity.type === 'focus') return parentColumns(parent)
+      const owner = entity.type === 'thread'
+        ? { type: 'thread' as const, id: entity.id }
+        : { type: 'commitment' as const, id: entity.id }
+      const application = this.applications.get(owner)
+      if (
+        application.effectiveScopeId !== null &&
+        this.scopes.effectiveSubjects(application.effectiveScopeId, today(now)).length > 0
+      ) {
+        throw new ModelValidationError(
+          'a scoped Thread or Commitment Todo requires a Scope and Subject cell'
+        )
+      }
+      return parentColumns(parent)
+    }
 
     assertId(scope.scopeId, 'Todo Scope id')
     assertId(scope.subjectId, 'Todo Subject id')

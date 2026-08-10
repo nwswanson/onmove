@@ -13,6 +13,7 @@ import {
 } from '../../shared/contracts'
 import { BaseModel, BaseRepository, ModelNotFoundError, ModelValidationError } from './model'
 import { ScopeApplicationRepository } from './scope-model'
+import { NoteRepository } from './note-model'
 import type { SqliteAdapter } from './sqlite-adapter'
 
 type FocusRecord = FocusSnapshot
@@ -118,7 +119,7 @@ function today(now = new Date()): string {
   return `${year}-${month}-${day}`
 }
 
-function focusFromRow(row: FocusRow): FocusRecord {
+function focusFromRow(row: FocusRow, notes: FocusSnapshot['notes']): FocusRecord {
   return {
     id: Number(row.id),
     kind: row.kind as FocusKind,
@@ -130,6 +131,7 @@ function focusFromRow(row: FocusRow): FocusRecord {
     lastReviewDate: row.last_review_date,
     needsReview: Boolean(row.needs_review),
     sensitive: Boolean(row.sensitive),
+    notes,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
@@ -145,8 +147,8 @@ function transitionFromRow(row: FocusTransitionRow): FocusStatusTransition {
   }
 }
 
-function timestamp(): string {
-  return new Date().toISOString()
+function timestamp(now = new Date()): string {
+  return now.toISOString()
 }
 
 export class FocusModel extends BaseModel<FocusRecord> {
@@ -185,6 +187,11 @@ export class FocusModel extends BaseModel<FocusRecord> {
     return this.replace(this.repository.setStatus(this.id, status))
   }
 
+  /** Records an explicit review without creating a synthetic Update. */
+  pokeReview(now = new Date()): this {
+    return this.replace(this.repository.pokeReview(this.id, now))
+  }
+
   statusHistory(): FocusStatusTransition[] {
     return this.repository.statusHistory(this.id)
   }
@@ -213,10 +220,12 @@ export class FocusModel extends BaseModel<FocusRecord> {
 
 export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
   private readonly scopeApplications: ScopeApplicationRepository
+  private readonly notes: NoteRepository
 
   constructor(private readonly database: SqliteAdapter) {
     super()
     this.scopeApplications = new ScopeApplicationRepository(database)
+    this.notes = new NoteRepository(database)
   }
 
   protected instantiate(record: FocusRecord): FocusModel {
@@ -259,13 +268,16 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
     const row = this.database.get<FocusRow>(
       `SELECT id, kind, title, description, goal, status, status_changed_at, needs_review, sensitive,
               created_at, updated_at,
-              (SELECT recorded_on FROM updates
-               WHERE focus_id = focuses.id AND recorded_on <= ?
-               ORDER BY recorded_on DESC, id DESC LIMIT 1) AS last_review_date
+              NULLIF(MAX(
+                COALESCE(CASE WHEN review_poked_on <= ? THEN review_poked_on END, ''),
+                COALESCE((SELECT recorded_on FROM updates
+                  WHERE focus_id = focuses.id AND recorded_on <= ?
+                  ORDER BY recorded_on DESC, id DESC LIMIT 1), '')
+              ), '') AS last_review_date
        FROM focuses WHERE id = ?`,
-      [asOf, id]
+      [asOf, asOf, id]
     )
-    return row ? focusFromRow(row) : null
+    return row ? focusFromRow(row, this.notes.list({ type: 'focus', id })) : null
   }
 
   list(asOf = today()): FocusSnapshot[] {
@@ -274,13 +286,16 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
       .all<FocusRow>(
         `SELECT id, kind, title, description, goal, status, status_changed_at, needs_review, sensitive,
                 created_at, updated_at,
-                (SELECT recorded_on FROM updates
-                 WHERE focus_id = focuses.id AND recorded_on <= ?
-                 ORDER BY recorded_on DESC, id DESC LIMIT 1) AS last_review_date
+                NULLIF(MAX(
+                  COALESCE(CASE WHEN review_poked_on <= ? THEN review_poked_on END, ''),
+                  COALESCE((SELECT recorded_on FROM updates
+                    WHERE focus_id = focuses.id AND recorded_on <= ?
+                    ORDER BY recorded_on DESC, id DESC LIMIT 1), '')
+                ), '') AS last_review_date
          FROM focuses ORDER BY id`,
-        [date]
+        [date, date]
       )
-      .map(focusFromRow)
+      .map((row) => focusFromRow(row, this.notes.list({ type: 'focus', id: Number(row.id) })))
   }
 
   update(id: number, input: UpdateFocusInput): FocusRecord {
@@ -313,6 +328,24 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
 
   setStatus(id: number, status: FocusStatus): FocusRecord {
     return this.update(id, { status })
+  }
+
+  pokeReview(id: number, now = new Date()): FocusRecord {
+    assertId(id)
+    const reviewDate = today(now)
+    const result = this.database.run(
+      `UPDATE focuses
+       SET review_poked_on = ?, updated_at = ?
+       WHERE id = ? AND (review_poked_on IS NULL OR review_poked_on < ?)`,
+      [reviewDate, timestamp(now), id, reviewDate]
+    )
+    if (result.changes === 0 && !this.database.get<{ found: number }>(
+      'SELECT 1 AS found FROM focuses WHERE id = ?',
+      [id]
+    )) {
+      throw new ModelNotFoundError('Focus', id)
+    }
+    return this.materialize(id, reviewDate)
   }
 
   delete(id: number): boolean {

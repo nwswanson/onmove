@@ -42,6 +42,7 @@ const focus: FocusSnapshot = {
   lastReviewDate: null,
   needsReview: true,
   sensitive: false,
+  notes: [],
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z'
 }
@@ -58,6 +59,7 @@ const thread: ThreadSnapshot = {
   needsReview: false,
   reviewDue: false,
   sensitive: false,
+  notes: [],
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z'
 }
@@ -71,10 +73,12 @@ const commitment: CommitmentSnapshot = {
   state: 'green',
   dueDate: null,
   cadenceDays: null,
+  lastReviewDate: '2026-01-07',
   lastUpdateDate: '2026-01-07',
   nextUpdateDate: null,
   needsUpdate: false,
   sensitive: false,
+  notes: [],
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z'
 }

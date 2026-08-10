@@ -9,8 +9,11 @@ import type {
   DomainApi,
   FocusSnapshot,
   OnMoveApi,
+  RichTextDocumentSnapshot,
   SubjectSnapshot,
   ThreadSnapshot,
+  TodoParent,
+  TodoSnapshot,
   UpdateSnapshot
 } from '../../src/shared/contracts'
 import { App } from '../../src/renderer/src/App'
@@ -39,6 +42,7 @@ function focus(overrides: Partial<FocusSnapshot> = {}): FocusSnapshot {
     lastReviewDate: null,
     needsReview: true,
     sensitive: false,
+    notes: [],
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides
@@ -58,6 +62,7 @@ function thread(overrides: Partial<ThreadSnapshot> = {}): ThreadSnapshot {
     needsReview: true,
     reviewDue: false,
     sensitive: false,
+    notes: [],
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides
@@ -74,10 +79,12 @@ function commitment(overrides: Partial<CommitmentSnapshot> = {}): CommitmentSnap
     state: 'none',
     dueDate: null,
     cadenceDays: null,
+    lastReviewDate: null,
     lastUpdateDate: null,
     nextUpdateDate: null,
     needsUpdate: false,
     sensitive: false,
+    notes: [],
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides
@@ -94,6 +101,7 @@ function update(overrides: Partial<UpdateSnapshot> = {}): UpdateSnapshot {
     sensitive: false,
     scope: null,
     createdAt: '2026-08-01T12:00:00.000Z',
+    updatedAt: '2026-08-01T12:00:00.000Z',
     ...overrides
   }
 }
@@ -108,6 +116,21 @@ function subject(id: number, name: string): SubjectSnapshot {
     sensitive: false,
     createdAt: '2026-08-08T12:00:00.000Z',
     updatedAt: '2026-08-08T12:00:00.000Z'
+  }
+}
+
+function todo(overrides: Partial<TodoSnapshot> = {}): TodoSnapshot {
+  return {
+    id: 70,
+    name: 'Review the rollout',
+    parent: { type: 'focus', id: 1 },
+    subject: null,
+    dueDate: null,
+    done: false,
+    sort: [],
+    createdAt: '2026-08-08T12:00:00.000Z',
+    updatedAt: '2026-08-08T12:00:00.000Z',
+    ...overrides
   }
 }
 
@@ -128,6 +151,7 @@ function installApi(
     listFocuses: vi.fn().mockResolvedValue([]),
     createFocus: vi.fn(),
     updateFocus: vi.fn(),
+    pokeFocusReview: vi.fn(),
     setFocusStatus: vi.fn(),
     deleteFocus: vi.fn(),
     getFocusStatusHistory: vi.fn(),
@@ -155,6 +179,7 @@ function installApi(
     listThreads: vi.fn().mockResolvedValue([]),
     createThread: vi.fn(),
     updateThread: vi.fn(),
+    pokeThreadReview: vi.fn(),
     deleteThread: vi.fn(),
     listCommitments: vi.fn().mockResolvedValue([]),
     getCommitmentWorkingContext: vi.fn(async (commitmentId) => ({
@@ -164,11 +189,19 @@ function installApi(
     })),
     createCommitment: vi.fn(),
     updateCommitment: vi.fn(),
+    pokeCommitmentReview: vi.fn(),
     deleteCommitment: vi.fn(),
     listUpdates: vi.fn().mockResolvedValue([]),
     createUpdate: vi.fn(),
     updateUpdate: vi.fn(),
     deleteUpdate: vi.fn(),
+    listTodos: vi.fn().mockResolvedValue([]),
+    queryTodos: vi.fn().mockResolvedValue([]),
+    createTodo: vi.fn(),
+    updateTodo: vi.fn(),
+    reorderTodos: vi.fn(),
+    deleteTodo: vi.fn(),
+    listNotes: vi.fn().mockResolvedValue([]),
     ...domainOverrides
   }
   const api: OnMoveApi = {
@@ -178,6 +211,19 @@ function installApi(
     recordGreeting: vi.fn().mockResolvedValue(initialState),
     showDataFolder: vi.fn().mockResolvedValue(undefined),
     domain,
+    richText: {
+      getDocument: vi.fn(() => new Promise<RichTextDocumentSnapshot>(() => undefined)),
+      saveDocument: vi.fn((reference, value) => ({
+        reference,
+        title: 'Test document',
+        value,
+        revision: 1,
+        updatedAt: '2026-01-01T00:00:01.000Z'
+      })),
+      openWindow: vi.fn().mockResolvedValue(undefined),
+      getWindowTarget: vi.fn().mockResolvedValue(null),
+      onDocumentChanged: vi.fn(() => () => undefined)
+    },
     ...apiOverrides
   }
   Object.defineProperty(window, 'onmove', { value: api, configurable: true })
@@ -1003,6 +1049,194 @@ describe('App', () => {
       .toHaveAttribute('aria-selected', 'true')
   })
 
+  it('creates Todos in Thread aggregate and exact Subject contexts', async () => {
+    const current = focus({ title: 'Project Atlas' })
+    const sprint = thread()
+    const customer = subject(40, 'Customer Operations')
+    const platform = subject(41, 'Platform Team')
+    const cells = [customer, platform].map((cellSubject) => ({
+      scopeId: 50,
+      subjectId: cellSubject.id,
+      subject: cellSubject,
+      state: 'none' as const,
+      lastReviewDate: null,
+      nextReviewDate: '2026-08-16',
+      reviewDue: false,
+      commitments: []
+    }))
+    let nextTodoId = 70
+    const listTodos = vi.fn().mockResolvedValue([])
+    const createTodo = vi.fn(async (input) => todo({
+      id: ++nextTodoId,
+      name: input.name,
+      parent: input.parent,
+      subject: input.parent.type === 'thread-scope'
+        ? [customer, platform].find(({ id }) => id === input.parent.scope.subjectId) ?? null
+        : null,
+      dueDate: input.dueDate ?? null
+    }))
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listThreads: vi.fn().mockResolvedValue([sprint]),
+      getThreadScope: vi.fn().mockResolvedValue({
+        threadId: sprint.id,
+        focusId: current.id,
+        mode: 'explicit',
+        scopeId: 50,
+        subjects: [customer, platform],
+        focusSubjects: []
+      }),
+      getThreadSubjectMatrix: vi.fn().mockResolvedValue(cells),
+      listTodos,
+      createTodo
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
+    await waitFor(() => expect(listTodos).toHaveBeenCalledWith({
+      type: 'thread',
+      id: sprint.id
+    }))
+
+    await user.click(screen.getByRole('tab', { name: 'Work in Customer Operations' }))
+    await waitFor(() => expect(listTodos).toHaveBeenCalledWith({
+      type: 'thread-scope',
+      id: sprint.id,
+      scope: { scopeId: 50, subjectId: customer.id }
+    }))
+    await user.type(screen.getByLabelText('New Todo name'), 'Call customer owner')
+    fireEvent.change(screen.getByLabelText('New Todo due date'), {
+      target: { value: '2026-08-20' }
+    })
+    await user.click(screen.getByRole('button', { name: 'Add Todo' }))
+    await waitFor(() => expect(createTodo).toHaveBeenLastCalledWith({
+      parent: {
+        type: 'thread-scope',
+        id: sprint.id,
+        scope: { scopeId: 50, subjectId: customer.id }
+      },
+      name: 'Call customer owner',
+      dueDate: '2026-08-20'
+    }))
+
+    await user.click(screen.getByRole('tab', { name: 'All subjects' }))
+    await user.type(screen.getByLabelText('New Todo name'), 'Confirm platform owner')
+    const todoContext = screen.getByLabelText('New Todo context')
+    expect(within(todoContext).getAllByRole('option').map((option) => option.textContent))
+      .toEqual(['Customer Operations', 'Platform Team'])
+    expect(within(todoContext).queryByRole('option', { name: 'All subjects' }))
+      .not.toBeInTheDocument()
+    await user.selectOptions(todoContext, 'scope:50:subject:41')
+    await user.click(screen.getByRole('button', { name: 'Add Todo' }))
+    await waitFor(() => expect(createTodo).toHaveBeenLastCalledWith({
+      parent: {
+        type: 'thread-scope',
+        id: sprint.id,
+        scope: { scopeId: 50, subjectId: platform.id }
+      },
+      name: 'Confirm platform owner',
+      dueDate: null
+    }))
+  })
+
+  it('shows only current Thread Subject Todos outside the aggregate orphaned accordion', async () => {
+    const current = focus({ title: 'Project Atlas' })
+    const sprint = thread()
+    const customer = subject(40, 'Customer Operations')
+    const platform = subject(41, 'Platform Team')
+    const currentCustomerTodo = todo({
+      id: 71,
+      name: 'Review customer rollout',
+      parent: {
+        type: 'thread-scope',
+        id: sprint.id,
+        scope: { scopeId: 45, subjectId: customer.id }
+      },
+      subject: customer
+    })
+    const removedPlatformTodo = todo({
+      id: 72,
+      name: 'Review former platform rollout',
+      parent: {
+        type: 'thread-scope',
+        id: sprint.id,
+        scope: { scopeId: 45, subjectId: platform.id }
+      },
+      subject: platform
+    })
+    const oldFallbackTodo = todo({
+      id: 73,
+      name: 'Review old thread-wide rollout',
+      parent: { type: 'thread', id: sprint.id }
+    })
+    const listTodos = vi.fn(async (context: TodoParent) => {
+      if (context.type === 'thread') {
+        return [currentCustomerTodo, removedPlatformTodo, oldFallbackTodo]
+      }
+      if (
+        context.type === 'thread-scope' &&
+        context.scope.subjectId === customer.id
+      ) {
+        return [currentCustomerTodo]
+      }
+      return []
+    })
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listThreads: vi.fn().mockResolvedValue([sprint]),
+      getThreadScope: vi.fn().mockResolvedValue({
+        threadId: sprint.id,
+        focusId: current.id,
+        mode: 'explicit',
+        scopeId: 50,
+        subjects: [customer],
+        focusSubjects: [customer, platform]
+      }),
+      getThreadSubjectMatrix: vi.fn().mockResolvedValue([{
+        scopeId: 50,
+        subjectId: customer.id,
+        subject: customer,
+        state: 'none',
+        lastReviewDate: null,
+        nextReviewDate: '2026-08-16',
+        reviewDue: false,
+        commitments: []
+      }]),
+      listTodos
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
+    const currentTodos = await screen.findByRole('list', {
+      name: 'thread Todos sortable list'
+    })
+    expect(within(currentTodos).getByDisplayValue('Review customer rollout')).toBeVisible()
+    expect(within(currentTodos).queryByDisplayValue('Review former platform rollout'))
+      .not.toBeInTheDocument()
+
+    const orphanedToggle = screen.getByRole('button', { name: /Orphaned Todos/ })
+    expect(orphanedToggle).toHaveAttribute('aria-expanded', 'false')
+    await user.click(orphanedToggle)
+    const orphanedTodos = screen.getByRole('list', { name: 'Orphaned Todos' })
+    expect(within(orphanedTodos).getByDisplayValue('Review former platform rollout'))
+      .toBeVisible()
+    expect(within(orphanedTodos).getByDisplayValue('Review old thread-wide rollout'))
+      .toBeVisible()
+
+    await user.click(screen.getByRole('tab', { name: 'Work in Customer Operations' }))
+    await waitFor(() => expect(listTodos).toHaveBeenCalledWith({
+      type: 'thread-scope',
+      id: sprint.id,
+      scope: { scopeId: 50, subjectId: customer.id }
+    }))
+    expect(screen.queryByRole('button', { name: /Orphaned Todos/ })).not.toBeInTheDocument()
+    expect(screen.getByDisplayValue('Review customer rollout')).toBeVisible()
+  })
+
   it('creates an unscoped Thread-wide Update when no Subjects are effective', async () => {
     const current = focus({ title: 'Project Atlas' })
     const sprint = thread()
@@ -1412,7 +1646,7 @@ describe('App', () => {
     const focusCommitment = commitment({ state: 'red', lastUpdateDate: '2026-01-04' })
     const updateFocus = vi.fn().mockResolvedValue(updated)
     const listCommitments = vi.fn().mockResolvedValue([focusCommitment])
-    installApi({
+    const api = installApi({
       listFocuses: vi.fn().mockResolvedValue([current]),
       updateFocus,
       listCommitments
@@ -1424,8 +1658,12 @@ describe('App', () => {
     const goal = await screen.findByLabelText('Goal')
     expect(goal).toHaveTextContent('Deliver the release safely')
     await user.type(goal, ' and predictably')
-    await waitFor(() => expect(updateFocus).toHaveBeenCalledOnce(), { timeout: 2_000 })
-    const goalInput = updateFocus.mock.calls[0][1].goal
+    const saveDocument = vi.mocked(api.richText.saveDocument)
+    await waitFor(() => expect(saveDocument).toHaveBeenCalled(), { timeout: 2_000 })
+    const goalInput = saveDocument.mock.calls.at(-1)?.[1] as string
+    expect(saveDocument.mock.calls.at(-1)?.[0]).toEqual({
+      type: 'focus', id: 1, field: 'goal'
+    })
     expect(isRichText(goalInput)).toBe(true)
     expect(richTextPlainText(goalInput)).toBe(' and predictablyDeliver the release safely')
     expect(listCommitments).toHaveBeenCalledWith({ type: 'focus', id: 1 })
@@ -1786,7 +2024,7 @@ describe('App', () => {
     const updateUpdate = vi.fn().mockResolvedValue(editedUpdate)
     const createUpdate = vi.fn().mockResolvedValue(createdUpdate)
     const deleteUpdate = vi.fn().mockResolvedValue(true)
-    installApi({
+    const api = installApi({
       listFocuses: vi.fn().mockResolvedValue([current]),
       listCommitments: vi.fn().mockResolvedValue([focusCommitment]),
       listUpdates: vi.fn().mockResolvedValue([existingUpdate]),
@@ -1811,8 +2049,10 @@ describe('App', () => {
     await waitFor(() => expect(updateUpdate).toHaveBeenCalled(), { timeout: 2_000 })
     const editInput = updateUpdate.mock.calls.at(-1)?.[1]
     expect(editInput).toMatchObject({ date: '2026-08-01', state: 'green' })
-    expect(isRichText(editInput.observation)).toBe(true)
-    expect(richTextPlainText(editInput.observation)).toBe(
+    expect(editInput.observation).toBeUndefined()
+    const savedObservation = vi.mocked(api.richText.saveDocument).mock.calls.at(-1)?.[1] as string
+    expect(isRichText(savedObservation)).toBe(true)
+    expect(richTextPlainText(savedObservation)).toBe(
       ' and acceptance criteria improvedTicket quality is uneven'
     )
     expect(screen.getByText('Green', { selector: 'span' })).toBeInTheDocument()
@@ -1890,7 +2130,6 @@ describe('App', () => {
     await waitFor(() => expect(updateUpdate).toHaveBeenCalledOnce(), { timeout: 2_000 })
     expect(updateUpdate).toHaveBeenCalledWith(30, {
       date: '2026-08-07',
-      observation: '',
       state: 'red',
       sensitive: false
     })

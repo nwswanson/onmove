@@ -9,11 +9,10 @@ import type {
   ThreadSnapshot,
   ThreadScopeSnapshot,
   ThreadSubjectCellSnapshot,
-  UpdateFocusInput,
   UpdateCommitmentInput,
   UpdateThreadInput
 } from '../../../../shared/contracts'
-import { useThrottledAutosave } from '@/lib/use-throttled-autosave'
+import { useDurableRichText } from '@/features/rich-text/use-durable-rich-text'
 import {
   buildCommitmentListModel,
   type CommitmentListModel
@@ -26,13 +25,13 @@ import {
 
 interface FocusWorkspaceModelOptions {
   focus: FocusSnapshot
-  onUpdateFocus: (input: UpdateFocusInput) => Promise<void>
 }
 
 export interface FocusWorkspaceModel {
   goal: string
   setGoal: (goal: string) => void
   goalSaving: boolean
+  goalRevision: number
   goalError: string | null
   focusScope: FocusScopeSnapshot | null
   focusScopeLoading: boolean
@@ -48,6 +47,9 @@ export interface FocusWorkspaceModel {
   commitmentList: CommitmentListModel
   commitmentsFor: (parent: CommitmentParent) => readonly CommitmentSnapshot[]
   saveGoal: (goal?: string) => Promise<void>
+  openGoalInWindow: () => void
+  saveDescription: (value: string) => void
+  openDescriptionInWindow: () => void
   addFocusScopeSubject: (name: string) => Promise<void>
   removeFocusScopeSubject: (subjectId: number) => Promise<void>
   createThread: (input: CreateThreadInput) => Promise<ThreadSnapshot>
@@ -149,10 +151,8 @@ async function loadFocusThreadWorkspaceData(focusId: number): Promise<FocusThrea
 
 /** Persistence-backed state and operations for a Focus workspace. */
 export function useFocusWorkspaceModel({
-  focus,
-  onUpdateFocus
+  focus
 }: FocusWorkspaceModelOptions): FocusWorkspaceModel {
-  const [goal, setGoal] = useState(focus.goal)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [focusScope, setFocusScope] = useState<FocusScopeSnapshot | null>(null)
   const [focusScopeLoading, setFocusScopeLoading] = useState(true)
@@ -173,10 +173,14 @@ export function useFocusWorkspaceModel({
     Record<number, readonly CommitmentSnapshot[] | undefined>
   >({})
   const threadProjectionRequest = useRef(0)
-  const goalAutosave = useThrottledAutosave({
-    initialValue: focus.goal,
-    onSave: (nextGoal: string) => onUpdateFocus({ goal: nextGoal })
-  })
+  const goalDocument = useDurableRichText(
+    { type: 'focus', id: focus.id, field: 'goal' },
+    focus.goal
+  )
+  const descriptionDocument = useDurableRichText(
+    { type: 'focus', id: focus.id, field: 'description' },
+    focus.description ?? ''
+  )
   const commitmentList = buildCommitmentListModel(commitments)
 
   function applyFocusThreadWorkspaceData(data: FocusThreadWorkspaceData): void {
@@ -238,15 +242,11 @@ export function useFocusWorkspaceModel({
   }, [focus.id])
 
   function changeGoal(nextGoal: string): void {
-    const normalizedGoal = nextGoal.trim()
-    setGoal(normalizedGoal)
-    goalAutosave.schedule(normalizedGoal)
+    goalDocument.save(nextGoal)
   }
 
-  async function saveGoal(nextGoal = goal): Promise<void> {
-    const normalizedGoal = nextGoal.trim()
-    setGoal(normalizedGoal)
-    await goalAutosave.flush(normalizedGoal)
+  async function saveGoal(nextGoal = goalDocument.value): Promise<void> {
+    goalDocument.save(nextGoal)
   }
 
   async function refreshFocusScopeDependents(): Promise<void> {
@@ -489,10 +489,11 @@ export function useFocusWorkspaceModel({
   }
 
   return {
-    goal,
+    goal: goalDocument.value,
     setGoal: changeGoal,
-    goalSaving: goalAutosave.saving,
-    goalError: goalAutosave.error ? 'The goal could not be saved.' : null,
+    goalSaving: goalDocument.saving,
+    goalRevision: goalDocument.revision,
+    goalError: goalDocument.error,
     focusScope,
     focusScopeLoading,
     focusScopeSaving,
@@ -507,6 +508,9 @@ export function useFocusWorkspaceModel({
     commitmentList,
     commitmentsFor,
     saveGoal,
+    openGoalInWindow: goalDocument.openInWindow,
+    saveDescription: descriptionDocument.save,
+    openDescriptionInWindow: descriptionDocument.openInWindow,
     addFocusScopeSubject,
     removeFocusScopeSubject,
     createThread,

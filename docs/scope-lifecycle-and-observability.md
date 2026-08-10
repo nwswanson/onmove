@@ -200,7 +200,9 @@ Updates carrying exact cell attribution.
 
 Commitment projections retain the established behavior that a future-dated Update immediately
 supplies current state and cadence. Thread review cells and Focus review dates ignore Updates after
-their projection date.
+their projection date. Explicit aggregate review pokes are separate evidence: a Thread poke can
+advance the aggregate date but never rewrites or satisfies its per-Subject cells, and a Commitment
+poke never changes Update-derived state or cadence.
 
 ## UI implications for the next phase
 

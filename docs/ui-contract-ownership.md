@@ -21,7 +21,8 @@ SQLite/domain -> typed preload snapshot -> feature model hook -> feature present
 | Work status selector | `WorkStatusSelectProps` | Supply one Focus/Thread/Commitment status and a typed mutation callback | Shared domain choices and translation into the low-level lifecycle-select receiver |
 | Sidebar Sunflower | `SemanticSunflowerModel` | Project the newest direct state and active Commitment states into labeled semantic-tone seeds | 24px spiral geometry, product-color resolution, density limits, SVG accessibility, and model validation |
 | Rich text | `RichTextEditorProps` and the drawer's `rich-text` field kind | Supply an opaque persisted string and typed change/save callbacks | Lexical state, legacy-text import, toolbar, formatting, serialization, focus, and accessibility |
-| Existing-record text persistence | `useThrottledAutosave` and `ContextDrawerAutosaveModel` | Supply the latest draft, persistence callback, and drawer field capabilities | The 750 ms interval, coalescing, write serialization, blur/close flushing, pending state, and errors |
+| Existing rich-text persistence | `useDurableRichText` and the typed `richText` preload API | Supply a document reference and initial opaque value | Synchronous SQLite commit, revisions, cross-window updates, detached-window opening, and errors |
+| Compact-field persistence | `useThrottledAutosave` and `ContextDrawerAutosaveModel` | Supply the latest draft, persistence callback, and drawer field capabilities | The 750 ms interval, coalescing, write serialization, blur/close flushing, pending state, and errors |
 | Context drawer | `ContextDrawerModel` inside `ContextDrawerAdapter` | Map the selected record to text/select/checkbox/static fields and typed action capabilities | Inputs/static values, boolean controls, draft state, validation, pending/errors, confirmation, close, resize, and pin UI |
 | Commitment collection | `CommitmentCollectionModel` | Translate the ordered Commitment projection into display labels, state/status models, and completion capabilities | Group/list markup, empty states, Add action, Action checkbox, disclosure and info controls, accessibility, creation requests, and id-only item events |
 | Direct updates | `UpdateListItemModel`, `UpdateListDraft`, and `UpdateListStateOptionModel` | Bind one typed Focus, Thread, or Commitment parent; map Update snapshots, provide explicit creation defaults, and translate drafts into typed mutations | Responsive cards, inline editors, immediate blank-record creation, automatic edit persistence, delete actions, validation, empty/loading/errors, accessible owner label, and visible state labels/colors |
@@ -135,24 +136,41 @@ API. Its card layout keeps the narrative observation at full width; date, state,
 independently above it as the available main-view width changes. The receiver's `defaultDate` and
 `defaultState` make creation behavior explicit: Add immediately persists an empty Update, with
 pending and failure feedback, and never creates a temporary UI-only draft. The resulting card's
-date, state, and observation edits all enter the shared autosave pipeline.
+date, state, and sensitivity edits enter the shared throttled pipeline. Observation text uses the
+durable rich-text document path described below.
 
 Multiline content follows one shared receiver contract. `RichTextEditor` owns a deliberately small
-Lexical configuration: undo/redo, bold, italic, underline, bulleted and numbered lists, and a text
-color palette. `RichTextContent` renders the same value without editing controls. The stored string
-uses an `onmove-rich-text:1:` prefix followed by Lexical's serialized editor-state JSON; unprefixed
-legacy strings are imported as paragraphs. Models and IPC treat both representations as opaque
-text, so rich-text UI concerns do not enter business logic. Inside one bulleted or numbered list,
-Tab nests the selection and Shift+Tab outdents it; outside a list, Tab retains normal focus
-navigation instead of trapping keyboard users in the editor.
+Lexical configuration: undo/redo, bold, italic, underline, strikethrough, a fixed yellow highlight,
+bulleted, numbered, and check lists, links, and a conventional text-color palette. The palette uses
+adaptive gray, red, orange, yellow, green, blue, and purple values chosen for readable light and dark
+appearances instead of reusing product-theme semantics. Strikethrough is available through
+`Command-Shift-X` and highlighting through `Command-Y`; tooltips and `aria-keyshortcuts` expose both
+bindings. Color selection captures and restores the editor range before the native select receives
+focus, so applying one color replaces every color in a mixed selection while preserving bold,
+italic, links, and other independent formats. `RichTextContent` renders the same value without
+editing controls.
+The receiver normalizes links without a scheme to HTTPS and accepts only HTTP, HTTPS, and email
+destinations. Links always request a new external window; Electron denies that window and delegates
+allowed schemes to the user's default macOS application, while rejecting executable, data, and
+local-file schemes. The stored string uses an `onmove-rich-text:1:` prefix followed by Lexical's
+serialized editor-state JSON; unprefixed legacy strings are imported as paragraphs. Link nodes and
+checked state live inside that envelope, so models and IPC continue to treat both representations as
+opaque text and no data migration is necessary. Inside any list, Tab nests the selection and
+Shift+Tab outdents it; outside a list, Tab retains normal focus navigation instead of trapping
+keyboard users in the editor.
 
-Text persistence is likewise receiver-owned. Existing-record editors schedule their latest value
-through `useThrottledAutosave`; it performs at most one write per 750 ms, never overlaps writes, and
-coalesces changes made while a write is in flight. Goal and Update editors flush when their editing
-region loses focus. A drawer adapter declares only which text field ids support autosave and how to
-persist those values; the drawer owns scheduling, required-field checks, pending/error feedback, and
-flushes before closing or invoking an action. Create dialogs do not autosave because their record
-does not exist until the explicit Create action succeeds.
+Rich-text persistence belongs to the feature model rather than the generic Lexical receiver.
+`useDurableRichText` accepts a typed document reference, commits every emitted value synchronously,
+and applies only newer revision broadcasts from other windows. `RichTextEditor` accepts an external
+revision token and updates Lexical only when that token changes; ordinary controlled rerenders never
+interrupt rapid local typing. The receiver exposes an optional Open in new window action, while the
+feature supplies the typed operation. Detached windows run the same sandboxed renderer and hook.
+
+Compact metadata still uses `useThrottledAutosave`; it performs at most one write per 750 ms, never
+overlaps writes, and coalesces changes made while a write is in flight. A drawer adapter declares
+which compact field ids support autosave and how to persist them; the drawer owns scheduling,
+required-field checks, pending/error feedback, and close/action flushing. Create dialogs do not
+autosave because their record does not exist until the explicit Create action succeeds.
 
 ## Enforcement
 

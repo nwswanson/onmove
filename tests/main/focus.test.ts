@@ -174,7 +174,7 @@ describe('Focus models', () => {
     expect(() => focus.update({ sensitive: 'yes' as never })).toThrow(ModelValidationError)
   })
 
-  it('derives last review from only the latest effective direct Focus update', () => {
+  it('derives last review from the later direct Focus update or explicit review poke', () => {
     const focus = database!.domain.focuses.create({ title: 'Project execution' })
     const thread = database!.domain.threads.create({
       focusId: focus.id,
@@ -209,8 +209,13 @@ describe('Focus models', () => {
       date: '2026-01-10',
       observation: 'Future review'
     })
+    focus.pokeReview(new Date('2026-01-07T12:00:00.000Z'))
 
-    expect(focus.snapshot('2026-01-09').lastReviewDate).toBe('2026-01-03')
+    expect(focus.snapshot('2026-01-06').lastReviewDate).toBe('2026-01-03')
+    expect(focus.snapshot('2026-01-09').lastReviewDate).toBe('2026-01-07')
     expect(focus.snapshot('2026-01-10').lastReviewDate).toBe('2026-01-10')
+
+    focus.pokeReview(new Date('2026-01-06T12:00:00.000Z'))
+    expect(focus.snapshot('2026-01-09').lastReviewDate).toBe('2026-01-07')
   })
 })

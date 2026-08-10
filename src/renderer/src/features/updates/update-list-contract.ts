@@ -14,6 +14,7 @@ export interface UpdateListDraft {
 export interface UpdateListItemModel extends UpdateListDraft {
   id: string
   contextLabel?: string
+  externalRevision?: string | number
 }
 
 export interface UpdateListCreateOptionModel {
@@ -39,6 +40,8 @@ export interface UpdateListProps {
   createOptionsLabel?: string
   onCreateFor?: (optionId: string, draft: UpdateListDraft) => Promise<void>
   onUpdate: (itemId: string, draft: UpdateListDraft) => Promise<void>
+  onObservationChange?: (itemId: string, value: string) => void
+  onOpenObservation?: (itemId: string) => void
   onDelete: (itemId: string) => Promise<void>
 }
 

@@ -16,7 +16,8 @@ describe('Update presenters', () => {
       state: 'green',
       sensitive: false,
       scope: null,
-      createdAt: '2026-08-07T12:00:00.000Z'
+      createdAt: '2026-08-07T12:00:00.000Z',
+      updatedAt: '2026-08-07T12:00:00.000Z'
     }
 
     expect(updateListItems([update])).toEqual([
@@ -24,6 +25,7 @@ describe('Update presenters', () => {
         id: '8',
         date: '2026-08-07',
         observation: 'Ticket quality improved',
+        externalRevision: '2026-08-07T12:00:00.000Z',
         state: 'green',
         sensitive: false
       }
@@ -45,7 +47,8 @@ describe('Update presenters', () => {
       state: 'yellow',
       sensitive: false,
       scope: { scopeId: 50, subjectId: 40 },
-      createdAt: '2026-08-07T12:00:00.000Z'
+      createdAt: '2026-08-07T12:00:00.000Z',
+      updatedAt: '2026-08-07T12:00:00.000Z'
     }
 
     expect(updateListProjection([update], {
@@ -69,7 +72,8 @@ describe('Update presenters', () => {
       state: 'green',
       sensitive: false,
       scope: { scopeId: 50, subjectId: 40 },
-      createdAt: '2026-08-07T12:00:00.000Z'
+      createdAt: '2026-08-07T12:00:00.000Z',
+      updatedAt: '2026-08-07T12:00:00.000Z'
     }
 
     expect(updateListProjection([update], {
@@ -93,7 +97,8 @@ describe('Update presenters', () => {
       state: 'none',
       sensitive: false,
       scope: null,
-      createdAt: '2026-08-07T12:00:00.000Z'
+      createdAt: '2026-08-07T12:00:00.000Z',
+      updatedAt: '2026-08-07T12:00:00.000Z'
     }
 
     expect(updateListProjection([unscopedUpdate], {

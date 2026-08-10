@@ -9,6 +9,8 @@ function submenuItems(item: MenuItemConstructorOptions): MenuItemConstructorOpti
 function actions(overrides: Partial<Parameters<typeof createMenuTemplate>[0]> = {}) {
   return {
     createWindow: vi.fn(),
+    importData: vi.fn(),
+    exportData: vi.fn(),
     showDataFolder: vi.fn(),
     sensitiveContentHidden: false,
     setSensitiveContentHidden: vi.fn(),
@@ -39,19 +41,28 @@ describe('createMenuTemplate', () => {
     expect(template.some((item) => item.label === 'OnMove')).toBe(false)
   })
 
-  it('connects New Window and Show Data File actions', () => {
+  it('connects window, import, export, and data-folder actions', () => {
     const createWindow = vi.fn()
+    const importData = vi.fn()
+    const exportData = vi.fn()
     const showDataFolder = vi.fn()
-    const template = createMenuTemplate(actions({ createWindow, showDataFolder }), true)
+    const template = createMenuTemplate(
+      actions({ createWindow, importData, exportData, showDataFolder }),
+      true
+    )
     const fileMenu = template.find((item) => item.label === 'File')!
     const helpMenu = template.find((item) => item.role === 'help')!
 
     submenuItems(fileMenu).find((item) => item.label === 'New Window')?.click?.({} as never, {} as never, {} as never)
+    submenuItems(fileMenu).find((item) => item.label === 'Import Data…')?.click?.({} as never, {} as never, {} as never)
+    submenuItems(fileMenu).find((item) => item.label === 'Export Data…')?.click?.({} as never, {} as never, {} as never)
     submenuItems(helpMenu)
       .find((item) => item.label === 'Show Data File in Finder')
       ?.click?.({} as never, {} as never, {} as never)
 
     expect(createWindow).toHaveBeenCalledOnce()
+    expect(importData).toHaveBeenCalledOnce()
+    expect(exportData).toHaveBeenCalledOnce()
     expect(showDataFolder).toHaveBeenCalledOnce()
   })
 
