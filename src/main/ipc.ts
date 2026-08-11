@@ -21,6 +21,7 @@ import {
   type NoteParent,
   type RichTextDocumentChange,
   type RichTextDocumentReference,
+  type UpdateScopeCell,
   type UpdateParent,
   type UpdateCommitmentInput,
   type UpdateFocusInput,
@@ -159,8 +160,8 @@ export function registerAppIpc(
   ipcMain.handle(IPC_CHANNELS.moveThread, (_event, id: number, input: MoveThreadInput) =>
     database.domain.threads.move(id, input)
   )
-  ipcMain.handle(IPC_CHANNELS.pokeThreadReview, (_event, id: number) =>
-    database.domain.threads.requireModel(id).pokeReview().snapshot()
+  ipcMain.handle(IPC_CHANNELS.pokeThreadReview, (_event, id: number, cell?: UpdateScopeCell) =>
+    database.domain.threads.requireModel(id).pokeReview(new Date(), cell).snapshot()
   )
   ipcMain.handle(IPC_CHANNELS.deleteThread, (_event, id: number) =>
     database.domain.threads.delete(id)
@@ -196,8 +197,10 @@ export function registerAppIpc(
     (_event, id: number, input: MoveCommitmentInput) =>
       database.domain.commitments.move(id, input)
   )
-  ipcMain.handle(IPC_CHANNELS.pokeCommitmentReview, (_event, id: number) =>
-    database.domain.commitments.requireModel(id).pokeReview().snapshot()
+  ipcMain.handle(
+    IPC_CHANNELS.pokeCommitmentReview,
+    (_event, id: number, cell?: UpdateScopeCell) =>
+      database.domain.commitments.requireModel(id).pokeReview(new Date(), cell).snapshot()
   )
   ipcMain.handle(IPC_CHANNELS.deleteCommitment, (_event, id: number) =>
     database.domain.commitments.delete(id)

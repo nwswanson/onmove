@@ -65,7 +65,8 @@ const api: OnMoveApi = {
     planThreadMove: (id, focusId) =>
       ipcRenderer.invoke(IPC_CHANNELS.planThreadMove, id, focusId),
     moveThread: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.moveThread, id, input),
-    pokeThreadReview: (id) => ipcRenderer.invoke(IPC_CHANNELS.pokeThreadReview, id),
+    pokeThreadReview: (id, cell) =>
+      ipcRenderer.invoke(IPC_CHANNELS.pokeThreadReview, id, cell),
     deleteThread: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteThread, id),
     listCommitments: (parent) => ipcRenderer.invoke(IPC_CHANNELS.listCommitments, parent),
     getCommitmentWorkingContext: (commitmentId) =>
@@ -77,8 +78,8 @@ const api: OnMoveApi = {
       ipcRenderer.invoke(IPC_CHANNELS.planCommitmentMove, id, parent),
     moveCommitment: (id, input) =>
       ipcRenderer.invoke(IPC_CHANNELS.moveCommitment, id, input),
-    pokeCommitmentReview: (id) =>
-      ipcRenderer.invoke(IPC_CHANNELS.pokeCommitmentReview, id),
+    pokeCommitmentReview: (id, cell) =>
+      ipcRenderer.invoke(IPC_CHANNELS.pokeCommitmentReview, id, cell),
     deleteCommitment: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteCommitment, id),
     listUpdates: (parent) => ipcRenderer.invoke(IPC_CHANNELS.listUpdates, parent),
     createUpdate: (input) => ipcRenderer.invoke(IPC_CHANNELS.createUpdate, input),

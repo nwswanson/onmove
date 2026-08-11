@@ -98,6 +98,50 @@ describe('database migrations', () => {
     migrated.close()
   })
 
+  it('stores calendar-validated scoped review pokes with aggregate cascades', () => {
+    const now = new Date('2026-08-10T12:00:00.000Z')
+    const database = new AppDatabase(databasePath)
+    const focus = database.domain.focuses.create({ title: 'Scoped reviews' })
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Regional health',
+      reviewFrequencyDays: 7
+    }, now)
+    const scope = database.domain.threadScopes.addSubject(thread.id, { name: 'North' }, now)
+    const subject = scope.subjects[0]
+    const commitment = database.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Keep rollout current',
+      cadenceDays: 7
+    }, now)
+    const cell = { scopeId: scope.scopeId!, subjectId: subject.id }
+    thread.pokeReview(now, cell)
+    commitment.pokeReview(now, cell)
+    database.close()
+
+    const migrated = new DatabaseSync(databasePath)
+    expect(migrated.prepare(
+      `SELECT reviewed_on FROM thread_review_cell_pokes
+       WHERE thread_id = ? AND scope_id = ? AND subject_id = ?`
+    ).get(thread.id, cell.scopeId, cell.subjectId)).toMatchObject({ reviewed_on: '2026-08-10' })
+    expect(migrated.prepare(
+      `SELECT reviewed_on FROM commitment_review_cell_pokes
+       WHERE commitment_id = ? AND scope_id = ? AND subject_id = ?`
+    ).get(commitment.id, cell.scopeId, cell.subjectId))
+      .toMatchObject({ reviewed_on: '2026-08-10' })
+    expect(() => migrated.prepare(
+      `UPDATE thread_review_cell_pokes SET reviewed_on = '2026-02-30'
+       WHERE thread_id = ?`
+    ).run(thread.id)).toThrow()
+    migrated.prepare('DELETE FROM threads WHERE id = ?').run(thread.id)
+    expect(migrated.prepare('SELECT count(*) AS count FROM thread_review_cell_pokes').get())
+      .toMatchObject({ count: 0 })
+    expect(migrated.prepare('SELECT count(*) AS count FROM commitment_review_cell_pokes').get())
+      .toMatchObject({ count: 0 })
+    migrated.close()
+  })
+
   it('backfills and enforces Todo completion timestamps', () => {
     const database = new AppDatabase(databasePath)
     const focus = database.domain.focuses.create({ title: 'Completion history' })

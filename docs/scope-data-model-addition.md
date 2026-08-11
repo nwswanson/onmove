@@ -186,16 +186,18 @@ newest last-Update date, earliest next-Update date, and any-cell-needs-update.
 
 `ThreadModel.scopeMatrix(date)` contains one independently scheduled review cell per effective
 Subject. Every cell carries its Subject, direct state, last review date, next review date, and due
-flag. A missing Subject assessment contributes `none` and remains independently due according to
-the Thread's review frequency. Child Commitment Updates do not complete Thread review cells.
+flag. Its last review date is the later of its exact direct Update or exact review poke; only an
+Update supplies state. A missing Subject assessment contributes `none` and remains independently
+due according to the Thread's review frequency. Child Commitment Updates do not complete Thread
+review cells.
 
 The ordinary Thread snapshot rolls the matrix up for list and review surfaces: `reviewDue` means any
 cell is due, `nextReviewDate` is the earliest cell deadline, and `lastReviewDate` is the oldest latest
 review across all effective cells. It remains `null` while any current Subject has never been
 reviewed. A later aggregate review poke may advance the Thread snapshot's `lastReviewDate`, but it
 does not alter these cells, their deadlines, or their evidence. The cell projection itself required
-no additional schema migration because scoped Updates already store the exact
-Thread/Scope/Subject attribution.
+dedicated durable `thread_review_cell_pokes` records so a no-observation acknowledgement survives
+refresh without being confused with scoped Update evidence.
 
 Thread health includes each cell's direct state plus every active child Commitment's materialized
 state. A missing Subject assessment contributes `none`.

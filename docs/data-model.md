@@ -66,11 +66,13 @@ Update directly on the Focus and its explicit `review_poked_on` date; descendant
 Commitment Updates do not advance it.
 
 Focuses, Threads, and Commitments can be explicitly “poked” as reviewed without creating a
-synthetic Update. Each aggregate stores only its monotonic latest `review_poked_on` calendar date;
-the named `pokeReview` repository/model operation supplies the local current date and does not let
-callers write the derived snapshot field. Focus and Thread temporal projections ignore a poke after
-their requested projection date. A Commitment exposes `lastReviewDate` separately from
-`lastUpdateDate`: poking it never changes state, cadence, or the meaning of its latest observation.
+synthetic Update. Open aggregates store their monotonic latest `review_poked_on` calendar date;
+bounded Threads and Commitments additionally store exact Scope/Subject pokes in dedicated tables.
+The named `pokeReview` repository/model operations supply the local current date, validate that an
+exact cell is currently effective, and do not let callers write derived snapshot fields. Temporal
+projections ignore pokes after their requested projection date. A Commitment exposes
+`lastReviewDate` separately from `lastUpdateDate`: poking it never changes state, cadence, or the
+meaning of its latest observation.
 
 `FocusModel` supplies update, status, history, refresh, and deletion helpers. The renderer reaches
 these operations only through named IPC methods. Threads and Commitments use named list and create

@@ -353,9 +353,9 @@ export class ThreadModel extends BaseModel<ThreadRecord> {
     return this.replace(this.repository.setStatus(this.id, status))
   }
 
-  /** Records an aggregate review without inventing per-Subject Update evidence. */
-  pokeReview(now = new Date()): this {
-    return this.replace(this.repository.pokeReview(this.id, now))
+  /** Records aggregate or exact-cell review evidence without inventing an Update. */
+  pokeReview(now = new Date(), cell?: UpdateScopeCell): this {
+    return this.replace(this.repository.pokeReview(this.id, now, cell))
   }
 
   snapshot(asOf?: string): ThreadSnapshot {
@@ -602,6 +602,7 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
         this.remapOwnedScope('updates', id, sourceScopeId, targetScopeId)
         this.remapOwnedScope('todos', id, sourceScopeId, targetScopeId)
         this.remapOwnedScope('todo_lists', id, sourceScopeId, targetScopeId)
+        this.remapReviewPokes(id, sourceScopeId, targetScopeId)
       }
 
       if (plan.scopeStrategy === 'copy-custom') {
@@ -629,9 +630,30 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
     return this.update(id, { status })
   }
 
-  pokeReview(id: number, now = new Date()): ThreadRecord {
+  pokeReview(id: number, now = new Date(), cell?: UpdateScopeCell): ThreadRecord {
     assertId(id, 'thread')
     const reviewDate = today(now)
+    if (cell) {
+      assertId(cell.scopeId, 'scope')
+      assertId(cell.subjectId, 'subject')
+      const isCurrentCell = this.scopeMatrix(id, reviewDate).some((candidate) =>
+        candidate.scopeId === cell.scopeId && candidate.subjectId === cell.subjectId)
+      if (!isCurrentCell) {
+        throw new ModelValidationError('Thread review cell must be currently effective')
+      }
+      const changedAt = timestamp(now)
+      this.database.run(
+        `INSERT INTO thread_review_cell_pokes (
+           thread_id, scope_id, subject_id, reviewed_on, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (thread_id, scope_id, subject_id) DO UPDATE SET
+           reviewed_on = MAX(reviewed_on, excluded.reviewed_on),
+           updated_at = excluded.updated_at`,
+        [id, cell.scopeId, cell.subjectId, reviewDate, changedAt, changedAt]
+      )
+      this.database.run('UPDATE threads SET updated_at = ? WHERE id = ?', [changedAt, id])
+      return this.materialize(id, reviewDate)
+    }
     const result = this.database.run(
       `UPDATE threads
        SET review_poked_on = ?, updated_at = ?
@@ -825,7 +847,12 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
          ORDER BY recorded_on DESC, id DESC LIMIT 1`,
         [row.id, scopeId, subject.id, asOf]
       )
-      const lastReviewDate = latest?.recorded_on ?? null
+      const poke = this.database.get<{ reviewed_on: string }>(
+        `SELECT reviewed_on FROM thread_review_cell_pokes
+         WHERE thread_id = ? AND scope_id = ? AND subject_id = ? AND reviewed_on <= ?`,
+        [row.id, scopeId, subject.id, asOf]
+      )
+      const lastReviewDate = latestDate(latest?.recorded_on ?? null, poke?.reviewed_on ?? null)
       const nextReviewDate = addDays(
         lastReviewDate ?? row.created_at.slice(0, 10),
         reviewFrequencyDays
@@ -900,8 +927,24 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
        FROM todo_lists record
        LEFT JOIN commitments commitment ON commitment.id = record.commitment_id
        WHERE record.scope_id IS NOT NULL
-         AND (record.thread_id = ? OR commitment.thread_id = ?)`,
-      [threadId, threadId, threadId, threadId, threadId, threadId]
+         AND (record.thread_id = ? OR commitment.thread_id = ?)
+       UNION
+       SELECT scope_id FROM thread_review_cell_pokes WHERE thread_id = ?
+       UNION
+       SELECT record.scope_id
+       FROM commitment_review_cell_pokes record
+       JOIN commitments commitment ON commitment.id = record.commitment_id
+       WHERE commitment.thread_id = ?`,
+      [
+        threadId,
+        threadId,
+        threadId,
+        threadId,
+        threadId,
+        threadId,
+        threadId,
+        threadId
+      ]
     ).map(({ scope_id: scopeId }) => Number(scopeId)))
   }
 
@@ -1004,6 +1047,25 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
     )
   }
 
+  private remapReviewPokes(
+    threadId: number,
+    sourceScopeId: number,
+    targetScopeId: number
+  ): void {
+    this.database.run(
+      `UPDATE thread_review_cell_pokes SET scope_id = ?
+       WHERE thread_id = ? AND scope_id = ?`,
+      [targetScopeId, threadId, sourceScopeId]
+    )
+    this.database.run(
+      `UPDATE commitment_review_cell_pokes SET scope_id = ?
+       WHERE scope_id = ? AND commitment_id IN (
+         SELECT id FROM commitments WHERE thread_id = ?
+       )`,
+      [targetScopeId, sourceScopeId, threadId]
+    )
+  }
+
   private assertParentExists(table: 'focuses', id: number, name: string): void {
     const row = this.database.get<ExistsRow>(`SELECT 1 AS found FROM ${table} WHERE id = ?`, [id])
     if (!row) throw new ModelNotFoundError(name, id)
@@ -1042,9 +1104,9 @@ export class CommitmentModel extends BaseModel<CommitmentRecord> {
     return this.replace(this.repository.setStatus(this.id, status))
   }
 
-  /** Records a review independently from Update state and cadence evidence. */
-  pokeReview(now = new Date()): this {
-    return this.replace(this.repository.pokeReview(this.id, now))
+  /** Records aggregate or exact-cell review evidence without inventing an Update. */
+  pokeReview(now = new Date(), cell?: UpdateScopeCell): this {
+    return this.replace(this.repository.pokeReview(this.id, now, cell))
   }
 
   snapshot(asOf?: string): CommitmentSnapshot {
@@ -1266,9 +1328,30 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
     return this.find(id) as CommitmentRecord
   }
 
-  pokeReview(id: number, now = new Date()): CommitmentRecord {
+  pokeReview(id: number, now = new Date(), cell?: UpdateScopeCell): CommitmentRecord {
     assertId(id, 'commitment')
     const reviewDate = today(now)
+    if (cell) {
+      assertId(cell.scopeId, 'scope')
+      assertId(cell.subjectId, 'subject')
+      const isCurrentCell = this.scopeMatrix(id, reviewDate).some((candidate) =>
+        candidate.scopeId === cell.scopeId && candidate.subjectId === cell.subjectId)
+      if (!isCurrentCell) {
+        throw new ModelValidationError('Commitment review cell must be currently effective')
+      }
+      const changedAt = timestamp(now)
+      this.database.run(
+        `INSERT INTO commitment_review_cell_pokes (
+           commitment_id, scope_id, subject_id, reviewed_on, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (commitment_id, scope_id, subject_id) DO UPDATE SET
+           reviewed_on = MAX(reviewed_on, excluded.reviewed_on),
+           updated_at = excluded.updated_at`,
+        [id, cell.scopeId, cell.subjectId, reviewDate, changedAt, changedAt]
+      )
+      this.database.run('UPDATE commitments SET updated_at = ? WHERE id = ?', [changedAt, id])
+      return this.materialize(id, reviewDate)
+    }
     const result = this.database.run(
       `UPDATE commitments
        SET review_poked_on = ?, updated_at = ?
@@ -1354,6 +1437,11 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
         [id, scopeId, subject.id]
       )
       const lastUpdateDate = latest?.recorded_on ?? null
+      const poke = this.database.get<{ reviewed_on: string }>(
+        `SELECT reviewed_on FROM commitment_review_cell_pokes
+         WHERE commitment_id = ? AND scope_id = ? AND subject_id = ? AND reviewed_on <= ?`,
+        [id, scopeId, subject.id, date]
+      )
       const nextUpdateDate = cadenceDays === null
         ? null
         : addDays(lastUpdateDate ?? row.created_at.slice(0, 10), cadenceDays)
@@ -1362,6 +1450,7 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
         subjectId: subject.id,
         subject,
         state: (latest?.state as HealthState | undefined) ?? 'none',
+        lastReviewDate: latestDate(lastUpdateDate, poke?.reviewed_on ?? null),
         lastUpdateDate,
         nextUpdateDate,
         needsUpdate:
@@ -1423,7 +1512,15 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
         : calculateHealth(cells.map((cell) => cell.state)),
       dueDate: row.due_on,
       cadenceDays,
-      lastReviewDate: latestDate(row.review_poked_on, lastUpdateDate),
+      lastReviewDate: latestDate(
+        row.review_poked_on,
+        application.effectiveScopeId === null
+          ? lastUpdateDate
+          : cells.reduce<string | null>(
+              (latestReview, cell) => latestDate(latestReview, cell.lastReviewDate),
+              null
+            )
+      ),
       lastUpdateDate,
       nextUpdateDate,
       needsUpdate: application.effectiveScopeId === null

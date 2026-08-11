@@ -118,9 +118,23 @@ export function useReviewModel({ onReviewChanged }: ReviewModelOptions = {}): Re
       if (item.kind === 'focus') {
         await window.onmove.domain.pokeFocusReview(item.focus.id)
       } else if (item.kind === 'thread' && item.thread) {
-        await window.onmove.domain.pokeThreadReview(item.thread.id)
+        if (item.cell) {
+          await window.onmove.domain.pokeThreadReview(item.thread.id, {
+            scopeId: item.cell.scopeId,
+            subjectId: item.cell.subjectId
+          })
+        } else {
+          await window.onmove.domain.pokeThreadReview(item.thread.id)
+        }
       } else if (item.commitment) {
-        await window.onmove.domain.pokeCommitmentReview(item.commitment.id)
+        if (item.cell) {
+          await window.onmove.domain.pokeCommitmentReview(item.commitment.id, {
+            scopeId: item.cell.scopeId,
+            subjectId: item.cell.subjectId
+          })
+        } else {
+          await window.onmove.domain.pokeCommitmentReview(item.commitment.id)
+        }
       }
       complete(item.key)
       await notifyReviewChanged(item.focus.id)

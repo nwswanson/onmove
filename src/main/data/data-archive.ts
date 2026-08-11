@@ -21,6 +21,8 @@ export const DATA_ARCHIVE_TABLES = [
   'focus_scope_applications',
   'thread_scope_applications',
   'commitment_scope_applications',
+  'thread_review_cell_pokes',
+  'commitment_review_cell_pokes',
   'updates',
   'todos',
   'todo_subject_completions',
@@ -114,7 +116,7 @@ const INTEGER_COLUMNS = new Set([
 ])
 const TIMESTAMP_COLUMNS = new Set(['created_at', 'updated_at', 'changed_at'])
 const OPTIONAL_TIMESTAMP_COLUMNS = new Set(['completed_at'])
-const DATE_COLUMNS = new Set(['recorded_on', 'effective_from'])
+const DATE_COLUMNS = new Set(['recorded_on', 'effective_from', 'reviewed_on'])
 const OPTIONAL_DATE_COLUMNS = new Set(['due_on', 'effective_until', 'review_poked_on'])
 
 function quoteIdentifier(value: string): string {

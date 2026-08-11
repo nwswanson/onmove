@@ -228,7 +228,7 @@ A Thread is an independently meaningful dimension by which its Focus is judged.
 | `health` | Derived `red`, `yellow`, `green`, or `none`. |
 | `status` | `active`, `paused`, `done`, or `cancelled`, with transition history. |
 | `reviewFrequencyDays` | Required positive whole-number review interval. |
-| `lastReviewDate` | Later of the explicit Thread poke and its applicable direct-Update review projection. |
+| `lastReviewDate` | Later of applicable aggregate/exact-cell pokes and direct-Update review evidence. |
 | `nextReviewDate` | Open or zero-Subject: aggregate deadline. Bounded with Subjects: earliest Subject-cell deadline. |
 | `needsReview` | Review-workflow inclusion independent of status. |
 | `reviewDue` | Derived from status, inclusion, cadence, and projection date. |
@@ -236,7 +236,8 @@ A Thread is an independently meaningful dimension by which its Focus is judged.
 | `createdAt`, `updatedAt` | Durable timestamps. |
 
 Selecting or opening a Thread never counts as reviewing it. A direct Thread Update supplies
-observational review evidence; `pokeReview` is the explicit no-observation acknowledgement.
+observational review evidence; `pokeReview` is the explicit no-observation acknowledgement. For a
+bounded Thread, that acknowledgement can target one exact Scope/Subject cell.
 Commitment Updates do not advance the Thread review date.
 
 For an Open Thread—or one whose effective Scope has no Subjects—the latest direct unscoped Update
@@ -255,10 +256,10 @@ review projection per currently effective Subject:
 }
 ```
 
-Each cell uses only direct Thread Updates attributed to that exact Scope/Subject pair. A Subject
-without an effective Update contributes `none`, has `lastReviewDate: null`, and uses the Thread's
-creation date as its initial review-cadence baseline. Future-dated Thread Updates do not affect a
-cell before their recorded date.
+Each cell uses only direct Thread Updates and review pokes attributed to that exact Scope/Subject
+pair. Only Updates supply state. A Subject without either contributes `none`, has
+`lastReviewDate: null`, and uses the Thread's creation date as its initial review-cadence baseline.
+Future-dated Thread Updates or pokes do not affect a cell before their recorded date.
 
 The bounded Thread snapshot rolls up its review cells:
 
@@ -271,7 +272,8 @@ The bounded Thread snapshot rolls up its review cells:
 
 The aggregate poke does not alter `scopeMatrix`: it neither creates Subject-cell evidence nor clears
 cell `reviewDue` flags. This keeps the two-review obligation for a two-Subject Scope observable even
-when someone acknowledges the Thread as a whole.
+when someone acknowledges the Thread as a whole. An exact-cell poke does advance only that cell's
+review date and deadline.
 
 This means a Scope containing Alex and Jamie creates two review obligations. Reviewing Alex advances
 only Alex's cell; the Thread remains due until Jamie is also reviewed. Effective-dated additions and
@@ -294,7 +296,7 @@ todo and does not block its parent from closing.
 | `dueDate` | Optional due date. |
 | `cadenceDays` | Optional positive whole-number interval between required Updates. |
 | `state` | Derived observed state. |
-| `lastReviewDate` | Later of the latest direct Update date and explicit Commitment review poke. |
+| `lastReviewDate` | Later of the latest applicable direct Update and aggregate/exact-cell review poke. |
 | `lastUpdateDate` | Derived latest relevant recorded date. |
 | `nextUpdateDate` | Derived cadence boundary. |
 | `needsUpdate` | Derived active/cadence condition. |
@@ -310,6 +312,7 @@ For an Open Commitment, state and cadence use the newest unscoped Update. For a 
   subjectId,
   subject,
   state,
+  lastReviewDate,
   lastUpdateDate,
   nextUpdateDate,
   needsUpdate
@@ -319,13 +322,14 @@ For an Open Commitment, state and cadence use the newest unscoped Update. For a 
 The aggregate Commitment snapshot is derived from those cells:
 
 - `state` is the severity aggregation of cell states;
+- `lastReviewDate` includes exact-cell review pokes as well as Updates;
 - `lastUpdateDate` is the newest cell date;
 - `nextUpdateDate` is the earliest cell deadline; and
 - `needsUpdate` is true when any cell needs an Update.
 
-`pokeReview` advances only `lastReviewDate`. It does not change `lastUpdateDate`, state,
-`nextUpdateDate`, or `needsUpdate`, so a review acknowledgement cannot masquerade as new evidence or
-defer an Update cadence.
+`pokeReview` advances only the applicable aggregate or exact-cell `lastReviewDate`. It does not
+change `lastUpdateDate`, state, `nextUpdateDate`, or `needsUpdate`, so a review acknowledgement
+cannot masquerade as new evidence or defer an Update cadence.
 
 A bounded Commitment therefore has independent evidence and cadence per Subject rather than one
 shared Update stream. Empty cells contribute `none` and use the Commitment creation date as their
@@ -442,6 +446,10 @@ entity cascades its transition history.
 - Commitment cadence is per Scope/Subject cell when bounded and one stream when Open.
 - Commitment review uses the later Update date or explicit poke, independently of cadence.
 - A Commitment needs an Update only when active and at least one applicable cadence deadline is due.
+- Review queues include never-reviewed active Threads and Commitments for an initial pass, then use
+  their frequency/cadence due state. Applicable Update or poke evidence dated today suppresses that
+  exact target for the day. Enabled active Focuses follow the same-day suppression rule and return
+  daily because they have no separate frequency.
 - Review and cadence values are recomputed from durable records whenever a snapshot is materialized.
 
 ## Commitment parent moves

@@ -158,6 +158,12 @@ test('reviews active work before cadence is due and refreshes typed pokes in the
     title: 'Sprint execution',
     reviewFrequencyDays: 30
   }, createdAt)
+  const threadScope = seed.domain.threadScopes.addSubject(
+    currentThread.id,
+    { name: 'North region' },
+    createdAt
+  )
+  const reviewSubject = threadScope.subjects[0]
   const currentCommitment = seed.domain.commitments.create({
     parent: { type: 'thread', id: currentThread.id },
     type: 'ongoing',
@@ -172,7 +178,7 @@ test('reviews active work before cadence is due and refreshes typed pokes in the
       args: executablePath ? [] : [resolve('.')],
       env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
     })
-    const window = await application.firstWindow()
+    let window = await application.firstWindow()
 
     await window.getByRole('button', { name: 'Review' }).click()
     await expect(window.getByRole('heading', { name: 'Review', exact: true })).toBeVisible()
@@ -180,6 +186,7 @@ test('reviews active work before cadence is due and refreshes typed pokes in the
     await expect(window.getByRole('article', {
       name: 'Thread review: Sprint execution'
     })).toBeVisible()
+    await expect(window.getByText('Subject · North region')).toBeVisible()
 
     await window.getByRole('button', { name: 'Pass along' }).click()
     await expect(window.getByRole('article', {
@@ -195,16 +202,21 @@ test('reviews active work before cadence is due and refreshes typed pokes in the
       const stored = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
         readOnly: true
       })
-      const threadRow = stored.prepare(
-        'SELECT review_poked_on AS reviewPokedOn FROM threads WHERE id = ?'
-      ).get(currentThread.id) as { reviewPokedOn: string | null }
+      const threadReview = stored.prepare(
+        `SELECT reviewed_on AS reviewedOn FROM thread_review_cell_pokes
+         WHERE thread_id = ? AND scope_id = ? AND subject_id = ?`
+      ).get(
+        currentThread.id,
+        threadScope.scopeId,
+        reviewSubject.id
+      ) as { reviewedOn: string } | undefined
       const updateRow = stored.prepare(
         'SELECT observation, commitment_id AS commitmentId FROM updates WHERE commitment_id = ?'
       ).get(currentCommitment.id) as { observation: string; commitmentId: number } | undefined
       stored.close()
-      return { threadRow, updateRow }
+      return { threadReview, updateRow }
     }).toMatchObject({
-      threadRow: { reviewPokedOn: expect.any(String) },
+      threadReview: { reviewedOn: reviewDate },
       updateRow: {
         commitmentId: currentCommitment.id,
         observation: expect.stringContaining('Ticket examples are now included')
@@ -216,6 +228,17 @@ test('reviews active work before cadence is due and refreshes typed pokes in the
     await expect(window.getByLabel('Thread last reviewed')).toContainText(
       `Last reviewed · ${reviewDate}`
     )
+
+    await application.close()
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    window = await application.firstWindow()
+    await window.getByRole('button', { name: 'Review' }).click()
+    await expect(window.getByRole('heading', { name: 'You’re caught up' })).toBeVisible()
+    await expect(window.getByText('No new items need attention.')).toBeVisible()
   } finally {
     await application?.close()
     rmSync(userDataDirectory, { recursive: true, force: true })

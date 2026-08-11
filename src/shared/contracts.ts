@@ -355,6 +355,7 @@ export interface UpdateScopeCell {
 export interface CommitmentScopeCellSnapshot extends UpdateScopeCell {
   subject: SubjectSnapshot
   state: HealthState
+  lastReviewDate: string | null
   lastUpdateDate: string | null
   nextUpdateDate: string | null
   needsUpdate: boolean
@@ -863,7 +864,7 @@ export interface DomainApi {
   updateThread: (id: number, input: UpdateThreadInput) => Promise<ThreadSnapshot>
   planThreadMove: (id: number, focusId: number) => Promise<ThreadMovePlanSnapshot>
   moveThread: (id: number, input: MoveThreadInput) => Promise<ThreadSnapshot>
-  pokeThreadReview: (id: number) => Promise<ThreadSnapshot>
+  pokeThreadReview: (id: number, cell?: UpdateScopeCell) => Promise<ThreadSnapshot>
   deleteThread: (id: number) => Promise<boolean>
   listCommitments: (parent: CommitmentParent) => Promise<CommitmentSnapshot[]>
   getCommitmentWorkingContext: (
@@ -876,7 +877,7 @@ export interface DomainApi {
     parent: CommitmentParent
   ) => Promise<CommitmentMovePlanSnapshot>
   moveCommitment: (id: number, input: MoveCommitmentInput) => Promise<CommitmentSnapshot>
-  pokeCommitmentReview: (id: number) => Promise<CommitmentSnapshot>
+  pokeCommitmentReview: (id: number, cell?: UpdateScopeCell) => Promise<CommitmentSnapshot>
   deleteCommitment: (id: number) => Promise<boolean>
   listUpdates: (parent: UpdateParent) => Promise<UpdateSnapshot[]>
   createUpdate: (input: CreateUpdateInput) => Promise<UpdateSnapshot>

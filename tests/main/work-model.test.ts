@@ -204,6 +204,9 @@ describe('Thread, Commitment, and Update models', () => {
       },
       name: 'Commitment action'
     }, now).toSnapshot()
+    const reviewCell = { scopeId: sourceFocusScope.scopeId!, subjectId: subject.id }
+    thread.pokeReview(new Date('2026-08-11T12:00:00.000Z'), reviewCell)
+    commitment.pokeReview(new Date('2026-08-11T12:00:00.000Z'), reviewCell)
 
     const plan = thread.movePlan(targetFocus.id)
     expect(plan).toMatchObject({
@@ -252,6 +255,17 @@ describe('Thread, Commitment, and Update models', () => {
       .map(({ id }) => id)).toContain(directTodo.id)
     expect(database!.domain.todos.list({ type: 'commitment', id: commitment.id })
       .map(({ id }) => id)).toContain(commitmentTodo.id)
+    const movedReviewPokes = database!.dataArchive.export('test').tables
+    expect(movedReviewPokes.thread_review_cell_pokes).toMatchObject([
+      { thread_id: thread.id, subject_id: subject.id }
+    ])
+    expect(movedReviewPokes.commitment_review_cell_pokes).toMatchObject([
+      { commitment_id: commitment.id, subject_id: subject.id }
+    ])
+    expect(movedReviewPokes.thread_review_cell_pokes[0].scope_id)
+      .not.toBe(sourceFocusScope.scopeId)
+    expect(movedReviewPokes.commitment_review_cell_pokes[0].scope_id)
+      .not.toBe(sourceFocusScope.scopeId)
 
     expect(sourceFocus.delete()).toBe(true)
     expect(thread.snapshot().focusId).toBe(targetFocus.id)

@@ -164,6 +164,7 @@ describe('Focus presentation adapters', () => {
         subjectId: platformTeam.id,
         subject: platformTeam,
         state: 'green',
+        lastReviewDate: '2026-08-08',
         lastUpdateDate: '2026-08-08',
         nextUpdateDate: '2026-08-15',
         needsUpdate: true

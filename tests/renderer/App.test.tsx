@@ -446,6 +446,51 @@ describe('App', () => {
     )
   })
 
+  it('passes only the selected review Subject cell', async () => {
+    const currentFocus = focus({ id: 6, title: 'Regional rollout' })
+    const currentThread = thread({
+      id: 16,
+      focusId: 6,
+      title: 'Market health',
+      reviewDue: true
+    })
+    const pokeThreadReview = vi.fn().mockResolvedValue({
+      ...currentThread,
+      lastReviewDate: '2026-08-10'
+    })
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([currentFocus]),
+      pokeThreadReview,
+      getReviewOverview: vi.fn().mockResolvedValue({
+        asOf: '2026-08-10',
+        items: [reviewItem({
+          key: 'thread:16:scope:56:subject:66',
+          kind: 'thread',
+          focus: currentFocus,
+          thread: currentThread,
+          cell: {
+            scopeId: 56,
+            subjectId: 66,
+            subject: subject(66, 'North region')
+          },
+          due: true
+        })]
+      })
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Review' }))
+    expect(screen.getByText('Subject · North region')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Pass along' }))
+
+    await waitFor(() => expect(pokeThreadReview).toHaveBeenCalledWith(16, {
+      scopeId: 56,
+      subjectId: 66
+    }))
+    expect(await screen.findByRole('heading', { name: 'You’re caught up' })).toBeVisible()
+  })
+
   it('starts an autosaved Update in the exact review Subject cell before advancing', async () => {
     const currentFocus = focus({ id: 5, title: 'People program' })
     const currentThread = thread({ id: 15, focusId: 5, title: 'Team health', reviewDue: true })
@@ -683,6 +728,7 @@ describe('App', () => {
           subjectId: customer.id,
           subject: customer,
           state: 'none' as const,
+          lastReviewDate: null,
           lastUpdateDate: null,
           nextUpdateDate: null,
           needsUpdate: false
@@ -1498,6 +1544,7 @@ describe('App', () => {
           subjectId: customer.id,
           subject: customer,
           state: 'none' as const,
+          lastReviewDate: null,
           lastUpdateDate: null,
           nextUpdateDate: null,
           needsUpdate: false

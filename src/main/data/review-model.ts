@@ -52,6 +52,19 @@ function updatesForCell(
     : update.scope?.scopeId === cell.scopeId && update.scope.subjectId === cell.subjectId)
 }
 
+function isUnreviewedToday(item: ReviewQueueItemSnapshot, asOf: string): boolean {
+  return item.lastReviewDate === null || item.lastReviewDate < asOf
+}
+
+function appendIfEligible(
+  items: ReviewQueueItemSnapshot[],
+  item: ReviewQueueItemSnapshot,
+  asOf: string
+): void {
+  const participates = item.kind === 'focus' || item.lastReviewDate === null || item.due
+  if (participates && isUnreviewedToday(item, asOf)) items.push(item)
+}
+
 /**
  * Named, bounded review projection. It preserves independent Subject-cell
  * review targets and keeps the renderer from deriving eligibility or due state
@@ -78,7 +91,9 @@ export class ReviewRepository {
       if (focus.status !== 'active') continue
 
       const focusCommitments = this.commitments.listForFocus(focus.id, date)
-      if (focus.needsReview) items.push(this.focusItem(focus, focusCommitments))
+      if (focus.needsReview) {
+        appendIfEligible(items, this.focusItem(focus, focusCommitments), date)
+      }
       this.appendCommitmentItems(items, focus, null, focusCommitments, date)
 
       for (const thread of this.threads.listForFocus(focus.id, date)) {
@@ -87,10 +102,19 @@ export class ReviewRepository {
         if (thread.needsReview) {
           const cells = this.threads.scopeMatrix(thread.id, date)
           if (cells.length === 0) {
-            items.push(this.threadItem(focus, thread, null, threadCommitments))
+            appendIfEligible(
+              items,
+              this.threadItem(focus, thread, null, threadCommitments),
+              date
+            )
           } else {
-            items.push(...cells.map((cell) =>
-              this.threadItem(focus, thread, cell, threadCommitments)))
+            for (const cell of cells) {
+              appendIfEligible(
+                items,
+                this.threadItem(focus, thread, cell, threadCommitments),
+                date
+              )
+            }
           }
         }
         this.appendCommitmentItems(items, focus, thread, threadCommitments, date)
@@ -137,10 +161,10 @@ export class ReviewRepository {
       thread,
       commitment: null,
       cell: scopeCell,
-      lastReviewDate: cell?.lastReviewDate ?? thread.lastReviewDate,
-      nextReviewDate: cell?.nextReviewDate ?? thread.nextReviewDate,
-      due: cell?.reviewDue ?? thread.reviewDue,
-      state: cell?.state ?? thread.health,
+      lastReviewDate: cell ? cell.lastReviewDate : thread.lastReviewDate,
+      nextReviewDate: cell ? cell.nextReviewDate : thread.nextReviewDate,
+      due: cell ? cell.reviewDue : thread.reviewDue,
+      state: cell ? cell.state : thread.health,
       updates: updatesForCell(updates, scopeCell),
       commitments
     }
@@ -157,10 +181,19 @@ export class ReviewRepository {
       if (commitment.status !== 'active') continue
       const cells = this.commitments.scopeMatrix(commitment.id, asOf)
       if (cells.length === 0) {
-        items.push(this.commitmentItem(focus, thread, commitment, null))
+        appendIfEligible(
+          items,
+          this.commitmentItem(focus, thread, commitment, null),
+          asOf
+        )
       } else {
-        items.push(...cells.map((cell) =>
-          this.commitmentItem(focus, thread, commitment, cell)))
+        for (const cell of cells) {
+          appendIfEligible(
+            items,
+            this.commitmentItem(focus, thread, commitment, cell),
+            asOf
+          )
+        }
       }
     }
   }
@@ -182,10 +215,10 @@ export class ReviewRepository {
       thread,
       commitment,
       cell: scopeCell,
-      lastReviewDate: cell?.lastUpdateDate ?? commitment.lastReviewDate,
-      nextReviewDate: cell?.nextUpdateDate ?? commitment.nextUpdateDate,
-      due: cell?.needsUpdate ?? commitment.needsUpdate,
-      state: cell?.state ?? commitment.state,
+      lastReviewDate: cell ? cell.lastReviewDate : commitment.lastReviewDate,
+      nextReviewDate: cell ? cell.nextUpdateDate : commitment.nextUpdateDate,
+      due: cell ? cell.needsUpdate : commitment.needsUpdate,
+      state: cell ? cell.state : commitment.state,
       updates: updatesForCell(updates, scopeCell),
       commitments: []
     }

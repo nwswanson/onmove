@@ -163,6 +163,10 @@ describe('DataArchiveRepository', () => {
     const scope = source.domain.threadScopes.addSubject(thread.id, { name: 'South' }, now)
     const north = scope.subjects.find(({ name }) => name === 'North')!
     const south = scope.subjects.find(({ name }) => name === 'South')!
+    source.domain.threads.requireModel(thread.id).pokeReview(now, {
+      scopeId: scope.scopeId!,
+      subjectId: north.id
+    })
     const shared = source.domain.todos.create({
       parent: { type: 'thread', id: thread.id },
       name: 'Confirm launch readiness',
@@ -172,6 +176,7 @@ describe('DataArchiveRepository', () => {
 
     const archive = source.dataArchive.export('9.9.9', now)
     expect(archive.tables.todo_subject_completions).toHaveLength(2)
+    expect(archive.tables.thread_review_cell_pokes).toHaveLength(1)
 
     const target = createDatabase('archive-shared-todo-target')
     expect(target.dataArchive.import(archive, now).issues).toEqual([])
@@ -191,6 +196,10 @@ describe('DataArchiveRepository', () => {
       ]
     })
     expect(imported.sort).toHaveLength(3)
+    expect(target.domain.threads.requireModel(importedThread.id).scopeMatrix('2026-08-10'))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ subjectId: north.id, lastReviewDate: '2026-08-10' })
+      ]))
     expect(target.domain.todos.list({
       type: 'thread-scope',
       id: importedThread.id,

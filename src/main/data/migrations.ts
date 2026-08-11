@@ -2083,6 +2083,44 @@ const migrations: readonly Migration[] = [
         END;
       `)
     }
+  },
+  {
+    version: 20,
+    name: 'scoped_review_pokes',
+    up(database) {
+      const requiredTables = ['threads', 'commitments', 'scopes', 'subjects']
+      const hasCompleteWorkDomain = requiredTables.every((table) => database.get<{ found: number }>(
+        "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?",
+        [table]
+      ))
+      if (!hasCompleteWorkDomain) return
+
+      database.exec(`
+        CREATE TABLE thread_review_cell_pokes (
+          thread_id INTEGER NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+          scope_id INTEGER NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
+          subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+          reviewed_on TEXT NOT NULL CHECK (
+            length(reviewed_on) = 10 AND reviewed_on = date(reviewed_on)
+          ),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (thread_id, scope_id, subject_id)
+        ) STRICT, WITHOUT ROWID;
+
+        CREATE TABLE commitment_review_cell_pokes (
+          commitment_id INTEGER NOT NULL REFERENCES commitments(id) ON DELETE CASCADE,
+          scope_id INTEGER NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
+          subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+          reviewed_on TEXT NOT NULL CHECK (
+            length(reviewed_on) = 10 AND reviewed_on = date(reviewed_on)
+          ),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (commitment_id, scope_id, subject_id)
+        ) STRICT, WITHOUT ROWID;
+      `)
+    }
   }
 ]
 

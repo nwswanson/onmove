@@ -19,7 +19,7 @@ describe('Review model', () => {
     rmSync(directory, { recursive: true, force: true })
   })
 
-  it('returns every active aggregate that participates in review before it is due', () => {
+  it('includes initial reviews but suppresses recent evidence until scheduled work is due', () => {
     const focus = database!.domain.focuses.create({
       title: 'Project Atlas',
       needsReview: false
@@ -63,7 +63,6 @@ describe('Review model', () => {
     expect(overview.items.map(({ key }) => key)).toEqual([
       `commitment:${overall.id}`,
       `thread:${thread.id}`,
-      `commitment:${threaded.id}`,
       `commitment:${unscheduled.id}`
     ])
     expect(overview.items.find(({ key }) => key === `thread:${thread.id}`)).toMatchObject({
@@ -74,14 +73,7 @@ describe('Review model', () => {
       cell: null,
       commitments: expect.arrayContaining([expect.objectContaining({ id: threaded.id })])
     })
-    expect(overview.items.find(({ key }) => key === `commitment:${threaded.id}`)).toMatchObject({
-      kind: 'commitment',
-      state: 'yellow',
-      lastReviewDate: '2026-01-02',
-      nextReviewDate: '2026-01-09',
-      due: false,
-      updates: [{ observation: 'Tickets still need examples' }]
-    })
+    expect(overview.items.find(({ key }) => key === `commitment:${threaded.id}`)).toBeUndefined()
     expect(overview.items.find(({ key }) => key === `commitment:${unscheduled.id}`))
       .toMatchObject({ nextReviewDate: null, due: false })
   })
@@ -133,27 +125,73 @@ describe('Review model', () => {
       state: 'green',
       scope: { scopeId: reports.id, subjectId: alex.id }
     })
-    thread.pokeReview(new Date('2026-01-08T12:00:00.000Z'))
-
     const after = database!.domain.reviews.getOverview('2026-01-08')
     expect(after.items.filter(({ kind }) => kind === 'thread').map(({ cell }) =>
-      cell?.subject.name)).toEqual(['Alex', 'Jamie'])
+      cell?.subject.name)).toEqual(['Jamie'])
     expect(after.items.filter(({ kind }) => kind === 'commitment').map(({ cell }) =>
-      cell?.subject.name)).toEqual(['Alex', 'Jamie'])
+      cell?.subject.name)).toEqual(['Jamie'])
     expect(after.items.filter(({ kind }) => kind === 'thread').map(({ cell, due }) => ({
       subject: cell?.subject.name,
       due
     }))).toEqual([
-      { subject: 'Alex', due: false },
       { subject: 'Jamie', due: true }
     ])
     expect(after.items.filter(({ kind }) => kind === 'commitment').map(({ cell, due }) => ({
       subject: cell?.subject.name,
       due
     }))).toEqual([
-      { subject: 'Alex', due: false },
       { subject: 'Jamie', due: true }
     ])
+
+    const jamieCell = { scopeId: reports.id, subjectId: jamie.id }
+    expect(() => thread.pokeReview(new Date('2026-01-08T12:00:00.000Z'), {
+      scopeId: reports.id,
+      subjectId: 999
+    })).toThrow(/currently effective/)
+    expect(() => commitment.pokeReview(new Date('2026-01-08T12:00:00.000Z'), {
+      scopeId: reports.id,
+      subjectId: 999
+    })).toThrow(/currently effective/)
+    thread.pokeReview(new Date('2026-01-08T12:00:00.000Z'), jamieCell)
+    commitment.pokeReview(new Date('2026-01-08T12:00:00.000Z'), jamieCell)
+    const reviewed = database!.domain.reviews.getOverview('2026-01-08')
+    expect(reviewed.items.filter(({ kind }) => kind === 'thread')).toEqual([])
+    expect(reviewed.items.filter(({ kind }) => kind === 'commitment')).toEqual([])
+
+    expect(thread.scopeMatrix('2026-01-08')).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        subjectId: jamie.id,
+        lastReviewDate: '2026-01-08',
+        reviewDue: false
+      })
+    ]))
+    expect(commitment.scopeMatrix('2026-01-08')).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        subjectId: jamie.id,
+        lastReviewDate: '2026-01-08',
+        lastUpdateDate: null,
+        needsUpdate: true
+      })
+    ]))
+    expect(database!.domain.reviews.getOverview('2026-01-09').items
+      .filter(({ kind }) => kind === 'commitment').map(({ cell }) => cell?.subject.name))
+      .toEqual(['Jamie'])
+  })
+
+  it('does not queue a Focus that already has direct Update evidence today', () => {
+    const focus = database!.domain.focuses.create({ title: 'Current board' })
+    database!.domain.updates.create({
+      parent: { type: 'focus', id: focus.id },
+      date: '2026-01-10',
+      observation: 'Reviewed this board today',
+      state: 'green'
+    })
+
+    expect(database!.domain.reviews.getOverview('2026-01-10').items
+      .filter(({ kind }) => kind === 'focus')).toEqual([])
+    expect(database!.domain.reviews.getOverview('2026-01-11').items
+      .filter(({ kind }) => kind === 'focus').map(({ key }) => key))
+      .toEqual([`focus:${focus.id}`])
   })
 
   it('omits inactive ancestry and reacts to deletion without retained queue records', () => {

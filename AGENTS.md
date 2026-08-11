@@ -287,11 +287,13 @@ and do not rely on color alone to communicate selection or status.
   renderer collection rule: hide sensitive-only sidebar tags and sensitive use rows, then let the
   contextual navigation reconcile an invalid selection to its first remaining item.
 - Build Review as a full-width, single-item catch-up queue with no contextual sidebar. Review active
-  Focuses and Threads whose `needsReview` flag is enabled, plus every active Commitment. Eligibility
-  is deliberate catch-up coverage, not due filtering: Thread review frequency and Commitment Update
-  cadence remain model-owned attention metadata and determine whether the displayed next date is
-  due. Render direct evidence and child Commitments as non-navigating reference rows; a Focus or
-  Thread must never drill into a Commitment from Review. `Ignore` dismisses only the current
+  Focuses and Threads whose `needsReview` flag is enabled, plus active Commitments. A never-reviewed
+  Thread or Commitment gets an initial review; after that, Thread review frequency and Commitment
+  Update cadence determine when it participates again. Focus review is daily when enabled. Any
+  applicable direct Update or explicit Pass dated today suppresses that exact target for today,
+  even when an unmet Commitment cadence remains due; such a passed due Commitment may return the
+  next day. Render direct evidence and child Commitments as non-navigating reference rows; a Focus
+  or Thread must never drill into a Commitment from Review. `Ignore` dismisses only the current
   in-memory queue entry, `Pass along` calls the aggregate's typed `pokeReview` operation, refreshes
   the application-owned Focus projection, and advances the session. `Update` immediately creates a
   blank direct Update before exposing its autosaved editor. The editor's finish action advances the
@@ -299,10 +301,12 @@ and do not rely on color alone to communicate selection or status.
   refresh must retain passed and updated item keys while offering ignored items again; do not
   present a completed item as fresh work through a replay-style `Review again` action.
 - Preserve scoped review obligations as separate queue entries. A bounded Thread or Commitment
-  contributes one entry per effective Subject cell, and Review-created Updates must use that
-  exact Scope/Subject cell. An aggregate Thread poke may advance the current queue session but must
-  not be represented as Subject evidence or clear another Subject's durable due state. Apply the
-  same hierarchy-cascading sensitive visibility rule used by other renderer collections.
+  contributes one eligible entry per effective Subject cell, and Review-created Updates must use
+  that exact Scope/Subject cell. Pass persists a typed exact-cell poke so acknowledging one Subject
+  survives refresh without clearing a sibling Subject. Exact Thread-cell pokes advance that cell's
+  review schedule; exact Commitment-cell pokes acknowledge review without changing Update-only
+  state or cadence. Apply the same hierarchy-cascading sensitive visibility rule used by other
+  renderer collections.
 
 ## Data model
 
@@ -322,8 +326,8 @@ and do not rely on color alone to communicate selection or status.
   through named IPC; do not expose arbitrary search or SQL.
 - Treat Thread health, materialized review dates, Commitment state, and cadence deadlines as model
   projections. Do not add writable columns or UI mutations for those derived values. The nullable
-  `review_poked_on` evidence field is the deliberate exception: mutate it only through each
-  aggregate's typed `pokeReview` operation, never as a caller-supplied review projection.
+  aggregate `review_poked_on` fields and exact-cell review-poke tables are deliberate exceptions:
+  mutate them only through typed `pokeReview` operations, never as caller-supplied projections.
 - Return Review through one named, bounded overview projection. The model owns active-ancestor and
   inclusion filtering, due metadata, hierarchy context, exact Scope/Subject cells, direct Updates,
   and direct child Commitments; the renderer must not rebuild review eligibility by fetching every
@@ -338,9 +342,10 @@ and do not rely on color alone to communicate selection or status.
   `nextReviewDate` with the earliest cell deadline, and Update-derived coverage as the oldest latest
   review date across all current cells (or null while any current Subject is unreviewed). A global
   Thread poke may advance the aggregate `lastReviewDate`, but must not fabricate cell evidence or
-  satisfy cell deadlines. Commitment `lastReviewDate` uses its later poke or `lastUpdateDate`, while
-  state, `lastUpdateDate`, and cadence remain Update-only projections. Keep persisted `needsReview`
-  separate from lifecycle status and from all derived review projections.
+  satisfy cell deadlines. An exact Thread-cell poke is separate durable review evidence for only
+  that cell. Commitment `lastReviewDate` uses its later applicable aggregate/cell poke or Update,
+  while state, `lastUpdateDate`, and cadence remain Update-only projections. Keep persisted
+  `needsReview` separate from lifecycle status and from all derived review projections.
 - A Commitment must have exactly one Focus or Thread parent. An Update must have exactly one Focus,
   Thread, or Commitment parent. Preserve these SQLite constraints and cascades.
 - Treat Subject, Scope, and Scope application as distinct model concepts. Subjects are canonical and
