@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="background" x1="146" y1="96" x2="874" y2="928" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7776FF"/>
+      <stop offset="0.52" stop-color="#5451E8"/>
+      <stop offset="1" stop-color="#2C286F"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="300" y1="252" x2="707" y2="796" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E6E5FF"/>
+    </linearGradient>
+    <filter id="shadow" x="120" y="120" width="784" height="784" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="24" stdDeviation="28" flood-color="#17143F" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+  <rect x="56" y="56" width="912" height="912" rx="220" fill="url(#background)"/>
+  <path d="M164 309C272 131 513 89 705 191C816 250 890 350 915 462C811 332 658 265 496 274C367 281 251 328 164 405V309Z" fill="#FFFFFF" opacity="0.12"/>
+  <g filter="url(#shadow)">
+    <path d="M306 679V401C306 368 333 341 366 341H418C440 341 460 353 471 372L512 445L553 372C564 353 584 341 606 341H658C691 341 718 368 718 401V679C718 703 699 722 675 722C651 722 632 703 632 679V451L552 588C544 602 529 611 512 611C495 611 480 602 472 588L392 451V679C392 703 373 722 349 722C325 722 306 703 306 679Z" fill="url(#shine)"/>
+    <path d="M512 250L595 291L512 332L429 291L512 250Z" fill="#FFFFFF" opacity="0.92"/>
+  </g>
+</svg>

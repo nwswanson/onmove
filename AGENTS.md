@@ -462,3 +462,7 @@ foreground colors and do not rely on color alone to communicate selection or sta
 Run `pnpm check` for every change. Run `pnpm test:e2e` for navigation, preload, persistence, window,
 or packaging-boundary changes. Rebuild the `.app` with `pnpm dist:mac` before handing off a new
 desktop version.
+
+The canonical application icon is the tracked vector source at `build/icon.svg`. Keep electron-builder's
+`directories.buildResources` pointed at `build` and its macOS icon pointed at that SVG so a clean clone
+can generate the complete `.icns` set without relying on ignored local PNG or ICNS artifacts.

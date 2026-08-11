@@ -68,7 +68,8 @@
     "productName": "OnMove",
     "asar": true,
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
       "out/**/*",
@@ -76,7 +77,7 @@
     ],
     "mac": {
       "category": "public.app-category.productivity",
-      "icon": "build/icon.png",
+      "icon": "build/icon.svg",
       "electronLanguages": [
         "en"
       ],
