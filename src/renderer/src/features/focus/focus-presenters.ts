@@ -237,7 +237,7 @@ function commitmentChildCollection(
       label: 'Add commitment',
       ariaLabel: `Add commitment to ${ownerLabel}`
     },
-    items: buildCommitmentListModel(commitments).ordered.map((commitment) => ({
+    items: buildCommitmentListModel(commitments).current.map((commitment) => ({
       id: String(commitment.id),
       label: commitment.title,
       ariaLabel: `Open ${ownerLabel} commitment ${commitment.title}`,
@@ -304,7 +304,7 @@ export function focusContextSidebarItems(
 export function commitmentContextSidebarItems(
   commitments: readonly CommitmentSnapshot[]
 ): ContextualSidebarItemModel[] {
-  return buildCommitmentListModel(commitments).groups.flatMap((group) =>
+  return buildCommitmentListModel(commitments).groups.slice(0, 2).flatMap((group) =>
     group.commitments.map((commitment) => {
       const status = workStatusLabel(commitment.status)
       return {

@@ -1196,6 +1196,11 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect.poll(() => storedCommitment()?.status).toBe('done')
     await expect.poll(() => latestCommitmentTransition()).toBe('done')
     await expect(currentCommitments).toContainText('No active or paused commitments')
+    const closedCommitmentsToggle = window.getByRole('button', {
+      name: /Done \/ Cancelled/
+    })
+    await expect(closedCommitmentsToggle).toHaveAttribute('aria-expanded', 'false')
+    await closedCommitmentsToggle.click()
     const closedCommitments = window.getByRole('list', {
       name: 'Done and cancelled commitments'
     })
@@ -1622,6 +1627,11 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       .getByRole('button', { name: 'Sprint execution, paused', exact: true })
       .click()
     await window.getByRole('button', { name: 'Overall', exact: true }).click()
+    const reloadedClosedCommitmentsToggle = window.getByRole('button', {
+      name: /Done \/ Cancelled/
+    })
+    await expect(reloadedClosedCommitmentsToggle).toHaveAttribute('aria-expanded', 'false')
+    await reloadedClosedCommitmentsToggle.click()
     await expect(
       window.getByRole('button', { name: 'Open commitment Keep sponsors aligned' })
     ).toBeVisible()

@@ -232,6 +232,10 @@ export function FocusWorkspace({
   } | null>(null)
   const [commitmentMoveSaving, setCommitmentMoveSaving] = useState(false)
   const [commitmentMoveError, setCommitmentMoveError] = useState<string | null>(null)
+  const [standaloneCommitmentRoute, setStandaloneCommitmentRoute] = useState<{
+    parent: CommitmentParent
+    commitmentId: number
+  } | null>(null)
   const [pendingThreadMove, setPendingThreadMove] = useState<{
     plan: ThreadMovePlanSnapshot
     threadTitle: string
@@ -266,6 +270,8 @@ export function FocusWorkspace({
         title: 'Focus',
         ariaLabel: 'Focus sections',
         items: focusContextSidebarItems([], {}, false, { overall: [] }),
+        onSelect: () => setStandaloneCommitmentRoute(null),
+        onSelectChild: () => setStandaloneCommitmentRoute(null),
         onChildCollectionAction: (parentItemId, collectionId, actionId) => {
           if (collectionId !== 'commitments' || actionId !== 'add') return
           const parent = commitmentParentForContextItem(parentItemId, focus.id)
@@ -294,6 +300,7 @@ export function FocusWorkspace({
         parent: focusLevel,
         parentItemId: 'overall',
         items: [],
+        onSelect: () => setStandaloneCommitmentRoute(null),
         newItem: {
           label: 'New commitment',
           onCreate: () => setNewCommitmentParent({ type: 'focus', id: focus.id })
@@ -516,6 +523,7 @@ export function FocusWorkspace({
       parent: focusLevel,
       parentItemId: threadSidebarItemId(parent.id),
       items: commitmentContextSidebarItems(visibleCommitmentsFor(parent)),
+      onSelect: () => setStandaloneCommitmentRoute(null),
       newItem: {
         label: 'New commitment',
         onCreate: () => setNewCommitmentParent(parent)
@@ -603,11 +611,27 @@ export function FocusWorkspace({
     if (destination.commitmentId === null) {
       navigation.select(parentItemId)
     } else {
-      navigation.selectChild(
-        parentItemId,
-        'commitments',
-        String(destination.commitmentId)
-      )
+      const destinationCommitmentId = destination.commitmentId
+      const currentCommitment = buildCommitmentListModel(
+        parent.type === 'focus'
+          ? visibleFocusCommitments
+          : (visibleThreadCommitments[parent.id] ?? [])
+      ).current.some(({ id }) => id === destinationCommitmentId)
+      if (currentCommitment) {
+        navigation.selectChild(
+          parentItemId,
+          'commitments',
+          String(destinationCommitmentId)
+        )
+      } else {
+        navigation.select(parentItemId)
+        queueMicrotask(() => {
+          setStandaloneCommitmentRoute({
+            parent,
+            commitmentId: destinationCommitmentId
+          })
+        })
+      }
     }
     onSelectedSubjectChange(destination.subjectId)
     appliedDestinationRequest.current = destination.requestId
@@ -643,17 +667,22 @@ export function FocusWorkspace({
           focus.id
         )
       : null
-  const activeCommitmentParent = childCommitmentParent ?? levelCommitmentParent
-  const commitmentRouteFromChild = childCommitmentParent !== null
+  const activeCommitmentParent = standaloneCommitmentRoute?.parent ??
+    childCommitmentParent ??
+    levelCommitmentParent
+  const commitmentRouteFromChild = standaloneCommitmentRoute === null &&
+    childCommitmentParent !== null
   const rawActiveCommitments = activeCommitmentParent
     ? model.commitmentsFor(activeCommitmentParent)
     : []
   const activeCommitments = activeCommitmentParent
     ? visibleCommitmentsFor(activeCommitmentParent)
     : []
-  const routedCommitmentId = commitmentRouteFromChild
-    ? navigationSnapshot.selectedChild?.childItemId
-    : navigationSnapshot.selectedItemId
+  const routedCommitmentId = standaloneCommitmentRoute
+    ? String(standaloneCommitmentRoute.commitmentId)
+    : commitmentRouteFromChild
+      ? navigationSnapshot.selectedChild?.childItemId
+      : navigationSnapshot.selectedItemId
   const rawSelectedCommitment =
     activeCommitmentParent && routedCommitmentId
       ? rawActiveCommitments.find(
@@ -770,6 +799,14 @@ export function FocusWorkspace({
   useEffect(() => {
     if (!hideSensitiveContent) return
     if (commitmentRouteHiddenByAncestor) {
+      if (standaloneCommitmentRoute && activeCommitmentParent) {
+        navigation.select(
+          activeCommitmentParent.type === 'thread' && activeParentThread?.sensitive
+            ? 'overall'
+            : contextItemIdForCommitmentParent(activeCommitmentParent)
+        )
+        return
+      }
       if (commitmentRouteFromChild && activeCommitmentParent) {
         const parentItemId = contextItemIdForCommitmentParent(activeCommitmentParent)
         navigation.select(
@@ -783,6 +820,10 @@ export function FocusWorkspace({
       return
     }
     if (commitmentRouteHiddenBySelection) {
+      if (standaloneCommitmentRoute && activeCommitmentParent) {
+        navigation.select(contextItemIdForCommitmentParent(activeCommitmentParent))
+        return
+      }
       if (commitmentRouteFromChild && activeCommitmentParent) {
         navigation.select(contextItemIdForCommitmentParent(activeCommitmentParent))
       } else {
@@ -799,7 +840,8 @@ export function FocusWorkspace({
     navigation,
     rawSelectedThread,
     activeCommitmentParent,
-    activeParentThread
+    activeParentThread,
+    standaloneCommitmentRoute
   ])
 
   function adapterForCommitment(commitment: CommitmentSnapshot): ContextDrawerAdapter {
@@ -884,7 +926,9 @@ export function FocusWorkspace({
     const itemId = threadSidebarItemId(threadId)
     return snapshot.selectedItemId === itemId ||
       snapshot.selectedChild?.parentItemId === itemId ||
-      snapshot.level.id === `thread:${threadId}:commitments`
+      snapshot.level.id === `thread:${threadId}:commitments` ||
+      (standaloneCommitmentRoute?.parent.type === 'thread' &&
+        standaloneCommitmentRoute.parent.id === threadId)
   }
 
   async function deleteThreadFromDrawer(threadId: number): Promise<void> {
@@ -894,6 +938,7 @@ export function FocusWorkspace({
 
     contextDrawer.onInvalidate([`thread:${threadId}`])
     if (routeUsesThread) {
+      setStandaloneCommitmentRoute(null)
       navigation.reset()
       navigation.select('overall')
     }
@@ -913,6 +958,7 @@ export function FocusWorkspace({
     const selectedAsChild = snapshot.selectedChild?.childItemId === commitmentId
     const selectedInLevel = snapshot.level !== focusLevel &&
       snapshot.selectedItemId === commitmentId
+    const selectedStandalone = standaloneCommitmentRoute?.commitmentId === commitment.id
     const deleted = await model.deleteCommitment(commitment.id)
     if (!deleted) throw new Error('Commitment deletion did not remove a record.')
 
@@ -921,6 +967,9 @@ export function FocusWorkspace({
       navigation.select(contextItemIdForCommitmentParent(commitment.parent))
     } else if (selectedInLevel) {
       navigation.back()
+    } else if (selectedStandalone) {
+      setStandaloneCommitmentRoute(null)
+      navigation.select(contextItemIdForCommitmentParent(commitment.parent))
     }
     try {
       await onRefreshStatusSummary()
@@ -1099,6 +1148,7 @@ export function FocusWorkspace({
   }
 
   function drillIntoCommitments(parent: CommitmentParent): void {
+    setStandaloneCommitmentRoute(null)
     const level = commitmentsLevelFor(parent)
     level.setItems(
       commitmentContextSidebarItems(visibleCommitmentsFor(parent))
@@ -1111,11 +1161,16 @@ export function FocusWorkspace({
     commitmentId: number
   ): void {
     navigation.reset()
-    navigation.selectChild(
-      contextItemIdForCommitmentParent(parent),
-      'commitments',
-      String(commitmentId)
-    )
+    const parentItemId = contextItemIdForCommitmentParent(parent)
+    const isCurrent = buildCommitmentListModel(
+      visibleCommitmentsFor(parent)
+    ).current.some(({ id }) => id === commitmentId)
+    if (isCurrent) {
+      navigation.selectChild(parentItemId, 'commitments', String(commitmentId))
+      return
+    }
+    navigation.select(parentItemId)
+    setStandaloneCommitmentRoute({ parent, commitmentId })
   }
 
   function pinCommitment(parent: CommitmentParent, commitmentId: number): void {

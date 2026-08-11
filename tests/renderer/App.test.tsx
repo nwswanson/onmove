@@ -2601,6 +2601,12 @@ describe('App', () => {
     )
 
     expect(updateCommitment).toHaveBeenCalledWith(21, { status: 'done' })
+    const closedAccordion = await screen.findByRole('button', { name: /Done \/ Cancelled/ })
+    expect(closedAccordion).toHaveAttribute('aria-expanded', 'false')
+    expect(
+      screen.queryByRole('list', { name: 'Done and cancelled commitments' })
+    ).not.toBeInTheDocument()
+    await user.click(closedAccordion)
     const closedList = screen.getByRole('list', { name: 'Done and cancelled commitments' })
     const completedCheckbox = await within(closedList).findByRole('checkbox', {
       name: 'Mark commitment Publish launch plan done'
@@ -2640,7 +2646,11 @@ describe('App', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Quarterly plan' }))
     const currentList = screen.getByRole('list', { name: 'Current commitments' })
-    const closedList = screen.getByRole('list', { name: 'Done and cancelled commitments' })
+    const closedAccordion = screen.getByRole('button', { name: /Done \/ Cancelled/ })
+    expect(closedAccordion).toHaveAttribute('aria-expanded', 'false')
+    expect(
+      screen.queryByRole('list', { name: 'Done and cancelled commitments' })
+    ).not.toBeInTheDocument()
     expect(
       within(currentList)
         .getAllByRole('button', { name: /^Open commitment/ })
@@ -2654,6 +2664,8 @@ describe('App', () => {
     ])
     expect(within(currentList).getByText('Active', { selector: '[role="presentation"]' })).toBeVisible()
     expect(within(currentList).getByText('Paused', { selector: '[role="presentation"]' })).toBeVisible()
+    await user.click(closedAccordion)
+    const closedList = screen.getByRole('list', { name: 'Done and cancelled commitments' })
     expect(
       within(closedList)
         .getAllByRole('button', { name: /^Open commitment/ })
@@ -2673,10 +2685,12 @@ describe('App', () => {
       'Yellow item',
       'Green item',
       'No-state item',
-      'Paused item',
-      'Done item',
-      'Cancelled item'
+      'Paused item'
     ])
+    expect(within(navigation).queryByRole('button', { name: 'Done item' })).not.toBeInTheDocument()
+    expect(
+      within(navigation).queryByRole('button', { name: 'Cancelled item' })
+    ).not.toBeInTheDocument()
     expect(
       within(navigation).getByText('Active', { selector: '[data-slot="sidebar-group-label"]' })
     ).toBeVisible()
@@ -2684,10 +2698,10 @@ describe('App', () => {
       within(navigation).getByText('Paused', { selector: '[data-slot="sidebar-group-label"]' })
     ).toBeVisible()
     expect(
-      within(navigation).getByText('Done / Cancelled', {
+      within(navigation).queryByText('Done / Cancelled', {
         selector: '[data-slot="sidebar-group-label"]'
       })
-    ).toBeVisible()
+    ).not.toBeInTheDocument()
   })
 
   it('lists direct Focus Updates in Overall and refreshes the derived review date', async () => {

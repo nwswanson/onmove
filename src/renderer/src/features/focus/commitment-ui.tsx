@@ -1,5 +1,5 @@
 import { Fragment, useState } from 'react'
-import { ChevronRight, Info, Plus } from 'lucide-react'
+import { ChevronDown, ChevronRight, Info, Plus } from 'lucide-react'
 import type {
   CommitmentParent,
   CommitmentType,
@@ -170,6 +170,8 @@ export function CommitmentCollection({
   onPin,
   onComplete
 }: CommitmentCollectionProps): React.JSX.Element {
+  const [closedOpen, setClosedOpen] = useState(false)
+
   function renderRow(item: CommitmentCollectionItemModel): React.JSX.Element {
     const rowError = statusError?.id === item.id ? statusError.message : null
     const lastUpdatedId = `${idPrefix}-commitment-${item.id}-last-updated`
@@ -302,25 +304,46 @@ export function CommitmentCollection({
           </div>
         </section>
 
-        <section aria-labelledby={`${idPrefix}-closed-commitments-heading`}>
-          <h3
-            id={`${idPrefix}-closed-commitments-heading`}
-            className="mb-2 text-xs font-semibold text-muted-foreground"
+        <section
+          className="overflow-hidden rounded-xl border border-border/80 bg-card/45"
+          aria-labelledby={`${idPrefix}-closed-commitments-heading`}
+        >
+          <button
+            type="button"
+            aria-expanded={closedOpen}
+            aria-controls={`${idPrefix}-closed-commitments`}
+            className="flex w-full items-center gap-2 px-3 py-2.5 text-left outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/55"
+            onClick={() => setClosedOpen((open) => !open)}
           >
-            Done / Cancelled
-          </h3>
-          <div
-            role="list"
-            aria-label="Done and cancelled commitments"
-            className="overflow-hidden rounded-xl border border-border/80 bg-card/45"
-          >
-            {model.groups[2]?.items.map(renderRow)}
-            {model.closedCount === 0 && (
-              <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                No done or cancelled commitments
-              </p>
-            )}
-          </div>
+            <ChevronDown
+              className={`size-4 shrink-0 text-muted-foreground transition-transform ${closedOpen ? '' : '-rotate-90'}`}
+              aria-hidden="true"
+            />
+            <span
+              id={`${idPrefix}-closed-commitments-heading`}
+              className="text-xs font-semibold text-muted-foreground"
+            >
+              Done / Cancelled
+            </span>
+            <span className="ml-auto text-xs tabular-nums text-muted-foreground">
+              {model.closedCount}
+            </span>
+          </button>
+          {closedOpen && (
+            <div
+              id={`${idPrefix}-closed-commitments`}
+              role="list"
+              aria-label="Done and cancelled commitments"
+              className="border-t border-border/65"
+            >
+              {model.groups[2]?.items.map(renderRow)}
+              {model.closedCount === 0 && (
+                <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+                  No done or cancelled commitments
+                </p>
+              )}
+            </div>
+          )}
         </section>
       </div>
     </section>

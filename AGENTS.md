@@ -216,8 +216,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - Build all Commitment collections through the pure feature view-model projection. Order Active
   Commitments by state (`red`, `yellow`, `green`, `none`), followed by Paused, followed by the
   combined Done / Cancelled group; preserve repository order within equal priorities. The main view
-  exposes Current (separate Active and Paused sections) and Done / Cancelled lists, while the
-  contextual sidebar uses the same ordered groups.
+  exposes Current (separate Active and Paused sections) and retains Done / Cancelled in a
+  closed-by-default accordion. Contextual sidebars project only Active and Paused Commitments;
+  never render closed Commitment rows or a Done / Cancelled sidebar group.
 - Render Focus- and Thread-owned collections through the same `CommitmentCollection` receiver.
   Presenters must translate the business projection into its receiver-owned item contract; the
   receiver owns row markup and the visible `Add commitment` action, and emits only creation

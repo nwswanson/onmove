@@ -350,14 +350,26 @@ describe('Focus presentation adapters', () => {
       state: 'yellow' as const,
       status: 'paused' as const
     }
+    const doneFocusCommitment = {
+      ...focusCommitment,
+      id: 22,
+      title: 'Archived sponsor plan',
+      status: 'done' as const
+    }
+    const cancelledThreadCommitment = {
+      ...threadCommitment,
+      id: 23,
+      title: 'Abandoned ticket experiment',
+      status: 'cancelled' as const
+    }
 
     const items = focusContextSidebarItems(
       [{ ...thread, status: 'active' }],
       {},
       false,
       {
-        overall: [focusCommitment],
-        'thread:10': [threadCommitment]
+        overall: [focusCommitment, doneFocusCommitment],
+        'thread:10': [threadCommitment, cancelledThreadCommitment]
       }
     )
 
@@ -399,6 +411,14 @@ describe('Focus presentation adapters', () => {
         }
       ]
     })
+    expect(
+      commitmentContextSidebarItems([
+        focusCommitment,
+        threadCommitment,
+        doneFocusCommitment,
+        cancelledThreadCommitment
+      ]).map(({ label }) => label)
+    ).toEqual(['Align sponsors', 'Improve ticket quality'])
   })
 
   it('maps every model health state into a labeled semantic receiver tone', () => {
