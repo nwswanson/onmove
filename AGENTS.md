@@ -174,10 +174,11 @@ foreground colors and do not rely on color alone to communicate selection or sta
   date, state, and sensitivity autosave through the shared throttle; observation text uses the
   synchronous rich-text document path. Do not render a manual save action.
   Blank and state-only Updates are valid. State must always have a text label as well as semantic
-  color (`destructive` for red, `warning` for yellow, `success` for green, muted for none). `Ctrl-P`
-  immediately adds an Update wherever direct creation is valid. In a bounded All Subjects view it
-  focuses the required Subject creation picker; on Review it starts an Update for the current exact
-  target. Todos, Tags, and other screens without Updates leave `Ctrl-P` untouched.
+  color (`destructive` for red, `warning` for yellow, `success` for green, muted for none). `Cmd-P`
+  immediately adds an Update wherever direct creation is valid and focuses its observation editor.
+  In a bounded All Subjects view it focuses the required Subject creation picker, then focuses the
+  created editor after selection; on Review it starts an Update for the current exact target and
+  focuses its editor. Todos, Tags, and other screens without Updates leave `Cmd-P` untouched.
 - Treat a bounded Thread's Subject selector as an operational working-context lens, distinct from
   editing the Thread's Scope definition. All Subjects keeps its main Update list limited to
   currently applicable canonical Subjects. Put retained Updates whose Subject is no longer

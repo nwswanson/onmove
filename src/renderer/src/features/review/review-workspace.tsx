@@ -29,7 +29,7 @@ import { useReviewModel } from '@/features/review/use-review-model'
 import { SensitivityToggle } from '@/features/shared/sensitivity-toggle'
 import { DirectTodos } from '@/features/todos/direct-todos'
 import { UPDATE_LIST_STATE_OPTIONS } from '@/features/updates/updates-presenters'
-import { useControlKeyShortcut } from '@/lib/use-control-key-shortcut'
+import { useCommandKeyShortcut } from '@/lib/use-command-key-shortcut'
 
 interface ReviewWorkspaceProps {
   contextDrawer: ContextDrawerControl
@@ -138,6 +138,7 @@ function ReviewUpdateEditor({
 
       <RichTextEditor
         ariaLabel="Review Update observation"
+        autoFocus
         value={update.observation}
         externalRevision={update.updatedAt}
         placeholder="What changed?"
@@ -319,7 +320,7 @@ export function ReviewWorkspace({
   const pending = current ? review.pendingKey === current.key : false
   const editing = Boolean(review.editingUpdate && current?.key === review.editingUpdate.itemKey)
 
-  useControlKeyShortcut('p', () => {
+  useCommandKeyShortcut('p', () => {
     if (!current || pending || editing) return
     void review.beginUpdate(current)
   }, current !== null)
@@ -410,8 +411,8 @@ export function ReviewWorkspace({
                         type="button"
                         disabled={pending}
                         onClick={() => void review.beginUpdate(current)}
-                        aria-keyshortcuts="Control+P"
-                        title="Add update (Ctrl-P)"
+                        aria-keyshortcuts="Meta+P"
+                        title="Add update (⌘P)"
                       >
                         <MessageSquarePlus aria-hidden="true" />
                         {pending ? 'Starting…' : 'Update'}

@@ -12,7 +12,7 @@ import {
   type UpdateListProps,
   type UpdateListStateOptionModel
 } from '@/features/updates/update-list-contract'
-import { useControlKeyShortcut } from '@/lib/use-control-key-shortcut'
+import { useCommandKeyShortcut } from '@/lib/use-command-key-shortcut'
 import { useThrottledAutosave } from '@/lib/use-throttled-autosave'
 
 function updateDraftsEqual(left: UpdateListDraft, right: UpdateListDraft): boolean {
@@ -30,7 +30,8 @@ function UpdateEditorCard({
   onSave,
   onObservationChange,
   onOpenObservation,
-  onDelete
+  onDelete,
+  autoFocus = false
 }: {
   item: UpdateListItemModel
   stateOptions: readonly UpdateListStateOptionModel[]
@@ -38,6 +39,7 @@ function UpdateEditorCard({
   onObservationChange?: (value: string) => void
   onOpenObservation?: () => void
   onDelete: () => Promise<void>
+  autoFocus?: boolean
 }): React.JSX.Element {
   const initialDraft: UpdateListDraft = {
     date: item.date,
@@ -196,6 +198,7 @@ function UpdateEditorCard({
           placeholder="What changed?"
           value={draft.observation}
           externalRevision={item.externalRevision}
+          autoFocus={autoFocus}
           onChange={updateObservation}
           onOpenInWindow={onOpenObservation}
           compact
@@ -252,6 +255,7 @@ export function UpdateList({
   const [createOptionId, setCreateOptionId] = useState('')
   const [createError, setCreateError] = useState<string | null>(null)
   const [formerItemsOpen, setFormerItemsOpen] = useState(false)
+  const [autoFocusItemId, setAutoFocusItemId] = useState<string | null>(null)
   const createOptionRef = useRef<HTMLSelectElement>(null)
   const headingId = useId()
   const formerItemsId = useId()
@@ -261,12 +265,13 @@ export function UpdateList({
     setCreateError(null)
     try {
       if (!onCreate) return
-      await onCreate({
+      const createdItemId = await onCreate({
         date: defaultDate,
         observation: '',
         state: defaultState,
         sensitive: false
       })
+      if (createdItemId) setAutoFocusItemId(createdItemId)
     } catch {
       setCreateError('The update could not be added.')
     } finally {
@@ -280,12 +285,13 @@ export function UpdateList({
     setAdding(true)
     setCreateError(null)
     try {
-      await onCreateFor(optionId, {
+      const createdItemId = await onCreateFor(optionId, {
         date: defaultDate,
         observation: '',
         state: defaultState,
         sensitive: false
       })
+      if (createdItemId) setAutoFocusItemId(createdItemId)
     } catch {
       setCreateError('The update could not be added.')
     } finally {
@@ -294,7 +300,7 @@ export function UpdateList({
     }
   }
 
-  useControlKeyShortcut('p', () => {
+  useCommandKeyShortcut('p', () => {
     if (adding) return
     if (onCreate) {
       void addUpdate()
@@ -328,8 +334,8 @@ export function UpdateList({
             size="sm"
             disabled={adding}
             onClick={() => void addUpdate()}
-            aria-keyshortcuts="Control+P"
-            title="Add update (Ctrl-P)"
+            aria-keyshortcuts="Meta+P"
+            title="Add update (⌘P)"
           >
             <Plus aria-hidden="true" />
             {adding ? 'Adding…' : 'Add update'}
@@ -344,8 +350,8 @@ export function UpdateList({
             <select
               ref={createOptionRef}
               aria-label={createOptionsLabel}
-              aria-keyshortcuts="Control+P"
-              title={`${createOptionsLabel} (Ctrl-P)`}
+              aria-keyshortcuts="Meta+P"
+              title={`${createOptionsLabel} (⌘P)`}
               value={createOptionId}
               disabled={adding}
               className="h-9 max-w-64 appearance-none rounded-md border border-input bg-background pl-8 pr-8 text-sm font-medium shadow-xs outline-none hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/35 disabled:pointer-events-none disabled:opacity-50"
@@ -377,6 +383,7 @@ export function UpdateList({
               ? () => onOpenObservation(item.id)
               : undefined}
             onDelete={() => onDelete(item.id)}
+            autoFocus={item.id === autoFocusItemId}
           />
         ))}
         {items.length === 0 && !loading && (

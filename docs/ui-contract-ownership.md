@@ -148,10 +148,12 @@ pending and failure feedback, and never creates a temporary UI-only draft. The r
 date, state, and sensitivity edits enter the shared throttled pipeline. Observation text uses the
 durable rich-text document path described below.
 
-`UpdateList` also owns the exact `Ctrl-P` interaction for its creation contract. Direct creation
-immediately runs the same Add path; choice-based creation focuses and opens the required Subject
-picker rather than inventing a Scope cell. Review maps the same shortcut to its current typed review
-target. Screens without an Update creation contract do not register or consume the shortcut.
+`UpdateList` also owns the exact `Cmd-P` interaction for its creation contract. Direct creation
+immediately runs the same Add path and focuses the created row's observation editor after the caller
+returns its opaque id. Choice-based creation focuses and opens the required Subject picker rather
+than inventing a Scope cell, then focuses the resulting editor after selection. Review maps the same
+shortcut and focus behavior to its current typed review target. Screens without an Update creation
+contract do not register or consume the shortcut.
 
 Multiline content follows one shared receiver contract. `RichTextEditor` owns a deliberately small
 Lexical configuration: undo/redo, bold, italic, underline, strikethrough, a fixed yellow highlight,

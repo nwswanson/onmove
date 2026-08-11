@@ -656,7 +656,7 @@ describe('App', () => {
     expect(screen.getByText('Subject · Customer Operations')).toBeVisible()
     const shortcut = new KeyboardEvent('keydown', {
       key: 'p',
-      ctrlKey: true,
+      metaKey: true,
       bubbles: true,
       cancelable: true
     })
@@ -672,7 +672,7 @@ describe('App', () => {
     }))
 
     const observation = await screen.findByRole('textbox', { name: 'Review Update observation' })
-    await user.click(observation)
+    expect(observation).toHaveFocus()
     await user.keyboard('Customer sentiment improved')
     await waitFor(() => expect(api.richText.saveDocument).toHaveBeenCalled())
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
@@ -684,7 +684,7 @@ describe('App', () => {
     expect(getReviewOverview).toHaveBeenCalledTimes(2)
   })
 
-  it('leaves Ctrl-P inert in the Todos and Tags workspaces', async () => {
+  it('leaves Cmd-P inert in the Todos and Tags workspaces', async () => {
     const createUpdate = vi.fn()
     installApi({ createUpdate })
     const user = userEvent.setup()
@@ -693,7 +693,7 @@ describe('App', () => {
     await screen.findByRole('heading', { name: 'Todos' })
     const todosShortcut = new KeyboardEvent('keydown', {
       key: 'p',
-      ctrlKey: true,
+      metaKey: true,
       bubbles: true,
       cancelable: true
     })
@@ -704,7 +704,7 @@ describe('App', () => {
     await screen.findByRole('heading', { name: 'Tags' })
     const tagsShortcut = new KeyboardEvent('keydown', {
       key: 'p',
-      ctrlKey: true,
+      metaKey: true,
       bubbles: true,
       cancelable: true
     })

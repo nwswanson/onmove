@@ -16,6 +16,7 @@ import {
 import { CheckListPlugin } from '@lexical/react/LexicalCheckListPlugin'
 import { ClickableLinkPlugin } from '@lexical/react/LexicalClickableLinkPlugin'
 import { ContentEditable } from '@lexical/react/LexicalContentEditable'
+import { AutoFocusPlugin } from '@lexical/react/LexicalAutoFocusPlugin'
 import { HistoryPlugin } from '@lexical/react/LexicalHistoryPlugin'
 import { LexicalComposer, type InitialConfigType } from '@lexical/react/LexicalComposer'
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext'
@@ -639,6 +640,7 @@ export interface RichTextEditorProps {
   ariaLabel: string
   placeholder?: string
   compact?: boolean
+  autoFocus?: boolean
   /** Lets the editor document consume a height supplied by its parent. */
   fillHeight?: boolean
   className?: string
@@ -693,6 +695,7 @@ export function RichTextEditor({
   ariaLabel,
   placeholder = 'Write something…',
   compact = false,
+  autoFocus = false,
   fillHeight = false,
   className,
   onOpenInWindow,
@@ -751,6 +754,7 @@ export function RichTextEditor({
             ErrorBoundary={LexicalErrorBoundary}
           />
           <HistoryPlugin />
+          {autoFocus ? <AutoFocusPlugin defaultSelection="rootEnd" /> : null}
           <ListPlugin />
           <CheckListPlugin />
           <LinkPlugin validateUrl={validLinkUrl} attributes={LINK_ATTRIBUTES} />

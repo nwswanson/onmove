@@ -1,11 +1,11 @@
 import { useEffect, useRef } from 'react'
 
 /**
- * Registers one exact Control-key shortcut at the document boundary. The
- * receiver decides when the action exists; disabled screens leave the native
- * key behavior untouched.
+ * Registers one exact macOS Command-key shortcut at the document boundary.
+ * The receiver decides when the action exists; disabled screens leave the
+ * native key behavior untouched.
  */
-export function useControlKeyShortcut(
+export function useCommandKeyShortcut(
   key: string,
   onInvoke: () => void,
   enabled = true
@@ -24,8 +24,8 @@ export function useControlKeyShortcut(
         event.defaultPrevented ||
         event.isComposing ||
         event.repeat ||
-        !event.ctrlKey ||
-        event.metaKey ||
+        !event.metaKey ||
+        event.ctrlKey ||
         event.altKey ||
         event.shiftKey ||
         event.key.toLowerCase() !== key.toLowerCase()

@@ -128,9 +128,9 @@ describe('UpdateList', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('creates directly with Ctrl-P and leaves unrelated modifier combinations alone', async () => {
-    const onCreate = vi.fn().mockResolvedValue(undefined)
-    render(
+  it('creates directly with Cmd-P and focuses the persisted observation editor', async () => {
+    const onCreate = vi.fn().mockResolvedValue('42')
+    const { rerender } = render(
       <UpdateList
         ariaLabel="Shortcut updates"
         items={[]}
@@ -143,16 +143,6 @@ describe('UpdateList', () => {
       />
     )
 
-    const metaEvent = new KeyboardEvent('keydown', {
-      key: 'p',
-      metaKey: true,
-      bubbles: true,
-      cancelable: true
-    })
-    document.dispatchEvent(metaEvent)
-    expect(metaEvent.defaultPrevented).toBe(false)
-    expect(onCreate).not.toHaveBeenCalled()
-
     const controlEvent = new KeyboardEvent('keydown', {
       key: 'p',
       ctrlKey: true,
@@ -160,17 +150,47 @@ describe('UpdateList', () => {
       cancelable: true
     })
     document.dispatchEvent(controlEvent)
+    expect(controlEvent.defaultPrevented).toBe(false)
+    expect(onCreate).not.toHaveBeenCalled()
 
-    expect(controlEvent.defaultPrevented).toBe(true)
+    const metaEvent = new KeyboardEvent('keydown', {
+      key: 'p',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    document.dispatchEvent(metaEvent)
+
+    expect(metaEvent.defaultPrevented).toBe(true)
     await waitFor(() => expect(onCreate).toHaveBeenCalledWith({
       date: '2026-08-11',
       observation: '',
       state: 'none',
       sensitive: false
     }))
+
+    rerender(
+      <UpdateList
+        ariaLabel="Shortcut updates"
+        items={[{
+          id: '42',
+          date: '2026-08-11',
+          observation: '',
+          state: 'none',
+          sensitive: false
+        }]}
+        stateOptions={states}
+        defaultDate="2026-08-11"
+        defaultState="none"
+        onCreate={onCreate}
+        onUpdate={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    )
+    await waitFor(() => expect(screen.getByLabelText('Update observation')).toHaveFocus())
   })
 
-  it('moves Ctrl-P to the Subject picker when creation requires an exact cell', () => {
+  it('moves Cmd-P to the Subject picker when creation requires an exact cell', () => {
     const onCreateFor = vi.fn().mockResolvedValue(undefined)
     render(
       <UpdateList
@@ -187,7 +207,7 @@ describe('UpdateList', () => {
       />
     )
 
-    fireEvent.keyDown(document, { key: 'p', ctrlKey: true })
+    fireEvent.keyDown(document, { key: 'p', metaKey: true })
 
     expect(screen.getByRole('combobox', { name: 'Add update for Subject…' })).toHaveFocus()
     expect(onCreateFor).not.toHaveBeenCalled()

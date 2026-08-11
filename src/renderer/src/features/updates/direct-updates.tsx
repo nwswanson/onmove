@@ -110,13 +110,14 @@ export function DirectUpdates({
       loading={model.loading}
       loadError={model.loadError}
       onCreate={context.mode === 'scope-overview' ? undefined : async (draft: UpdateListDraft) => {
-        await model.createUpdate({
+        const created = await model.createUpdate({
           date: draft.date,
           observation: draft.observation,
           state: draft.state as HealthState,
           sensitive: draft.sensitive
         })
         await changed()
+        return String(created.id)
       }}
       createOptions={scopedCreationAvailable
         ? context.subjects.map(({ id, name }) => ({ id: String(id), label: name }))
@@ -126,7 +127,7 @@ export function DirectUpdates({
         : undefined}
       onCreateFor={scopedCreationAvailable
         ? async (subjectId, draft) => {
-            await model.createUpdate({
+            const created = await model.createUpdate({
               date: draft.date,
               observation: draft.observation,
               state: draft.state as HealthState,
@@ -137,6 +138,7 @@ export function DirectUpdates({
               }
             })
             await changed()
+            return String(created.id)
           }
         : undefined}
       onUpdate={async (rowId, draft) => {

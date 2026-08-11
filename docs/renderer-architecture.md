@@ -68,10 +68,11 @@ The palette never mutates sidebar controllers directly. Todo search intentionall
 Todo query rather than the bounded global-overview projection, so an older completed Todo can still
 lead back to its containing screen.
 
-Update-capable receivers register `Ctrl-P` only while their creation action is present. Focus,
+Update-capable receivers register `Cmd-P` only while their creation action is present. Focus,
 Thread, and Commitment screens therefore share one direct/Subject-choice behavior through
-`UpdateList`; Review registers the same domain-free shortcut for its current queue target. Todos,
-Tags, Settings, and empty Review states leave the key event untouched.
+`UpdateList`; its creation callback returns an opaque row id so the receiver can focus the persisted
+observation editor. Review registers the same domain-free shortcut and editor focus for its current
+queue target. Todos, Tags, Settings, and empty Review states leave the key event untouched.
 
 Cross-Focus Thread movement follows the same separation. The contextual receiver emits only a
 generic Thread item move toward a generic Focus target. `useFocusWorkspaceModel` owns plan/move IPC,

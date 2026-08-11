@@ -35,10 +35,12 @@ export interface UpdateListProps {
   defaultState: string
   loading?: boolean
   loadError?: string | null
-  onCreate?: (draft: UpdateListDraft) => Promise<void>
+  /** Returns the opaque created row id when its editor should receive focus. */
+  onCreate?: (draft: UpdateListDraft) => Promise<string | void>
   createOptions?: readonly UpdateListCreateOptionModel[]
   createOptionsLabel?: string
-  onCreateFor?: (optionId: string, draft: UpdateListDraft) => Promise<void>
+  /** Returns the opaque created row id when its editor should receive focus. */
+  onCreateFor?: (optionId: string, draft: UpdateListDraft) => Promise<string | void>
   onUpdate: (itemId: string, draft: UpdateListDraft) => Promise<void>
   onObservationChange?: (itemId: string, value: string) => void
   onOpenObservation?: (itemId: string) => void

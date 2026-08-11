@@ -9,3 +9,4 @@ playwright-report/
 build/
 tsconfig.*.tsbuildinfo
 *.swp
+.pnpm-store/
