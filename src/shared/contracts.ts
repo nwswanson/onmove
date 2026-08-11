@@ -59,6 +59,8 @@ export const IPC_CHANNELS = {
   reorderTodos: 'domain:reorder-todos',
   deleteTodo: 'domain:delete-todo',
   listNotes: 'domain:list-notes',
+  listTags: 'domain:list-tags',
+  listTagUses: 'domain:list-tag-uses',
   getRichTextDocument: 'rich-text:get-document',
   openRichTextDocumentWindow: 'rich-text:open-window',
   getRichTextWindowTarget: 'rich-text:get-window-target'
@@ -580,6 +582,57 @@ export interface NoteSnapshot {
   updatedAt: string
 }
 
+export type TagUseSource =
+  | { type: 'focus'; id: number; field: 'title' | 'description' | 'goal' }
+  | { type: 'thread'; id: number; field: 'title' }
+  | { type: 'commitment'; id: number; field: 'title' }
+  | { type: 'update'; id: number; field: 'observation' }
+  | { type: 'todo'; id: number; field: 'name' }
+  | { type: 'note'; id: number; field: 'title' | 'content' }
+
+export interface TagUseFocusSnapshot {
+  id: number
+  title: string
+  sensitive: boolean
+}
+
+export interface TagUseThreadSnapshot {
+  id: number
+  title: string
+  sensitive: boolean
+}
+
+export interface TagUseCommitmentSnapshot {
+  id: number
+  title: string
+  sensitive: boolean
+}
+
+/** Resolved hierarchy needed to open the record's containing workspace. */
+export interface TagUseContextSnapshot {
+  focus: TagUseFocusSnapshot
+  thread: TagUseThreadSnapshot | null
+  commitment: TagUseCommitmentSnapshot | null
+  subject: SubjectSnapshot | null
+}
+
+/** One exact literal occurrence, projected to a compact plain-text snippet. */
+export interface TagUseSnapshot {
+  id: string
+  name: string
+  source: TagUseSource
+  context: TagUseContextSnapshot
+  snippet: string
+  effectiveSensitive: boolean
+}
+
+/** Exact spelling is identity; sensitive counts let the renderer own visibility. */
+export interface TagSummarySnapshot {
+  name: string
+  useCount: number
+  sensitiveUseCount: number
+}
+
 export type RichTextDocumentReference =
   | { type: 'focus'; id: number; field: 'goal' | 'description' }
   | { type: 'update'; id: number; field: 'observation' }
@@ -812,6 +865,8 @@ export interface DomainApi {
   reorderTodos: (context: TodoParent, orderedTodoIds: readonly number[]) => Promise<TodoSnapshot[]>
   deleteTodo: (id: number) => Promise<boolean>
   listNotes: (parent: NoteParent) => Promise<NoteSnapshot[]>
+  listTags: () => Promise<TagSummarySnapshot[]>
+  listTagUses: (name: string) => Promise<TagUseSnapshot[]>
 }
 
 export interface RichTextApi {

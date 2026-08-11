@@ -250,6 +250,8 @@ function installApi(
     reorderTodos: vi.fn(),
     deleteTodo: vi.fn(),
     listNotes: vi.fn().mockResolvedValue([]),
+    listTags: vi.fn().mockResolvedValue([]),
+    listTagUses: vi.fn().mockResolvedValue([]),
     ...domainOverrides
   }
   const api: OnMoveApi = {
@@ -333,6 +335,54 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: 'Focus' })).not.toBeInTheDocument()
     expect(screen.getByText('No focuses yet')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'New focus' })).toBeEnabled()
+  })
+
+  it('lists Tags in the contextual sidebar and opens each use in its containing screen', async () => {
+    const current = focus({ id: 4, title: 'Project @Atlas' })
+    const listTagUses = vi.fn().mockResolvedValue([{
+      id: 'focus:4:goal:0',
+      name: 'Launch',
+      source: { type: 'focus' as const, id: 4, field: 'goal' as const },
+      context: {
+        focus: { id: 4, title: 'Project @Atlas', sensitive: false },
+        thread: null,
+        commitment: null,
+        subject: null
+      },
+      snippet: 'Coordinate the @Launch review without serialized editor data',
+      effectiveSensitive: false
+    }])
+    const api = installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listTags: vi.fn().mockResolvedValue([
+        { name: 'Launch', useCount: 1, sensitiveUseCount: 0 },
+        { name: 'Private', useCount: 1, sensitiveUseCount: 1 }
+      ]),
+      listTagUses
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Tags' }))
+    expect(screen.getByRole('button', { name: 'Tags' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByLabelText('Contextual sidebar')).toBeVisible()
+    expect(await screen.findByRole('button', { name: '@Launch' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    expect(screen.getByRole('button', { name: '@Private' })).toBeVisible()
+    const table = await screen.findByRole('table', { name: 'Uses of @Launch' })
+    expect(table).toHaveTextContent('Coordinate the @Launch review without serialized editor data')
+    expect(within(table).getByText('@Launch')).toHaveAttribute('data-text-tag', 'true')
+    expect(listTagUses).toHaveBeenCalledWith('Launch')
+
+    await user.click(within(table).getByRole('link', { name: /Project @Atlas/ }))
+    expect(await screen.findByRole('heading', { name: 'Project @Atlas' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Overall' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    expect(api.domain.listThreads).toHaveBeenCalledWith(4)
   })
 
   it('sorts the global Todo table, reveals recent closures, and closes open work', async () => {
@@ -584,6 +634,53 @@ describe('App', () => {
     act(() => visibilityListener?.(false))
     expect(await screen.findByRole('button', { name: 'Confidential initiative' })).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Todos' })).toBeVisible()
+  })
+
+  it('removes sensitive-only Tags and reconciles contextual selection when visibility changes', async () => {
+    let visibilityListener: ((hidden: boolean) => void) | undefined
+    const listTagUses = vi.fn(async (name: string) => [{
+      id: `focus:1:goal:${name}`,
+      name,
+      source: { type: 'focus' as const, id: 1, field: 'goal' as const },
+      context: {
+        focus: { id: 1, title: 'Project Atlas', sensitive: name === 'Private' },
+        thread: null,
+        commitment: null,
+        subject: null
+      },
+      snippet: `Review @${name}`,
+      effectiveSensitive: name === 'Private'
+    }])
+    installApi(
+      {
+        listTags: vi.fn().mockResolvedValue([
+          { name: 'Public', useCount: 1, sensitiveUseCount: 0 },
+          { name: 'Private', useCount: 1, sensitiveUseCount: 1 }
+        ]),
+        listTagUses
+      },
+      {
+        onSensitiveContentVisibilityChanged: vi.fn((listener) => {
+          visibilityListener = listener
+          return () => undefined
+        })
+      }
+    )
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Tags' }))
+    await user.click(await screen.findByRole('button', { name: '@Private' }))
+    expect(await screen.findByRole('table', { name: 'Uses of @Private' })).toBeVisible()
+
+    act(() => visibilityListener?.(true))
+
+    expect(screen.queryByRole('button', { name: '@Private' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '@Public' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    expect(await screen.findByRole('table', { name: 'Uses of @Public' })).toBeVisible()
   })
 
   it('filters sensitive descendants and walks a hidden Commitment route to its visible parent', async () => {

@@ -1,4 +1,4 @@
-import { ListChecks, PauseCircle, Plus } from 'lucide-react'
+import { ListChecks, PauseCircle, Plus, Tags } from 'lucide-react'
 import { useDroppable } from '@dnd-kit/core'
 import {
   SidebarMenu,
@@ -18,7 +18,7 @@ export interface SidebarNavigationItemModel {
   id: string
   label: string
   ariaLabel?: string
-  icon?: 'todos' | 'sunflower' | 'paused'
+  icon?: 'todos' | 'tags' | 'sunflower' | 'paused'
   sunflower?: SemanticSunflowerModel
   tone?: 'default' | 'muted'
   disabled?: boolean
@@ -90,6 +90,8 @@ function SidebarNavigationRow({
       >
         {item.icon === 'todos' ? (
           <ListChecks aria-hidden="true" />
+        ) : item.icon === 'tags' ? (
+          <Tags aria-hidden="true" />
         ) : item.icon === 'paused' ? (
           <PauseCircle aria-hidden="true" />
         ) : item.icon === 'sunflower' && item.sunflower ? (

@@ -201,6 +201,24 @@ test('persists and visually restores text tags in compact and rich-text fields',
       todo: 'Coordinate @Launch2 readiness',
       goal: expect.stringContaining('"type":"tag"')
     })
+
+    await window.getByRole('button', { name: 'Tags', exact: true }).click()
+    await expect(window.getByRole('complementary', { name: 'Contextual sidebar' })).toBeVisible()
+    await expect(window.getByRole('button', { name: '@Atlas2', exact: true })).toBeVisible()
+    await window.getByRole('button', { name: '@Launch2', exact: true }).click()
+    const uses = window.getByRole('table', { name: 'Uses of @Launch2' })
+    await expect(uses.locator('tbody tr')).toHaveCount(2)
+    await expect(uses).toContainText('Coordinate @Launch2 readiness')
+    await expect(uses).toContainText('Review @Launch2')
+    await expect(uses).not.toContainText('onmove-rich-text:1:')
+
+    const goalUse = uses.locator('tbody tr').filter({ hasText: 'Review @Launch2' })
+    await goalUse.getByRole('link').click()
+    await expect(window.getByRole('heading', { name: 'Project @Atlas2' })).toBeVisible()
+    await expect(window.getByRole('button', { name: 'Overall', exact: true })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
   } finally {
     await application?.close()
     rmSync(userDataDirectory, { recursive: true, force: true })

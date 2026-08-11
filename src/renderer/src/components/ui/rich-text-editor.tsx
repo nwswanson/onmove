@@ -84,8 +84,12 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { firstTextTag } from '../../../../shared/text-tags'
+import {
+  RICH_TEXT_PREFIX,
+  richTextPlainText,
+  serializedRichTextEditorState
+} from '../../../../shared/rich-text-value'
 
-const RICH_TEXT_PREFIX = 'onmove-rich-text:1:'
 const HIGHLIGHT_FORMAT: TextFormatType = 'highlight'
 
 const TEXT_COLOR_OPTIONS = [
@@ -196,19 +200,8 @@ function validLinkUrl(value: string): boolean {
   return normalizeLinkUrl(value) !== null
 }
 
-function serializedEditorState(value: string): string | null {
-  if (!value.startsWith(RICH_TEXT_PREFIX)) return null
-  const serialized = value.slice(RICH_TEXT_PREFIX.length)
-  try {
-    const parsed = JSON.parse(serialized) as { root?: unknown }
-    return parsed && typeof parsed === 'object' && parsed.root ? serialized : null
-  } catch {
-    return null
-  }
-}
-
 function initialEditorState(value: string): InitialConfigType['editorState'] {
-  const serialized = serializedEditorState(value)
+  const serialized = serializedRichTextEditorState(value)
   if (serialized) return serialized
 
   return () => {
@@ -228,26 +221,10 @@ export function serializeRichText(editorState: EditorState): string {
 }
 
 export function isRichText(value: string): boolean {
-  return serializedEditorState(value) !== null
+  return serializedRichTextEditorState(value) !== null
 }
 
-/** Plain-text projection for search, accessibility, and contract-level tests. */
-export function richTextPlainText(value: string): string {
-  const serialized = serializedEditorState(value)
-  if (!serialized) return value
-
-  const document = JSON.parse(serialized) as {
-    root: { children?: unknown[] }
-  }
-  function read(node: unknown): string {
-    if (!node || typeof node !== 'object') return ''
-    const record = node as { children?: unknown[]; text?: unknown; type?: unknown }
-    if (typeof record.text === 'string') return record.text
-    const content = (record.children ?? []).map(read).join('')
-    return record.type === 'paragraph' || record.type === 'listitem' ? `${content}\n` : content
-  }
-  return read(document.root).replace(/\n+$/, '')
-}
+export { richTextPlainText }
 
 interface RichTextToolbarProps {
   compact: boolean
@@ -691,7 +668,7 @@ function ExternalValuePlugin({
     const externalValue = value
     if (externalValue === currentValueRef.current) return
     currentValueRef.current = externalValue
-    const serialized = serializedEditorState(externalValue)
+    const serialized = serializedRichTextEditorState(externalValue)
     if (serialized) {
       editor.setEditorState(editor.parseEditorState(serialized), { tag: 'external-sync' })
       return

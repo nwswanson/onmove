@@ -256,6 +256,16 @@ describe('registerAppIpc', () => {
         notes: {
           list: vi.fn(() => [{ id: 81, title: 'Default', content: '' }])
         },
+        tags: {
+          list: vi.fn(() => [{ name: 'Launch', useCount: 2, sensitiveUseCount: 0 }]),
+          uses: vi.fn(() => [{
+            id: 'focus:12:goal:0',
+            name: 'Launch',
+            source: { type: 'focus', id: 12, field: 'goal' },
+            snippet: 'Ship @Launch',
+            effectiveSensitive: false
+          }])
+        },
         richTextDocuments: {
           get: vi.fn((reference) => ({
             reference,
@@ -490,6 +500,12 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.listNotes)?.(undefined, {
       type: 'focus', id: 12
     })).toEqual([{ id: 81, title: 'Default', content: '' }])
+    expect(await handlers.get(IPC_CHANNELS.listTags)?.()).toEqual([
+      { name: 'Launch', useCount: 2, sensitiveUseCount: 0 }
+    ])
+    expect(await handlers.get(IPC_CHANNELS.listTagUses)?.(undefined, 'Launch')).toMatchObject([
+      { id: 'focus:12:goal:0', name: 'Launch', snippet: 'Ship @Launch' }
+    ])
     expect(await handlers.get(IPC_CHANNELS.getRichTextDocument)?.(undefined, {
       type: 'focus', id: 12, field: 'goal'
     })).toMatchObject({ value: 'Ship', revision: 1 })

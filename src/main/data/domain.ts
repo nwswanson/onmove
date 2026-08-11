@@ -27,6 +27,7 @@ import { TodoRepository } from './todo-model'
 import { CommitmentRepository, ThreadRepository, UpdateRepository } from './work-model'
 import { NoteRepository } from './note-model'
 import { RichTextDocumentRepository } from './rich-text-model'
+import { TagRepository } from './tag-model'
 
 type RelationRecord = RelationSnapshot
 
@@ -547,6 +548,7 @@ export class DomainStore {
   readonly todos: TodoRepository
   readonly notes: NoteRepository
   readonly richTextDocuments: RichTextDocumentRepository
+  readonly tags: TagRepository
 
   constructor(database: SqliteAdapter) {
     this.relations = new RelationRepository(database)
@@ -564,5 +566,6 @@ export class DomainStore {
     this.todos = new TodoRepository(database)
     this.notes = new NoteRepository(database)
     this.richTextDocuments = new RichTextDocumentRepository(database)
+    this.tags = new TagRepository(database)
   }
 }

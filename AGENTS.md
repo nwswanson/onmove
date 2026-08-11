@@ -6,7 +6,7 @@
 - Keep one macOS-style toolbar across the full window, with the sidebar and main workspace beneath
   it. Do not add view-level breadcrumb bars above the main canvas.
 - Put primary item destinations at the top of the sidebar. `Todos` is selectable and is the default
-  aggregate workspace; `Focuses` is a
+  aggregate workspace; `Tags` is its peer destination immediately below it; `Focuses` is a
   section label with focus records and the `New focus` action exposed directly beneath it.
 - Focus records with `active` or `paused` status appear in the selector. Paused focuses remain
   selectable but visually muted; `cancelled` and `done` focuses remain in SQLite but are filtered
@@ -141,8 +141,10 @@ and do not rely on color alone to communicate selection or status.
   continuations instead of styling a misleading prefix. Rich text stores recognized tokens as
   Lexical `tag` nodes; compact user-authored strings keep the literal token and use `TaggedInput` /
   `TaggedText` for the same deep-blue visual treatment. Dates, numbers, URLs, Scope Subject names,
-  and other structured identifiers remain ordinary controls. Tags have no database registry,
-  links, or backreferences yet; do not infer those future semantics in UI receivers.
+  and other structured identifiers remain ordinary controls. Exact spelling is tag identity, so
+  `@Launch` and `@launch` remain distinct. Tags have no persisted database registry; derive the
+  global summaries and backreferences from current stored text through the named tag-query IPC.
+  Keep containing-screen links in the Tags feature and do not infer tag semantics in UI receivers.
 - Persist every change from an existing rich-text editor synchronously through the typed
   `richText` preload contract. The main process commits it with `DatabaseSync` before the renderer
   call returns, increments its durable revision, and broadcasts the committed snapshot to every
@@ -271,6 +273,13 @@ and do not rely on color alone to communicate selection or status.
   nested Commitment route, and working-context tab restore atomically. Hide completed rows by
   default; the view option may reveal only the recently completed records already returned by the
   model. Never fetch all historical closed Todos and filter them in React.
+- Build the Tags workspace as a peer of Todos. It uses one parentless `ContextualSidebarLevel` whose
+  rows are exact tag spellings plus visible-use counts. Selecting a tag issues the bounded
+  `listTagUses` query and renders one row per exact occurrence with only Location, Field, and a short
+  plain-text snippet. The Location link must use `FocusWorkspaceDestination` so Overall/Thread,
+  nested Commitment, and Subject context restore atomically. Sensitive visibility remains a
+  renderer collection rule: hide sensitive-only sidebar tags and sensitive use rows, then let the
+  contextual navigation reconcile an invalid selection to its first remaining item.
 
 ## Data model
 
@@ -281,6 +290,12 @@ and do not rely on color alone to communicate selection or status.
   days, with the cutoff enforced in SQLite before snapshots cross IPC.
 - Preserve hierarchy cascades, relation `SET NULL` behavior, and automatic status-transition
   auditing.
+- Keep tag identity derived from literal current text instead of adding a second persisted source of
+  truth. Index Focus title/description/goal, Thread and Commitment titles, Update observation, Todo
+  name, and Note title/content. Project rich-text envelopes to plain text before parsing or
+  producing snippets. Imports, edits, moves, and cascade deletions must therefore become visible to
+  tag queries without repair or migration. Return summaries and selected-tag occurrences only
+  through named IPC; do not expose arbitrary search or SQL.
 - Treat Thread health, materialized review dates, Commitment state, and cadence deadlines as model
   projections. Do not add writable columns or UI mutations for those derived values. The nullable
   `review_poked_on` evidence field is the deliberate exception: mutate it only through each

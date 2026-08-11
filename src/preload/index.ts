@@ -95,7 +95,9 @@ const api: OnMoveApi = {
     reorderTodos: (context, orderedTodoIds) =>
       ipcRenderer.invoke(IPC_CHANNELS.reorderTodos, context, orderedTodoIds),
     deleteTodo: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteTodo, id),
-    listNotes: (parent) => ipcRenderer.invoke(IPC_CHANNELS.listNotes, parent)
+    listNotes: (parent) => ipcRenderer.invoke(IPC_CHANNELS.listNotes, parent),
+    listTags: () => ipcRenderer.invoke(IPC_CHANNELS.listTags),
+    listTagUses: (name) => ipcRenderer.invoke(IPC_CHANNELS.listTagUses, name)
   },
   richText: {
     getDocument: (reference) =>

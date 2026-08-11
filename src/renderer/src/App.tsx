@@ -37,6 +37,7 @@ import { focusPrimaryNavigationItems } from '@/features/focus/focus-presenters'
 import { FocusWorkspace } from '@/features/focus/focus-workspace'
 import { SettingsWorkspace } from '@/features/settings/settings-workspace'
 import { TodoWorkspace } from '@/features/todos/todo-workspace'
+import { TagsWorkspace } from '@/features/tags/tags-workspace'
 import type { ThreadSnapshot } from '../../shared/contracts'
 
 const SIDEBAR_MIN = 208
@@ -97,10 +98,11 @@ function AppToolbar({
 interface AppSidebarProps {
   focusItems: readonly SidebarNavigationItemModel[]
   selectedFocusId: string | null
-  selectedView: 'todos' | 'focus' | 'settings'
+  selectedView: 'todos' | 'tags' | 'focus' | 'settings'
   enabled: boolean
   width: number
   onTodos: () => void
+  onTags: () => void
   onSettings: () => void
   onSelectFocus: (focusId: string) => void
   onNewFocus: () => void
@@ -114,12 +116,15 @@ function AppSidebar({
   enabled,
   width,
   onTodos,
+  onTags,
   onSettings,
   onSelectFocus,
   onNewFocus,
   onShowData
 }: AppSidebarProps): React.JSX.Element {
-  const todosActive = selectedView === 'todos'
+  const selectedItemId = selectedView === 'todos' || selectedView === 'tags'
+    ? selectedView
+    : null
 
   return (
     <Sidebar aria-label="Primary sidebar" style={{ width }}>
@@ -144,9 +149,12 @@ function AppSidebar({
         <SidebarGroup>
           <SidebarGroupLabel>Items</SidebarGroupLabel>
           <SidebarNavigation
-            items={[{ id: 'todos', label: 'Todos', icon: 'todos' }]}
-            selectedItemId={todosActive ? 'todos' : null}
-            onSelect={onTodos}
+            items={[
+              { id: 'todos', label: 'Todos', icon: 'todos' },
+              { id: 'tags', label: 'Tags', icon: 'tags' }
+            ]}
+            selectedItemId={selectedItemId}
+            onSelect={(itemId) => itemId === 'tags' ? onTags() : onTodos()}
           />
         </SidebarGroup>
 
@@ -230,7 +238,9 @@ export function App(): React.JSX.Element {
   )
   const toolbarTitle = application.selectedView === 'settings'
     ? 'Settings'
-    : (selectedFocus?.title ?? 'Todos')
+    : application.selectedView === 'tags'
+      ? 'Tags'
+      : (selectedFocus?.title ?? 'Todos')
   const contextDrawer = {
     open: contextDrawerState.open,
     pinnedAdapter: contextDrawerState.pinnedAdapter,
@@ -311,6 +321,10 @@ export function App(): React.JSX.Element {
               setFocusDestination(null)
               application.goTodos()
             }}
+            onTags={() => {
+              setFocusDestination(null)
+              application.goTags()
+            }}
             onSettings={application.goSettings}
             onSelectFocus={(focusId) => {
               setFocusDestination(null)
@@ -333,6 +347,12 @@ export function App(): React.JSX.Element {
         {application.state ? (
           application.selectedView === 'settings' ? (
             <SettingsWorkspace contextDrawer={contextDrawer} />
+          ) : application.selectedView === 'tags' ? (
+            <TagsWorkspace
+              contextDrawer={contextDrawer}
+              hideSensitiveContent={application.sensitiveContentHidden}
+              onOpenContext={openTodoContext}
+            />
           ) : selectedFocus ? (
             <FocusWorkspace
               key={selectedFocus.id}

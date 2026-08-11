@@ -1,0 +1,86 @@
+import type {
+  TagSummarySnapshot,
+  TagUseSnapshot
+} from '../../../../shared/contracts'
+import type { ContextualSidebarItemModel } from '@/components/ui/contextual-sidebar'
+import type { FocusWorkspaceDestinationTarget } from '@/features/application/application-navigation'
+
+export interface TagUseRowModel {
+  id: string
+  location: string
+  source: string
+  snippet: string
+  destination: FocusWorkspaceDestinationTarget
+}
+
+export function tagSidebarItems(
+  tags: readonly TagSummarySnapshot[],
+  hideSensitiveContent: boolean
+): ContextualSidebarItemModel[] {
+  return tags.flatMap((tag) => {
+    const visibleCount = tag.useCount - (hideSensitiveContent ? tag.sensitiveUseCount : 0)
+    if (visibleCount <= 0) return []
+    return [{
+      id: tag.name,
+      label: `@${tag.name}`,
+      description: visibleCount === 1 ? '1 use' : `${visibleCount} uses`
+    }]
+  })
+}
+
+function sourceLabel(use: TagUseSnapshot): string {
+  switch (use.source.type) {
+    case 'focus':
+      if (use.source.field === 'title') return 'Focus title'
+      return use.source.field === 'goal' ? 'Goal' : 'Description'
+    case 'thread':
+      return 'Thread title'
+    case 'commitment':
+      return 'Commitment title'
+    case 'update':
+      return 'Update'
+    case 'todo':
+      return 'Todo'
+    case 'note':
+      return use.source.field === 'title' ? 'Note title' : 'Note'
+  }
+}
+
+function locationLabel(use: TagUseSnapshot): string {
+  return [
+    use.context.focus.title,
+    use.context.thread?.title ?? 'Overall',
+    use.context.commitment?.title,
+    use.context.subject?.name
+  ].filter((part): part is string => part !== undefined).join(' › ')
+}
+
+export function tagUseDestination(use: TagUseSnapshot): FocusWorkspaceDestinationTarget {
+  return {
+    focusId: use.context.focus.id,
+    threadId: use.context.thread?.id ?? null,
+    commitmentId: use.context.commitment?.id ?? null,
+    subjectId: use.context.subject?.id ?? null
+  }
+}
+
+export function tagUseRows(
+  uses: readonly TagUseSnapshot[],
+  hideSensitiveContent: boolean
+): TagUseRowModel[] {
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+  return uses
+    .filter((use) => !hideSensitiveContent || !use.effectiveSensitive)
+    .map((use) => ({
+      id: use.id,
+      location: locationLabel(use),
+      source: sourceLabel(use),
+      snippet: use.snippet,
+      destination: tagUseDestination(use)
+    }))
+    .sort((left, right) =>
+      collator.compare(left.location, right.location) ||
+      collator.compare(left.source, right.source) ||
+      collator.compare(left.snippet, right.snippet)
+    )
+}

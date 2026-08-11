@@ -249,6 +249,10 @@ export function registerAppIpc(
   ipcMain.handle(IPC_CHANNELS.listNotes, (_event, parent: NoteParent) =>
     database.domain.notes.list(parent)
   )
+  ipcMain.handle(IPC_CHANNELS.listTags, () => database.domain.tags.list())
+  ipcMain.handle(IPC_CHANNELS.listTagUses, (_event, name: string) =>
+    database.domain.tags.uses(name)
+  )
   ipcMain.handle(
     IPC_CHANNELS.getRichTextDocument,
     (_event, reference: RichTextDocumentReference) =>

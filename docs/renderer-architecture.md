@@ -40,6 +40,9 @@ Persistence-backed state lives in feature hooks:
 - `useTodoOverviewModel` loads the bounded global Todo projection and owns both ordinary and
   per-Subject completion mutations; SQLite has already excluded older completed records before this
   hook receives a snapshot.
+- `useTagsModel` loads the exact-name summary and only the selected tag's bounded occurrence list.
+  It also invalidates those projections when another window commits rich text; tag parsing and
+  hierarchy resolution remain in the main-process repository.
 
 The domain-free `TodoList` receiver owns the disclosure and interaction grammar for a shared Todo.
 Feature presenters provide only data: whether the parent may be edited/deleted/checked, its current
@@ -48,7 +51,7 @@ plain progress children outside the sortable collection and emits ids through th
 it never receives Scope records or decides aggregate completion.
 
 Cross-feature navigation uses the data-only `FocusWorkspaceDestination` contract. The global Todo
-view translates a clicked row into ids, while the Focus workspace atomically restores its own
+and Tags views translate a clicked row into ids, while the Focus workspace atomically restores its own
 contextual-sidebar route and working-context tab. Reusable table and sidebar receivers never see
 domain records or orchestrate each other.
 
