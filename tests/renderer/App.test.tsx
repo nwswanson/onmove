@@ -9,6 +9,7 @@ import type {
   DomainApi,
   FocusSnapshot,
   OnMoveApi,
+  ReviewQueueItemSnapshot,
   RichTextDocumentSnapshot,
   SubjectSnapshot,
   ThreadSnapshot,
@@ -150,6 +151,26 @@ function overviewTodo(
   }
 }
 
+function reviewItem(
+  overrides: Partial<ReviewQueueItemSnapshot> = {}
+): ReviewQueueItemSnapshot {
+  const currentFocus = focus({ id: 1, title: 'Project Atlas' })
+  return {
+    key: 'focus:1',
+    kind: 'focus',
+    focus: currentFocus,
+    thread: null,
+    commitment: null,
+    cell: null,
+    lastReviewDate: null,
+    nextReviewDate: null,
+    state: null,
+    updates: [],
+    commitments: [],
+    ...overrides
+  }
+}
+
 function installApi(
   domainOverrides: Partial<DomainApi> = {},
   apiOverrides: Partial<OnMoveApi> = {}
@@ -252,6 +273,10 @@ function installApi(
     listNotes: vi.fn().mockResolvedValue([]),
     listTags: vi.fn().mockResolvedValue([]),
     listTagUses: vi.fn().mockResolvedValue([]),
+    getReviewOverview: vi.fn().mockResolvedValue({
+      asOf: '2026-08-10',
+      items: []
+    }),
     ...domainOverrides
   }
   const api: OnMoveApi = {
@@ -335,6 +360,129 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: 'Focus' })).not.toBeInTheDocument()
     expect(screen.getByText('No focuses yet')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'New focus' })).toBeEnabled()
+  })
+
+  it('reviews full-width Focus and Thread surfaces without commitment drilldown', async () => {
+    const currentFocus = focus({ id: 4, title: 'Project Atlas', goal: 'Ship the pilot safely' })
+    const currentThread = thread({
+      id: 14,
+      focusId: 4,
+      title: 'Sprint execution',
+      reviewDue: true,
+      nextReviewDate: '2026-08-10'
+    })
+    const related = commitment({
+      id: 24,
+      parent: { type: 'thread', id: 14 },
+      title: 'Improve ticket quality',
+      state: 'yellow'
+    })
+    const pokeThreadReview = vi.fn().mockResolvedValue({
+      ...currentThread,
+      lastReviewDate: '2026-08-10'
+    })
+    installApi({
+      getReviewOverview: vi.fn().mockResolvedValue({
+        asOf: '2026-08-10',
+        items: [
+          reviewItem({
+            key: 'focus:4',
+            focus: currentFocus,
+            commitments: [related]
+          }),
+          reviewItem({
+            key: 'thread:14',
+            kind: 'thread',
+            focus: currentFocus,
+            thread: currentThread,
+            nextReviewDate: '2026-08-10',
+            state: 'yellow',
+            commitments: [related]
+          })
+        ]
+      }),
+      pokeThreadReview
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Review' }))
+    expect(screen.getByRole('button', { name: 'Review' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('heading', { name: 'Review' })).toBeVisible()
+    expect(screen.queryByLabelText('Contextual sidebar')).not.toBeInTheDocument()
+    expect(screen.getByRole('article', { name: 'Focus review: Project Atlas' })).toBeVisible()
+    expect(screen.getByText('Ship the pilot safely')).toBeVisible()
+    expect(screen.getByRole('list', { name: 'Related commitments' })).toHaveTextContent(
+      'Improve ticket quality'
+    )
+    expect(screen.queryByRole('button', { name: /Open commitment/ })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Ignore' }))
+    expect(screen.getByRole('article', { name: 'Thread review: Sprint execution' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Pass along' }))
+    await waitFor(() => expect(pokeThreadReview).toHaveBeenCalledWith(14))
+    expect(await screen.findByRole('heading', { name: 'You’re caught up' })).toBeVisible()
+  })
+
+  it('starts an autosaved Update in the exact review Subject cell before advancing', async () => {
+    const currentFocus = focus({ id: 5, title: 'People program' })
+    const currentThread = thread({ id: 15, focusId: 5, title: 'Team health', reviewDue: true })
+    const currentCommitment = commitment({
+      id: 25,
+      parent: { type: 'thread', id: 15 },
+      title: 'Hold weekly check-ins',
+      cadenceDays: 7,
+      needsUpdate: true
+    })
+    const created = update({
+      id: 35,
+      parent: { type: 'commitment', id: 25 },
+      date: '2026-08-10',
+      observation: 'Initial draft',
+      state: 'none',
+      scope: { scopeId: 51, subjectId: 61 }
+    })
+    const createUpdate = vi.fn().mockResolvedValue(created)
+    const api = installApi({
+      getReviewOverview: vi.fn().mockResolvedValue({
+        asOf: '2026-08-10',
+        items: [reviewItem({
+          key: 'commitment:25:scope:51:subject:61',
+          kind: 'commitment',
+          focus: currentFocus,
+          thread: currentThread,
+          commitment: currentCommitment,
+          cell: { scopeId: 51, subjectId: 61, subject: subject(61, 'Customer Operations') },
+          lastReviewDate: null,
+          nextReviewDate: '2026-08-10',
+          state: 'none'
+        })]
+      }),
+      createUpdate,
+      updateUpdate: vi.fn(async (_id, input) => ({ ...created, ...input }))
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Review' }))
+    expect(screen.getByText('Subject · Customer Operations')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Update' }))
+    await waitFor(() => expect(createUpdate).toHaveBeenCalledWith({
+      parent: { type: 'commitment', id: 25 },
+      date: '2026-08-10',
+      observation: '',
+      state: 'none',
+      sensitive: false,
+      scope: { scopeId: 51, subjectId: 61 }
+    }))
+
+    const observation = await screen.findByRole('textbox', { name: 'Review Update observation' })
+    await user.click(observation)
+    await user.keyboard('Customer sentiment improved')
+    await waitFor(() => expect(api.richText.saveDocument).toHaveBeenCalled())
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Finish update' }))
+    expect(await screen.findByRole('heading', { name: 'You’re caught up' })).toBeVisible()
   })
 
   it('lists Tags in the contextual sidebar and opens each use in its containing screen', async () => {

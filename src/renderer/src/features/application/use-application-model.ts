@@ -20,11 +20,12 @@ export interface ApplicationModel {
   focusStatusSummaries: Readonly<Record<number, StatusSummary | undefined>>
   selectedFocus: FocusSnapshot | null
   selectedFocusId: number | null
-  selectedView: 'todos' | 'tags' | 'focus' | 'settings'
+  selectedView: 'todos' | 'tags' | 'review' | 'focus' | 'settings'
   sensitiveContentHidden: boolean
   enabled: boolean
   goTodos: () => void
   goTags: () => void
+  goReview: () => void
   goSettings: () => void
   selectFocus: (focusId: number) => boolean
   createFocus: (input: CreateFocusInput) => Promise<void>
@@ -48,7 +49,9 @@ export function useApplicationModel(): ApplicationModel {
     Record<number, StatusSummary | undefined>
   >({})
   const [selectedFocusId, setSelectedFocusId] = useState<number | null>(null)
-  const [selectedView, setSelectedView] = useState<'todos' | 'tags' | 'focus' | 'settings'>('todos')
+  const [selectedView, setSelectedView] = useState<
+    'todos' | 'tags' | 'review' | 'focus' | 'settings'
+  >('todos')
   const [sensitiveContentHidden, setSensitiveContentHidden] = useState(false)
 
   useEffect(() => {
@@ -143,6 +146,11 @@ export function useApplicationModel(): ApplicationModel {
   function goTags(): void {
     setSelectedFocusId(null)
     setSelectedView('tags')
+  }
+
+  function goReview(): void {
+    setSelectedFocusId(null)
+    setSelectedView('review')
   }
 
   function goSettings(): void {
@@ -250,6 +258,7 @@ export function useApplicationModel(): ApplicationModel {
     enabled: Boolean(state),
     goTodos,
     goTags,
+    goReview,
     goSettings,
     selectFocus,
     createFocus,

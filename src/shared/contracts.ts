@@ -61,6 +61,7 @@ export const IPC_CHANNELS = {
   listNotes: 'domain:list-notes',
   listTags: 'domain:list-tags',
   listTagUses: 'domain:list-tag-uses',
+  getReviewOverview: 'domain:get-review-overview',
   getRichTextDocument: 'rich-text:get-document',
   openRichTextDocumentWindow: 'rich-text:open-window',
   getRichTextWindowTarget: 'rich-text:get-window-target'
@@ -566,6 +567,35 @@ export interface UpdateSnapshot {
   updatedAt: string
 }
 
+/** Exact Subject cell represented by one review-queue entry. */
+export interface ReviewScopeCellSnapshot extends UpdateScopeCell {
+  subject: SubjectSnapshot
+}
+
+/**
+ * One due review target with enough domain context to render its full working
+ * surface without asking the renderer to reconstruct hierarchy ownership.
+ * Thread and Commitment entries are repeated per due Subject cell.
+ */
+export interface ReviewQueueItemSnapshot {
+  key: string
+  kind: 'focus' | 'thread' | 'commitment'
+  focus: FocusSnapshot
+  thread: ThreadSnapshot | null
+  commitment: CommitmentSnapshot | null
+  cell: ReviewScopeCellSnapshot | null
+  lastReviewDate: string | null
+  nextReviewDate: string | null
+  state: HealthState | null
+  updates: UpdateSnapshot[]
+  commitments: CommitmentSnapshot[]
+}
+
+export interface ReviewOverviewSnapshot {
+  asOf: string
+  items: ReviewQueueItemSnapshot[]
+}
+
 export type NoteParent =
   | { type: 'focus'; id: number }
   | { type: 'thread'; id: number }
@@ -867,6 +897,7 @@ export interface DomainApi {
   listNotes: (parent: NoteParent) => Promise<NoteSnapshot[]>
   listTags: () => Promise<TagSummarySnapshot[]>
   listTagUses: (name: string) => Promise<TagUseSnapshot[]>
+  getReviewOverview: () => Promise<ReviewOverviewSnapshot>
 }
 
 export interface RichTextApi {

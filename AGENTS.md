@@ -6,8 +6,9 @@
 - Keep one macOS-style toolbar across the full window, with the sidebar and main workspace beneath
   it. Do not add view-level breadcrumb bars above the main canvas.
 - Put primary item destinations at the top of the sidebar. `Todos` is selectable and is the default
-  aggregate workspace; `Tags` is its peer destination immediately below it; `Focuses` is a
-  section label with focus records and the `New focus` action exposed directly beneath it.
+  aggregate workspace; `Tags` and `Review` are its peer destinations immediately below it;
+  `Focuses` is a section label with focus records and the `New focus` action exposed directly
+  beneath it.
 - Focus records with `active` or `paused` status appear in the selector. Paused focuses remain
   selectable but visually muted; `cancelled` and `done` focuses remain in SQLite but are filtered
   from navigation.
@@ -285,6 +286,18 @@ and do not rely on color alone to communicate selection or status.
   nested Commitment, and Subject context restore atomically. Sensitive visibility remains a
   renderer collection rule: hide sensitive-only sidebar tags and sensitive use rows, then let the
   contextual navigation reconcile an invalid selection to its first remaining item.
+- Build Review as a full-width, single-item catch-up queue with no contextual sidebar. Review active
+  Focuses whose `needsReview` flag is enabled, due active Threads, and active Commitments whose
+  Update cadence is due. Render direct evidence and child Commitments as non-navigating reference
+  rows; a Focus or Thread must never drill into a Commitment from Review. `Ignore` dismisses only the
+  current in-memory queue entry, `Pass along` calls the aggregate's typed `pokeReview` operation and
+  advances the session, and `Update` immediately creates a blank direct Update before exposing its
+  autosaved editor. The editor's finish action advances the session; it is not a Save button.
+- Preserve scoped review obligations as separate queue entries. A bounded Thread or Commitment
+  contributes one entry per due effective Subject cell, and Review-created Updates must use that
+  exact Scope/Subject cell. An aggregate Thread poke may advance the current queue session but must
+  not be represented as Subject evidence or clear another Subject's durable due state. Apply the
+  same hierarchy-cascading sensitive visibility rule used by other renderer collections.
 
 ## Data model
 
@@ -306,6 +319,9 @@ and do not rely on color alone to communicate selection or status.
   projections. Do not add writable columns or UI mutations for those derived values. The nullable
   `review_poked_on` evidence field is the deliberate exception: mutate it only through each
   aggregate's typed `pokeReview` operation, never as a caller-supplied review projection.
+- Return Review through one named, bounded overview projection. The model owns active-ancestor and
+  due filtering, hierarchy context, exact Scope/Subject cells, direct Updates, and direct child
+  Commitments; the renderer must not rebuild review eligibility by fetching every aggregate.
 - Order Commitment Updates by their recorded date without capping them at today. A future-dated
   Update immediately supplies the Commitment's state and cadence baseline.
 - Derive every aggregate `lastReviewDate` as the later of its persisted explicit review poke and its

@@ -266,6 +266,12 @@ describe('registerAppIpc', () => {
             effectiveSensitive: false
           }])
         },
+        reviews: {
+          getOverview: vi.fn(() => ({
+            asOf: '2026-08-10',
+            items: [{ key: 'focus:12', kind: 'focus', focus: { id: 12 } }]
+          }))
+        },
         richTextDocuments: {
           get: vi.fn((reference) => ({
             reference,
@@ -506,6 +512,10 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.listTagUses)?.(undefined, 'launch')).toMatchObject([
       { id: 'focus:12:goal:launch', name: 'launch', snippet: 'Ship @Launch' }
     ])
+    expect(await handlers.get(IPC_CHANNELS.getReviewOverview)?.()).toMatchObject({
+      asOf: '2026-08-10',
+      items: [{ key: 'focus:12', kind: 'focus' }]
+    })
     expect(await handlers.get(IPC_CHANNELS.getRichTextDocument)?.(undefined, {
       type: 'focus', id: 12, field: 'goal'
     })).toMatchObject({ value: 'Ship', revision: 1 })

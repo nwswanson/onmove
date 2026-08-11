@@ -139,6 +139,79 @@ test('sorts all current Todos and bounds recently completed work before renderin
   }
 })
 
+test('reviews due work through typed pokes and autosaved Updates', async () => {
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-review-e2e-'))
+  let application: ElectronApplication | undefined
+  const createdAt = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000)
+  const seed = new AppDatabase(join(userDataDirectory, 'onmove.sqlite3'))
+  const currentFocus = seed.domain.focuses.create({
+    title: 'Project Atlas',
+    needsReview: false
+  })
+  const currentThread = seed.domain.threads.create({
+    focusId: currentFocus.id,
+    title: 'Sprint execution',
+    reviewFrequencyDays: 1
+  }, createdAt)
+  const currentCommitment = seed.domain.commitments.create({
+    parent: { type: 'thread', id: currentThread.id },
+    type: 'ongoing',
+    title: 'Improve ticket quality',
+    cadenceDays: 1
+  }, createdAt)
+  seed.close()
+
+  try {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    const window = await application.firstWindow()
+
+    await window.getByRole('button', { name: 'Review' }).click()
+    await expect(window.getByRole('heading', { name: 'Review', exact: true })).toBeVisible()
+    await expect(window.getByLabel('Contextual sidebar')).toHaveCount(0)
+    await expect(window.getByRole('article', {
+      name: 'Thread review: Sprint execution'
+    })).toBeVisible()
+
+    await window.getByRole('button', { name: 'Pass along' }).click()
+    await expect(window.getByRole('article', {
+      name: 'Commitment review: Improve ticket quality'
+    })).toBeVisible()
+    await window.getByRole('button', { name: 'Update' }).click()
+    const observation = window.getByRole('textbox', { name: 'Review Update observation' })
+    await observation.fill('Ticket examples are now included')
+    await window.getByRole('button', { name: 'Finish update' }).click()
+    await expect(window.getByRole('heading', { name: 'You’re caught up' })).toBeVisible()
+
+    await expect.poll(() => {
+      const stored = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
+        readOnly: true
+      })
+      const threadRow = stored.prepare(
+        'SELECT review_poked_on AS reviewPokedOn FROM threads WHERE id = ?'
+      ).get(currentThread.id) as { reviewPokedOn: string | null }
+      const updateRow = stored.prepare(
+        'SELECT observation, commitment_id AS commitmentId FROM updates WHERE commitment_id = ?'
+      ).get(currentCommitment.id) as { observation: string; commitmentId: number } | undefined
+      stored.close()
+      return { threadRow, updateRow }
+    }).toMatchObject({
+      threadRow: { reviewPokedOn: expect.any(String) },
+      updateRow: {
+        commitmentId: currentCommitment.id,
+        observation: expect.stringContaining('Ticket examples are now included')
+      }
+    })
+  } finally {
+    await application?.close()
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
 test('persists and visually restores text tags in compact and rich-text fields', async () => {
   const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-text-tags-e2e-'))
   const databasePath = join(userDataDirectory, 'onmove.sqlite3')

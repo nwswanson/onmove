@@ -425,6 +425,7 @@ describe('Thread, Commitment, and Update models', () => {
   })
 
   it('plans and atomically confirms custom Subject widening while retaining child evidence', () => {
+    const now = new Date('2026-08-10T12:00:00.000Z')
     const focus = database!.domain.focuses.create({ title: 'Delivery' })
     const source = database!.domain.threads.create({
       focusId: focus.id,
@@ -438,7 +439,8 @@ describe('Thread, Commitment, and Update models', () => {
     })
     const sourceScope = database!.domain.threadScopes.addSubject(
       source.id,
-      { name: 'Platform Team' }
+      { name: 'Platform Team' },
+      now
     )
     const subject = sourceScope.subjects[0]
     const commitment = database!.domain.commitments.create({

@@ -38,6 +38,7 @@ import { FocusWorkspace } from '@/features/focus/focus-workspace'
 import { SettingsWorkspace } from '@/features/settings/settings-workspace'
 import { TodoWorkspace } from '@/features/todos/todo-workspace'
 import { TagsWorkspace } from '@/features/tags/tags-workspace'
+import { ReviewWorkspace } from '@/features/review/review-workspace'
 import type { ThreadSnapshot } from '../../shared/contracts'
 
 const SIDEBAR_MIN = 208
@@ -98,11 +99,12 @@ function AppToolbar({
 interface AppSidebarProps {
   focusItems: readonly SidebarNavigationItemModel[]
   selectedFocusId: string | null
-  selectedView: 'todos' | 'tags' | 'focus' | 'settings'
+  selectedView: 'todos' | 'tags' | 'review' | 'focus' | 'settings'
   enabled: boolean
   width: number
   onTodos: () => void
   onTags: () => void
+  onReview: () => void
   onSettings: () => void
   onSelectFocus: (focusId: string) => void
   onNewFocus: () => void
@@ -117,14 +119,16 @@ function AppSidebar({
   width,
   onTodos,
   onTags,
+  onReview,
   onSettings,
   onSelectFocus,
   onNewFocus,
   onShowData
 }: AppSidebarProps): React.JSX.Element {
-  const selectedItemId = selectedView === 'todos' || selectedView === 'tags'
-    ? selectedView
-    : null
+  const selectedItemId =
+    selectedView === 'todos' || selectedView === 'tags' || selectedView === 'review'
+      ? selectedView
+      : null
 
   return (
     <Sidebar aria-label="Primary sidebar" style={{ width }}>
@@ -151,10 +155,15 @@ function AppSidebar({
           <SidebarNavigation
             items={[
               { id: 'todos', label: 'Todos', icon: 'todos' },
-              { id: 'tags', label: 'Tags', icon: 'tags' }
+              { id: 'tags', label: 'Tags', icon: 'tags' },
+              { id: 'review', label: 'Review', icon: 'review' }
             ]}
             selectedItemId={selectedItemId}
-            onSelect={(itemId) => itemId === 'tags' ? onTags() : onTodos()}
+            onSelect={(itemId) => {
+              if (itemId === 'tags') onTags()
+              else if (itemId === 'review') onReview()
+              else onTodos()
+            }}
           />
         </SidebarGroup>
 
@@ -238,9 +247,11 @@ export function App(): React.JSX.Element {
   )
   const toolbarTitle = application.selectedView === 'settings'
     ? 'Settings'
-    : application.selectedView === 'tags'
-      ? 'Tags'
-      : (selectedFocus?.title ?? 'Todos')
+    : application.selectedView === 'review'
+      ? 'Review'
+      : application.selectedView === 'tags'
+        ? 'Tags'
+        : (selectedFocus?.title ?? 'Todos')
   const contextDrawer = {
     open: contextDrawerState.open,
     pinnedAdapter: contextDrawerState.pinnedAdapter,
@@ -325,6 +336,10 @@ export function App(): React.JSX.Element {
               setFocusDestination(null)
               application.goTags()
             }}
+            onReview={() => {
+              setFocusDestination(null)
+              application.goReview()
+            }}
             onSettings={application.goSettings}
             onSelectFocus={(focusId) => {
               setFocusDestination(null)
@@ -352,6 +367,11 @@ export function App(): React.JSX.Element {
               contextDrawer={contextDrawer}
               hideSensitiveContent={application.sensitiveContentHidden}
               onOpenContext={openTodoContext}
+            />
+          ) : application.selectedView === 'review' ? (
+            <ReviewWorkspace
+              contextDrawer={contextDrawer}
+              hideSensitiveContent={application.sensitiveContentHidden}
             />
           ) : selectedFocus ? (
             <FocusWorkspace
