@@ -122,9 +122,9 @@ function TodoRow({
         transition
       }}
       className={cn(
-        'relative rounded-xl border border-border/80 bg-card/55 shadow-xs will-change-transform',
-        item.overdue && 'border-destructive/55 bg-destructive/5',
-        isDragging && 'z-10 border-dashed border-primary/80 bg-primary/10 shadow-none'
+        'relative bg-transparent will-change-transform transition-colors',
+        item.overdue && 'bg-destructive/5',
+        isDragging && 'z-10 bg-primary/10 ring-2 ring-inset ring-primary/70'
       )}
     >
       {isDragging && (
@@ -134,7 +134,7 @@ function TodoRow({
         </div>
       )}
       <div className={cn(
-        'flex min-w-0 flex-wrap items-center gap-2 p-2.5',
+        'flex min-w-0 flex-wrap items-center gap-1.5 px-2 py-1.5',
         isDragging && 'invisible'
       )}>
         {draggable ? (
@@ -166,7 +166,10 @@ function TodoRow({
         <TaggedInput
           aria-label="Todo name"
           value={name}
-          className={cn('min-w-44 flex-1', item.done && 'text-muted-foreground line-through')}
+          className={cn(
+            'h-8 min-w-44 flex-1',
+            item.done && 'text-muted-foreground line-through'
+          )}
           disabled={saving || item.canEdit === false}
           onChange={(event) => setName(event.target.value)}
           onBlur={() => void saveName()}
@@ -179,7 +182,7 @@ function TodoRow({
           }}
         />
         {item.contextLabel && (
-          <span className="rounded-full border border-primary/45 bg-primary/15 px-2 py-1 text-[0.6875rem] font-semibold">
+          <span className="rounded-full border border-primary/45 bg-primary/15 px-2 py-0.5 text-[0.6875rem] font-semibold">
             {item.contextLabel}
           </span>
         )}
@@ -190,7 +193,7 @@ function TodoRow({
             aria-label="Todo due date"
             value={dueDate}
             disabled={saving || item.canEdit === false}
-            className={cn('w-36', item.overdue && 'border-destructive text-destructive')}
+            className={cn('h-8 w-36', item.overdue && 'border-destructive text-destructive')}
             onChange={(event) => setDueDate(event.target.value)}
             onBlur={() => void saveDueDate()}
           />
@@ -203,14 +206,14 @@ function TodoRow({
             type="button"
             variant="ghost"
             size="icon"
-            className="size-9 text-muted-foreground hover:text-destructive"
+            className="size-8 text-muted-foreground hover:text-destructive"
             aria-label={`Delete ${item.name}`}
             disabled={saving}
             onClick={() => void remove()}
           >
             <Trash2 aria-hidden="true" />
           </Button>
-        ) : <span className="size-9 shrink-0" aria-hidden="true" />}
+        ) : <span className="size-8 shrink-0" aria-hidden="true" />}
       </div>
       {(item.subjectCompletions?.length ?? 0) > 0 && (
         <div className="border-t border-border/65 px-3 py-2">
@@ -268,7 +271,7 @@ function TodoDragPreview({ item }: { item: TodoListItemModel }): React.JSX.Eleme
     <div
       aria-hidden="true"
       className={cn(
-        'flex w-full min-w-0 rotate-[0.35deg] items-center gap-2 rounded-xl border border-primary/70 bg-card p-2.5 shadow-2xl',
+        'flex w-full min-w-0 rotate-[0.35deg] items-center gap-1.5 rounded-lg border border-primary/70 bg-card p-2 shadow-2xl',
         item.overdue && 'border-destructive/70 bg-destructive/5'
       )}
     >
@@ -286,7 +289,7 @@ function TodoDragPreview({ item }: { item: TodoListItemModel }): React.JSX.Eleme
         <TaggedText value={item.name} />
       </span>
       {item.contextLabel && (
-        <span className="rounded-full border border-primary/45 bg-primary/15 px-2 py-1 text-[0.6875rem] font-semibold">
+        <span className="rounded-full border border-primary/45 bg-primary/15 px-2 py-0.5 text-[0.6875rem] font-semibold">
           {item.contextLabel}
         </span>
       )}
@@ -301,7 +304,7 @@ function TodoDragPreview({ item }: { item: TodoListItemModel }): React.JSX.Eleme
       {item.overdue && (
         <span className="text-xs font-semibold text-destructive">Overdue</span>
       )}
-      <span className="size-9 shrink-0" />
+      <span className="size-8 shrink-0" />
     </div>
   )
 }
@@ -398,7 +401,10 @@ function TodoSortableCollection({
         onDragEnd={handleDragEnd}
       >
         <SortableContext items={displayedItemIds} strategy={verticalListSortingStrategy}>
-          <ul className="space-y-2" aria-label={ariaLabel}>
+          <ul
+            className="divide-y divide-border/65 overflow-hidden rounded-xl border border-border/80 bg-card/45 shadow-xs"
+            aria-label={ariaLabel}
+          >
             {displayedItems.map((item) => (
               <TodoRow
                 key={item.id}

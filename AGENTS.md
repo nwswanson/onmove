@@ -220,6 +220,9 @@ and do not rely on color alone to communicate selection or status.
   receiver owns inline creation, editable name/due date/done controls, overdue presentation, delete,
   and dnd-kit sortable ordering. Overdue means incomplete with a due date before the current local
   date; always show the `Overdue` text in destructive color instead of relying on color alone.
+- Present each Todo collection as one rounded, bordered container with compact divided rows. Do not
+  wrap every ordinary Todo in its own rounded card or pill; row-level backgrounds are reserved for
+  overdue, dragging, and other semantic interaction states.
 - Todo dragging begins only from the row grip and supports pointer and keyboard sensors. Use a
   complete-row `DragOverlay` and reflow the list around a visible insertion placeholder during
   sorting; never make the editable row or its form controls draggable.

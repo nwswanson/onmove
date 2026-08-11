@@ -46,6 +46,9 @@ describe('TodoList', () => {
     )
 
     const overdueRow = screen.getByDisplayValue('Overdue review').closest('[data-todo-id]')
+    const todoContainer = screen.getByRole('list', { name: 'Thread Todos sortable list' })
+    expect(todoContainer).toHaveClass('rounded-xl', 'divide-y')
+    expect(overdueRow).not.toHaveClass('rounded-xl')
     expect(overdueRow).toHaveAttribute('data-overdue', 'true')
     expect(overdueRow).not.toHaveAttribute('draggable')
     expect(within(overdueRow as HTMLElement).getByLabelText('Drag Overdue review'))
