@@ -616,7 +616,7 @@ export interface TagUseContextSnapshot {
   subject: SubjectSnapshot | null
 }
 
-/** One exact literal occurrence, projected to a compact plain-text snippet. */
+/** One canonical tag use per field, projected to a compact plain-text snippet. */
 export interface TagUseSnapshot {
   id: string
   name: string
@@ -626,7 +626,7 @@ export interface TagUseSnapshot {
   effectiveSensitive: boolean
 }
 
-/** Exact spelling is identity; sensitive counts let the renderer own visibility. */
+/** Lowercase canonical identity; sensitive counts let the renderer own visibility. */
 export interface TagSummarySnapshot {
   name: string
   useCount: number

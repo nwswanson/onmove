@@ -108,12 +108,15 @@ a Lexical `tag` node so its visual identity survives save, reload, detached-wind
 and read-only rendering. Legacy plain text and older rich-text nodes are recognized lazily by the
 same parser; no destructive migration is required.
 
-Tags intentionally remain a derived model rather than a relational registry. Exact spelling is
-identity (`@Launch` and `@launch` are distinct), and there is no canonical tag row to synchronize.
+Tags intentionally remain a derived model rather than a relational registry. Identity is Unicode
+lowercase (`@Launch` and `@launch` both resolve to `@launch`) without rewriting the stored text, and
+there is no canonical tag row to synchronize.
 `TagRepository` projects current Focus title/description/goal, Thread and Commitment titles, Update
 observation, Todo name, and Note title/content. Rich-text envelopes are reduced to plain text before
-parsing. One query returns exact-name summaries and counts; a second returns compact occurrences for
-one selected name, including the hierarchy ids needed to open its containing screen.
+parsing. Repeated instances of the same canonical tag in one field produce one use, whose snippet is
+centered on the first instance. One query returns canonical-name summaries and per-field counts; a
+second returns compact field uses for one selected name, including the hierarchy ids needed to open
+its containing screen.
 
 This derived design makes edits, imports, moves, and cascade deletions observable immediately. It
 also avoids stale backreferences because the stored text remains the only source of truth. Each use

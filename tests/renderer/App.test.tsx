@@ -340,8 +340,8 @@ describe('App', () => {
   it('lists Tags in the contextual sidebar and opens each use in its containing screen', async () => {
     const current = focus({ id: 4, title: 'Project @Atlas' })
     const listTagUses = vi.fn().mockResolvedValue([{
-      id: 'focus:4:goal:0',
-      name: 'Launch',
+      id: 'focus:4:goal:launch',
+      name: 'launch',
       source: { type: 'focus' as const, id: 4, field: 'goal' as const },
       context: {
         focus: { id: 4, title: 'Project @Atlas', sensitive: false },
@@ -355,8 +355,8 @@ describe('App', () => {
     const api = installApi({
       listFocuses: vi.fn().mockResolvedValue([current]),
       listTags: vi.fn().mockResolvedValue([
-        { name: 'Launch', useCount: 1, sensitiveUseCount: 0 },
-        { name: 'Private', useCount: 1, sensitiveUseCount: 1 }
+        { name: 'launch', useCount: 1, sensitiveUseCount: 0 },
+        { name: 'private', useCount: 1, sensitiveUseCount: 1 }
       ]),
       listTagUses
     })
@@ -366,15 +366,15 @@ describe('App', () => {
     await user.click(await screen.findByRole('button', { name: 'Tags' }))
     expect(screen.getByRole('button', { name: 'Tags' })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByLabelText('Contextual sidebar')).toBeVisible()
-    expect(await screen.findByRole('button', { name: '@Launch' })).toHaveAttribute(
+    expect(await screen.findByRole('button', { name: '@launch' })).toHaveAttribute(
       'aria-current',
       'page'
     )
-    expect(screen.getByRole('button', { name: '@Private' })).toBeVisible()
-    const table = await screen.findByRole('table', { name: 'Uses of @Launch' })
+    expect(screen.getByRole('button', { name: '@private' })).toBeVisible()
+    const table = await screen.findByRole('table', { name: 'Uses of @launch' })
     expect(table).toHaveTextContent('Coordinate the @Launch review without serialized editor data')
     expect(within(table).getByText('@Launch')).toHaveAttribute('data-text-tag', 'true')
-    expect(listTagUses).toHaveBeenCalledWith('Launch')
+    expect(listTagUses).toHaveBeenCalledWith('launch')
 
     await user.click(within(table).getByRole('link', { name: /Project @Atlas/ }))
     expect(await screen.findByRole('heading', { name: 'Project @Atlas' })).toBeVisible()
@@ -643,19 +643,19 @@ describe('App', () => {
       name,
       source: { type: 'focus' as const, id: 1, field: 'goal' as const },
       context: {
-        focus: { id: 1, title: 'Project Atlas', sensitive: name === 'Private' },
+        focus: { id: 1, title: 'Project Atlas', sensitive: name === 'private' },
         thread: null,
         commitment: null,
         subject: null
       },
       snippet: `Review @${name}`,
-      effectiveSensitive: name === 'Private'
+      effectiveSensitive: name === 'private'
     }])
     installApi(
       {
         listTags: vi.fn().mockResolvedValue([
-          { name: 'Public', useCount: 1, sensitiveUseCount: 0 },
-          { name: 'Private', useCount: 1, sensitiveUseCount: 1 }
+          { name: 'public', useCount: 1, sensitiveUseCount: 0 },
+          { name: 'private', useCount: 1, sensitiveUseCount: 1 }
         ]),
         listTagUses
       },
@@ -670,17 +670,17 @@ describe('App', () => {
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: 'Tags' }))
-    await user.click(await screen.findByRole('button', { name: '@Private' }))
-    expect(await screen.findByRole('table', { name: 'Uses of @Private' })).toBeVisible()
+    await user.click(await screen.findByRole('button', { name: '@private' }))
+    expect(await screen.findByRole('table', { name: 'Uses of @private' })).toBeVisible()
 
     act(() => visibilityListener?.(true))
 
-    expect(screen.queryByRole('button', { name: '@Private' })).not.toBeInTheDocument()
-    expect(await screen.findByRole('button', { name: '@Public' })).toHaveAttribute(
+    expect(screen.queryByRole('button', { name: '@private' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '@public' })).toHaveAttribute(
       'aria-current',
       'page'
     )
-    expect(await screen.findByRole('table', { name: 'Uses of @Public' })).toBeVisible()
+    expect(await screen.findByRole('table', { name: 'Uses of @public' })).toBeVisible()
   })
 
   it('filters sensitive descendants and walks a hidden Commitment route to its visible parent', async () => {

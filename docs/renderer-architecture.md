@@ -40,7 +40,7 @@ Persistence-backed state lives in feature hooks:
 - `useTodoOverviewModel` loads the bounded global Todo projection and owns both ordinary and
   per-Subject completion mutations; SQLite has already excluded older completed records before this
   hook receives a snapshot.
-- `useTagsModel` loads the exact-name summary and only the selected tag's bounded occurrence list.
+- `useTagsModel` loads the canonical-name summary and only the selected tag's bounded field-use list.
   It also invalidates those projections when another window commits rich text; tag parsing and
   hierarchy resolution remain in the main-process repository.
 

@@ -9,7 +9,7 @@ import {
 function use(overrides: Partial<TagUseSnapshot> = {}): TagUseSnapshot {
   return {
     id: 'update:30:observation:0',
-    name: 'Launch',
+    name: 'launch',
     source: { type: 'update', id: 30, field: 'observation' },
     context: {
       focus: { id: 1, title: 'Project Atlas', sensitive: false },
@@ -35,16 +35,16 @@ function use(overrides: Partial<TagUseSnapshot> = {}): TagUseSnapshot {
 describe('Tags presenters', () => {
   it('projects visible counts into receiver-owned contextual rows', () => {
     const summaries: TagSummarySnapshot[] = [
-      { name: 'Launch', useCount: 4, sensitiveUseCount: 2 },
-      { name: 'Private', useCount: 1, sensitiveUseCount: 1 }
+      { name: 'launch', useCount: 4, sensitiveUseCount: 2 },
+      { name: 'private', useCount: 1, sensitiveUseCount: 1 }
     ]
 
     expect(tagSidebarItems(summaries, false)).toEqual([
-      { id: 'Launch', label: '@Launch', description: '4 uses' },
-      { id: 'Private', label: '@Private', description: '1 use' }
+      { id: 'launch', label: '@launch', description: '4 uses' },
+      { id: 'private', label: '@private', description: '1 use' }
     ])
     expect(tagSidebarItems(summaries, true)).toEqual([
-      { id: 'Launch', label: '@Launch', description: '2 uses' }
+      { id: 'launch', label: '@launch', description: '2 uses' }
     ])
   })
 

@@ -34,7 +34,7 @@ describe('Tag model', () => {
     rmSync(directory, { recursive: true, force: true })
   })
 
-  it('derives exact tag occurrences and hierarchy links from every user-authored record kind', () => {
+  it('derives canonical tag uses and hierarchy links from every user-authored record kind', () => {
     const focus = database!.domain.focuses.create({
       title: 'Project @Atlas',
       description: richText('Coordinate @Launch across the portfolio'),
@@ -66,11 +66,11 @@ describe('Tag model', () => {
     )
 
     expect(database!.domain.tags.list()).toEqual([
-      { name: 'Atlas', useCount: 1, sensitiveUseCount: 0 },
-      { name: 'Launch', useCount: 7, sensitiveUseCount: 4 }
+      { name: 'atlas', useCount: 1, sensitiveUseCount: 0 },
+      { name: 'launch', useCount: 7, sensitiveUseCount: 4 }
     ])
 
-    const uses = database!.domain.tags.uses('Launch')
+    const uses = database!.domain.tags.uses('launch')
     expect(uses).toHaveLength(7)
     expect(uses.map(({ source }) => source)).toEqual(expect.arrayContaining([
       { type: 'focus', id: focus.id, field: 'description' },
@@ -92,7 +92,7 @@ describe('Tag model', () => {
     })
   })
 
-  it('keeps spelling distinct, emits one bounded plain snippet per occurrence, and follows edits', () => {
+  it('normalizes case, emits one bounded plain use per field, and follows edits', () => {
     const longContext = `${'before '.repeat(40)}@Launch ${'after '.repeat(40)}`
     const focus = database!.domain.focuses.create({
       title: '@Launch and @launch',
@@ -100,14 +100,18 @@ describe('Tag model', () => {
     })
 
     const launchUses = database!.domain.tags.uses('Launch')
-    expect(launchUses).toHaveLength(3)
+    expect(launchUses).toHaveLength(2)
+    expect(launchUses.every(({ name }) => name === 'launch')).toBe(true)
     expect(launchUses.every(({ snippet }) => !snippet.includes(RICH_TEXT_PREFIX))).toBe(true)
     expect(launchUses.every(({ snippet }) => Array.from(snippet).length <= 182)).toBe(true)
-    expect(database!.domain.tags.uses('launch')).toHaveLength(1)
+    expect(database!.domain.tags.uses('launch')).toEqual(launchUses)
+    expect(database!.domain.tags.list()).toEqual([
+      { name: 'launch', useCount: 2, sensitiveUseCount: 0 }
+    ])
 
     database!.domain.focuses.requireModel(focus.id).update({ title: 'Project ready' })
     expect(database!.domain.tags.list()).toEqual([
-      { name: 'Launch', useCount: 2, sensitiveUseCount: 0 }
+      { name: 'launch', useCount: 1, sensitiveUseCount: 0 }
     ])
   })
 

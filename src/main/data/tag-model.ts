@@ -145,14 +145,15 @@ function hierarchySensitive(row: HierarchyRow, sourceSensitive = false): boolean
   ].some(Boolean)
 }
 
-function assertTagName(name: string): void {
+function canonicalTagName(name: string): string {
   if (typeof name !== 'string' || name.length === 0 || name.trim() !== name) {
     throw new ModelValidationError('tag name must be a non-empty alphanumeric identifier')
   }
   const matches = findTextTags(`@${name}`)
-  if (matches.length !== 1 || matches[0].name !== name || matches[0].value !== `@${name}`) {
+  if (matches.length !== 1 || matches[0].value !== `@${name}`) {
     throw new ModelValidationError('tag name must contain only Unicode letters and numbers')
   }
+  return matches[0].name
 }
 
 function normalizedPlainText(record: TaggableRecord): string {
@@ -201,26 +202,26 @@ export class TagRepository {
   }
 
   uses(name: string): TagUseSnapshot[] {
-    assertTagName(name)
-    return this.projectUses(name)
+    return this.projectUses(canonicalTagName(name))
   }
 
   private projectUses(onlyName?: string): TagUseSnapshot[] {
     const uses: TagUseSnapshot[] = []
     for (const record of this.records()) {
       const plainText = normalizedPlainText(record)
-      let occurrence = 0
+      const seenNames = new Set<string>()
       for (const match of findTextTags(plainText)) {
+        if (seenNames.has(match.name)) continue
+        seenNames.add(match.name)
         if (onlyName !== undefined && match.name !== onlyName) continue
         uses.push({
-          id: `${record.source.type}:${record.source.id}:${record.source.field}:${occurrence}`,
+          id: `${record.source.type}:${record.source.id}:${record.source.field}:${match.name}`,
           name: match.name,
           source: structuredClone(record.source),
           context: structuredClone(record.context),
           snippet: tagSnippet(plainText, match),
           effectiveSensitive: record.effectiveSensitive
         })
-        occurrence += 1
       }
     }
     return uses

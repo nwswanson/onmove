@@ -257,10 +257,10 @@ describe('registerAppIpc', () => {
           list: vi.fn(() => [{ id: 81, title: 'Default', content: '' }])
         },
         tags: {
-          list: vi.fn(() => [{ name: 'Launch', useCount: 2, sensitiveUseCount: 0 }]),
+          list: vi.fn(() => [{ name: 'launch', useCount: 2, sensitiveUseCount: 0 }]),
           uses: vi.fn(() => [{
-            id: 'focus:12:goal:0',
-            name: 'Launch',
+            id: 'focus:12:goal:launch',
+            name: 'launch',
             source: { type: 'focus', id: 12, field: 'goal' },
             snippet: 'Ship @Launch',
             effectiveSensitive: false
@@ -501,10 +501,10 @@ describe('registerAppIpc', () => {
       type: 'focus', id: 12
     })).toEqual([{ id: 81, title: 'Default', content: '' }])
     expect(await handlers.get(IPC_CHANNELS.listTags)?.()).toEqual([
-      { name: 'Launch', useCount: 2, sensitiveUseCount: 0 }
+      { name: 'launch', useCount: 2, sensitiveUseCount: 0 }
     ])
-    expect(await handlers.get(IPC_CHANNELS.listTagUses)?.(undefined, 'Launch')).toMatchObject([
-      { id: 'focus:12:goal:0', name: 'Launch', snippet: 'Ship @Launch' }
+    expect(await handlers.get(IPC_CHANNELS.listTagUses)?.(undefined, 'launch')).toMatchObject([
+      { id: 'focus:12:goal:launch', name: 'launch', snippet: 'Ship @Launch' }
     ])
     expect(await handlers.get(IPC_CHANNELS.getRichTextDocument)?.(undefined, {
       type: 'focus', id: 12, field: 'goal'

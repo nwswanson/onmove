@@ -185,7 +185,7 @@ test('persists and visually restores text tags in compact and rich-text fields',
     )
 
     const goal = window.getByLabel('Goal')
-    await goal.fill('Review @Launch2')
+    await goal.fill('Review @Launch2 and revisit @LAUNCH2')
     await expect(goal.getByText('@Launch2', { exact: true }))
       .toHaveAttribute('data-text-tag', 'true')
     await expect.poll(() => storedText().goal).toContain('"type":"tag"')
@@ -204,12 +204,12 @@ test('persists and visually restores text tags in compact and rich-text fields',
 
     await window.getByRole('button', { name: 'Tags', exact: true }).click()
     await expect(window.getByRole('complementary', { name: 'Contextual sidebar' })).toBeVisible()
-    await expect(window.getByRole('button', { name: '@Atlas2', exact: true })).toBeVisible()
-    await window.getByRole('button', { name: '@Launch2', exact: true }).click()
-    const uses = window.getByRole('table', { name: 'Uses of @Launch2' })
+    await expect(window.getByRole('button', { name: '@atlas2', exact: true })).toBeVisible()
+    await window.getByRole('button', { name: '@launch2', exact: true }).click()
+    const uses = window.getByRole('table', { name: 'Uses of @launch2' })
     await expect(uses.locator('tbody tr')).toHaveCount(2)
     await expect(uses).toContainText('Coordinate @Launch2 readiness')
-    await expect(uses).toContainText('Review @Launch2')
+    await expect(uses).toContainText('Review @Launch2 and revisit @LAUNCH2')
     await expect(uses).not.toContainText('onmove-rich-text:1:')
 
     const goalUse = uses.locator('tbody tr').filter({ hasText: 'Review @Launch2' })

@@ -15,12 +15,14 @@ describe('durable text tags', () => {
     expect(findTextTags(
       '@Alpha2, @123 @team-health @team_name person@example.com @@double and (@Final).'
     )).toEqual([
-      { value: '@Alpha2', name: 'Alpha2', start: 0, end: 7 },
+      { value: '@Alpha2', name: 'alpha2', start: 0, end: 7 },
       { value: '@123', name: '123', start: 9, end: 13 },
-      { value: '@Final', name: 'Final', start: 71, end: 77 }
+      { value: '@Final', name: 'final', start: 71, end: 77 }
     ])
     expect(findTextTags('@Équipe2 and @東京3').map(({ value }) => value))
       .toEqual(['@Équipe2', '@東京3'])
+    expect(findTextTags('@Équipe2 @İ').map(({ name }) => name))
+      .toEqual(['équipe2', 'i'])
   })
 
   it('renders valid tokens visually without changing their text', () => {

@@ -1,7 +1,7 @@
 export interface TextTagMatch {
   /** The complete durable token, including its leading @. */
   value: string
-  /** The alphanumeric identifier without its leading @. */
+  /** The canonical lowercase identifier without its leading @. */
   name: string
   start: number
   end: number
@@ -13,6 +13,13 @@ export interface TextTagMatch {
 // styling only a misleading prefix.
 const TEXT_TAG_PATTERN = /(^|[^\p{L}\p{N}@])(@[\p{L}\p{N}]+)(?![\p{L}\p{N}_-])/gu
 
+/** Unicode lowercase while keeping the canonical identifier alphanumeric. */
+export function canonicalTextTagName(value: string): string {
+  return Array.from(value, (character) =>
+    character.toLowerCase().replace(/\p{M}/gu, '')
+  ).join('')
+}
+
 /** Finds every durable @tag token without assigning domain identity or links. */
 export function findTextTags(value: string): TextTagMatch[] {
   const matches: TextTagMatch[] = []
@@ -22,7 +29,7 @@ export function findTextTags(value: string): TextTagMatch[] {
     const start = match.index + (match[1]?.length ?? 0)
     matches.push({
       value: token,
-      name: token.slice(1),
+      name: canonicalTextTagName(token.slice(1)),
       start,
       end: start + token.length
     })

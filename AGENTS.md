@@ -141,8 +141,9 @@ and do not rely on color alone to communicate selection or status.
   continuations instead of styling a misleading prefix. Rich text stores recognized tokens as
   Lexical `tag` nodes; compact user-authored strings keep the literal token and use `TaggedInput` /
   `TaggedText` for the same deep-blue visual treatment. Dates, numbers, URLs, Scope Subject names,
-  and other structured identifiers remain ordinary controls. Exact spelling is tag identity, so
-  `@Launch` and `@launch` remain distinct. Tags have no persisted database registry; derive the
+  and other structured identifiers remain ordinary controls. Canonicalize tag identity to Unicode
+  lowercase, so `@Launch` and `@launch` resolve to one `@launch` identity without rewriting stored
+  user text. Tags have no persisted database registry; derive the
   global summaries and backreferences from current stored text through the named tag-query IPC.
   Keep containing-screen links in the Tags feature and do not infer tag semantics in UI receivers.
 - Persist every change from an existing rich-text editor synchronously through the typed
@@ -274,9 +275,10 @@ and do not rely on color alone to communicate selection or status.
   default; the view option may reveal only the recently completed records already returned by the
   model. Never fetch all historical closed Todos and filter them in React.
 - Build the Tags workspace as a peer of Todos. It uses one parentless `ContextualSidebarLevel` whose
-  rows are exact tag spellings plus visible-use counts. Selecting a tag issues the bounded
-  `listTagUses` query and renders one row per exact occurrence with only Location, Field, and a short
-  plain-text snippet. The Location link must use `FocusWorkspaceDestination` so Overall/Thread,
+  rows are canonical lowercase tag names plus visible-use counts. Selecting a tag issues the bounded
+  `listTagUses` query and renders at most one row per field for that tag with only Location, Field,
+  and a short plain-text snippet from its first occurrence. The Location link must use
+  `FocusWorkspaceDestination` so Overall/Thread,
   nested Commitment, and Subject context restore atomically. Sensitive visibility remains a
   renderer collection rule: hide sensitive-only sidebar tags and sensitive use rows, then let the
   contextual navigation reconcile an invalid selection to its first remaining item.
@@ -292,9 +294,10 @@ and do not rely on color alone to communicate selection or status.
   auditing.
 - Keep tag identity derived from literal current text instead of adding a second persisted source of
   truth. Index Focus title/description/goal, Thread and Commitment titles, Update observation, Todo
-  name, and Note title/content. Project rich-text envelopes to plain text before parsing or
-  producing snippets. Imports, edits, moves, and cascade deletions must therefore become visible to
-  tag queries without repair or migration. Return summaries and selected-tag occurrences only
+  name, and Note title/content. Canonicalize names to lowercase and deduplicate repeated names within
+  one field. Project rich-text envelopes to plain text before parsing or producing snippets.
+  Imports, edits, moves, and cascade deletions must therefore become visible to
+  tag queries without repair or migration. Return summaries and selected-tag field uses only
   through named IPC; do not expose arbitrary search or SQL.
 - Treat Thread health, materialized review dates, Commitment state, and cadence deadlines as model
   projections. Do not add writable columns or UI mutations for those derived values. The nullable
