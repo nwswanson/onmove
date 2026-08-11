@@ -29,6 +29,7 @@ import { useReviewModel } from '@/features/review/use-review-model'
 import { SensitivityToggle } from '@/features/shared/sensitivity-toggle'
 import { DirectTodos } from '@/features/todos/direct-todos'
 import { UPDATE_LIST_STATE_OPTIONS } from '@/features/updates/updates-presenters'
+import { useControlKeyShortcut } from '@/lib/use-control-key-shortcut'
 
 interface ReviewWorkspaceProps {
   contextDrawer: ContextDrawerControl
@@ -318,6 +319,11 @@ export function ReviewWorkspace({
   const pending = current ? review.pendingKey === current.key : false
   const editing = Boolean(review.editingUpdate && current?.key === review.editingUpdate.itemKey)
 
+  useControlKeyShortcut('p', () => {
+    if (!current || pending || editing) return
+    void review.beginUpdate(current)
+  }, current !== null)
+
   return (
     <WorkspaceShell
       main={
@@ -404,6 +410,8 @@ export function ReviewWorkspace({
                         type="button"
                         disabled={pending}
                         onClick={() => void review.beginUpdate(current)}
+                        aria-keyshortcuts="Control+P"
+                        title="Add update (Ctrl-P)"
                       >
                         <MessageSquarePlus aria-hidden="true" />
                         {pending ? 'Starting…' : 'Update'}

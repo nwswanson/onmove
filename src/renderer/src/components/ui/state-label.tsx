@@ -35,7 +35,7 @@ export function StateDot({
       className={cn(
         'size-2 shrink-0 rounded-full ring-1 ring-inset',
         model.tone === 'danger' && 'bg-destructive ring-destructive/35',
-        model.tone === 'warning' && 'bg-destructive/55 ring-destructive/25',
+        model.tone === 'warning' && 'bg-warning ring-warning/45',
         model.tone === 'success' && 'bg-success ring-success/35',
         model.tone === 'neutral' && 'bg-muted-foreground/55 ring-border',
         className
@@ -61,7 +61,7 @@ export function StateLabel({
         model.tone === 'danger' &&
           'border-destructive bg-destructive text-destructive-foreground',
         model.tone === 'warning' &&
-          'border-destructive/45 bg-destructive/12 text-destructive',
+          'border-warning/70 bg-warning/25 text-warning-foreground',
         model.tone === 'success' &&
           'border-success/45 bg-success/14 text-success-foreground',
         model.tone === 'neutral' && 'border-border bg-muted text-muted-foreground',
@@ -74,7 +74,7 @@ export function StateLabel({
         className={cn(
           'size-1.5 rounded-full',
           model.tone === 'danger' && 'bg-destructive-foreground',
-          model.tone === 'warning' && 'bg-destructive',
+          model.tone === 'warning' && 'bg-warning',
           model.tone === 'success' && 'bg-success',
           model.tone === 'neutral' && 'bg-muted-foreground'
         )}

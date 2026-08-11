@@ -12,6 +12,7 @@ import {
   type UpdateListProps,
   type UpdateListStateOptionModel
 } from '@/features/updates/update-list-contract'
+import { useControlKeyShortcut } from '@/lib/use-control-key-shortcut'
 import { useThrottledAutosave } from '@/lib/use-throttled-autosave'
 
 function updateDraftsEqual(left: UpdateListDraft, right: UpdateListDraft): boolean {
@@ -251,6 +252,7 @@ export function UpdateList({
   const [createOptionId, setCreateOptionId] = useState('')
   const [createError, setCreateError] = useState<string | null>(null)
   const [formerItemsOpen, setFormerItemsOpen] = useState(false)
+  const createOptionRef = useRef<HTMLSelectElement>(null)
   const headingId = useId()
   const formerItemsId = useId()
 
@@ -292,6 +294,24 @@ export function UpdateList({
     }
   }
 
+  useControlKeyShortcut('p', () => {
+    if (adding) return
+    if (onCreate) {
+      void addUpdate()
+      return
+    }
+
+    const select = createOptionRef.current
+    if (!select) return
+    select.focus()
+    try {
+      select.showPicker?.()
+    } catch {
+      // Focusing preserves a usable fallback when the platform does not allow
+      // opening a native picker programmatically.
+    }
+  }, Boolean(onCreate || onCreateFor))
+
   return (
     <section className="mt-8" aria-labelledby={headingId}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
@@ -308,6 +328,8 @@ export function UpdateList({
             size="sm"
             disabled={adding}
             onClick={() => void addUpdate()}
+            aria-keyshortcuts="Control+P"
+            title="Add update (Ctrl-P)"
           >
             <Plus aria-hidden="true" />
             {adding ? 'Adding…' : 'Add update'}
@@ -320,7 +342,10 @@ export function UpdateList({
               className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2"
             />
             <select
+              ref={createOptionRef}
               aria-label={createOptionsLabel}
+              aria-keyshortcuts="Control+P"
+              title={`${createOptionsLabel} (Ctrl-P)`}
               value={createOptionId}
               disabled={adding}
               className="h-9 max-w-64 appearance-none rounded-md border border-input bg-background pl-8 pr-8 text-sm font-medium shadow-xs outline-none hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/35 disabled:pointer-events-none disabled:opacity-50"

@@ -25,8 +25,9 @@
 - Use the shared 24px semantic `Sunflower` for active Focus and Thread sidebar destinations instead
   of generic circle icons. The center seed represents the newest direct Update; subsequent seeds
   represent every active Commitment (including Thread-parented Commitments in a Focus rollup).
-  Map green to Greenery, red/yellow to Tigerlily, and missing/`none` state to gray, with Cerulean as
-  the boundary. Keep the textual summary available as SVG/hover text; never rely on seed color alone.
+  Map green to Greenery, red to Tigerlily, yellow to Illuminating, and missing/`none` state to gray,
+  with Cerulean as the boundary. Keep the textual summary available as SVG/hover text; never rely on
+  seed color alone.
 - Preserve the native macOS inset title bar and draggable regions. Interactive controls must remain
   outside draggable hit targets.
 - The sidebar is resizable. Contextual editing belongs in the resizable right-side drawer, which
@@ -98,12 +99,13 @@
 These product colors are fixed:
 
 - Pantone Cerulean — `#9BB7D4`: primary actions, selection, focus, and active navigation.
-- Pantone Tigerlily — `#E2583E`: alerts, warnings, destructive states, and failures.
+- Pantone Tigerlily — `#E2583E`: alerts, destructive states, and failures.
+- Pantone Illuminating — `#F5DF4D`: yellow health, caution, and warning states.
 - Pantone Greenery — `#88B04B`: healthy, complete, connected, and other positive states.
 
-Use the semantic CSS variables (`primary`, `destructive`, and `success`) rather than repeating hex
-values in components. Cerulean is the active-sidebar highlight. Maintain readable foreground colors
-and do not rely on color alone to communicate selection or status.
+Use the semantic CSS variables (`primary`, `destructive`, `warning`, and `success`) rather than
+repeating hex values in components. Cerulean is the active-sidebar highlight. Maintain readable
+foreground colors and do not rely on color alone to communicate selection or status.
 
 ## Renderer architecture
 
@@ -171,8 +173,11 @@ and do not rely on color alone to communicate selection or status.
   current local date and `none` state; do not introduce a second Create/Cancel draft step. All
   date, state, and sensitivity autosave through the shared throttle; observation text uses the
   synchronous rich-text document path. Do not render a manual save action.
-  Blank and state-only Updates are valid. State must always have a text label as well as semantic color
-  (`destructive` for red/warning, `success` for green, muted for none).
+  Blank and state-only Updates are valid. State must always have a text label as well as semantic
+  color (`destructive` for red, `warning` for yellow, `success` for green, muted for none). `Ctrl-P`
+  immediately adds an Update wherever direct creation is valid. In a bounded All Subjects view it
+  focuses the required Subject creation picker; on Review it starts an Update for the current exact
+  target. Todos, Tags, and other screens without Updates leave `Ctrl-P` untouched.
 - Treat a bounded Thread's Subject selector as an operational working-context lens, distinct from
   editing the Thread's Scope definition. All Subjects keeps its main Update list limited to
   currently applicable canonical Subjects. Put retained Updates whose Subject is no longer

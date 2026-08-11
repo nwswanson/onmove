@@ -304,7 +304,7 @@ test('reviews active work before cadence is due and refreshes typed pokes in the
     await expect(window.getByRole('article', {
       name: 'Commitment review: Improve ticket quality'
     })).toBeVisible()
-    await window.getByRole('button', { name: 'Update' }).click()
+    await window.keyboard.press('Control+p')
     const observation = window.getByRole('textbox', { name: 'Review Update observation' })
     await observation.fill('Ticket examples are now included')
     await window.getByRole('button', { name: 'Finish update' }).click()
@@ -946,7 +946,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       .toContain('With aligned teams')
     const focusUpdates = window.getByRole('list', { name: 'Focus updates' })
     await expect(focusUpdates).toBeVisible()
-    await window.getByRole('button', { name: 'Add update' }).click()
+    await window.keyboard.press('Control+p')
     await expect.poll(() => storedFocusUpdate()?.state).toBe('none')
     const focusUpdateDate = storedFocusUpdate()!.date
     expect(storedFocusUpdate()?.observation).toBe('')
@@ -1012,7 +1012,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect.poll(() => storedThread()?.needsReview).toBe(0)
     const threadUpdates = window.getByRole('list', { name: 'Thread updates' })
     await expect(threadUpdates).toBeVisible()
-    await window.getByRole('button', { name: 'Add update' }).click()
+    await window.keyboard.press('Control+p')
     await expect.poll(() => storedThreadUpdate()?.state).toBe('none')
     await threadUpdates.getByLabel('Update observation').fill('Sprint review completed')
     await threadUpdates.getByLabel('Update state').selectOption('green')
@@ -1130,7 +1130,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     const updateList = window.getByRole('list', { name: 'Commitment updates' })
     await expect(updateList).toBeVisible()
     await expect(window.getByRole('table')).toHaveCount(0)
-    await window.getByRole('button', { name: 'Add update' }).click()
+    await window.keyboard.press('Control+p')
     await expect.poll(() => storedCommitmentUpdate()?.state).toBe('none')
     expect(storedCommitmentUpdate()?.observation).toBe('')
     await expect(window.getByRole('button', { name: 'Create update' })).toHaveCount(0)

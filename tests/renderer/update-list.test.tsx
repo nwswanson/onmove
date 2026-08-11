@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { UpdateList } from '../../src/renderer/src/features/updates/update-list'
@@ -63,7 +63,9 @@ describe('UpdateList', () => {
     expect(list).toBeInTheDocument()
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
     expect(screen.getByRole('listitem', { name: 'Update from 2026-08-01' })).toBeInTheDocument()
-    expect(screen.getByText('Yellow', { selector: 'span' })).toHaveClass('text-destructive')
+    expect(screen.getByText('Yellow', { selector: 'span' })).toHaveClass(
+      'text-warning-foreground'
+    )
     const observation = screen.getByLabelText('Update observation')
     await user.type(observation, ' and acceptance criteria improved')
     await user.selectOptions(screen.getByLabelText('Update state'), 'green')
@@ -124,6 +126,71 @@ describe('UpdateList', () => {
     })
     expect(subjectChoice).toHaveValue('')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('creates directly with Ctrl-P and leaves unrelated modifier combinations alone', async () => {
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    render(
+      <UpdateList
+        ariaLabel="Shortcut updates"
+        items={[]}
+        stateOptions={states}
+        defaultDate="2026-08-11"
+        defaultState="none"
+        onCreate={onCreate}
+        onUpdate={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    )
+
+    const metaEvent = new KeyboardEvent('keydown', {
+      key: 'p',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    document.dispatchEvent(metaEvent)
+    expect(metaEvent.defaultPrevented).toBe(false)
+    expect(onCreate).not.toHaveBeenCalled()
+
+    const controlEvent = new KeyboardEvent('keydown', {
+      key: 'p',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    document.dispatchEvent(controlEvent)
+
+    expect(controlEvent.defaultPrevented).toBe(true)
+    await waitFor(() => expect(onCreate).toHaveBeenCalledWith({
+      date: '2026-08-11',
+      observation: '',
+      state: 'none',
+      sensitive: false
+    }))
+  })
+
+  it('moves Ctrl-P to the Subject picker when creation requires an exact cell', () => {
+    const onCreateFor = vi.fn().mockResolvedValue(undefined)
+    render(
+      <UpdateList
+        ariaLabel="Scoped shortcut updates"
+        items={[]}
+        stateOptions={states}
+        defaultDate="2026-08-11"
+        defaultState="none"
+        createOptions={[{ id: '41', label: 'Platform Team' }]}
+        createOptionsLabel="Add update for Subject…"
+        onCreateFor={onCreateFor}
+        onUpdate={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    )
+
+    fireEvent.keyDown(document, { key: 'p', ctrlKey: true })
+
+    expect(screen.getByRole('combobox', { name: 'Add update for Subject…' })).toHaveFocus()
+    expect(onCreateFor).not.toHaveBeenCalled()
   })
 
   it('keeps former-scope cards in a closed-by-default editable accordion', async () => {

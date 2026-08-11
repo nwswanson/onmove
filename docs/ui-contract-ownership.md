@@ -133,9 +133,9 @@ asserted ancestor and leaf in one transaction.
 Sidebar Sunflowers follow the same boundary. `status-summary.ts` materializes business data only:
 the newest direct Update plus each unique active Commitment, including Thread descendants in a Focus
 summary. `focus-presenters.ts` maps those health states into labeled semantic tones. The shared
-`SemanticSunflower` receiver owns exact Cerulean, Tigerlily, Greenery, and gray values, seed geometry,
-the 24px size, validation, and accessible/hover descriptions; sidebar components never inspect
-Commitments or Updates.
+`SemanticSunflower` receiver owns exact Cerulean, Tigerlily, Illuminating, Greenery, and gray values,
+seed geometry, the 24px size, validation, and accessible/hover descriptions; sidebar components
+never inspect Commitments or Updates.
 
 Direct Focus, Thread, and Commitment Updates follow the same pattern. `useUpdatesModel` owns
 persistence for one typed parent, `DirectUpdates` supplies the owner-specific accessible label, and
@@ -147,6 +147,11 @@ independently above it as the available main-view width changes. The receiver's 
 pending and failure feedback, and never creates a temporary UI-only draft. The resulting card's
 date, state, and sensitivity edits enter the shared throttled pipeline. Observation text uses the
 durable rich-text document path described below.
+
+`UpdateList` also owns the exact `Ctrl-P` interaction for its creation contract. Direct creation
+immediately runs the same Add path; choice-based creation focuses and opens the required Subject
+picker rather than inventing a Scope cell. Review maps the same shortcut to its current typed review
+target. Screens without an Update creation contract do not register or consume the shortcut.
 
 Multiline content follows one shared receiver contract. `RichTextEditor` owns a deliberately small
 Lexical configuration: undo/redo, bold, italic, underline, strikethrough, a fixed yellow highlight,

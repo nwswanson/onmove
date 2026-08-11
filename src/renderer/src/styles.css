@@ -15,6 +15,8 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
   --color-success: var(--success);
   --color-success-foreground: var(--success-foreground);
   --color-border: var(--border);
@@ -35,6 +37,7 @@
 :root {
   --cerulean: #9bb7d4;
   --tigerlily: #e2583e;
+  --illuminating: #f5df4d;
   --greenery: #88b04b;
   --rich-text-gray: #4b5563;
   --rich-text-red: #b42318;
@@ -60,6 +63,8 @@
   --accent-foreground: #24384b;
   --destructive: var(--tigerlily);
   --destructive-foreground: #ffffff;
+  --warning: var(--illuminating);
+  --warning-foreground: #584b00;
   --success: var(--greenery);
   --success-foreground: #142108;
   --border: oklch(0.89 0.006 275);
@@ -88,6 +93,8 @@
     --accent-foreground: oklch(0.96 0.004 270);
     --destructive: var(--tigerlily);
     --destructive-foreground: #ffffff;
+    --warning: var(--illuminating);
+    --warning-foreground: #f8e978;
     --success: var(--greenery);
     --success-foreground: #162208;
     --border: oklch(1 0 0 / 0.12);

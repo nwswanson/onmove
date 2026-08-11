@@ -654,7 +654,14 @@ describe('App', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Review' }))
     expect(screen.getByText('Subject · Customer Operations')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Update' }))
+    const shortcut = new KeyboardEvent('keydown', {
+      key: 'p',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    document.dispatchEvent(shortcut)
+    expect(shortcut.defaultPrevented).toBe(true)
     await waitFor(() => expect(createUpdate).toHaveBeenCalledWith({
       parent: { type: 'commitment', id: 25 },
       date: '2026-08-10',
@@ -675,6 +682,36 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: 'You’re caught up' })).toBeVisible()
     expect(screen.queryByText('Hold weekly check-ins')).not.toBeInTheDocument()
     expect(getReviewOverview).toHaveBeenCalledTimes(2)
+  })
+
+  it('leaves Ctrl-P inert in the Todos and Tags workspaces', async () => {
+    const createUpdate = vi.fn()
+    installApi({ createUpdate })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await screen.findByRole('heading', { name: 'Todos' })
+    const todosShortcut = new KeyboardEvent('keydown', {
+      key: 'p',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    document.dispatchEvent(todosShortcut)
+    expect(todosShortcut.defaultPrevented).toBe(false)
+
+    await user.click(screen.getByRole('button', { name: 'Tags' }))
+    await screen.findByRole('heading', { name: 'Tags' })
+    const tagsShortcut = new KeyboardEvent('keydown', {
+      key: 'p',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    document.dispatchEvent(tagsShortcut)
+
+    expect(tagsShortcut.defaultPrevented).toBe(false)
+    expect(createUpdate).not.toHaveBeenCalled()
   })
 
   it('lists Tags in the contextual sidebar and opens each use in its containing screen', async () => {
@@ -1162,7 +1199,7 @@ describe('App', () => {
     expect(focusSunflower.querySelectorAll('[data-seed-index]')).toHaveLength(3)
     expect(focusSunflower.querySelector('[data-seed-index="0"]')).toHaveAttribute(
       'fill',
-      'var(--destructive)'
+      'var(--warning)'
     )
     expect(focusSunflower.querySelector('[data-seed-index="1"]')).toHaveAttribute(
       'fill',

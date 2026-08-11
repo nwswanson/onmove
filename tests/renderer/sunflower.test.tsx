@@ -46,7 +46,7 @@ describe('Sunflower', () => {
     )
     expect(graphic.querySelector('[data-seed-index="2"]')).toHaveAttribute(
       'fill',
-      'var(--destructive)'
+      'var(--warning)'
     )
   })
 

@@ -13,8 +13,8 @@ sandboxed from Node.js.
 - A full-width macOS-style toolbar, resizable primary and contextual sidebars, flexible main canvas,
   and composable, resizable contextual drawer that participates in layout rather than covering
   content.
-- A semantic product palette using Cerulean for primary selection, Tigerlily for alerts, and
-  Greenery for healthy states.
+- A semantic product palette using Cerulean for primary selection, Tigerlily for alerts,
+  Illuminating for yellow states, and Greenery for healthy states.
 - A real SQLite database using Electron's bundled `node:sqlite` implementation and WAL mode.
 - Versioned, transactional migrations and a typed, subclassable domain-model layer.
 - Recursive parent/child items, nullable relation references, JSON metadata, and materialized status

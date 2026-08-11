@@ -440,7 +440,7 @@ export interface SemanticSunflowerModel {
 export const SUNFLOWER_TONE_COLORS: Readonly<Record<SemanticSunflowerTone, SunflowerColor>> = {
   primary: 'var(--primary)',
   danger: 'var(--destructive)',
-  warning: 'var(--destructive)',
+  warning: 'var(--warning)',
   success: 'var(--success)',
   neutral: 'var(--muted-foreground)'
 }
