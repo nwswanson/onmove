@@ -61,6 +61,7 @@ describe('createMenuTemplate', () => {
       ?.click?.({} as never, {} as never, {} as never)
 
     expect(createWindow).toHaveBeenCalledOnce()
+    expect(createWindow).toHaveBeenCalledWith()
     expect(importData).toHaveBeenCalledOnce()
     expect(exportData).toHaveBeenCalledOnce()
     expect(showDataFolder).toHaveBeenCalledOnce()

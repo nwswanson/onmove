@@ -181,6 +181,18 @@ describe('registerAppIpc', () => {
           create: vi.fn(() => ({
             snapshot: () => ({ id: 33, title: 'Align sponsors' })
           })),
+          planMove: vi.fn(() => ({
+            commitmentId: 31,
+            from: { type: 'focus', id: 12 },
+            to: { type: 'thread', id: 21 },
+            scopeSubjectAdditions: [],
+            requiresConfirmation: false
+          })),
+          move: vi.fn(() => ({
+            id: 31,
+            parent: { type: 'thread', id: 21 },
+            title: 'Ship safely'
+          })),
           delete: vi.fn(() => true)
         },
         updates: {
@@ -200,6 +212,12 @@ describe('registerAppIpc', () => {
         todos: {
           list: vi.fn(() => [{ id: 71, name: 'Review plan', done: false }]),
           query: vi.fn(() => [{ id: 72, name: 'Cross-context Todo', done: false }]),
+          overview: vi.fn(() => ({
+            items: [{ id: 72, name: 'Cross-context Todo', done: false }],
+            today: '2026-08-10',
+            recentlyCompletedDays: 7,
+            completedSince: '2026-08-03T12:00:00.000Z'
+          })),
           create: vi.fn(() => ({
             toSnapshot: () => ({ id: 73, name: 'Created Todo', done: false })
           })),
@@ -207,6 +225,12 @@ describe('registerAppIpc', () => {
             update: vi.fn(() => ({
               toSnapshot: () => ({ id: 71, name: 'Edited Todo', done: true })
             }))
+          })),
+          updateSubjectCompletion: vi.fn(() => ({
+            id: 74,
+            name: 'Shared Todo',
+            done: false,
+            subjectCompletions: [{ subject: { id: 61 }, done: true }]
           })),
           reorder: vi.fn(() => [
             { id: 72, name: 'Second Todo' },
@@ -377,6 +401,16 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.updateCommitment)?.(undefined, 31, {
       status: 'paused'
     })).toMatchObject({ id: 31, status: 'paused' })
+    expect(await handlers.get(IPC_CHANNELS.planCommitmentMove)?.(
+      undefined,
+      31,
+      { type: 'thread', id: 21 }
+    )).toMatchObject({ commitmentId: 31, requiresConfirmation: false })
+    expect(await handlers.get(IPC_CHANNELS.moveCommitment)?.(
+      undefined,
+      31,
+      { parent: { type: 'thread', id: 21 } }
+    )).toMatchObject({ id: 31, parent: { type: 'thread', id: 21 } })
     expect(await handlers.get(IPC_CHANNELS.pokeCommitmentReview)?.(undefined, 31)).toMatchObject({
       id: 31,
       lastReviewDate: '2026-08-10'
@@ -403,6 +437,10 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.queryTodos)?.(undefined, {
       dueOnOrBefore: '2026-08-09'
     })).toMatchObject([{ id: 72, name: 'Cross-context Todo' }])
+    expect(await handlers.get(IPC_CHANNELS.getTodoOverview)?.()).toMatchObject({
+      items: [{ id: 72, name: 'Cross-context Todo' }],
+      recentlyCompletedDays: 7
+    })
     expect(await handlers.get(IPC_CHANNELS.createTodo)?.(undefined, {
       parent: { type: 'thread', id: 21 },
       name: 'Created Todo'
@@ -410,6 +448,15 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.updateTodo)?.(undefined, 71, {
       done: true
     })).toMatchObject({ id: 71, done: true })
+    expect(await handlers.get(IPC_CHANNELS.updateTodoSubjectCompletion)?.(
+      undefined,
+      74,
+      61,
+      true
+    )).toMatchObject({
+      id: 74,
+      subjectCompletions: [{ subject: { id: 61 }, done: true }]
+    })
     expect(await handlers.get(IPC_CHANNELS.reorderTodos)?.(undefined, {
       type: 'thread',
       id: 21

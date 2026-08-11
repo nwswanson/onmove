@@ -3,6 +3,141 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { _electron as electron, expect, test, type ElectronApplication } from '@playwright/test'
+import { AppDatabase } from '../../src/main/database'
+
+test('opens and closes multiple main windows through the New Window menu', async () => {
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-multi-window-e2e-'))
+  let application: ElectronApplication | undefined
+
+  try {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+
+    const firstWindow = await application.firstWindow()
+    await expect(firstWindow.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
+
+    await application.evaluate(({ BrowserWindow, Menu }) => {
+      const menuItem = Menu.getApplicationMenu()?.getMenuItemById('new-window')
+      if (!menuItem) throw new Error('Missing New Window menu item')
+      // Supply the same arguments Electron supplies for Cmd+N. These objects are
+      // intentionally not structured-cloneable and must stay at the menu boundary.
+      menuItem.click?.(menuItem, BrowserWindow.getFocusedWindow() ?? undefined, {} as never)
+    })
+
+    await expect.poll(() => application?.windows().length).toBe(2)
+    const secondWindow = application.windows().find((window) => window !== firstWindow)
+    if (!secondWindow) throw new Error('New Window did not create a second main window')
+    await expect(secondWindow.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
+
+    await secondWindow.close()
+    await expect.poll(() => application?.windows().length).toBe(1)
+    await expect(firstWindow.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
+  } finally {
+    await application?.close()
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
+test('sorts all current Todos and bounds recently completed work before rendering', async () => {
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-todo-overview-e2e-'))
+  let application: ElectronApplication | undefined
+  const now = new Date()
+  const recent = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+  const old = new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000)
+
+  const seed = new AppDatabase(join(userDataDirectory, 'onmove.sqlite3'))
+  const zulu = seed.domain.focuses.create({ title: 'Zulu Project' })
+  const alpha = seed.domain.focuses.create({ title: 'Alpha Project' })
+  const alphaThread = seed.domain.threads.create({
+    focusId: alpha.id,
+    title: 'Sprint execution',
+    reviewFrequencyDays: 7
+  })
+  const zuluTodo = seed.domain.todos.create({
+    parent: { type: 'focus', id: zulu.id },
+    name: 'Zulu open work'
+  }, now)
+  const alphaTodo = seed.domain.todos.create({
+    parent: { type: 'focus', id: alpha.id },
+    name: 'Alpha open work'
+  }, now)
+  seed.domain.todos.create({
+    parent: { type: 'thread', id: alphaThread.id },
+    name: 'Review sprint execution'
+  }, now)
+  seed.domain.todos.create({
+    parent: { type: 'focus', id: alpha.id },
+    name: 'Recently closed work',
+    done: true
+  }, recent)
+  seed.domain.todos.create({
+    parent: { type: 'focus', id: alpha.id },
+    name: 'Old closed work',
+    done: true
+  }, old)
+  seed.close()
+
+  try {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    const window = await application.firstWindow()
+    const table = window.getByRole('table', { name: 'All Todos' })
+
+    await expect(window.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
+    await expect(table.getByText('Alpha open work')).toBeVisible()
+    await expect(table.getByText('Zulu open work')).toBeVisible()
+    await expect(table.getByText('Review sprint execution')).toBeVisible()
+    await expect(table.getByText('Recently closed work')).toHaveCount(0)
+    await expect(table.getByText('Old closed work')).toHaveCount(0)
+
+    await table.getByRole('button', { name: 'Sort by Project' }).click()
+    await expect(table.locator('tbody tr').first()).toContainText('Alpha Project')
+    await table.getByLabel('Mark Alpha open work done').click()
+    await expect(table.getByText('Alpha open work')).toHaveCount(0)
+    await expect.poll(() => {
+      const stored = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
+        readOnly: true
+      })
+      const row = stored.prepare(
+        'SELECT done, completed_at AS completedAt FROM todos WHERE id = ?'
+      ).get(alphaTodo.id) as { done: number; completedAt: string | null }
+      stored.close()
+      return row
+    }).toMatchObject({ done: 1, completedAt: expect.any(String) })
+
+    await window.getByLabel('Show completed from last 7 days').click()
+    await expect(table.getByText('Alpha open work')).toBeVisible()
+    await expect(table.getByText('Recently closed work')).toBeVisible()
+    await expect(table.getByText('Old closed work')).toHaveCount(0)
+    await expect(table.getByText('Zulu open work')).toBeVisible()
+    expect(zuluTodo.done).toBe(false)
+
+    await table.getByRole('link', { name: 'Sprint execution' }).click()
+    await expect(window.getByRole('heading', { name: 'Sprint execution', exact: true })).toBeVisible()
+    await expect(window.getByRole('button', { name: 'Alpha Project' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    await expect(window.getByRole('button', {
+      name: 'Sprint execution',
+      exact: true
+    })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+  } finally {
+    await application?.close()
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
 
 test('creates, edits, reloads, and deletes a persisted focus across Electron launches', async () => {
   test.setTimeout(60_000)
@@ -337,7 +472,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       importLabel: Menu.getApplicationMenu()?.getMenuItemById('import-data')?.label,
       exportLabel: Menu.getApplicationMenu()?.getMenuItemById('export-data')?.label
     }))).toEqual({ importLabel: 'Import Data…', exportLabel: 'Export Data…' })
-    await expect(window.getByRole('heading', { name: 'Home', exact: true })).toBeVisible()
+    await expect(window.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
     await expect(window.getByRole('toolbar', { name: 'Application toolbar' })).toBeVisible()
     await expect(window.getByText('Overview')).toBeVisible()
     await expect(window.getByText('Focuses', { exact: true })).toBeVisible()
@@ -403,6 +538,23 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     ).toBeVisible()
     const detachedEditor = documentWindow.getByRole('textbox', { name: 'Document content' })
     await expect(detachedEditor).toContainText('A durable working note')
+    const detachedEditorBounds = async (): Promise<{
+      editorHeight: number
+      bottomGap: number
+    }> => documentWindow.evaluate(() => {
+      const editor = document.querySelector<HTMLElement>('[aria-label="Document content"]')!
+      const bounds = editor.getBoundingClientRect()
+      return {
+        editorHeight: bounds.height,
+        bottomGap: window.innerHeight - bounds.bottom
+      }
+    })
+    const initialDetachedEditorBounds = await detachedEditorBounds()
+    await documentWindow.setViewportSize({ width: 820, height: 900 })
+    const resizedDetachedEditorBounds = await detachedEditorBounds()
+    expect(resizedDetachedEditorBounds.editorHeight)
+      .toBeGreaterThan(initialDetachedEditorBounds.editorHeight + 150)
+    expect(resizedDetachedEditorBounds.bottomGap).toBeLessThanOrEqual(26)
     await detachedEditor.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A')
     await detachedEditor.press('Backspace')
     await expect(defaultNote).toHaveText('')
@@ -766,8 +918,8 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       'page'
     )
     await expect(window.getByRole('heading', { name: 'Persistent focus' })).toBeVisible()
-    await window.getByRole('button', { name: 'Home' }).click()
-    await expect(window.getByRole('heading', { name: 'Home', exact: true })).toBeVisible()
+    await window.getByRole('button', { name: 'Todos' }).click()
+    await expect(window.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
     await expect(
       window.getByRole('complementary', { name: 'Commitment context drawer' })
     ).toBeVisible()
@@ -801,7 +953,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       if (!menuItem) throw new Error('Missing sensitive-content View menu item')
       menuItem.click?.(menuItem, BrowserWindow.getFocusedWindow() ?? undefined, {} as never)
     })
-    await expect(window.getByRole('heading', { name: 'Home', exact: true })).toBeVisible()
+    await expect(window.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
     await expect(window.getByRole('button', { name: 'Persistent focus, paused' })).toHaveCount(0)
     await application.evaluate(({ BrowserWindow, Menu }) => {
       const menuItem = Menu.getApplicationMenu()?.getMenuItemById('hide-sensitive-content')
@@ -809,7 +961,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       menuItem.click?.(menuItem, BrowserWindow.getFocusedWindow() ?? undefined, {} as never)
     })
     await expect(window.getByRole('button', { name: 'Persistent focus, paused' })).toBeVisible()
-    await expect(window.getByRole('heading', { name: 'Home', exact: true })).toBeVisible()
+    await expect(window.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
     await window.getByRole('button', { name: 'Persistent focus, paused' }).click()
     await expect(window.getByRole('heading', { name: 'Persistent focus' })).toBeVisible()
     await window
@@ -1047,7 +1199,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
 
     application = await launch()
     window = await application.firstWindow()
-    await expect(window.getByRole('heading', { name: 'Home', exact: true })).toBeVisible()
+    await expect(window.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
     await window.getByRole('button', { name: 'Persistent focus, paused' }).click()
     await expect(window.getByRole('heading', { name: 'Persistent focus' })).toBeVisible()
     await expect(
@@ -1202,7 +1354,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       .click()
     await expect(window.getByRole('dialog', { name: 'Delete focus?' })).toBeVisible()
     await window.getByRole('button', { name: 'Delete focus' }).click()
-    await expect(window.getByRole('heading', { name: 'Home', exact: true })).toBeVisible()
+    await expect(window.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
     await expect(window.getByText('No focuses yet')).toBeVisible()
     await application.close()
     application = undefined
@@ -1233,7 +1385,7 @@ test('creates and exposes verified rolling backups in Settings', async () => {
       env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
     })
     const window = await application.firstWindow()
-    await expect(window.getByRole('heading', { name: 'Home' })).toBeVisible()
+    await expect(window.getByRole('heading', { name: 'Todos' })).toBeVisible()
 
     await window.getByRole('button', { name: 'Settings' }).click()
     await expect(window.getByRole('heading', { name: 'Settings' })).toBeVisible()
@@ -1256,6 +1408,196 @@ test('creates and exposes verified rolling backups in Settings', async () => {
       expect(backup.prepare('PRAGMA quick_check').get()).toMatchObject({ quick_check: 'ok' })
       backup.close()
     }
+  } finally {
+    await application?.close()
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
+test('drags a Commitment between Threads and confirms required Scope widening', async () => {
+  test.setTimeout(60_000)
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-commitment-move-e2e-'))
+  let application: ElectronApplication | undefined
+
+  function storedMove(): {
+    parentTitle: string
+    updateCount: number
+    todoCount: number
+    noteContent: string
+    targetMode: string
+    targetSubjects: string[]
+    parentTransitionCount: number
+  } | null {
+    const database = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
+      readOnly: true
+    })
+    const row = database.prepare(
+      `SELECT commitment.id, thread.title AS parent_title,
+              (SELECT count(*) FROM updates WHERE commitment_id = commitment.id) AS update_count,
+              (SELECT count(*) FROM todos WHERE commitment_id = commitment.id) AS todo_count,
+              (SELECT content FROM notes WHERE commitment_id = commitment.id ORDER BY id LIMIT 1)
+                AS note_content,
+              application.mode AS target_mode,
+              (SELECT count(*) FROM commitment_parent_transitions transition
+               WHERE transition.commitment_id = commitment.id) AS parent_transition_count,
+              application.scope_id AS target_scope_id
+       FROM commitments commitment
+       JOIN threads thread ON thread.id = commitment.thread_id
+       JOIN thread_scope_applications application ON application.thread_id = thread.id
+       WHERE commitment.title = 'Portable commitment'`
+    ).get() as {
+      id: number
+      parent_title: string
+      update_count: number
+      todo_count: number
+      note_content: string
+      target_mode: string
+      parent_transition_count: number
+      target_scope_id: number | null
+    } | undefined
+    const subjects = row?.target_scope_id === null || row === undefined
+      ? []
+      : database.prepare(
+          `SELECT DISTINCT subject.name
+           FROM scope_memberships membership
+           JOIN subjects subject ON subject.id = membership.subject_id
+           WHERE membership.scope_id = ? AND membership.effect = 'include'
+           ORDER BY subject.name`
+        ).all(row.target_scope_id).map((subject) => (subject as { name: string }).name)
+    database.close()
+    return row ? {
+      parentTitle: row.parent_title,
+      updateCount: Number(row.update_count),
+      todoCount: Number(row.todo_count),
+      noteContent: row.note_content,
+      targetMode: row.target_mode,
+      targetSubjects: subjects,
+      parentTransitionCount: Number(row.parent_transition_count)
+    } : null
+  }
+
+  try {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    const window = await application.firstWindow()
+
+    await window.getByRole('button', { name: 'New focus' }).click()
+    await window.getByLabel(/^Title/).fill('Move Focus')
+    await window.getByRole('button', { name: 'Create focus' }).click()
+    for (const title of ['Source Thread', 'Target Thread']) {
+      await window.getByRole('button', { name: 'New thread' }).click()
+      const dialog = window.getByRole('dialog', { name: 'New thread' })
+      await dialog.getByLabel(/^Title/).fill(title)
+      await dialog.getByRole('button', { name: 'Create thread' }).click()
+    }
+
+    await window.getByRole('button', { name: 'Source Thread', exact: true }).click()
+    const drawerToggle = window.getByRole('button', { name: 'Toggle context drawer' })
+    if (await drawerToggle.getAttribute('aria-pressed') === 'false') await drawerToggle.click()
+    const sourceDrawer = window.getByRole('complementary', { name: 'Thread context drawer' })
+    await sourceDrawer.getByRole('radio', { name: /Custom scope/ }).click()
+    const subjectInput = sourceDrawer.getByLabel('Add a Subject to custom scope')
+    await subjectInput.fill('Partner Team')
+    await subjectInput.press('Enter')
+    await expect(sourceDrawer.getByRole('button', { name: 'Remove Partner Team' })).toBeVisible()
+
+    await window.getByRole('button', { name: 'Add commitment to Source Thread' }).click()
+    const commitmentDialog = window.getByRole('dialog', { name: 'New commitment' })
+    await commitmentDialog.getByLabel(/^Title/).fill('Portable commitment')
+    await commitmentDialog.getByRole('button', { name: 'Create commitment' }).click()
+    await expect(window.getByRole('heading', { name: 'Portable commitment' })).toBeVisible()
+
+    await window
+      .getByRole('combobox', { name: 'Add update for Subject…' })
+      .selectOption({ label: 'Partner Team' })
+    const updateCard = window
+      .getByRole('list', { name: 'Commitment updates' })
+      .getByRole('listitem')
+      .filter({ hasText: 'Partner Team' })
+    await updateCard.getByLabel('Update observation').fill('Partner evidence moves intact')
+    await updateCard.getByLabel('Update state').selectOption('green')
+
+    await window.getByLabel('New Todo name').fill('Carry the scoped action')
+    await window.getByLabel('New Todo context').selectOption({ label: 'Partner Team' })
+    await window.getByRole('button', { name: 'Add Todo' }).click()
+    await window.getByRole('textbox', { name: 'Default note' }).fill('Durable move note')
+
+    const commitmentRow = window.getByRole('button', {
+      name: 'Open Source Thread commitment Portable commitment'
+    })
+    const targetRow = window.getByRole('button', { name: 'Target Thread', exact: true })
+    const commitmentBounds = await commitmentRow.boundingBox()
+    const targetBounds = await targetRow.boundingBox()
+    if (!commitmentBounds || !targetBounds) throw new Error('Commitment move targets need layout')
+    await window.mouse.move(
+      commitmentBounds.x + commitmentBounds.width / 2,
+      commitmentBounds.y + commitmentBounds.height / 2
+    )
+    await window.mouse.down()
+    await window.mouse.move(
+      targetBounds.x + targetBounds.width / 2,
+      targetBounds.y + targetBounds.height / 2,
+      { steps: 12 }
+    )
+    await expect(targetRow.locator('..')).toHaveAttribute('data-drop-target', 'active')
+    await window.mouse.up()
+
+    const moveDialog = window.getByRole('dialog', { name: 'Move Portable commitment?' })
+    await expect(moveDialog).toBeVisible()
+    await expect(moveDialog.getByText('Partner Team')).toBeVisible()
+    await expect(moveDialog).toContainText('1 Updates, 1 Todos, and 1 Notes')
+    await expect(window.getByRole('list', { name: 'Source Thread Commitments' }))
+      .toContainText('Portable commitment')
+    await moveDialog.getByRole('button', { name: 'Move Commitment' }).click()
+
+    await expect(window.getByRole('list', { name: 'Target Thread Commitments' }))
+      .toContainText('Portable commitment')
+    await expect(window.getByRole('list', { name: 'Source Thread Commitments' }))
+      .not.toContainText('Portable commitment')
+    await expect(window.getByRole('heading', { name: 'Portable commitment' })).toBeVisible()
+    await expect.poll(storedMove).toEqual({
+      parentTitle: 'Target Thread',
+      updateCount: 1,
+      todoCount: 1,
+      noteContent: expect.stringContaining('Durable move note'),
+      targetMode: 'explicit',
+      targetSubjects: ['Partner Team'],
+      parentTransitionCount: 2
+    })
+
+    await window.waitForTimeout(75)
+    const movedCommitmentRow = window.getByRole('button', {
+      name: 'Open Target Thread commitment Portable commitment'
+    })
+    const sourceRow = window.getByRole('button', { name: 'Source Thread', exact: true })
+    const movedBounds = await movedCommitmentRow.boundingBox()
+    const sourceBounds = await sourceRow.boundingBox()
+    if (!movedBounds || !sourceBounds) throw new Error('Return move targets need layout')
+    await window.mouse.move(
+      movedBounds.x + movedBounds.width / 2,
+      movedBounds.y + movedBounds.height / 2
+    )
+    await window.mouse.down()
+    await window.mouse.move(
+      sourceBounds.x + sourceBounds.width / 2,
+      sourceBounds.y + sourceBounds.height / 2,
+      { steps: 12 }
+    )
+    await window.mouse.up()
+    await expect(window.getByRole('dialog', { name: 'Move Portable commitment?' })).toHaveCount(0)
+    await expect(window.getByRole('list', { name: 'Source Thread Commitments' }))
+      .toContainText('Portable commitment')
+    await expect.poll(() => {
+      const move = storedMove()
+      return move && {
+        parentTitle: move.parentTitle,
+        parentTransitionCount: move.parentTransitionCount
+      }
+    }).toEqual({ parentTitle: 'Source Thread', parentTransitionCount: 3 })
   } finally {
     await application?.close()
     rmSync(userDataDirectory, { recursive: true, force: true })
@@ -1475,14 +1817,38 @@ test('sorts and preserves contextual Todos through Scope changes', async () => {
     await window.getByLabel('New Todo name').fill('Call customer owner')
     const threadTodoContext = window.getByLabel('New Todo context')
     await expect(threadTodoContext.locator('option')).toHaveText([
+      'All subjects',
       'Customer Operations',
       'Platform Team'
     ])
+    await expect(threadTodoContext).toHaveValue('all-subjects')
+    await window.getByLabel('New Todo name').fill('Confirm shared rollout')
+    await window.getByRole('button', { name: 'Add Todo' }).click()
+    const sharedParentCompletion = window.getByLabel(
+      'Confirm shared rollout completes when every Subject is done'
+    )
+    await expect(sharedParentCompletion).toBeDisabled()
+    await window.getByRole('button', { name: /Subject progress 0\/2/ }).click()
+    await expect(window.getByLabel(
+      'Mark Confirm shared rollout done for Customer Operations'
+    )).not.toBeChecked()
+
+    await window.getByRole('tab', { name: 'Work in Customer Operations' }).click()
+    await expect(window.getByLabel('Delete Confirm shared rollout')).toHaveCount(0)
+    const sharedSubjectCompletion = window.getByLabel('Mark Confirm shared rollout done')
+    await sharedSubjectCompletion.click()
+    await expect(sharedSubjectCompletion).toBeChecked()
+
+    await window.getByRole('tab', { name: 'All subjects' }).click()
+    await expect(window.getByRole('button', { name: /Subject progress 1\/2/ })).toBeVisible()
+    await window.getByLabel('New Todo name').fill('Call customer owner')
     await threadTodoContext.selectOption({ label: 'Customer Operations' })
     await window.getByRole('button', { name: 'Add Todo' }).click()
     await window.getByRole('tab', { name: 'Work in Customer Operations' }).click()
     const scopedThreadTodos = window.getByRole('list', { name: 'thread Todos sortable list' })
-    await expect(scopedThreadTodos.getByLabel('Todo name', { exact: true }))
+    await expect(scopedThreadTodos.locator(
+      'input[aria-label="Todo name"][value="Call customer owner"]'
+    ))
       .toHaveValue('Call customer owner')
     await expect(scopedThreadTodos).toContainText('Customer Operations')
     await expect(window.getByRole('button', { name: /Orphaned Todos/ })).toHaveCount(0)
@@ -1506,6 +1872,8 @@ test('sorts and preserves contextual Todos through Scope changes', async () => {
     await expect(window.getByRole('tab', { name: 'All subjects' }))
       .toHaveAttribute('aria-selected', 'true')
     const threadOrphanedToggle = window.getByRole('button', { name: /Orphaned Todos/ })
+    await expect(sharedParentCompletion).toBeChecked()
+    await expect(window.getByRole('button', { name: /Subject progress 1\/1/ })).toBeVisible()
     await expect(threadOrphanedToggle).toHaveAttribute('aria-expanded', 'false')
     await expect(window.getByRole('list', { name: 'Orphaned Todos' })).toHaveCount(0)
     await threadOrphanedToggle.click()

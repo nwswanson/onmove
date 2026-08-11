@@ -23,6 +23,7 @@ export const DATA_ARCHIVE_TABLES = [
   'commitment_scope_applications',
   'updates',
   'todos',
+  'todo_subject_completions',
   'todo_lists',
   'todo_sort_placements',
   'notes',
@@ -30,6 +31,7 @@ export const DATA_ARCHIVE_TABLES = [
   'focus_status_transitions',
   'thread_status_transitions',
   'commitment_status_transitions',
+  'commitment_parent_transitions',
   'scope_application_transitions',
   'rich_text_history'
 ] as const
@@ -74,7 +76,12 @@ interface ForeignKeyViolation {
 }
 
 const TABLE_SET = new Set<string>(DATA_ARCHIVE_TABLES)
-const BOOLEAN_COLUMNS = new Set(['sensitive', 'needs_review', 'done'])
+const BOOLEAN_COLUMNS = new Set([
+  'sensitive',
+  'needs_review',
+  'done',
+  'shared_across_subjects'
+])
 const INTEGER_COLUMNS = new Set([
   'id',
   'parent_id',
@@ -89,6 +96,10 @@ const INTEGER_COLUMNS = new Set([
   'context_subject_id',
   'from_scope_id',
   'to_scope_id',
+  'from_focus_id',
+  'from_thread_id',
+  'to_focus_id',
+  'to_thread_id',
   'todo_id',
   'list_id',
   'review_frequency_days',
@@ -101,6 +112,7 @@ const INTEGER_COLUMNS = new Set([
   'revision'
 ])
 const TIMESTAMP_COLUMNS = new Set(['created_at', 'updated_at', 'changed_at'])
+const OPTIONAL_TIMESTAMP_COLUMNS = new Set(['completed_at'])
 const DATE_COLUMNS = new Set(['recorded_on', 'effective_from'])
 const OPTIONAL_DATE_COLUMNS = new Set(['due_on', 'effective_until', 'review_poked_on'])
 
@@ -127,6 +139,10 @@ function validDate(value: unknown): value is string {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
   const parsed = new Date(`${value}T00:00:00.000Z`)
   return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value
+}
+
+function validTimestamp(value: unknown): value is string {
+  return typeof value === 'string' && !Number.isNaN(Date.parse(value))
 }
 
 function camelCase(column: string): string {
@@ -164,6 +180,7 @@ function sqliteValue(column: string, type: string, value: unknown): SqlValue | u
   }
   if (DATE_COLUMNS.has(column)) return validDate(value) ? value : undefined
   if (OPTIONAL_DATE_COLUMNS.has(column)) return validDate(value) ? value : null
+  if (OPTIONAL_TIMESTAMP_COLUMNS.has(column)) return validTimestamp(value) ? value : null
   if (type.toUpperCase().includes('TEXT')) {
     if (typeof value === 'string') return value
     if (typeof value === 'number' || typeof value === 'boolean') return String(value)
@@ -279,6 +296,10 @@ function normalizeRow(
   }
   if (table === 'scope_application_transitions') {
     keepOneParent(row, ['commitment_id', 'thread_id', 'focus_id'])
+  }
+  if (table === 'commitment_parent_transitions') {
+    keepOneParent(row, ['from_thread_id', 'from_focus_id'])
+    keepOneParent(row, ['to_thread_id', 'to_focus_id'])
   }
   return row
 }
@@ -404,6 +425,12 @@ function cleanSemanticViolations(database: SqliteAdapter): number {
            thread.focus_id, commitment.focus_id, commitment_thread.focus_id
          )
      )`,
+    `DELETE FROM todo_subject_completions
+     WHERE NOT EXISTS (
+       SELECT 1 FROM todos todo
+       WHERE todo.id = todo_subject_completions.todo_id
+         AND todo.shared_across_subjects = 1
+     )`,
     `DELETE FROM todo_sort_placements
      WHERE NOT EXISTS (
        SELECT 1 FROM todos todo JOIN todo_lists list ON list.id = todo_sort_placements.list_id
@@ -412,7 +439,14 @@ function cleanSemanticViolations(database: SqliteAdapter): number {
          AND todo.thread_id IS list.thread_id
          AND todo.commitment_id IS list.commitment_id
          AND (list.scope_id IS NULL OR (
+           todo.shared_across_subjects = 0 AND
            todo.scope_id IS list.scope_id AND todo.subject_id IS list.subject_id
+         ) OR (
+           todo.shared_across_subjects = 1 AND todo.scope_id IS NULL AND EXISTS (
+             SELECT 1 FROM todo_subject_completions completion
+             WHERE completion.todo_id = todo.id
+               AND completion.subject_id = list.subject_id
+           )
          ))
      )`,
     `DELETE FROM rich_text_history
@@ -432,6 +466,34 @@ function cleanSemanticViolations(database: SqliteAdapter): number {
 function repairRequiredRecords(database: SqliteAdapter, now: Date): number {
   const timestamp = now.toISOString()
   let repaired = 0
+  repaired += database.run(
+    `UPDATE todos
+     SET completed_at = COALESCE(completed_at, updated_at, created_at, ?)
+     WHERE done = 1 AND completed_at IS NULL`,
+    [timestamp]
+  ).changes
+  repaired += database.run(
+    `UPDATE todos
+     SET done = CASE
+           WHEN NOT EXISTS (
+             SELECT 1 FROM todo_subject_completions completion
+             WHERE completion.todo_id = todos.id AND completion.done = 0
+           ) THEN 1 ELSE 0
+         END,
+         completed_at = CASE
+           WHEN NOT EXISTS (
+             SELECT 1 FROM todo_subject_completions completion
+             WHERE completion.todo_id = todos.id AND completion.done = 0
+           ) THEN COALESCE(completed_at, updated_at, created_at, ?)
+           ELSE NULL
+         END
+     WHERE shared_across_subjects = 1`,
+    [timestamp]
+  ).changes
+  repaired += database.run(
+    `UPDATE todos SET completed_at = NULL
+     WHERE done = 0 AND completed_at IS NOT NULL`
+  ).changes
   repaired += database.run(
     `INSERT INTO focus_scope_applications (focus_id, mode, scope_id, updated_at)
      SELECT id, 'open', NULL, ? FROM focuses focus
@@ -549,6 +611,21 @@ function repairRequiredRecords(database: SqliteAdapter, now: Date): number {
        )`
     ).changes
   }
+  repaired += database.run(
+    `INSERT INTO commitment_parent_transitions (
+       commitment_id, from_focus_id, from_thread_id,
+       to_focus_id, to_thread_id, changed_at
+     )
+     SELECT commitment.id, NULL, NULL,
+            commitment.focus_id, commitment.thread_id,
+            COALESCE(commitment.created_at, ?)
+     FROM commitments commitment
+     WHERE NOT EXISTS (
+       SELECT 1 FROM commitment_parent_transitions transition
+       WHERE transition.commitment_id = commitment.id
+     )`,
+    [timestamp]
+  ).changes
   return repaired
 }
 

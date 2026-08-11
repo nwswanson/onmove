@@ -611,6 +611,8 @@ export interface RichTextEditorProps {
   ariaLabel: string
   placeholder?: string
   compact?: boolean
+  /** Lets the editor document consume a height supplied by its parent. */
+  fillHeight?: boolean
   className?: string
   onOpenInWindow?: () => void
   /** Changes only when a value committed outside this editor should be applied. */
@@ -663,6 +665,7 @@ export function RichTextEditor({
   ariaLabel,
   placeholder = 'Write something…',
   compact = false,
+  fillHeight = false,
   className,
   onOpenInWindow,
   externalRevision
@@ -686,6 +689,7 @@ export function RichTextEditor({
       data-slot="rich-text-editor"
       className={cn(
         'overflow-hidden rounded-lg border border-border bg-background/75 shadow-xs outline-none transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/35',
+        fillHeight && 'flex min-h-0 flex-col',
         className
       )}
       onBlur={(event) => {
@@ -694,7 +698,10 @@ export function RichTextEditor({
     >
       <LexicalComposer initialConfig={config}>
         <RichTextToolbar compact={compact} onOpenInWindow={onOpenInWindow} />
-        <div className="relative">
+        <div
+          data-slot="rich-text-editor-document"
+          className={cn('relative', fillHeight && 'min-h-0 flex-1')}
+        >
           <RichTextPlugin
             contentEditable={
               <ContentEditable
@@ -703,7 +710,8 @@ export function RichTextEditor({
                 aria-multiline="true"
                 className={cn(
                   'w-full resize-y overflow-auto px-3 py-2 text-sm leading-6 outline-none select-text',
-                  compact ? 'min-h-20' : 'min-h-24'
+                  compact ? 'min-h-20' : 'min-h-24',
+                  fillHeight && 'h-full resize-none'
                 )}
               />
             }

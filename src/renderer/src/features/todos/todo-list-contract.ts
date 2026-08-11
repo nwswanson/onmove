@@ -1,3 +1,9 @@
+export interface TodoListSubjectCompletionModel {
+  subjectId: string
+  label: string
+  done: boolean
+}
+
 export interface TodoListItemModel {
   id: string
   name: string
@@ -5,6 +11,14 @@ export interface TodoListItemModel {
   done: boolean
   overdue: boolean
   contextLabel?: string
+  canToggleDone?: boolean
+  canEdit?: boolean
+  canDelete?: boolean
+  draggable?: boolean
+  /** Present only on a shared parent shown in an aggregate list. */
+  subjectCompletions?: readonly TodoListSubjectCompletionModel[]
+  /** Present when this row projects one shared parent into an exact Subject list. */
+  completionSubjectId?: string
 }
 
 export interface TodoListCreateTargetModel {
@@ -32,6 +46,11 @@ export interface TodoListProps {
     input: Partial<Pick<TodoListItemModel, 'name' | 'dueDate' | 'done'>>
   ) => Promise<void>
   onDelete: (itemId: string) => Promise<void>
+  onSubjectCompletionChange: (
+    itemId: string,
+    subjectId: string,
+    done: boolean
+  ) => Promise<void>
   onReorder: (orderedItemIds: readonly string[]) => Promise<void>
 }
 
@@ -46,6 +65,20 @@ export function validateTodoListModel(
     }
     if (item.overdue && (item.done || item.dueDate === null)) {
       throw new Error(`Todo list contains an invalid overdue item "${item.id}".`)
+    }
+    if (item.completionSubjectId && item.canToggleDone === false) {
+      throw new Error(`Todo list contains an untoggleable Subject completion "${item.id}".`)
+    }
+    const completionSubjectIds = new Set<string>()
+    for (const completion of item.subjectCompletions ?? []) {
+      if (
+        !completion.subjectId.trim() ||
+        !completion.label.trim() ||
+        completionSubjectIds.has(completion.subjectId)
+      ) {
+        throw new Error(`Todo list contains an invalid Subject completion "${item.id}".`)
+      }
+      completionSubjectIds.add(completion.subjectId)
     }
     itemIds.add(item.id)
   }

@@ -4,6 +4,8 @@ import type { TodoListCreateTargetModel } from '@/features/todos/todo-list-contr
 import { todoListProjection } from '@/features/todos/todo-presenters'
 import { useTodosModel } from '@/features/todos/use-todos-model'
 
+const ALL_SUBJECTS_TARGET_ID = 'all-subjects'
+
 function today(): string {
   const now = new Date()
   const month = String(now.getMonth() + 1).padStart(2, '0')
@@ -27,19 +29,26 @@ export function DirectTodos({
   context: TodoParent
   currentCells?: readonly CurrentTodoCell[]
 }): React.JSX.Element {
-  const model = useTodosModel(context)
+  const currentCellsKey = currentCells
+    .map(({ cell }) => `${cell.scopeId}:${cell.subjectId}`)
+    .join('|')
+  const model = useTodosModel(context, currentCellsKey)
   const aggregateContext = context.type === 'focus' || context.type === 'thread' ||
     context.type === 'commitment'
   const createTargets: TodoListCreateTargetModel[] = aggregateContext &&
     context.type !== 'focus' && currentCells.length > 0
-    ? currentCells.map(({ cell, subjectName }) => ({
-        id: cellTargetId(cell),
-        label: subjectName
-      }))
+    ? [
+        { id: ALL_SUBJECTS_TARGET_ID, label: 'All subjects' },
+        ...currentCells.map(({ cell, subjectName }) => ({
+          id: cellTargetId(cell),
+          label: subjectName
+        }))
+      ]
     : []
 
   function creationParent(targetId?: string): TodoParent {
     if (!aggregateContext || context.type === 'focus' || currentCells.length === 0) return context
+    if (targetId === ALL_SUBJECTS_TARGET_ID) return context
     if (targetId === undefined) throw new Error('A current Todo Subject is required')
     const selected = currentCells.find(({ cell }) => cellTargetId(cell) === targetId)
     if (!selected) throw new Error('Todo Scope is no longer available')
@@ -50,6 +59,9 @@ export function DirectTodos({
 
   const todoProjection = todoListProjection(model.todos, {
     today: today(),
+    ...(context.type === 'thread-scope' || context.type === 'commitment-scope'
+      ? { selectedSubjectId: context.scope.subjectId }
+      : {}),
     ...(aggregateContext && context.type !== 'focus'
       ? { currentCells: currentCells.map(({ cell }) => cell) }
       : {})
@@ -71,7 +83,10 @@ export function DirectTodos({
         await model.createTodo({
           parent: creationParent(targetId),
           name: draft.name,
-          dueDate: draft.dueDate
+          dueDate: draft.dueDate,
+          ...(targetId === ALL_SUBJECTS_TARGET_ID
+            ? { sharedAcrossSubjects: true }
+            : {})
         })
       }}
       onUpdate={async (itemId, input) => {
@@ -79,6 +94,9 @@ export function DirectTodos({
       }}
       onDelete={async (itemId) => {
         await model.deleteTodo(Number(itemId))
+      }}
+      onSubjectCompletionChange={async (itemId, subjectId, done) => {
+        await model.updateSubjectCompletion(Number(itemId), Number(subjectId), done)
       }}
       onReorder={async (orderedItemIds) => {
         await model.reorderTodos(orderedItemIds.map(Number))

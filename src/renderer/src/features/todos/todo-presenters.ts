@@ -11,6 +11,7 @@ export function todoListProjection(
   options: {
     today: string
     currentCells?: readonly UpdateScopeCell[]
+    selectedSubjectId?: number
   }
 ): TodoListProjection {
   const currentSubjectIds = options.currentCells === undefined
@@ -19,6 +20,14 @@ export function todoListProjection(
   const projection: TodoListProjection = { items: [], orphanedItems: [] }
 
   for (const todo of todos) {
+    const selectedCompletion = todo.sharedAcrossSubjects && options.selectedSubjectId !== undefined
+      ? todo.subjectCompletions.find(
+          ({ subject }) => subject.id === options.selectedSubjectId
+        )
+      : undefined
+    if (todo.sharedAcrossSubjects && options.selectedSubjectId !== undefined && !selectedCompletion) {
+      continue
+    }
     const scope = todo.parent.type === 'thread-scope' ||
       todo.parent.type === 'commitment-scope'
       ? todo.parent.scope
@@ -26,21 +35,41 @@ export function todoListProjection(
     // Scope ids are immutable application-history nodes. Reapplying the same
     // canonical Subject can replace its Scope id, so current applicability is
     // classified by Subject identity instead of the historical Scope id.
-    const orphaned = currentSubjectIds !== null && (
+    const orphaned = !todo.sharedAcrossSubjects && currentSubjectIds !== null && (
       scope === null
         ? currentSubjectIds.size > 0
         : !currentSubjectIds.has(scope.subjectId)
     )
     const subjectName = todo.subject?.name ?? (scope ? `Subject ${scope.subjectId}` : null)
-    const contextLabel = orphaned
+    const contextLabel = todo.sharedAcrossSubjects
+      ? options.selectedSubjectId === undefined ? 'All subjects' : 'Shared'
+      : orphaned
       ? subjectName ? `${subjectName} · Orphaned` : 'Orphaned'
       : subjectName
+    const displayedDone = selectedCompletion?.done ?? todo.done
     const item = {
       id: String(todo.id),
       name: todo.name,
       dueDate: todo.dueDate,
-      done: todo.done,
-      overdue: !todo.done && todo.dueDate !== null && todo.dueDate < options.today,
+      done: displayedDone,
+      overdue: !displayedDone && todo.dueDate !== null && todo.dueDate < options.today,
+      ...(todo.sharedAcrossSubjects && options.selectedSubjectId === undefined
+        ? {
+            canToggleDone: false,
+            subjectCompletions: todo.subjectCompletions.map((completion) => ({
+              subjectId: String(completion.subject.id),
+              label: completion.subject.name,
+              done: completion.done
+            }))
+          }
+        : {}),
+      ...(selectedCompletion
+        ? {
+            canEdit: false,
+            canDelete: false,
+            completionSubjectId: String(selectedCompletion.subject.id)
+          }
+        : {}),
       ...(contextLabel ? { contextLabel } : {})
     }
     if (orphaned) projection.orphanedItems.push(item)

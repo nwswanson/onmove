@@ -2,8 +2,11 @@ import type {
   CreateTodoInput,
   TodoEntityParent,
   TodoListOptions,
+  TodoOverviewItemSnapshot,
+  TodoOverviewSnapshot,
   TodoParent,
   TodoSnapshot,
+  TodoSubjectCompletionSnapshot,
   TodoSortPlacementSnapshot,
   SubjectSnapshot,
   UpdateScopeCell,
@@ -25,8 +28,31 @@ interface TodoRow {
   name: string
   due_on: string | null
   done: number
+  completed_at: string | null
+  shared_across_subjects: number
   created_at: string
   updated_at: string
+}
+
+interface TodoSubjectCompletionRow {
+  todo_id: number
+  subject_id: number
+  done: number
+  completed_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+interface TodoOverviewRow extends TodoRow {
+  overview_focus_id: number
+  overview_focus_title: string
+  overview_focus_sensitive: number
+  overview_thread_id: number | null
+  overview_thread_title: string | null
+  overview_thread_sensitive: number | null
+  overview_commitment_id: number | null
+  overview_commitment_title: string | null
+  overview_commitment_sensitive: number | null
 }
 
 interface TodoListRow {
@@ -60,6 +86,8 @@ interface ParentColumns {
 }
 
 const SORT_STRIDE = 1024
+export const RECENTLY_COMPLETED_TODO_DAYS = 7
+const DAY_MS = 24 * 60 * 60 * 1000
 
 function assertId(id: number, field: string): void {
   if (!Number.isSafeInteger(id) || id <= 0) {
@@ -196,6 +224,18 @@ export class TodoModel extends BaseModel<TodoRecord> {
     return this.record.done
   }
 
+  get completedAt(): string | null {
+    return this.record.completedAt
+  }
+
+  get sharedAcrossSubjects(): boolean {
+    return this.record.sharedAcrossSubjects
+  }
+
+  get subjectCompletions(): readonly TodoSubjectCompletionSnapshot[] {
+    return this.record.subjectCompletions
+  }
+
   get sort(): readonly TodoSortPlacementSnapshot[] {
     return this.record.sort
   }
@@ -211,6 +251,11 @@ export class TodoModel extends BaseModel<TodoRecord> {
 
   setDone(done: boolean): this {
     return this.update({ done })
+  }
+
+  setSubjectDone(subjectId: number, done: boolean): this {
+    const repository = this.persistence as TodoRepository
+    return this.replace(repository.updateSubjectCompletion(this.id, subjectId, done))
   }
 }
 
@@ -241,15 +286,21 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
     const name = normalizeName(input.name)
     const dueDate = normalizeOptionalDate(input.dueDate, 'Todo due date')
     const done = normalizeDone(input.done)
-    const columns = this.validateParent(input.parent, now)
+    const sharedAcrossSubjects = input.sharedAcrossSubjects ?? false
+    if (typeof sharedAcrossSubjects !== 'boolean') {
+      throw new ModelValidationError('Todo shared-across-Subjects flag must be a boolean')
+    }
+    const columns = sharedAcrossSubjects
+      ? this.validateSharedParent(input.parent, done, now)
+      : this.validateParent(input.parent, now)
     const createdAt = timestamp(now)
 
     const id = this.database.transaction(() => {
       const result = this.database.run(
         `INSERT INTO todos (
            focus_id, thread_id, commitment_id, scope_id, subject_id,
-           name, due_on, done, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           name, due_on, done, completed_at, shared_across_subjects, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           columns.focusId,
           columns.threadId,
@@ -259,6 +310,8 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
           name,
           dueDate,
           done ? 1 : 0,
+          done ? createdAt : null,
+          sharedAcrossSubjects ? 1 : 0,
           createdAt,
           createdAt
         ]
@@ -266,29 +319,44 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
 
       const aggregate = entityParent(input.parent)
       this.addPlacement(result.lastInsertRowid, this.ensureList(aggregate, now), now)
-      if (scopeCell(input.parent)) {
+      if (sharedAcrossSubjects) {
+        this.reconcileSharedTodo(result.lastInsertRowid, aggregate, now)
+      } else if (scopeCell(input.parent)) {
         this.addPlacement(result.lastInsertRowid, this.ensureList(input.parent, now), now)
       }
       return result.lastInsertRowid
     })
 
-    return this.requireModel(id)
+    return this.instantiate(this.find(id, now) as TodoSnapshot)
   }
 
-  find(id: number): TodoSnapshot | null {
+  find(id: number, now = new Date()): TodoSnapshot | null {
     assertId(id, 'Todo id')
-    const row = this.database.get<TodoRow>(
-      `SELECT id, focus_id, thread_id, commitment_id, scope_id, subject_id,
-              name, due_on, done, created_at, updated_at
-       FROM todos WHERE id = ?`,
-      [id]
-    )
+    let row = this.findRow(id)
+    if (row && Boolean(row.shared_across_subjects)) {
+      this.reconcileSharedTodo(id, entityParent(parentFromColumns(columnsFromTodoRow(row))), now)
+      row = this.findRow(id)
+    }
     return row ? this.snapshotFromRow(row) : null
   }
 
-  list(context: TodoParent, options: TodoListOptions = {}): TodoSnapshot[] {
+  private findRow(id: number): TodoRow | undefined {
+    return this.database.get<TodoRow>(
+      `SELECT id, focus_id, thread_id, commitment_id, scope_id, subject_id,
+              name, due_on, done, completed_at, shared_across_subjects, created_at, updated_at
+       FROM todos WHERE id = ?`,
+      [id]
+    )
+  }
+
+  list(
+    context: TodoParent,
+    options: TodoListOptions = {},
+    now = new Date()
+  ): TodoSnapshot[] {
     this.validateListOptions(options)
     this.assertContextReferences(context)
+    this.reconcileSharedTodos(entityParent(context), now)
     const list = this.findList(context)
     if (!list) return []
 
@@ -310,7 +378,8 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
     return this.database.all<TodoRow>(
       `SELECT todo.id, todo.focus_id, todo.thread_id, todo.commitment_id,
               todo.scope_id, todo.subject_id, todo.name, todo.due_on,
-              todo.done, todo.created_at, todo.updated_at
+              todo.done, todo.completed_at, todo.shared_across_subjects,
+              todo.created_at, todo.updated_at
        FROM todo_sort_placements placement
        JOIN todos todo ON todo.id = placement.todo_id
        WHERE ${clauses.join(' AND ')}
@@ -323,8 +392,9 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
    * Returns each Todo once without imposing one contextual list's ordering.
    * Callers can inspect `sort` to project it into any aggregate or exact list.
    */
-  query(options: TodoListOptions = {}): TodoSnapshot[] {
+  query(options: TodoListOptions = {}, now = new Date()): TodoSnapshot[] {
     this.validateListOptions(options)
+    this.reconcileAllSharedTodos(now)
     const clauses: string[] = []
     const parameters: Array<number | string> = []
     if (options.done !== undefined) {
@@ -342,26 +412,139 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
     const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''
     return this.database.all<TodoRow>(
       `SELECT id, focus_id, thread_id, commitment_id, scope_id, subject_id,
-              name, due_on, done, created_at, updated_at
+              name, due_on, done, completed_at, shared_across_subjects, created_at, updated_at
        FROM todos ${where}
        ORDER BY done, CASE WHEN due_on IS NULL THEN 1 ELSE 0 END, due_on, id`,
       parameters
     ).map((row) => this.snapshotFromRow(row))
   }
 
-  update(id: number, input: UpdateTodoInput): TodoSnapshot {
-    const current = this.find(id)
-    if (!current) throw new ModelNotFoundError('Todo', id)
-    const name = input.name === undefined ? current.name : normalizeName(input.name)
-    const dueDate = input.dueDate === undefined
-      ? current.dueDate
-      : normalizeOptionalDate(input.dueDate, 'Todo due date')
-    const done = input.done === undefined ? current.done : normalizeDone(input.done)
-    this.database.run(
-      `UPDATE todos SET name = ?, due_on = ?, done = ?, updated_at = ? WHERE id = ?`,
-      [name, dueDate, done ? 1 : 0, timestamp(), id]
+  /**
+   * Returns every open Todo plus only recently completed Todos. The completion
+   * cutoff is part of the SQL predicate, so older closed work is never
+   * materialized or sent to a renderer.
+   */
+  overview(
+    now = new Date(),
+    recentlyCompletedDays = RECENTLY_COMPLETED_TODO_DAYS
+  ): TodoOverviewSnapshot {
+    if (!Number.isSafeInteger(recentlyCompletedDays) || recentlyCompletedDays <= 0) {
+      throw new ModelValidationError('recently completed Todo days must be a positive integer')
+    }
+    const completedSince = new Date(now.getTime() - recentlyCompletedDays * DAY_MS).toISOString()
+    this.reconcileAllSharedTodos(now)
+    const rows = this.database.all<TodoOverviewRow>(
+      `SELECT todo.id, todo.focus_id, todo.thread_id, todo.commitment_id,
+              todo.scope_id, todo.subject_id, todo.name, todo.due_on,
+              todo.done, todo.completed_at, todo.shared_across_subjects,
+              todo.created_at, todo.updated_at,
+              focus.id AS overview_focus_id,
+              focus.title AS overview_focus_title,
+              focus.sensitive AS overview_focus_sensitive,
+              COALESCE(direct_thread.id, commitment_thread.id) AS overview_thread_id,
+              COALESCE(direct_thread.title, commitment_thread.title) AS overview_thread_title,
+              COALESCE(direct_thread.sensitive, commitment_thread.sensitive)
+                AS overview_thread_sensitive,
+              commitment.id AS overview_commitment_id,
+              commitment.title AS overview_commitment_title,
+              commitment.sensitive AS overview_commitment_sensitive
+       FROM todos todo
+       LEFT JOIN threads direct_thread ON direct_thread.id = todo.thread_id
+       LEFT JOIN commitments commitment ON commitment.id = todo.commitment_id
+       LEFT JOIN threads commitment_thread ON commitment_thread.id = commitment.thread_id
+       JOIN focuses focus ON focus.id = COALESCE(
+         todo.focus_id,
+         direct_thread.focus_id,
+         commitment.focus_id,
+         commitment_thread.focus_id
+       )
+       WHERE todo.done = 0 OR (todo.done = 1 AND todo.completed_at >= ?)
+       ORDER BY todo.done,
+                CASE WHEN todo.due_on IS NULL THEN 1 ELSE 0 END,
+                todo.due_on,
+                todo.id`,
+      [completedSince]
     )
-    return this.find(id) as TodoSnapshot
+
+    return {
+      items: rows.map((row) => this.overviewSnapshotFromRow(row)),
+      today: today(now),
+      recentlyCompletedDays,
+      completedSince
+    }
+  }
+
+  update(id: number, input: UpdateTodoInput, now = new Date()): TodoSnapshot {
+    const current = this.findRow(id)
+    if (!current) throw new ModelNotFoundError('Todo', id)
+    if (Boolean(current.shared_across_subjects) && input.done !== undefined) {
+      throw new ModelValidationError(
+        'a shared Todo is completed only through its Subject completion cells'
+      )
+    }
+    const snapshot = this.snapshotFromRow(current)
+    const name = input.name === undefined ? snapshot.name : normalizeName(input.name)
+    const dueDate = input.dueDate === undefined
+      ? snapshot.dueDate
+      : normalizeOptionalDate(input.dueDate, 'Todo due date')
+    const done = input.done === undefined ? snapshot.done : normalizeDone(input.done)
+    const completedAt = done
+      ? snapshot.done
+        ? snapshot.completedAt ?? timestamp(now)
+        : timestamp(now)
+      : null
+    this.database.run(
+      `UPDATE todos
+       SET name = ?, due_on = ?, done = ?, completed_at = ?, updated_at = ?
+       WHERE id = ?`,
+      [name, dueDate, done ? 1 : 0, completedAt, timestamp(now), id]
+    )
+    return this.find(id, now) as TodoSnapshot
+  }
+
+  updateSubjectCompletion(
+    id: number,
+    subjectId: number,
+    done: boolean,
+    now = new Date()
+  ): TodoSnapshot {
+    assertId(id, 'Todo id')
+    assertId(subjectId, 'Todo Subject id')
+    if (typeof done !== 'boolean') {
+      throw new ModelValidationError('Todo Subject completion done must be a boolean')
+    }
+    const row = this.findRow(id)
+    if (!row) throw new ModelNotFoundError('Todo', id)
+    if (row.shared_across_subjects === 0) {
+      throw new ModelValidationError('Todo Subject completion requires a shared Todo')
+    }
+    const parent = entityParent(parentFromColumns(columnsFromTodoRow(row)))
+    return this.database.transaction(() => {
+      this.reconcileSharedTodo(id, parent, now)
+      const current = this.database.get<TodoSubjectCompletionRow>(
+        `SELECT todo_id, subject_id, done, completed_at, created_at, updated_at
+         FROM todo_subject_completions WHERE todo_id = ? AND subject_id = ?`,
+        [id, subjectId]
+      )
+      if (!current) {
+        throw new ModelValidationError('Todo Subject is not in the current shared context')
+      }
+      const changedAt = timestamp(now)
+      this.database.run(
+        `UPDATE todo_subject_completions
+         SET done = ?, completed_at = ?, updated_at = ?
+         WHERE todo_id = ? AND subject_id = ?`,
+        [
+          done ? 1 : 0,
+          done ? (current.done !== 0 ? current.completed_at ?? changedAt : changedAt) : null,
+          changedAt,
+          id,
+          subjectId
+        ]
+      )
+      this.refreshSharedCompletion(id, now)
+      return this.snapshotFromRow(this.findRow(id) as TodoRow)
+    })
   }
 
   /**
@@ -375,6 +558,7 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
     now = new Date()
   ): TodoSnapshot[] {
     this.assertContextReferences(context)
+    this.reconcileSharedTodos(entityParent(context), now)
     const list = this.findList(context)
     if (!list) {
       if (orderedTodoIds.length === 0) return []
@@ -415,7 +599,7 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
         )
       })
     })
-    return this.list(context)
+    return this.list(context, {}, now)
   }
 
   delete(id: number): boolean {
@@ -443,11 +627,58 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
       subject: row.subject_id === null
         ? null
         : this.subjects.find(Number(row.subject_id)) as SubjectSnapshot | null,
+      sharedAcrossSubjects: Boolean(row.shared_across_subjects),
+      subjectCompletions: row.shared_across_subjects !== 0
+        ? this.subjectCompletions(Number(row.id))
+        : [],
       dueDate: row.due_on,
       done: Boolean(row.done),
+      completedAt: row.completed_at,
       sort: this.sortPlacements(Number(row.id)),
       createdAt: row.created_at,
       updatedAt: row.updated_at
+    }
+  }
+
+  private subjectCompletions(todoId: number): TodoSubjectCompletionSnapshot[] {
+    return this.database.all<TodoSubjectCompletionRow>(
+      `SELECT todo_id, subject_id, done, completed_at, created_at, updated_at
+       FROM todo_subject_completions WHERE todo_id = ? ORDER BY subject_id`,
+      [todoId]
+    ).flatMap((row) => {
+      const subject = this.subjects.find(Number(row.subject_id))
+      return subject ? [{
+        subject,
+        done: Boolean(row.done),
+        completedAt: row.completed_at,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at
+      }] : []
+    })
+  }
+
+  private overviewSnapshotFromRow(row: TodoOverviewRow): TodoOverviewItemSnapshot {
+    return {
+      ...this.snapshotFromRow(row),
+      focus: {
+        id: Number(row.overview_focus_id),
+        title: row.overview_focus_title,
+        sensitive: Boolean(row.overview_focus_sensitive)
+      },
+      thread: row.overview_thread_id === null
+        ? null
+        : {
+            id: Number(row.overview_thread_id),
+            title: row.overview_thread_title as string,
+            sensitive: Boolean(row.overview_thread_sensitive)
+          },
+      commitment: row.overview_commitment_id === null
+        ? null
+        : {
+            id: Number(row.overview_commitment_id),
+            title: row.overview_commitment_title as string,
+            sensitive: Boolean(row.overview_commitment_sensitive)
+          }
     }
   }
 
@@ -464,6 +695,181 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
       context: parentFromColumns(columnsFromListRow(row)),
       position: Number(row.sort_key)
     }))
+  }
+
+  private validateSharedParent(parent: TodoParent, done: boolean, now: Date): ParentColumns {
+    this.assertContextShape(parent)
+    if (parent.type !== 'thread' && parent.type !== 'commitment') {
+      throw new ModelValidationError(
+        'a shared Todo requires an aggregate Thread or Commitment parent'
+      )
+    }
+    if (done) {
+      throw new ModelValidationError(
+        'a shared Todo is completed only through its Subject completion cells'
+      )
+    }
+    this.requireEntityParent(parent)
+    const context = this.sharedContext(parent, now)
+    if (context.scopeId === null || context.subjects.length === 0) {
+      throw new ModelValidationError('a shared Todo requires at least one current Subject')
+    }
+    return parentColumns(parent)
+  }
+
+  private sharedContext(
+    parent: TodoEntityParent,
+    now: Date
+  ): { scopeId: number | null; subjects: SubjectSnapshot[] } {
+    if (parent.type === 'focus') return { scopeId: null, subjects: [] }
+    const application = this.applications.get(
+      parent.type === 'thread'
+        ? { type: 'thread', id: parent.id }
+        : { type: 'commitment', id: parent.id }
+    )
+    const scopeId = application.effectiveScopeId
+    return {
+      scopeId,
+      subjects: scopeId === null ? [] : this.scopes.effectiveSubjects(scopeId, today(now))
+    }
+  }
+
+  private reconcileAllSharedTodos(now: Date): void {
+    const parents = this.database.all<{
+      thread_id: number | null
+      commitment_id: number | null
+    }>(
+      `SELECT DISTINCT thread_id, commitment_id FROM todos
+       WHERE shared_across_subjects = 1`
+    )
+    for (const row of parents) {
+      if (row.thread_id !== null) {
+        this.reconcileSharedTodos({ type: 'thread', id: Number(row.thread_id) }, now)
+      } else if (row.commitment_id !== null) {
+        this.reconcileSharedTodos({ type: 'commitment', id: Number(row.commitment_id) }, now)
+      }
+    }
+  }
+
+  private reconcileSharedTodos(parent: TodoEntityParent, now: Date): void {
+    if (parent.type === 'focus') return
+    const column = parent.type === 'thread' ? 'thread_id' : 'commitment_id'
+    const rows = this.database.all<{ id: number }>(
+      `SELECT id FROM todos WHERE ${column} = ? AND shared_across_subjects = 1 ORDER BY id`,
+      [parent.id]
+    )
+    if (rows.length === 0) return
+    this.database.transaction(() => {
+      for (const row of rows) this.reconcileSharedTodo(Number(row.id), parent, now)
+    })
+  }
+
+  private reconcileSharedTodo(todoId: number, parent: TodoEntityParent, now: Date): void {
+    if (parent.type === 'focus') return
+    const context = this.sharedContext(parent, now)
+    const desiredSubjectIds = new Set(context.subjects.map(({ id }) => id))
+    const completionRows = this.database.all<TodoSubjectCompletionRow>(
+      `SELECT todo_id, subject_id, done, completed_at, created_at, updated_at
+       FROM todo_subject_completions WHERE todo_id = ?`,
+      [todoId]
+    )
+    const existingSubjectIds = new Set(
+      completionRows.map(({ subject_id: subjectId }) => Number(subjectId))
+    )
+    let changed = false
+
+    const exactPlacements = this.database.all<{
+      list_id: number
+      scope_id: number
+      subject_id: number
+    }>(
+      `SELECT placement.list_id, list.scope_id, list.subject_id
+       FROM todo_sort_placements placement
+       JOIN todo_lists list ON list.id = placement.list_id
+       WHERE placement.todo_id = ? AND list.scope_id IS NOT NULL`,
+      [todoId]
+    )
+    for (const placement of exactPlacements) {
+      if (
+        context.scopeId !== Number(placement.scope_id) ||
+        !desiredSubjectIds.has(Number(placement.subject_id))
+      ) {
+        this.database.run(
+          'DELETE FROM todo_sort_placements WHERE todo_id = ? AND list_id = ?',
+          [todoId, placement.list_id]
+        )
+        changed = true
+      }
+    }
+
+    for (const subjectId of existingSubjectIds) {
+      if (desiredSubjectIds.has(subjectId)) continue
+      this.database.run(
+        'DELETE FROM todo_subject_completions WHERE todo_id = ? AND subject_id = ?',
+        [todoId, subjectId]
+      )
+      changed = true
+    }
+
+    const createdAt = timestamp(now)
+    for (const subject of context.subjects) {
+      if (!existingSubjectIds.has(subject.id)) {
+        this.database.run(
+          `INSERT INTO todo_subject_completions (
+             todo_id, subject_id, done, completed_at, created_at, updated_at
+           ) VALUES (?, ?, 0, NULL, ?, ?)`,
+          [todoId, subject.id, createdAt, createdAt]
+        )
+        changed = true
+      }
+      if (context.scopeId === null) continue
+      const exactContext: TodoParent = parent.type === 'thread'
+        ? {
+            type: 'thread-scope',
+            id: parent.id,
+            scope: { scopeId: context.scopeId, subjectId: subject.id }
+          }
+        : {
+            type: 'commitment-scope',
+            id: parent.id,
+            scope: { scopeId: context.scopeId, subjectId: subject.id }
+          }
+      const list = this.ensureList(exactContext, now)
+      const placement = this.database.get<ExistsRow>(
+        `SELECT 1 AS found FROM todo_sort_placements
+         WHERE todo_id = ? AND list_id = ?`,
+        [todoId, list.id]
+      )
+      if (!placement) {
+        this.addPlacement(todoId, list, now)
+        changed = true
+      }
+    }
+    this.refreshSharedCompletion(todoId, now, changed)
+  }
+
+  private refreshSharedCompletion(todoId: number, now: Date, touched = false): void {
+    const summary = this.database.get<{ total: number; incomplete: number }>(
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(CASE WHEN done = 0 THEN 1 ELSE 0 END), 0) AS incomplete
+       FROM todo_subject_completions WHERE todo_id = ?`,
+      [todoId]
+    ) as { total: number; incomplete: number }
+    const row = this.findRow(todoId)
+    if (!row) throw new ModelNotFoundError('Todo', todoId)
+    const done = Number(summary.total) === 0 || Number(summary.incomplete) === 0
+    const stateChanged = done !== Boolean(row.done)
+    if (!stateChanged && !touched) return
+    const changedAt = timestamp(now)
+    this.database.run(
+      `UPDATE todos SET done = ?, completed_at = ?, updated_at = ? WHERE id = ?`,
+      [
+        done ? 1 : 0,
+        done ? (row.done !== 0 ? row.completed_at ?? changedAt : changedAt) : null,
+        changedAt,
+        todoId
+      ]
+    )
   }
 
   private validateParent(parent: TodoParent, now: Date): ParentColumns {

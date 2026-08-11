@@ -20,12 +20,12 @@ export interface ApplicationModel {
   focusStatusSummaries: Readonly<Record<number, StatusSummary | undefined>>
   selectedFocus: FocusSnapshot | null
   selectedFocusId: number | null
-  selectedView: 'home' | 'focus' | 'settings'
+  selectedView: 'todos' | 'focus' | 'settings'
   sensitiveContentHidden: boolean
   enabled: boolean
-  goHome: () => void
+  goTodos: () => void
   goSettings: () => void
-  selectFocus: (focusId: number) => void
+  selectFocus: (focusId: number) => boolean
   createFocus: (input: CreateFocusInput) => Promise<void>
   updateFocus: (focusId: number, input: UpdateFocusInput) => Promise<void>
   refreshFocus: (focusId: number) => Promise<FocusSnapshot>
@@ -47,7 +47,7 @@ export function useApplicationModel(): ApplicationModel {
     Record<number, StatusSummary | undefined>
   >({})
   const [selectedFocusId, setSelectedFocusId] = useState<number | null>(null)
-  const [selectedView, setSelectedView] = useState<'home' | 'focus' | 'settings'>('home')
+  const [selectedView, setSelectedView] = useState<'todos' | 'focus' | 'settings'>('todos')
   const [sensitiveContentHidden, setSensitiveContentHidden] = useState(false)
 
   useEffect(() => {
@@ -60,7 +60,7 @@ export function useApplicationModel(): ApplicationModel {
           current !== null &&
           focusesRef.current.some((focus) => focus.id === current && focus.sensitive)
             ? (() => {
-                setSelectedView('home')
+                setSelectedView('todos')
                 return null
               })()
             : current
@@ -134,9 +134,9 @@ export function useApplicationModel(): ApplicationModel {
             sensitiveRecordIsVisible(focus, sensitiveContentHidden)
         ) ?? null)
 
-  function goHome(): void {
+  function goTodos(): void {
     setSelectedFocusId(null)
-    setSelectedView('home')
+    setSelectedView('todos')
   }
 
   function goSettings(): void {
@@ -144,15 +144,16 @@ export function useApplicationModel(): ApplicationModel {
     setSelectedView('settings')
   }
 
-  function selectFocus(focusId: number): void {
+  function selectFocus(focusId: number): boolean {
     const focus = focuses.find((candidate) => candidate.id === focusId)
     if (
       !focus ||
       !isVisibleFocus(focus) ||
       !sensitiveRecordIsVisible(focus, sensitiveContentHidden)
-    ) return
+    ) return false
     setSelectedFocusId(focusId)
     setSelectedView('focus')
+    return true
   }
 
   async function refreshFocusStatusSummary(focusId: number): Promise<void> {
@@ -190,7 +191,7 @@ export function useApplicationModel(): ApplicationModel {
       !sensitiveRecordIsVisible(updated, sensitiveContentHidden)
     ) {
       setSelectedFocusId(null)
-      setSelectedView('home')
+      setSelectedView('todos')
     }
   }
 
@@ -205,7 +206,7 @@ export function useApplicationModel(): ApplicationModel {
       !sensitiveRecordIsVisible(refreshed, sensitiveContentHidden)
     ) {
       setSelectedFocusId(null)
-      setSelectedView('home')
+      setSelectedView('todos')
     }
     await refreshFocusStatusSummary(focusId)
     return refreshed
@@ -223,7 +224,7 @@ export function useApplicationModel(): ApplicationModel {
       Object.fromEntries(Object.entries(current).filter(([id]) => Number(id) !== focusId))
     )
     setSelectedFocusId(null)
-    setSelectedView('home')
+    setSelectedView('todos')
   }
 
   return {
@@ -241,7 +242,7 @@ export function useApplicationModel(): ApplicationModel {
     selectedView,
     sensitiveContentHidden,
     enabled: Boolean(state),
-    goHome,
+    goTodos,
     goSettings,
     selectFocus,
     createFocus,

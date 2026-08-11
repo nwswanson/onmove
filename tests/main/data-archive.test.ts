@@ -51,11 +51,12 @@ describe('DataArchiveRepository', () => {
       observation: 'Examples are improving.',
       state: 'green'
     })
-    source.domain.todos.create({
+    const sourceTodo = source.domain.todos.create({
       parent: { type: 'commitment', id: commitment.id },
       name: 'Review acceptance criteria',
-      dueDate: '2026-08-10'
-    })
+      dueDate: '2026-08-10',
+      done: true
+    }, new Date('2026-08-09T10:00:00.000Z'))
     const defaultNote = source.domain.commitments.materialize(commitment.id).notes[0]
     source.domain.richTextDocuments.save(
       { type: 'note', id: defaultNote.id, field: 'content' },
@@ -69,6 +70,7 @@ describe('DataArchiveRepository', () => {
       appVersion: '9.9.9',
       exportedAt: '2026-08-09T12:00:00.000Z'
     })
+    expect(archive.tables.commitment_parent_transitions).toHaveLength(1)
 
     const target = createDatabase('archive-target')
     target.domain.focuses.create({ title: 'Replaced local data' })
@@ -98,12 +100,66 @@ describe('DataArchiveRepository', () => {
       lastReviewDate: '2026-08-10',
       lastUpdateDate: '2026-08-09'
     })
+    expect(target.domain.commitments.requireModel(importedCommitment.id).parentHistory())
+      .toMatchObject([{ from: null, to: { type: 'thread', id: importedThread.id } }])
     expect(target.domain.updates.listForCommitment(importedCommitment.id)[0].observation)
       .toBe('Examples are improving.')
-    expect(target.domain.todos.list({ type: 'commitment', id: importedCommitment.id })[0].name)
-      .toBe('Review acceptance criteria')
+    expect(target.domain.todos.list({ type: 'commitment', id: importedCommitment.id })[0])
+      .toMatchObject({
+        name: 'Review acceptance criteria',
+        done: true,
+        completedAt: sourceTodo.completedAt
+      })
     expect(target.domain.commitments.materialize(importedCommitment.id).notes[0].content)
       .toBe('Durable imported note')
+  })
+
+  it('round-trips shared Todos with independent Subject completion and placements', () => {
+    const now = new Date('2026-08-10T12:00:00.000Z')
+    const source = createDatabase('archive-shared-todo-source')
+    const focus = source.domain.focuses.create({ title: 'Shared rollout' })
+    const thread = source.domain.threads.create({
+      focusId: focus.id,
+      title: 'Regional readiness',
+      reviewFrequencyDays: 7
+    }, now)
+    source.domain.threadScopes.addSubject(thread.id, { name: 'North' }, now)
+    const scope = source.domain.threadScopes.addSubject(thread.id, { name: 'South' }, now)
+    const north = scope.subjects.find(({ name }) => name === 'North')!
+    const south = scope.subjects.find(({ name }) => name === 'South')!
+    const shared = source.domain.todos.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Confirm launch readiness',
+      sharedAcrossSubjects: true
+    }, now)
+    source.domain.todos.updateSubjectCompletion(shared.id, north.id, true, now)
+
+    const archive = source.dataArchive.export('9.9.9', now)
+    expect(archive.tables.todo_subject_completions).toHaveLength(2)
+
+    const target = createDatabase('archive-shared-todo-target')
+    expect(target.dataArchive.import(archive, now).issues).toEqual([])
+    const importedThread = target.domain.threads.listForFocus(focus.id)[0]
+    const imported = target.domain.todos.list(
+      { type: 'thread', id: importedThread.id },
+      {},
+      now
+    ).find(({ id }) => id === shared.id)!
+
+    expect(imported).toMatchObject({
+      sharedAcrossSubjects: true,
+      done: false,
+      subjectCompletions: [
+        { subject: { id: north.id, name: 'North' }, done: true },
+        { subject: { id: south.id, name: 'South' }, done: false }
+      ]
+    })
+    expect(imported.sort).toHaveLength(3)
+    expect(target.domain.todos.list({
+      type: 'thread-scope',
+      id: importedThread.id,
+      scope: { scopeId: scope.scopeId!, subjectId: north.id }
+    }, {}, now).map(({ id }) => id)).toContain(shared.id)
   })
 
   it('accepts older camelCase records and ignores future fields and tables', () => {
@@ -130,6 +186,12 @@ describe('DataArchiveRepository', () => {
           threadId: 20,
           title: 'Older commitment'
         }],
+        todos: [{
+          id: 40,
+          focusId: 10,
+          name: 'Older completed Todo',
+          done: true
+        }],
         future_documents: [{ id: 1, blocks: [] }]
       }
     }, new Date('2026-08-09T12:00:00.000Z'))
@@ -137,7 +199,7 @@ describe('DataArchiveRepository', () => {
     expect(summary.sourceArchiveVersion).toBe(99)
     expect(summary.sourceSchemaVersion).toBe(999)
     expect(summary.issues).toEqual([])
-    expect(summary).toMatchObject({ candidateRows: 3, importedRows: 3, skippedRows: 0 })
+    expect(summary).toMatchObject({ candidateRows: 4, importedRows: 4, skippedRows: 0 })
     expect(summary.ignoredTables).toEqual(['future_documents'])
     expect(summary.ignoredFields).toContain('focuses.futurePresentationHint')
     expect(summary.repairedRows).toBeGreaterThan(0)
@@ -151,6 +213,13 @@ describe('DataArchiveRepository', () => {
     const commitment = target.domain.commitments.listForThread(thread.id)[0]
     expect(commitment).toMatchObject({ id: 30, title: 'Older commitment', type: 'ongoing' })
     expect(commitment.notes).toHaveLength(1)
+    expect(target.domain.todos.find(40)).toMatchObject({
+      name: 'Older completed Todo',
+      done: true,
+      completedAt: '2026-08-09T12:00:00.000Z'
+    })
+    expect(target.domain.commitments.requireModel(commitment.id).parentHistory())
+      .toMatchObject([{ from: null, to: { type: 'thread', id: thread.id } }])
   })
 
   it('keeps valid records while pruning broken relationships', () => {

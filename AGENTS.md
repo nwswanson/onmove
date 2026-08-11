@@ -5,7 +5,8 @@
 - The macOS application uses a persistent sidebar and a selection-driven main view.
 - Keep one macOS-style toolbar across the full window, with the sidebar and main workspace beneath
   it. Do not add view-level breadcrumb bars above the main canvas.
-- Put primary item destinations at the top of the sidebar. `Home` is selectable; `Focuses` is a
+- Put primary item destinations at the top of the sidebar. `Todos` is selectable and is the default
+  aggregate workspace; `Focuses` is a
   section label with focus records and the `New focus` action exposed directly beneath it.
 - Focus records with `active` or `paused` status appear in the selector. Paused focuses remain
   selectable but visually muted; `cancelled` and `done` focuses remain in SQLite but are filtered
@@ -46,6 +47,10 @@
   scope a generic child-collection action that presents `Add commitment`; it opens creation for that
   scope and never enters the filtered Commitment level. Do not render a Commitments drilldown in the
   contextual tree.
+- Treat top-level nested Commitment rows as generic dnd-kit draggable children and Overall/Thread
+  rows as stationary drop targets through the contextual sidebar's receiver-owned child-move
+  contract. Threads remain alphabetically ordered and are never draggable. Feature adapters provide
+  only move intent; the shared sidebar owns sensors, drag previews, drop targeting, and accessibility.
 - Route programmatic hierarchy destinations through `ContextualSidebarNavigation.navigateToPath`.
   The navigation owner must resolve asserted ancestor selections and the optional leaf selection
   atomically; feature screens must not manually sequence parent selection, level entry, and leaf
@@ -205,9 +210,11 @@ and do not rely on color alone to communicate selection or status.
 - Todo dragging begins only from the row grip and supports pointer and keyboard sensors. Use a
   complete-row `DragOverlay` and reflow the list around a visible insertion placeholder during
   sorting; never make the editable row or its form controls draggable.
-- A Thread or Commitment Subject tab lists and creates Todos in its exact Scope/Subject cell. Its
-  All Subjects view uses the aggregate ordering context and offers only current Subjects as creation
-  targets whenever at least one exists; never offer an aggregate target alongside them. If no
+- A Thread or Commitment Subject tab lists and creates individual Todos in its exact Scope/Subject
+  cell. Its All Subjects view uses the aggregate ordering context and, whenever at least one Subject
+  exists, offers `All subjects` followed by every current Subject as creation targets. `All subjects`
+  creates one shared aggregate Todo with a durable completion cell and exact sort placement for
+  every current Subject; an individual target creates the existing exact-cell Todo. If no
   Subjects exist, allow direct unscoped fallback Todos. Keep the main aggregate list limited to
   current canonical Subjects and put retained work from removed Subjects—plus old unscoped work
   when Subjects are now present—in the receiver-owned `Orphaned Todos` accordion below it, closed by
@@ -215,6 +222,13 @@ and do not rely on color alone to communicate selection or status.
   tab. Reapplying the same canonical Subject returns its historical Todos to the current aggregate
   list even when the effective Scope id changed. Reorder through named IPC in the active context;
   do not calculate or mutate sort positions in React.
+- A shared Todo parent is editable, deletable, and draggable only from aggregate views, but is never
+  directly checkable. Its receiver-owned disclosure contains non-draggable Subject completion rows.
+  Exact Subject views may toggle only their own completion cell and cannot edit or delete the shared
+  parent. The global Todos/review view returns the parent once and exposes the same completion
+  disclosure. Derive parent `done`/`completedAt` from all current cells. Scope reconciliation adds a
+  fresh unchecked cell for a newly effective Subject, removes cells and exact placements for removed
+  Subjects, closes when no unchecked cells remain, and reopens when a new unchecked cell appears.
 - Keep Focus Subject applicability in the shared feature-level chip editor on the Focus screen.
   Configure Thread applicability only through the Thread context drawer: a receiver-owned choice
   switches between `Inherit Focus scope` and `Custom scope`, and a conditional receiver-owned token
@@ -236,13 +250,25 @@ and do not rely on color alone to communicate selection or status.
   boundaries instead of redacting their view models. Sensitivity cascades down the hierarchy, so a
   sensitive ancestor removes all descendants from lists regardless of each descendant's own flag.
   If the current route becomes hidden, resolve to the nearest visible parent; a hidden Focus resolves
-  to Home. Pinned drawer adapters remain complete and continue to follow the pin-across-navigation
+  to Todos. Pinned drawer adapters remain complete and continue to follow the pin-across-navigation
   contract because they are selected view models, not list membership.
 - Prefer small view components and shared shadcn/ui primitives over a monolithic application shell.
+- Build the Todos workspace from the named bounded overview IPC projection. Its table owns sorting
+  controls for Todo, Project, unified Context, Due date, and Status and can complete/reopen records
+  through the typed Todo mutation. Context is the linked hierarchy path: it includes Overall or
+  Thread, optional Commitment, and optional canonical Subject. Route that link through the shared
+  Focus-workspace destination contract so the Focus, top-level contextual sidebar selection,
+  nested Commitment route, and working-context tab restore atomically. Hide completed rows by
+  default; the view option may reveal only the recently completed records already returned by the
+  model. Never fetch all historical closed Todos and filter them in React.
 
 ## Data model
 
 - Add schema changes as new numbered migrations; never edit a migration already released to users.
+- Persist Todo closure time independently as `completed_at`: the first open-to-done transition sets
+  it, edits to an already-done Todo preserve it, reopening clears it, and closing again records a new
+  instant. The global overview returns every open Todo plus only completed Todos from the last seven
+  days, with the cutoff enforced in SQLite before snapshots cross IPC.
 - Preserve hierarchy cascades, relation `SET NULL` behavior, and automatic status-transition
   auditing.
 - Treat Thread health, materialized review dates, Commitment state, and cadence deadlines as model
@@ -297,15 +323,26 @@ and do not rely on color alone to communicate selection or status.
 - Never accept a Scope declaration when creating or mutating a Commitment. Changing a Thread Scope
   must immediately change the effective working context of all its Commitments regardless of
   whether those Commitments were created before or after the Thread Scope.
+- Reparent Commitments only through the transactional plan/move repository contract and only within
+  one Focus. Updates, Todos, and Notes retain their Commitment ids and exact historical Scope cells;
+  the move never copies or deletes child rows. Compare canonical Subjects in the source and
+  destination contexts independently of evidence count. Exact/superset destinations need no
+  confirmation; missing Subjects require an explicit, stale-plan-safe confirmation before widening
+  the destination Focus Scope or an isolated Thread overlay. Record every actual parent change in
+  immutable `commitment_parent_transitions` history and keep the derived Commitment Scope
+  application synchronized (`inherited` under a Thread, `open` under Overall).
 - Model Todos separately from Commitments. A Todo has a required name, immutable Focus/Thread/
   Commitment or exact Thread/Commitment Scope-cell parent, optional due date, boolean done state,
-  and contextual sort placements. Scoped Todos must receive independent placements in both their
-  exact cell and entity rollup. Reordering a filtered subset may only permute that subset's occupied
-  slots; never use one scalar sort column that lets one view corrupt another view's order.
+  and contextual sort placements. Individual scoped Todos receive placements in their exact cell
+  and entity rollup. A shared aggregate Thread/Commitment Todo receives one durable current-Subject
+  completion cell plus an exact placement per cell; parent completion is derived and cannot be
+  directly mutated. Reordering a filtered subset may only permute that subset's occupied slots;
+  never use one scalar sort column that lets one view corrupt another view's order.
 - Reject direct unscoped Thread and Commitment Todo creation whenever the owner's current effective
   Scope has at least one Subject. Require an exact current Scope/Subject cell in that state. When no
   Subjects are effective, permit the unscoped fallback without rewriting retained scoped history.
-- Expose Todo persistence only through named list/query/create/update/reorder/delete IPC. The global
+- Expose Todo persistence only through named list/query/create/update/Subject-completion/reorder/
+  delete IPC. The global
   query returns each Todo once for future cross-context screens; contextual list order remains in
   each snapshot's sort placements and must not be replaced with an invented global ordering.
 - Model Notes as ordered children of exactly one Focus, Thread, or Commitment. Current inserts create

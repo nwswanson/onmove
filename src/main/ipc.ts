@@ -12,6 +12,7 @@ import {
   type CreateTodoInput,
   type CreateUpdateInput,
   type EditUpdateInput,
+  type MoveCommitmentInput,
   type FocusStatus,
   type SetItemStatusInput,
   type TodoListOptions,
@@ -178,6 +179,16 @@ export function registerAppIpc(
     (_event, id: number, input: UpdateCommitmentInput) =>
       database.domain.commitments.requireModel(id).update(input).snapshot()
   )
+  ipcMain.handle(
+    IPC_CHANNELS.planCommitmentMove,
+    (_event, id: number, parent: CommitmentParent) =>
+      database.domain.commitments.planMove(id, parent)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.moveCommitment,
+    (_event, id: number, input: MoveCommitmentInput) =>
+      database.domain.commitments.move(id, input)
+  )
   ipcMain.handle(IPC_CHANNELS.pokeCommitmentReview, (_event, id: number) =>
     database.domain.commitments.requireModel(id).pokeReview().snapshot()
   )
@@ -206,11 +217,19 @@ export function registerAppIpc(
   ipcMain.handle(IPC_CHANNELS.queryTodos, (_event, options?: TodoListOptions) =>
     database.domain.todos.query(options)
   )
+  ipcMain.handle(IPC_CHANNELS.getTodoOverview, () =>
+    database.domain.todos.overview()
+  )
   ipcMain.handle(IPC_CHANNELS.createTodo, (_event, input: CreateTodoInput) =>
     database.domain.todos.create(input).toSnapshot()
   )
   ipcMain.handle(IPC_CHANNELS.updateTodo, (_event, id: number, input: UpdateTodoInput) =>
     database.domain.todos.requireModel(id).update(input).toSnapshot()
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.updateTodoSubjectCompletion,
+    (_event, id: number, subjectId: number, done: boolean) =>
+      database.domain.todos.updateSubjectCompletion(id, subjectId, done)
   )
   ipcMain.handle(
     IPC_CHANNELS.reorderTodos,

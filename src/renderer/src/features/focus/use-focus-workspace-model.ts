@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import type {
   CommitmentParent,
+  CommitmentMovePlanSnapshot,
   CommitmentSnapshot,
   CreateCommitmentInput,
   CreateThreadInput,
   FocusSnapshot,
   FocusScopeSnapshot,
+  MoveCommitmentInput,
   ThreadSnapshot,
   ThreadScopeSnapshot,
   ThreadSubjectCellSnapshot,
@@ -64,6 +66,11 @@ export interface FocusWorkspaceModel {
   ) => Promise<ThreadScopeSnapshot>
   createCommitment: (input: CreateCommitmentInput) => Promise<CommitmentSnapshot>
   updateCommitment: (id: number, input: UpdateCommitmentInput) => Promise<CommitmentSnapshot>
+  planCommitmentMove: (
+    id: number,
+    parent: CommitmentParent
+  ) => Promise<CommitmentMovePlanSnapshot>
+  moveCommitment: (id: number, input: MoveCommitmentInput) => Promise<CommitmentSnapshot>
   deleteCommitment: (id: number) => Promise<boolean>
   refreshCommitments: (parent?: CommitmentParent) => Promise<void>
   refreshThread: (threadId: number) => Promise<ThreadSnapshot>
@@ -420,6 +427,32 @@ export function useFocusWorkspaceModel({
     return updated
   }
 
+  function planCommitmentMove(
+    id: number,
+    parent: CommitmentParent
+  ): Promise<CommitmentMovePlanSnapshot> {
+    return window.onmove.domain.planCommitmentMove(id, parent)
+  }
+
+  async function moveCommitment(
+    id: number,
+    input: MoveCommitmentInput
+  ): Promise<CommitmentSnapshot> {
+    const moved = await window.onmove.domain.moveCommitment(id, input)
+    const requestId = ++threadProjectionRequest.current
+    const [threadData, nextCommitments, nextFocusScope] = await Promise.all([
+      loadFocusThreadWorkspaceData(focus.id),
+      window.onmove.domain.listCommitments({ type: 'focus', id: focus.id }),
+      window.onmove.domain.getFocusScope(focus.id)
+    ])
+    if (requestId === threadProjectionRequest.current) {
+      applyFocusThreadWorkspaceData(threadData)
+    }
+    setCommitments(nextCommitments)
+    setFocusScope(nextFocusScope)
+    return moved
+  }
+
   async function deleteCommitment(id: number): Promise<boolean> {
     const parent = commitments.find((commitment) => commitment.id === id)?.parent ??
       Object.values(threadCommitments)
@@ -522,6 +555,8 @@ export function useFocusWorkspaceModel({
     removeThreadScopeSubject,
     createCommitment,
     updateCommitment,
+    planCommitmentMove,
+    moveCommitment,
     deleteCommitment,
     refreshCommitments,
     refreshThread

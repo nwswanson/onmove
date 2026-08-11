@@ -31,12 +31,15 @@ import { cn } from '@/lib/utils'
 function TodoRow({
   item,
   onUpdate,
-  onDelete
+  onDelete,
+  onSubjectCompletionChange
 }: {
   item: TodoListItemModel
   onUpdate: TodoListProps['onUpdate']
   onDelete: TodoListProps['onDelete']
+  onSubjectCompletionChange: TodoListProps['onSubjectCompletionChange']
 }): React.JSX.Element {
+  const draggable = item.draggable !== false
   const {
     attributes,
     listeners,
@@ -45,11 +48,12 @@ function TodoRow({
     transform,
     transition,
     isDragging
-  } = useSortable({ id: item.id })
+  } = useSortable({ id: item.id, disabled: !draggable })
   const [name, setName] = useState(item.name)
   const [dueDate, setDueDate] = useState(item.dueDate ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [subjectProgressOpen, setSubjectProgressOpen] = useState(false)
 
   async function saveName(): Promise<void> {
     const nextName = name.trim()
@@ -94,6 +98,18 @@ function TodoRow({
     }
   }
 
+  async function mutateSubject(subjectId: string, done: boolean): Promise<void> {
+    setSaving(true)
+    setError(null)
+    try {
+      await onSubjectCompletionChange(item.id, subjectId, done)
+    } catch {
+      setError('The Subject completion could not be saved.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <li
       ref={setNodeRef}
@@ -120,30 +136,37 @@ function TodoRow({
         'flex min-w-0 flex-wrap items-center gap-2 p-2.5',
         isDragging && 'invisible'
       )}>
-        <button
-          ref={setActivatorNodeRef}
-          type="button"
-          aria-label={`Drag ${item.name}`}
-          title="Drag to reorder"
-          disabled={saving}
-          className="flex size-7 shrink-0 touch-none cursor-grab items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40 active:cursor-grabbing disabled:pointer-events-none disabled:opacity-50"
-          {...attributes}
-          {...listeners}
-        >
-          <GripVertical aria-hidden="true" className="size-4" />
-        </button>
+        {draggable ? (
+          <button
+            ref={setActivatorNodeRef}
+            type="button"
+            aria-label={`Drag ${item.name}`}
+            title="Drag to reorder"
+            disabled={saving}
+            className="flex size-7 shrink-0 touch-none cursor-grab items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40 active:cursor-grabbing disabled:pointer-events-none disabled:opacity-50"
+            {...attributes}
+            {...listeners}
+          >
+            <GripVertical aria-hidden="true" className="size-4" />
+          </button>
+        ) : <span className="size-7 shrink-0" aria-hidden="true" />}
         <input
           type="checkbox"
-          aria-label={`Mark ${item.name} done`}
+          aria-label={item.canToggleDone === false
+            ? `${item.name} completes when every Subject is done`
+            : `Mark ${item.name} done`}
           checked={item.done}
-          disabled={saving}
+          disabled={saving || item.canToggleDone === false}
           className="size-4 accent-primary"
-          onChange={(event) => void mutate({ done: event.target.checked })}
+          onChange={(event) => item.completionSubjectId
+            ? void mutateSubject(item.completionSubjectId, event.target.checked)
+            : void mutate({ done: event.target.checked })}
         />
         <Input
           aria-label="Todo name"
           value={name}
           className={cn('min-w-44 flex-1', item.done && 'text-muted-foreground line-through')}
+          disabled={saving || item.canEdit === false}
           onChange={(event) => setName(event.target.value)}
           onBlur={() => void saveName()}
           onKeyDown={(event) => {
@@ -165,6 +188,7 @@ function TodoRow({
             type="date"
             aria-label="Todo due date"
             value={dueDate}
+            disabled={saving || item.canEdit === false}
             className={cn('w-36', item.overdue && 'border-destructive text-destructive')}
             onChange={(event) => setDueDate(event.target.value)}
             onBlur={() => void saveDueDate()}
@@ -173,18 +197,66 @@ function TodoRow({
         {item.overdue && (
           <span className="text-xs font-semibold text-destructive">Overdue</span>
         )}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-9 text-muted-foreground hover:text-destructive"
-          aria-label={`Delete ${item.name}`}
-          disabled={saving}
-          onClick={() => void remove()}
-        >
-          <Trash2 aria-hidden="true" />
-        </Button>
+        {item.canDelete !== false ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-9 text-muted-foreground hover:text-destructive"
+            aria-label={`Delete ${item.name}`}
+            disabled={saving}
+            onClick={() => void remove()}
+          >
+            <Trash2 aria-hidden="true" />
+          </Button>
+        ) : <span className="size-9 shrink-0" aria-hidden="true" />}
       </div>
+      {(item.subjectCompletions?.length ?? 0) > 0 && (
+        <div className="border-t border-border/65 px-3 py-2">
+          <button
+            type="button"
+            aria-expanded={subjectProgressOpen}
+            className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-left text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/55"
+            onClick={() => setSubjectProgressOpen((open) => !open)}
+          >
+            <ChevronDown
+              aria-hidden="true"
+              className={cn('size-3.5 transition-transform', subjectProgressOpen && 'rotate-180')}
+            />
+            Subject progress
+            <span className="ml-auto tabular-nums">
+              {item.subjectCompletions?.filter(({ done }) => done).length}/
+              {item.subjectCompletions?.length}
+            </span>
+          </button>
+          {subjectProgressOpen && (
+            <ul
+              aria-label={`${item.name} Subject progress`}
+              className="mt-2 space-y-1 pl-5"
+            >
+              {item.subjectCompletions?.map((completion) => (
+                <li
+                  key={completion.subjectId}
+                  className="flex min-h-8 items-center gap-2 rounded-md px-2 text-xs"
+                >
+                  <input
+                    type="checkbox"
+                    aria-label={`Mark ${item.name} done for ${completion.label}`}
+                    checked={completion.done}
+                    disabled={saving}
+                    className="size-4 accent-primary"
+                    onChange={(event) =>
+                      void mutateSubject(completion.subjectId, event.target.checked)}
+                  />
+                  <span className={cn(completion.done && 'text-muted-foreground line-through')}>
+                    {completion.label}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {error && <p role="alert" className="px-3 pb-2 text-xs text-destructive">{error}</p>}
     </li>
   )
@@ -238,12 +310,14 @@ function TodoSortableCollection({
   items,
   onUpdate,
   onDelete,
+  onSubjectCompletionChange,
   onReorder
 }: {
   ariaLabel: string
   items: readonly TodoListItemModel[]
   onUpdate: TodoListProps['onUpdate']
   onDelete: TodoListProps['onDelete']
+  onSubjectCompletionChange: TodoListProps['onSubjectCompletionChange']
   onReorder: TodoListProps['onReorder']
 }): React.JSX.Element {
   const [activeItemId, setActiveItemId] = useState<string | null>(null)
@@ -330,6 +404,7 @@ function TodoSortableCollection({
                 item={item}
                 onUpdate={onUpdate}
                 onDelete={onDelete}
+                onSubjectCompletionChange={onSubjectCompletionChange}
               />
             ))}
           </ul>
@@ -354,6 +429,7 @@ export function TodoList({
   onCreate,
   onUpdate,
   onDelete,
+  onSubjectCompletionChange,
   onReorder
 }: TodoListProps): React.JSX.Element {
   if (!ariaLabel.trim()) throw new Error('A Todo list requires an accessible label.')
@@ -448,6 +524,7 @@ export function TodoList({
           items={items}
           onUpdate={onUpdate}
           onDelete={onDelete}
+          onSubjectCompletionChange={onSubjectCompletionChange}
           onReorder={onReorder}
         />
       )}
@@ -483,6 +560,7 @@ export function TodoList({
                 items={orphanedItems}
                 onUpdate={onUpdate}
                 onDelete={onDelete}
+                onSubjectCompletionChange={onSubjectCompletionChange}
                 onReorder={onReorder}
               />
             )}

@@ -170,6 +170,127 @@ describe('Todo model', () => {
     }).map(({ id }) => id)).toEqual([second.id, first.id])
   })
 
+  it('shares one Todo across current Subjects and derives closure through Scope changes', () => {
+    const createdOn = new Date('2026-08-09T12:00:00.000Z')
+    const focus = database!.domain.focuses.create({ title: 'Project Atlas' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Sprint execution',
+      reviewFrequencyDays: 7
+    }, createdOn)
+    database!.domain.threadScopes.addSubject(
+      thread.id,
+      { name: 'Customer Operations' },
+      createdOn
+    )
+    const initialScope = database!.domain.threadScopes.addSubject(
+      thread.id,
+      { name: 'Platform Team' },
+      createdOn
+    )
+    const customer = initialScope.subjects.find(({ name }) => name === 'Customer Operations')!
+    const platform = initialScope.subjects.find(({ name }) => name === 'Platform Team')!
+    const shared = database!.domain.todos.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Confirm the rollout',
+      sharedAcrossSubjects: true
+    }, createdOn)
+
+    expect(shared.toSnapshot()).toMatchObject({
+      parent: { type: 'thread', id: thread.id },
+      sharedAcrossSubjects: true,
+      done: false,
+      completedAt: null,
+      subjectCompletions: [
+        { subject: { id: customer.id }, done: false },
+        { subject: { id: platform.id }, done: false }
+      ]
+    })
+    expect(shared.sort).toHaveLength(3)
+    for (const subject of [customer, platform]) {
+      expect(database!.domain.todos.list({
+        type: 'thread-scope',
+        id: thread.id,
+        scope: { scopeId: initialScope.scopeId!, subjectId: subject.id }
+      }, {}, createdOn).map(({ id }) => id)).toContain(shared.id)
+    }
+    expect(() => shared.setDone(true)).toThrow(
+      'completed only through its Subject completion cells'
+    )
+
+    const customerDoneOn = new Date('2026-08-10T09:00:00.000Z')
+    shared.setSubjectDone(customer.id, true)
+    expect(shared.toSnapshot()).toMatchObject({
+      done: false,
+      subjectCompletions: [
+        { subject: { id: customer.id }, done: true },
+        { subject: { id: platform.id }, done: false }
+      ]
+    })
+    const completed = database!.domain.todos.updateSubjectCompletion(
+      shared.id,
+      platform.id,
+      true,
+      customerDoneOn
+    )
+    expect(completed).toMatchObject({
+      done: true,
+      completedAt: customerDoneOn.toISOString()
+    })
+
+    const changedOn = new Date('2026-08-11T12:00:00.000Z')
+    database!.domain.threadScopes.removeSubject(thread.id, platform.id, changedOn)
+    let reconciled = database!.domain.todos.list(
+      { type: 'thread', id: thread.id },
+      {},
+      changedOn
+    ).find(({ id }) => id === shared.id)!
+    expect(reconciled.subjectCompletions.map(({ subject, done }) => ({
+      subject: subject.name,
+      done
+    }))).toEqual([{ subject: 'Customer Operations', done: true }])
+    expect(reconciled.done).toBe(true)
+
+    const widenedOn = new Date('2026-08-12T12:00:00.000Z')
+    const widened = database!.domain.threadScopes.addSubject(
+      thread.id,
+      { name: 'Partner Team' },
+      widenedOn
+    )
+    const partner = widened.subjects.find(({ name }) => name === 'Partner Team')!
+    reconciled = database!.domain.todos.list(
+      { type: 'thread', id: thread.id },
+      {},
+      widenedOn
+    ).find(({ id }) => id === shared.id)!
+    expect(reconciled.done).toBe(false)
+    expect(reconciled.completedAt).toBeNull()
+    expect(reconciled.subjectCompletions).toMatchObject([
+      { subject: { id: customer.id }, done: true },
+      { subject: { id: partner.id }, done: false }
+    ])
+
+    const narrowedOn = new Date('2026-08-13T12:00:00.000Z')
+    database!.domain.threadScopes.removeSubject(thread.id, partner.id, narrowedOn)
+    reconciled = database!.domain.todos.list(
+      { type: 'thread', id: thread.id },
+      {},
+      narrowedOn
+    ).find(({ id }) => id === shared.id)!
+    expect(reconciled).toMatchObject({
+      done: true,
+      completedAt: narrowedOn.toISOString()
+    })
+    expect(reconciled.subjectCompletions).toHaveLength(1)
+
+    expect(database!.domain.todos.delete(shared.id)).toBe(true)
+    const stored = new DatabaseSync(databasePath, { readOnly: true })
+    expect(stored.prepare(
+      'SELECT COUNT(*) AS count FROM todo_subject_completions WHERE todo_id = ?'
+    ).get(shared.id)).toEqual({ count: 0 })
+    stored.close()
+  })
+
   it('reorders filtered subsets without moving hidden Todos out of their slots', () => {
     const focus = database!.domain.focuses.create({ title: 'Project Atlas' })
     const context = { type: 'focus' as const, id: focus.id }
@@ -400,6 +521,74 @@ describe('Todo model', () => {
     expect(focus.delete()).toBe(true)
     expect(database!.domain.todos.find(focusTodo.id)).toBeNull()
     expect(database!.domain.todos.query()).toEqual([])
+  })
+
+  it('materializes a bounded global overview with hierarchy context and durable closure time', () => {
+    const now = new Date('2026-08-10T12:00:00.000Z')
+    const focus = database!.domain.focuses.create({
+      title: 'Project Atlas',
+      sensitive: true
+    })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Sprint execution',
+      reviewFrequencyDays: 7
+    }, now)
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Improve ticket quality'
+    }, now)
+    const active = database!.domain.todos.create({
+      parent: { type: 'focus', id: focus.id },
+      name: 'Align sponsors',
+      dueDate: '2026-08-09'
+    }, now)
+    const recent = database!.domain.todos.create({
+      parent: { type: 'commitment', id: commitment.id },
+      name: 'Review examples',
+      done: true
+    }, new Date('2026-08-09T12:00:00.000Z'))
+    const old = database!.domain.todos.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Old closed work',
+      done: true
+    }, new Date('2026-07-31T12:00:00.000Z'))
+
+    const overview = database!.domain.todos.overview(now)
+
+    expect(overview).toMatchObject({
+      today: '2026-08-10',
+      recentlyCompletedDays: 7,
+      completedSince: '2026-08-03T12:00:00.000Z'
+    })
+    expect(overview.items.map(({ id }) => id)).toEqual([active.id, recent.id])
+    expect(overview.items.find(({ id }) => id === recent.id)).toMatchObject({
+      completedAt: '2026-08-09T12:00:00.000Z',
+      focus: { id: focus.id, title: 'Project Atlas', sensitive: true },
+      thread: { id: thread.id, title: 'Sprint execution', sensitive: false },
+      commitment: { id: commitment.id, title: 'Improve ticket quality', sensitive: false }
+    })
+    expect(overview.items.some(({ id }) => id === old.id)).toBe(false)
+
+    const completed = database!.domain.todos.update(
+      active.id,
+      { done: true },
+      new Date('2026-08-10T13:00:00.000Z')
+    )
+    expect(completed.completedAt).toBe('2026-08-10T13:00:00.000Z')
+    const edited = database!.domain.todos.update(
+      active.id,
+      { name: 'Align executive sponsors' },
+      new Date('2026-08-11T13:00:00.000Z')
+    )
+    expect(edited.completedAt).toBe('2026-08-10T13:00:00.000Z')
+    expect(database!.domain.todos.update(
+      active.id,
+      { done: false },
+      new Date('2026-08-12T13:00:00.000Z')
+    ).completedAt).toBeNull()
+    expect(() => database!.domain.todos.overview(now, 0)).toThrow(/positive integer/)
   })
 
   it('cascades Todo records and placements with their owner but retains shared Scope data', () => {

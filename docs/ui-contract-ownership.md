@@ -64,7 +64,7 @@ what a Focus or Thread is; they simply receive fewer item models.
 
 Navigation resolves the same filtered hierarchy. Hiding the active Commitment goes Back to its
 owning Focus or Thread, hiding the active Thread selects Focus Overall, and hiding the active Focus
-returns Home. Showing content again restores list membership but does not silently restore the old
+returns Todos. Showing content again restores list membership but does not silently restore the old
 route. Selected model receivers remain complete: main screens and drawer adapters do not redact
 field values, and a deliberately pinned drawer continues across navigation under its existing pin
 contract. This keeps list visibility separate from model shape and avoids stale redacted adapters.

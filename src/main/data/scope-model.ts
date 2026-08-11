@@ -310,8 +310,9 @@ export class SubjectRepository extends BaseRepository<SubjectSnapshot, SubjectMo
        WHERE EXISTS (SELECT 1 FROM scope_memberships WHERE subject_id = ?)
           OR EXISTS (SELECT 1 FROM scopes WHERE context_subject_id = ?)
           OR EXISTS (SELECT 1 FROM updates WHERE subject_id = ?)
-          OR EXISTS (SELECT 1 FROM todos WHERE subject_id = ?)`,
-      [id, id, id, id]
+          OR EXISTS (SELECT 1 FROM todos WHERE subject_id = ?)
+          OR EXISTS (SELECT 1 FROM todo_subject_completions WHERE subject_id = ?)`,
+      [id, id, id, id, id]
     )
     if (referenced) {
       throw new ModelValidationError(
@@ -1080,6 +1081,46 @@ export class FocusScopeRepository {
     })
   }
 
+  /** Ensures canonical Subjects are present without creating duplicate identities. */
+  ensureSubjects(
+    focusId: number,
+    subjectIds: readonly number[],
+    now = new Date()
+  ): FocusScopeSnapshot {
+    const on = today(now)
+    return this.database.transaction(() => {
+      const ids = [...new Set(subjectIds)]
+      for (const subjectId of ids) {
+        assertId(subjectId, 'subject id')
+        if (!this.subjects.find(subjectId)) throw new ModelNotFoundError('Subject', subjectId)
+      }
+      const application = this.applications.get({ type: 'focus', id: focusId })
+      let scopeId = application.effectiveScopeId
+      if (scopeId === null && ids.length > 0) {
+        scopeId = this.scopes.create({
+          focusId,
+          name: 'Focus subjects',
+          dimension: 'subject'
+        }, now).id
+      }
+      if (scopeId !== null) {
+        for (const subjectId of ids) {
+          if (!this.scopes.isEffectiveMember(scopeId, subjectId, on)) {
+            this.restoreSubject(scopeId, subjectId, on, now)
+          }
+        }
+      }
+      if (application.effectiveScopeId === null && scopeId !== null) {
+        this.applications.set(
+          { type: 'focus', id: focusId },
+          { mode: 'explicit', scopeId },
+          now
+        )
+      }
+      return this.get(focusId, on)
+    })
+  }
+
   removeSubject(focusId: number, subjectId: number, now = new Date()): FocusScopeSnapshot {
     assertId(subjectId, 'subject id')
     const on = today(now)
@@ -1238,6 +1279,47 @@ export class ThreadScopeRepository {
         effect: 'include',
         effectiveFrom: on
       }, now)
+      this.applications.set(
+        { type: 'thread', id: threadId },
+        { mode: 'explicit', scopeId: scope.id },
+        now
+      )
+      return this.get(threadId, on)
+    })
+  }
+
+  /**
+   * Widens one Thread context in a single overlay/application transition. This
+   * is used by confirmed Commitment moves that carry canonical Subjects the
+   * destination does not yet cover.
+   */
+  ensureSubjects(
+    threadId: number,
+    subjectIds: readonly number[],
+    now = new Date()
+  ): ThreadScopeSnapshot {
+    const on = today(now)
+    return this.database.transaction(() => {
+      const current = this.get(threadId, on)
+      const currentIds = new Set(current.subjects.map(({ id }) => id))
+      const missing = [...new Set(subjectIds)].filter((subjectId) => {
+        assertId(subjectId, 'subject id')
+        return !currentIds.has(subjectId)
+      })
+      if (missing.length === 0) return current
+
+      for (const subjectId of missing) {
+        if (!this.subjects.find(subjectId)) throw new ModelNotFoundError('Subject', subjectId)
+      }
+      const scope = this.createOverlay(threadId, current, now)
+      for (const subjectId of missing) {
+        this.memberships.create({
+          scopeId: scope.id,
+          subjectId,
+          effect: 'include',
+          effectiveFrom: on
+        }, now)
+      }
       this.applications.set(
         { type: 'thread', id: threadId },
         { mode: 'explicit', scopeId: scope.id },

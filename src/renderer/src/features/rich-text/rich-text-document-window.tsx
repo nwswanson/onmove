@@ -28,10 +28,14 @@ export function RichTextDocumentWindow({
         <h1 className="mt-1 text-lg font-semibold">{editor.title || 'Rich text editor'}</h1>
         <p className="mt-1 text-xs text-muted-foreground">Saved locally as you type</p>
       </header>
-      <div className="min-h-0 flex-1 overflow-auto p-6">
+      <div
+        data-slot="rich-text-window-editor-region"
+        className="flex min-h-0 flex-1 flex-col p-6"
+      >
         <RichTextEditor
           ariaLabel="Document content"
-          className="min-h-[calc(100vh-13rem)]"
+          className="min-h-0 flex-1"
+          fillHeight
           value={editor.value}
           externalRevision={editor.revision}
           onChange={editor.save}

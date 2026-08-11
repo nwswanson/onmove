@@ -1,8 +1,7 @@
-import { useReducer, useState } from 'react'
-import { AlertTriangle, ChevronRight, FolderOpen, House, Info, Settings } from 'lucide-react'
+import { useReducer, useRef, useState } from 'react'
+import { AlertTriangle, FolderOpen, Info, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
-  ContextDrawerOutlet,
   contextDrawerReducer,
   initialContextDrawerState,
   type ContextDrawerAdapter,
@@ -28,15 +27,15 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Toolbar, ToolbarGroup } from '@/components/ui/toolbar'
 import { ApplicationShell, WorkspaceShell } from '@/components/ui/workspace-shell'
 import { useApplicationModel } from '@/features/application/use-application-model'
+import type {
+  FocusWorkspaceDestination,
+  FocusWorkspaceDestinationTarget
+} from '@/features/application/application-navigation'
 import { NewFocusDialog } from '@/features/focus/focus-ui'
 import { focusPrimaryNavigationItems } from '@/features/focus/focus-presenters'
 import { FocusWorkspace } from '@/features/focus/focus-workspace'
 import { SettingsWorkspace } from '@/features/settings/settings-workspace'
-
-interface HomeExample {
-  title: string
-  status: 'good' | 'attention'
-}
+import { TodoWorkspace } from '@/features/todos/todo-workspace'
 
 const SIDEBAR_MIN = 208
 const SIDEBAR_MAX = 288
@@ -96,10 +95,10 @@ function AppToolbar({
 interface AppSidebarProps {
   focusItems: readonly SidebarNavigationItemModel[]
   selectedFocusId: string | null
-  selectedView: 'home' | 'focus' | 'settings'
+  selectedView: 'todos' | 'focus' | 'settings'
   enabled: boolean
   width: number
-  onHome: () => void
+  onTodos: () => void
   onSettings: () => void
   onSelectFocus: (focusId: string) => void
   onNewFocus: () => void
@@ -112,13 +111,13 @@ function AppSidebar({
   selectedView,
   enabled,
   width,
-  onHome,
+  onTodos,
   onSettings,
   onSelectFocus,
   onNewFocus,
   onShowData
 }: AppSidebarProps): React.JSX.Element {
-  const homeActive = selectedView === 'home'
+  const todosActive = selectedView === 'todos'
 
   return (
     <Sidebar aria-label="Primary sidebar" style={{ width }}>
@@ -143,9 +142,9 @@ function AppSidebar({
         <SidebarGroup>
           <SidebarGroupLabel>Items</SidebarGroupLabel>
           <SidebarNavigation
-            items={[{ id: 'home', label: 'Home', icon: 'home' }]}
-            selectedItemId={homeActive ? 'home' : null}
-            onSelect={onHome}
+            items={[{ id: 'todos', label: 'Todos', icon: 'todos' }]}
+            selectedItemId={todosActive ? 'todos' : null}
+            onSelect={onTodos}
           />
         </SidebarGroup>
 
@@ -194,105 +193,6 @@ function AppSidebar({
   )
 }
 
-interface HomeViewProps {
-  value: HomeExample
-  contextDrawer: ContextDrawerControl
-  onChange: (value: HomeExample) => void
-  onOpenContext: () => void
-}
-
-function HomeView({
-  value,
-  contextDrawer,
-  onChange,
-  onOpenContext
-}: HomeViewProps): React.JSX.Element {
-  const contextDrawerAdapter: ContextDrawerAdapter = {
-    id: 'home:example',
-    invalidationKeys: [],
-    model: {
-      title: 'Home item',
-      description: 'Example contextual editor',
-      ariaLabel: 'Home item context drawer',
-      sections: [
-        {
-          id: 'details',
-          fields: [
-            { kind: 'text', id: 'title', label: 'Title', value: value.title },
-            {
-              kind: 'select',
-              id: 'status',
-              label: 'Status',
-              value: value.status,
-              options: [
-                { value: 'good', label: 'Good' },
-                { value: 'attention', label: 'Needs attention' }
-              ]
-            },
-            {
-              kind: 'static',
-              id: 'current-state',
-              label: 'Current state',
-              value: value.status === 'good' ? 'Good state' : 'Needs attention'
-            }
-          ]
-        }
-      ],
-      actions: [
-        {
-          id: 'done',
-          label: 'Done',
-          errorMessage: 'The example item could not be updated.',
-          onInvoke: (values) => {
-            onChange({
-              title: typeof values.title === 'string' ? values.title : '',
-              status: values.status as HomeExample['status']
-            })
-            contextDrawer.onClose()
-          }
-        }
-      ]
-    }
-  }
-
-  return (
-    <WorkspaceShell
-      main={<main className="min-w-0 flex-1 overflow-auto bg-background" aria-labelledby="home-heading">
-        <section className="mx-auto w-full max-w-5xl p-8 sm:p-10">
-          <h1 id="home-heading" className="text-2xl font-semibold tracking-[-0.025em]">
-            Home
-          </h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            This view is intentionally open for future items.
-          </p>
-
-          <button
-            type="button"
-            className="group mt-10 flex w-full max-w-md items-center gap-3 rounded-xl border border-border/80 bg-card/45 p-3.5 text-left shadow-xs outline-none transition-colors hover:border-primary/65 hover:bg-primary/10 focus-visible:ring-2 focus-visible:ring-ring/55"
-            aria-label="Edit Example home item"
-            onClick={onOpenContext}
-          >
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/25 text-sidebar-primary-foreground">
-              <House className="size-4" aria-hidden="true" />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium">{value.title}</span>
-              <span className="mt-0.5 block text-xs text-muted-foreground">
-                Select to inspect and edit context
-              </span>
-            </span>
-            <ChevronRight
-              className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5"
-              aria-hidden="true"
-            />
-          </button>
-        </section>
-      </main>}
-      drawer={<ContextDrawerOutlet adapter={contextDrawerAdapter} {...contextDrawer} />}
-    />
-  )
-}
-
 function LoadingView(): React.JSX.Element {
   return (
     <main className="flex min-w-0 flex-1 items-start p-10" aria-label="Loading application">
@@ -317,10 +217,9 @@ export function App(): React.JSX.Element {
   const [focusSubjectSelections, setFocusSubjectSelections] = useState<
     Record<number, number | null | undefined>
   >({})
-  const [homeExample, setHomeExample] = useState<HomeExample>({
-    title: 'Example home item',
-    status: 'good'
-  })
+  const [focusDestination, setFocusDestination] =
+    useState<FocusWorkspaceDestination | null>(null)
+  const focusDestinationRequest = useRef(0)
   const selectedFocus = application.selectedFocus
   const focusItems = focusPrimaryNavigationItems(
     application.navigableFocuses,
@@ -329,7 +228,7 @@ export function App(): React.JSX.Element {
   )
   const toolbarTitle = application.selectedView === 'settings'
     ? 'Settings'
-    : (selectedFocus?.title ?? 'Home')
+    : (selectedFocus?.title ?? 'Todos')
   const contextDrawer = {
     open: contextDrawerState.open,
     pinnedAdapter: contextDrawerState.pinnedAdapter,
@@ -348,6 +247,18 @@ export function App(): React.JSX.Element {
   async function deleteFocus(focusId: number): Promise<void> {
     await application.deleteFocus(focusId)
     contextDrawer.onInvalidate([`focus:${focusId}`])
+  }
+
+  function openTodoContext(destination: FocusWorkspaceDestinationTarget): void {
+    if (!application.selectFocus(destination.focusId)) return
+    setFocusSubjectSelections((current) => ({
+      ...current,
+      [destination.focusId]: destination.subjectId
+    }))
+    setFocusDestination({
+      ...destination,
+      requestId: ++focusDestinationRequest.current
+    })
   }
 
   return (
@@ -369,9 +280,15 @@ export function App(): React.JSX.Element {
             selectedView={application.selectedView}
             enabled={application.enabled}
             width={sidebarWidth}
-            onHome={application.goHome}
+            onTodos={() => {
+              setFocusDestination(null)
+              application.goTodos()
+            }}
             onSettings={application.goSettings}
-            onSelectFocus={(focusId) => application.selectFocus(Number(focusId))}
+            onSelectFocus={(focusId) => {
+              setFocusDestination(null)
+              application.selectFocus(Number(focusId))
+            }}
             onNewFocus={() => setNewFocusOpen(true)}
             onShowData={() => void application.showDataFolder()}
           />
@@ -407,14 +324,21 @@ export function App(): React.JSX.Element {
                   [selectedFocus.id]: subjectId
                 }))
               }
+              destination={focusDestination?.focusId === selectedFocus.id
+                ? focusDestination
+                : null}
+              onDestinationApplied={(requestId) =>
+                setFocusDestination((current) =>
+                  current?.requestId === requestId ? null : current
+                )
+              }
               hideSensitiveContent={application.sensitiveContentHidden}
             />
           ) : (
-            <HomeView
-              value={homeExample}
+            <TodoWorkspace
               contextDrawer={contextDrawer}
-              onChange={setHomeExample}
-              onOpenContext={() => dispatchContextDrawer({ type: 'open' })}
+              hideSensitiveContent={application.sensitiveContentHidden}
+              onOpenContext={openTodoContext}
             />
           )
         ) : application.error ? (

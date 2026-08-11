@@ -19,11 +19,12 @@ export interface TodosModel {
   loadError: string | null
   createTodo: (input: CreateTodoInput) => Promise<TodoSnapshot>
   updateTodo: (id: number, input: UpdateTodoInput) => Promise<TodoSnapshot>
+  updateSubjectCompletion: (id: number, subjectId: number, done: boolean) => Promise<TodoSnapshot>
   deleteTodo: (id: number) => Promise<void>
   reorderTodos: (orderedTodoIds: readonly number[]) => Promise<void>
 }
 
-export function useTodosModel(context: TodoParent): TodosModel {
+export function useTodosModel(context: TodoParent, refreshKey = ''): TodosModel {
   const key = contextKey(context)
   const contextType = context.type
   const contextId = context.id
@@ -67,7 +68,7 @@ export function useTodosModel(context: TodoParent): TodosModel {
     return () => {
       active = false
     }
-  }, [key, stableContext])
+  }, [key, refreshKey, stableContext])
 
   async function createTodo(input: CreateTodoInput): Promise<TodoSnapshot> {
     const created = await window.onmove.domain.createTodo(input)
@@ -101,6 +102,22 @@ export function useTodosModel(context: TodoParent): TodosModel {
     }))
   }
 
+  async function updateSubjectCompletion(
+    id: number,
+    subjectId: number,
+    done: boolean
+  ): Promise<TodoSnapshot> {
+    const updated = await window.onmove.domain.updateTodoSubjectCompletion(id, subjectId, done)
+    setState((current) => ({
+      key,
+      loadError: null,
+      todos: (current.key === key ? current.todos : []).map(
+        (todo) => todo.id === id ? updated : todo
+      )
+    }))
+    return updated
+  }
+
   async function reorderTodos(orderedTodoIds: readonly number[]): Promise<void> {
     const reordered = await window.onmove.domain.reorderTodos(stableContext, orderedTodoIds)
     setState({ key, todos: reordered, loadError: null })
@@ -112,6 +129,7 @@ export function useTodosModel(context: TodoParent): TodosModel {
     loadError: currentState.loadError,
     createTodo,
     updateTodo,
+    updateSubjectCompletion,
     deleteTodo,
     reorderTodos
   }

@@ -98,6 +98,186 @@ describe('database migrations', () => {
     migrated.close()
   })
 
+  it('backfills and enforces Todo completion timestamps', () => {
+    const database = new AppDatabase(databasePath)
+    const focus = database.domain.focuses.create({ title: 'Completion history' })
+    const open = database.domain.todos.create({
+      parent: { type: 'focus', id: focus.id },
+      name: 'Open Todo'
+    })
+    const done = database.domain.todos.create({
+      parent: { type: 'focus', id: focus.id },
+      name: 'Done Todo',
+      done: true
+    })
+    database.close()
+
+    const versionSixteen = new DatabaseSync(databasePath)
+    versionSixteen.exec(`
+      DROP TRIGGER todos_completion_state_insert;
+      DROP TRIGGER todos_completion_state_update;
+      DROP INDEX todos_overview_index;
+      ALTER TABLE todos DROP COLUMN completed_at;
+      DELETE FROM schema_migrations WHERE version = 17;
+    `)
+    versionSixteen.close()
+
+    const upgraded = new AppDatabase(databasePath)
+    upgraded.close()
+
+    const migrated = new DatabaseSync(databasePath)
+    expect(migrated.prepare(
+      'SELECT done, completed_at FROM todos WHERE id = ?'
+    ).get(open.id)).toMatchObject({ done: 0, completed_at: null })
+    expect(migrated.prepare(
+      'SELECT done, completed_at FROM todos WHERE id = ?'
+    ).get(done.id)).toMatchObject({ done: 1, completed_at: expect.any(String) })
+    expect(() => migrated.prepare(
+      'UPDATE todos SET done = 1, completed_at = NULL WHERE id = ?'
+    ).run(open.id)).toThrow(/completion timestamp/)
+    expect(() => migrated.prepare(
+      'UPDATE todos SET done = 0, completed_at = ? WHERE id = ?'
+    ).run('2026-08-10T12:00:00.000Z', done.id)).toThrow(/completion timestamp/)
+    migrated.close()
+  })
+
+  it('upgrades v17 Todos and enforces shared aggregate Subject completion cells', () => {
+    const database = new AppDatabase(databasePath)
+    const focus = database.domain.focuses.create({ title: 'Shared Todo migration' })
+    const subject = database.domain.subjects.create({ name: 'Customer Operations' })
+    const ordinary = database.domain.todos.create({
+      parent: { type: 'focus', id: focus.id },
+      name: 'Ordinary Todo'
+    })
+    database.close()
+
+    const previous = new DatabaseSync(databasePath)
+    previous.exec(`
+      DROP TRIGGER todos_shared_parent_insert;
+      DROP TRIGGER todos_shared_parent_update;
+      DROP TRIGGER todos_shared_mode_is_immutable;
+      DROP TRIGGER todo_subject_completion_requires_shared_insert;
+      DROP TRIGGER todo_subject_completion_identity_is_immutable;
+      DROP TRIGGER todo_sort_placement_matches_context_insert;
+      DROP TRIGGER todo_sort_placement_matches_context_update;
+      DROP TABLE todo_subject_completions;
+      ALTER TABLE todos DROP COLUMN shared_across_subjects;
+
+      CREATE TRIGGER todo_sort_placement_matches_context_insert
+      BEFORE INSERT ON todo_sort_placements
+      WHEN NOT EXISTS (
+        SELECT 1 FROM todos todo JOIN todo_lists list ON list.id = NEW.list_id
+        WHERE todo.id = NEW.todo_id
+          AND todo.focus_id IS list.focus_id
+          AND todo.thread_id IS list.thread_id
+          AND todo.commitment_id IS list.commitment_id
+          AND (list.scope_id IS NULL OR (
+            todo.scope_id IS list.scope_id AND todo.subject_id IS list.subject_id
+          ))
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'Todo sort placement must match its parent context');
+      END;
+
+      CREATE TRIGGER todo_sort_placement_matches_context_update
+      BEFORE UPDATE OF todo_id, list_id ON todo_sort_placements
+      WHEN NOT EXISTS (
+        SELECT 1 FROM todos todo JOIN todo_lists list ON list.id = NEW.list_id
+        WHERE todo.id = NEW.todo_id
+          AND todo.focus_id IS list.focus_id
+          AND todo.thread_id IS list.thread_id
+          AND todo.commitment_id IS list.commitment_id
+          AND (list.scope_id IS NULL OR (
+            todo.scope_id IS list.scope_id AND todo.subject_id IS list.subject_id
+          ))
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'Todo sort placement must match its parent context');
+      END;
+
+      DELETE FROM schema_migrations WHERE version = 18;
+    `)
+    previous.close()
+
+    const upgraded = new AppDatabase(databasePath)
+    upgraded.close()
+
+    const migrated = new DatabaseSync(databasePath)
+    expect(migrated.prepare(
+      'SELECT shared_across_subjects FROM todos WHERE id = ?'
+    ).get(ordinary.id)).toEqual({ shared_across_subjects: 0 })
+    expect(migrated.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'todo_subject_completions'"
+    ).get()).toEqual({ name: 'todo_subject_completions' })
+    expect(() => migrated.prepare(
+      `INSERT INTO todo_subject_completions (
+         todo_id, subject_id, done, completed_at, created_at, updated_at
+       ) VALUES (?, ?, 0, NULL, ?, ?)`
+    ).run(
+      ordinary.id,
+      subject.id,
+      '2026-08-10T12:00:00.000Z',
+      '2026-08-10T12:00:00.000Z'
+    )).toThrow(/requires a shared Todo/)
+    expect(() => migrated.prepare(
+      'UPDATE todos SET shared_across_subjects = 1 WHERE id = ?'
+    ).run(ordinary.id)).toThrow(/aggregate Thread or Commitment parent|sharing mode/)
+    migrated.close()
+  })
+
+  it('audits Commitment parent moves and keeps derived Scope applications synchronized', () => {
+    const database = new AppDatabase(databasePath)
+    const focus = database.domain.focuses.create({ title: 'Primary focus' })
+    const otherFocus = database.domain.focuses.create({ title: 'Other focus' })
+    const source = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Source',
+      reviewFrequencyDays: 7
+    })
+    const target = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Target',
+      reviewFrequencyDays: 7
+    })
+    const outside = database.domain.threads.create({
+      focusId: otherFocus.id,
+      title: 'Outside',
+      reviewFrequencyDays: 7
+    })
+    const commitment = database.domain.commitments.create({
+      parent: { type: 'thread', id: source.id },
+      type: 'ongoing',
+      title: 'Move safely'
+    })
+    database.close()
+
+    const migrated = new DatabaseSync(databasePath)
+    migrated.prepare(
+      `UPDATE commitments
+       SET focus_id = NULL, thread_id = ?, updated_at = ?
+       WHERE id = ?`
+    ).run(target.id, '2026-08-10T12:00:00.000Z', commitment.id)
+    expect(migrated.prepare(
+      `SELECT mode, scope_id FROM commitment_scope_applications
+       WHERE commitment_id = ?`
+    ).get(commitment.id)).toMatchObject({ mode: 'inherited', scope_id: null })
+    expect(migrated.prepare(
+      `SELECT count(*) AS count FROM commitment_parent_transitions
+       WHERE commitment_id = ?`
+    ).get(commitment.id)).toMatchObject({ count: 2 })
+    expect(() => migrated.prepare(
+      `UPDATE commitments
+       SET focus_id = NULL, thread_id = ?, updated_at = ?
+       WHERE id = ?`
+    ).run(outside.id, '2026-08-10T12:01:00.000Z', commitment.id)).toThrow(
+      /cannot move outside its Focus/
+    )
+    expect(() => migrated.prepare(
+      'UPDATE commitment_parent_transitions SET changed_at = ? WHERE commitment_id = ?'
+    ).run('2026-08-10T13:00:00.000Z', commitment.id)).toThrow(/immutable/)
+    migrated.close()
+  })
+
   it('adds an empty goal to focuses created before the goal migration', () => {
     const legacy = new DatabaseSync(databasePath)
     legacy.exec(`

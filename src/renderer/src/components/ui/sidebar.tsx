@@ -1,4 +1,4 @@
-import type * as React from 'react'
+import * as React from 'react'
 import { cn } from '@/lib/utils'
 
 function Sidebar({ className, ...props }: React.ComponentProps<'aside'>): React.JSX.Element {
@@ -53,9 +53,17 @@ function SidebarMenu({ className, ...props }: React.ComponentProps<'ul'>): React
   return <ul data-slot="sidebar-menu" className={cn('flex flex-col gap-1', className)} {...props} />
 }
 
-function SidebarMenuItem({ className, ...props }: React.ComponentProps<'li'>): React.JSX.Element {
-  return <li data-slot="sidebar-menu-item" className={cn('relative', className)} {...props} />
-}
+const SidebarMenuItem = React.forwardRef<HTMLLIElement, React.ComponentProps<'li'>>(
+  ({ className, ...props }, ref) => (
+    <li
+      ref={ref}
+      data-slot="sidebar-menu-item"
+      className={cn('relative', className)}
+      {...props}
+    />
+  )
+)
+SidebarMenuItem.displayName = 'SidebarMenuItem'
 
 function SidebarMenuButton({
   className,

@@ -380,6 +380,13 @@ immutable parent context, an optional due date, a boolean `done`, and independen
 It may belong to a Focus, Thread, Commitment, Thread Scope/Subject cell, or Commitment Scope/Subject
 cell. A scoped Todo is returned both in its exact-cell list and its entity aggregate list.
 
+`completedAt` is durable transition evidence rather than an alias for `updatedAt`. Completing an
+open Todo records the completion instant, edits while done preserve it, reopening clears it, and a
+later completion records a new instant. The global Todo overview resolves each row's Focus, optional
+Thread, optional Commitment, and Subject, and asks SQLite for every open Todo plus only those closed
+within the last seven days. Older completed work is absent from the snapshot rather than hidden by
+the renderer.
+
 Sort is modeled as a relation rather than a scalar column because those two lists may have different
 orders. Reordering a filtered subset only rearranges the supplied Todos among their existing slots,
 so hidden done/not-due records remain stable. The complete contract is documented in
@@ -436,6 +443,20 @@ entity cascades its transition history.
 - Commitment review uses the later Update date or explicit poke, independently of cadence.
 - A Commitment needs an Update only when active and at least one applicable cadence deadline is due.
 - Review and cadence values are recomputed from durable records whenever a snapshot is materialized.
+
+## Commitment parent moves
+
+A Commitment can move among Overall and Threads within one Focus through a two-step plan/move API.
+The plan compares canonical Subject coverage, reports attached Update/Todo/Note counts, and lists any
+Subjects the destination would need to add. Exact and superset destinations move immediately;
+missing Subjects require confirmation of the exact planned ids. Confirmed Thread widening creates
+an isolated overlay, while confirmed Overall widening adds the missing Subjects to the Focus Scope.
+
+Updates, Todos, and Notes remain owned by the same Commitment id, so their identities, contents,
+sort placements, and exact historical Scope cells survive without copying. The Commitment's derived
+application synchronizes to `inherited` under a Thread or `open` under Overall. Immutable
+`commitment_parent_transitions` record the initial parent and each actual move. SQLite rejects a
+cross-Focus reparent even below the repository boundary.
 
 ## Deletion and historical integrity
 

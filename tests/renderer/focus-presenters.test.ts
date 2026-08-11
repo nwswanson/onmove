@@ -253,6 +253,20 @@ describe('Focus presentation adapters', () => {
     })
   })
 
+  it('keeps Thread drop targets alphabetically ordered without sorting Commitments', () => {
+    const items = focusContextSidebarItems([
+      { ...thread, id: 12, title: 'Team health' },
+      { ...thread, id: 11, title: 'Architecture' },
+      { ...thread, id: 10, title: 'Sprint execution' }
+    ])
+    expect(items.map(({ label }) => label)).toEqual([
+      'Overall',
+      'Architecture',
+      'Sprint execution',
+      'Team health'
+    ])
+  })
+
   it('filters sensitive status signals while drawer adapters retain complete models', () => {
     const sensitiveFocus = { ...focus, sensitive: true }
     const sensitiveThread = { ...thread, sensitive: true }

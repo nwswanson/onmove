@@ -40,6 +40,7 @@ describe('TodoList', () => {
         onCreate={onCreate}
         onUpdate={onUpdate}
         onDelete={onDelete}
+        onSubjectCompletionChange={vi.fn().mockResolvedValue(undefined)}
         onReorder={onReorder}
       />
     )
@@ -129,6 +130,7 @@ describe('TodoList', () => {
         onCreate={vi.fn().mockResolvedValue(undefined)}
         onUpdate={onUpdate}
         onDelete={onDelete}
+        onSubjectCompletionChange={vi.fn().mockResolvedValue(undefined)}
         onReorder={onReorder}
       />
     )
@@ -154,5 +156,75 @@ describe('TodoList', () => {
     await user.keyboard('{ArrowUp}')
     await user.keyboard('[Space]')
     await waitFor(() => expect(onReorder).toHaveBeenCalledWith(['3', '2']))
+  })
+
+  it('expands shared Subject progress without making child rows draggable or deletable', async () => {
+    const user = userEvent.setup()
+    const onUpdate = vi.fn().mockResolvedValue(undefined)
+    const onDelete = vi.fn().mockResolvedValue(undefined)
+    const onSubjectCompletionChange = vi.fn().mockResolvedValue(undefined)
+    const { rerender } = render(
+      <TodoList
+        ariaLabel="Thread Todos"
+        items={[{
+          id: '9',
+          name: 'Confirm rollout',
+          dueDate: null,
+          done: false,
+          overdue: false,
+          contextLabel: 'All subjects',
+          canToggleDone: false,
+          subjectCompletions: [
+            { subjectId: '40', label: 'Customer Operations', done: false },
+            { subjectId: '41', label: 'Platform Team', done: true }
+          ]
+        }]}
+        onCreate={vi.fn().mockResolvedValue(undefined)}
+        onUpdate={onUpdate}
+        onDelete={onDelete}
+        onSubjectCompletionChange={onSubjectCompletionChange}
+        onReorder={vi.fn().mockResolvedValue(undefined)}
+      />
+    )
+
+    expect(screen.getByLabelText('Confirm rollout completes when every Subject is done'))
+      .toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Delete Confirm rollout' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: /Subject progress/ }))
+    const progress = screen.getByRole('list', { name: 'Confirm rollout Subject progress' })
+    expect(within(progress).queryByRole('button', { name: /Drag/ })).not.toBeInTheDocument()
+    expect(within(progress).queryByRole('button', { name: /Delete/ })).not.toBeInTheDocument()
+    await user.click(within(progress).getByLabelText(
+      'Mark Confirm rollout done for Customer Operations'
+    ))
+    expect(onSubjectCompletionChange).toHaveBeenCalledWith('9', '40', true)
+    expect(onUpdate).not.toHaveBeenCalled()
+
+    rerender(
+      <TodoList
+        ariaLabel="Thread Todos"
+        items={[{
+          id: '9',
+          name: 'Confirm rollout',
+          dueDate: null,
+          done: false,
+          overdue: false,
+          contextLabel: 'Shared',
+          canEdit: false,
+          canDelete: false,
+          completionSubjectId: '40'
+        }]}
+        onCreate={vi.fn().mockResolvedValue(undefined)}
+        onUpdate={onUpdate}
+        onDelete={onDelete}
+        onSubjectCompletionChange={onSubjectCompletionChange}
+        onReorder={vi.fn().mockResolvedValue(undefined)}
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: 'Delete Confirm rollout' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Todo name')).toBeDisabled()
+    await user.click(screen.getByLabelText('Mark Confirm rollout done'))
+    expect(onSubjectCompletionChange).toHaveBeenLastCalledWith('9', '40', true)
   })
 })

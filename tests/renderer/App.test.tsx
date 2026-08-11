@@ -12,6 +12,7 @@ import type {
   RichTextDocumentSnapshot,
   SubjectSnapshot,
   ThreadSnapshot,
+  TodoOverviewItemSnapshot,
   TodoParent,
   TodoSnapshot,
   UpdateSnapshot
@@ -125,11 +126,26 @@ function todo(overrides: Partial<TodoSnapshot> = {}): TodoSnapshot {
     name: 'Review the rollout',
     parent: { type: 'focus', id: 1 },
     subject: null,
+    sharedAcrossSubjects: false,
+    subjectCompletions: [],
     dueDate: null,
     done: false,
+    completedAt: null,
     sort: [],
     createdAt: '2026-08-08T12:00:00.000Z',
     updatedAt: '2026-08-08T12:00:00.000Z',
+    ...overrides
+  }
+}
+
+function overviewTodo(
+  overrides: Partial<TodoOverviewItemSnapshot> = {}
+): TodoOverviewItemSnapshot {
+  return {
+    ...todo(),
+    focus: { id: 1, title: 'Project Atlas', sensitive: false },
+    thread: null,
+    commitment: null,
     ...overrides
   }
 }
@@ -189,6 +205,18 @@ function installApi(
     })),
     createCommitment: vi.fn(),
     updateCommitment: vi.fn(),
+    planCommitmentMove: vi.fn(async (id, parent) => ({
+      commitmentId: id,
+      from: parent,
+      to: parent,
+      sourceScopeMode: 'open' as const,
+      sourceScopeId: null,
+      targetScopeId: null,
+      scopeSubjectAdditions: [],
+      ownedRecords: { updates: 0, todos: 0, notes: 0 },
+      requiresConfirmation: false
+    })),
+    moveCommitment: vi.fn(),
     pokeCommitmentReview: vi.fn(),
     deleteCommitment: vi.fn(),
     listUpdates: vi.fn().mockResolvedValue([]),
@@ -197,8 +225,15 @@ function installApi(
     deleteUpdate: vi.fn(),
     listTodos: vi.fn().mockResolvedValue([]),
     queryTodos: vi.fn().mockResolvedValue([]),
+    getTodoOverview: vi.fn().mockResolvedValue({
+      items: [],
+      today: '2026-08-10',
+      recentlyCompletedDays: 7,
+      completedSince: '2026-08-03T12:00:00.000Z'
+    }),
     createTodo: vi.fn(),
     updateTodo: vi.fn(),
+    updateTodoSubjectCompletion: vi.fn(),
     reorderTodos: vi.fn(),
     deleteTodo: vi.fn(),
     listNotes: vi.fn().mockResolvedValue([]),
@@ -275,19 +310,228 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'New focus' })).toBeDisabled()
   })
 
-  it('starts on Home with focuses exposed directly beneath the Focuses label', async () => {
+  it('starts on Todos with focuses exposed directly beneath the Focuses label', async () => {
     installApi()
     render(<App />)
 
-    expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Home' })).toHaveAttribute('aria-current', 'page')
+    expect(await screen.findByRole('heading', { name: 'Todos' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Todos' })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByText('Focuses')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Focus' })).not.toBeInTheDocument()
     expect(screen.getByText('No focuses yet')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'New focus' })).toBeEnabled()
   })
 
-  it('returns Home and removes a sensitive Focus branch when hiding is enabled', async () => {
+  it('sorts the global Todo table, reveals recent closures, and closes open work', async () => {
+    const atlasTodo = overviewTodo({
+      id: 70,
+      name: 'Prepare launch review',
+      dueDate: '2026-08-09',
+      focus: { id: 2, title: 'Project Atlas', sensitive: false }
+    })
+    const beaconTodo = overviewTodo({
+      id: 71,
+      name: 'Call executive sponsor',
+      dueDate: null,
+      focus: { id: 3, title: 'Project Beacon', sensitive: false }
+    })
+    const recentlyCompleted = overviewTodo({
+      id: 72,
+      name: 'Archive decision log',
+      done: true,
+      completedAt: '2026-08-09T12:00:00.000Z',
+      focus: { id: 3, title: 'Project Beacon', sensitive: false }
+    })
+    const updateTodo = vi.fn(async (id: number) => ({
+      ...atlasTodo,
+      id,
+      done: true,
+      completedAt: '2026-08-10T12:00:00.000Z'
+    }))
+    const getTodoOverview = vi.fn().mockResolvedValue({
+      items: [beaconTodo, recentlyCompleted, atlasTodo],
+      today: '2026-08-10',
+      recentlyCompletedDays: 7,
+      completedSince: '2026-08-03T12:00:00.000Z'
+    })
+    const api = installApi({ getTodoOverview, updateTodo })
+    const user = userEvent.setup()
+    render(<App />)
+
+    const table = await screen.findByRole('table', { name: 'All Todos' })
+    expect(getTodoOverview).toHaveBeenCalledOnce()
+    expect(within(table).getByText('Prepare launch review')).toBeVisible()
+    expect(within(table).getByText('Overdue')).toBeVisible()
+    expect(within(table).queryByText('Archive decision log')).not.toBeInTheDocument()
+
+    await user.click(within(table).getByRole('button', { name: 'Sort by Project' }))
+    expect(within(table).getAllByRole('row')[1]).toHaveTextContent('Project Atlas')
+    const showCompleted = screen.getByLabelText('Show completed from last 7 days')
+    await user.click(showCompleted)
+    expect(within(table).getByText('Archive decision log')).toBeVisible()
+    await user.click(showCompleted)
+
+    await user.click(within(table).getByLabelText('Mark Prepare launch review done'))
+    expect(api.domain.updateTodo).toHaveBeenCalledWith(70, { done: true })
+    await waitFor(() => {
+      expect(within(table).queryByText('Prepare launch review')).not.toBeInTheDocument()
+    })
+  })
+
+  it('opens a unified Todo context link at its Focus, sidebar route, and Subject tab', async () => {
+    const current = focus({ title: 'Project Atlas' })
+    const sprint = thread()
+    const customer = subject(40, 'Customer Operations')
+    const scopedCommitment = commitment({
+      id: 21,
+      parent: { type: 'thread', id: sprint.id },
+      title: 'Improve ticket quality'
+    })
+    const scopedTodo = overviewTodo({
+      id: 73,
+      name: 'Review customer tickets',
+      parent: {
+        type: 'commitment-scope',
+        id: scopedCommitment.id,
+        scope: { scopeId: 50, subjectId: customer.id }
+      },
+      focus: { id: current.id, title: current.title, sensitive: false },
+      thread: { id: sprint.id, title: sprint.title, sensitive: false },
+      commitment: {
+        id: scopedCommitment.id,
+        title: scopedCommitment.title,
+        sensitive: false
+      },
+      subject: customer
+    })
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listThreads: vi.fn().mockResolvedValue([sprint]),
+      listCommitments: vi.fn(async (parent) =>
+        parent.type === 'thread' ? [scopedCommitment] : []
+      ),
+      getThreadScope: vi.fn().mockResolvedValue({
+        threadId: sprint.id,
+        focusId: current.id,
+        mode: 'custom' as const,
+        scopeId: 50,
+        subjects: [customer],
+        focusSubjects: []
+      }),
+      getThreadSubjectMatrix: vi.fn().mockResolvedValue([{
+        scopeId: 50,
+        subjectId: customer.id,
+        subject: customer,
+        state: 'none' as const,
+        lastReviewDate: null,
+        nextReviewDate: '2026-08-17',
+        reviewDue: false,
+        commitments: [{
+          commitmentId: scopedCommitment.id,
+          scopeId: 50,
+          subjectId: customer.id,
+          state: 'none' as const,
+          lastUpdateDate: null,
+          nextUpdateDate: null,
+          needsUpdate: false
+        }]
+      }]),
+      getCommitmentWorkingContext: vi.fn().mockResolvedValue({
+        commitmentId: scopedCommitment.id,
+        scopeId: 50,
+        cells: [{
+          scopeId: 50,
+          subjectId: customer.id,
+          subject: customer,
+          state: 'none' as const,
+          lastUpdateDate: null,
+          nextUpdateDate: null,
+          needsUpdate: false
+        }]
+      }),
+      getTodoOverview: vi.fn().mockResolvedValue({
+        items: [scopedTodo],
+        today: '2026-08-10',
+        recentlyCompletedDays: 7,
+        completedSince: '2026-08-03T12:00:00.000Z'
+      })
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('link', {
+      name: 'Sprint execution › Improve ticket quality › Customer Operations'
+    }))
+
+    expect(await screen.findByRole('heading', { name: 'Improve ticket quality' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Project Atlas' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    expect(screen.getByRole('button', {
+      name: 'Open Sprint execution commitment Improve ticket quality'
+    })).toHaveAttribute('aria-current', 'page')
+    expect(await screen.findByRole('tab', { name: 'Work in Customer Operations' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+  })
+
+  it('expands and completes shared Todo Subjects from the global parent row', async () => {
+    const customer = subject(40, 'Customer Operations')
+    const platform = subject(41, 'Platform Team')
+    const sharedTodo = overviewTodo({
+      id: 74,
+      name: 'Confirm rollout',
+      parent: { type: 'thread', id: 10 },
+      thread: { id: 10, title: 'Sprint execution', sensitive: false },
+      sharedAcrossSubjects: true,
+      subjectCompletions: [customer, platform].map((completionSubject) => ({
+        subject: completionSubject,
+        done: false,
+        completedAt: null,
+        createdAt: '2026-08-10T12:00:00.000Z',
+        updatedAt: '2026-08-10T12:00:00.000Z'
+      }))
+    })
+    const updateTodoSubjectCompletion = vi.fn(async (
+      _id: number,
+      subjectId: number,
+      done: boolean
+    ) => ({
+      ...sharedTodo,
+      subjectCompletions: sharedTodo.subjectCompletions.map((completion) =>
+        completion.subject.id === subjectId ? { ...completion, done } : completion
+      )
+    }))
+    installApi({
+      getTodoOverview: vi.fn().mockResolvedValue({
+        items: [sharedTodo],
+        today: '2026-08-10',
+        recentlyCompletedDays: 7,
+        completedSince: '2026-08-03T12:00:00.000Z'
+      }),
+      updateTodoSubjectCompletion
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    const table = await screen.findByRole('table', { name: 'All Todos' })
+    expect(within(table).queryByLabelText('Mark Confirm rollout done')).not.toBeInTheDocument()
+    await user.click(within(table).getByRole('button', {
+      name: 'Show Confirm rollout Subject progress'
+    }))
+    const progress = within(table).getByRole('list', {
+      name: 'Confirm rollout Subject progress'
+    })
+    await user.click(within(progress).getByLabelText(
+      'Mark Confirm rollout done for Customer Operations'
+    ))
+    expect(updateTodoSubjectCompletion).toHaveBeenCalledWith(74, customer.id, true)
+    expect(within(table).getByText('1/2 subjects')).toBeVisible()
+  })
+
+  it('returns Todos and removes a sensitive Focus branch when hiding is enabled', async () => {
     const privateFocus = focus({
       title: 'Confidential initiative',
       description: 'Private launch notes',
@@ -320,13 +564,13 @@ describe('App', () => {
 
     act(() => visibilityListener?.(true))
 
-    expect(await screen.findByRole('heading', { name: 'Home' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Todos' })).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Confidential initiative' })).not.toBeInTheDocument()
     expect(screen.queryByText('Private launch notes')).not.toBeInTheDocument()
 
     act(() => visibilityListener?.(false))
     expect(await screen.findByRole('button', { name: 'Confidential initiative' })).toBeVisible()
-    expect(screen.getByRole('heading', { name: 'Home' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Todos' })).toBeVisible()
   })
 
   it('filters sensitive descendants and walks a hidden Commitment route to its visible parent', async () => {
@@ -525,7 +769,7 @@ describe('App', () => {
     const user = userEvent.setup()
     render(<App />)
 
-    await screen.findByRole('heading', { name: 'Home' })
+    await screen.findByRole('heading', { name: 'Todos' })
     const duplicates = screen.getAllByRole('button', { name: 'Same title' })
     expect(duplicates).toHaveLength(2)
     expect(screen.getByRole('button', { name: 'Paused focus, paused' })).toHaveClass('opacity-55')
@@ -1102,7 +1346,17 @@ describe('App', () => {
       subject: input.parent.type === 'thread-scope'
         ? [customer, platform].find(({ id }) => id === input.parent.scope.subjectId) ?? null
         : null,
-      dueDate: input.dueDate ?? null
+      dueDate: input.dueDate ?? null,
+      sharedAcrossSubjects: input.sharedAcrossSubjects ?? false,
+      subjectCompletions: input.sharedAcrossSubjects
+        ? [customer, platform].map((completionSubject) => ({
+            subject: completionSubject,
+            done: false,
+            completedAt: null,
+            createdAt: '2026-08-10T12:00:00.000Z',
+            updatedAt: '2026-08-10T12:00:00.000Z'
+          }))
+        : []
     }))
     installApi({
       listFocuses: vi.fn().mockResolvedValue([current]),
@@ -1154,9 +1408,19 @@ describe('App', () => {
     await user.type(screen.getByLabelText('New Todo name'), 'Confirm platform owner')
     const todoContext = screen.getByLabelText('New Todo context')
     expect(within(todoContext).getAllByRole('option').map((option) => option.textContent))
-      .toEqual(['Customer Operations', 'Platform Team'])
-    expect(within(todoContext).queryByRole('option', { name: 'All subjects' }))
-      .not.toBeInTheDocument()
+      .toEqual(['All subjects', 'Customer Operations', 'Platform Team'])
+    await user.click(screen.getByRole('button', { name: 'Add Todo' }))
+    await waitFor(() => expect(createTodo).toHaveBeenLastCalledWith({
+      parent: { type: 'thread', id: sprint.id },
+      name: 'Confirm platform owner',
+      dueDate: null,
+      sharedAcrossSubjects: true
+    }))
+    expect(screen.getByLabelText(
+      'Confirm platform owner completes when every Subject is done'
+    )).toBeDisabled()
+
+    await user.type(screen.getByLabelText('New Todo name'), 'Confirm individual owner')
     await user.selectOptions(todoContext, 'scope:50:subject:41')
     await user.click(screen.getByRole('button', { name: 'Add Todo' }))
     await waitFor(() => expect(createTodo).toHaveBeenLastCalledWith({
@@ -1165,7 +1429,7 @@ describe('App', () => {
         id: sprint.id,
         scope: { scopeId: 50, subjectId: platform.id }
       },
-      name: 'Confirm platform owner',
+      name: 'Confirm individual owner',
       dueDate: null
     }))
   })
@@ -2215,15 +2479,15 @@ describe('App', () => {
     expect(screen.getByRole('navigation', { name: 'Focus sections' })).toBeInTheDocument()
     expect(screen.queryByRole('navigation', { name: 'Focus commitments' })).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: 'Home' }))
-    expect(screen.getByRole('heading', { name: 'Home' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Todos' }))
+    expect(screen.getByRole('heading', { name: 'Todos' })).toBeInTheDocument()
     expect(screen.getByRole('complementary', { name: 'Commitment context drawer' })).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Unpin drawer and follow current selection' }))
-    expect(screen.getByRole('complementary', { name: 'Home item context drawer' })).toBeInTheDocument()
+    expect(screen.getByRole('complementary', { name: 'Context drawer' })).toBeInTheDocument()
   })
 
-  it('keeps the drawer open and replaces its adapter across Focus, Thread, Commitment, and Home', async () => {
+  it('keeps the drawer open and replaces its adapter across Focus, Thread, Commitment, and Todos', async () => {
     const current = focus({ title: 'Project Atlas', lastReviewDate: '2026-01-02' })
     const sprint = thread({ lastReviewDate: '2026-01-03' })
     const updatedSprint = thread({ lastReviewDate: '2026-01-03', needsReview: false })
@@ -2281,8 +2545,8 @@ describe('App', () => {
       'Last updated · Never'
     )
 
-    await user.click(screen.getByRole('button', { name: 'Home' }))
-    expect(screen.getByRole('complementary', { name: 'Home item context drawer' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Todos' }))
+    expect(screen.getByRole('complementary', { name: 'Context drawer' })).toBeInTheDocument()
     expect(screen.getByRole('separator', { name: 'Resize context drawer' })).toBeInTheDocument()
   })
 
@@ -2517,7 +2781,7 @@ describe('App', () => {
       .toBeInTheDocument()
   })
 
-  it('filters a newly cancelled or completed selection and redirects to Home', async () => {
+  it('filters a newly cancelled or completed selection and redirects to Todos', async () => {
     const current = focus()
     const updateFocus = vi.fn().mockResolvedValue(focus({ status: 'done' }))
     installApi({ listFocuses: vi.fn().mockResolvedValue([current]), updateFocus })
@@ -2529,13 +2793,13 @@ describe('App', () => {
     await user.selectOptions(screen.getByLabelText('Status'), 'done')
     await user.click(screen.getByRole('button', { name: 'Save changes' }))
 
-    expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Todos' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Quarterly plan' })).not.toBeInTheDocument()
     expect(screen.queryByRole('complementary', { name: 'Focus context drawer' })).not.toBeInTheDocument()
-    expect(screen.getByRole('complementary', { name: 'Home item context drawer' })).toBeInTheDocument()
+    expect(screen.getByRole('complementary', { name: 'Context drawer' })).toBeInTheDocument()
   })
 
-  it('requires confirmation before deleting and redirects the selected focus to Home', async () => {
+  it('requires confirmation before deleting and redirects the selected focus to Todos', async () => {
     const current = focus({ title: 'Delete me' })
     const deleteFocus = vi.fn().mockResolvedValue(true)
     installApi({ listFocuses: vi.fn().mockResolvedValue([current]), deleteFocus })
@@ -2551,9 +2815,9 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'Delete focus' }))
 
     expect(deleteFocus).toHaveBeenCalledWith(1)
-    expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Todos' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Delete me' })).not.toBeInTheDocument()
-    expect(screen.getByRole('complementary', { name: 'Home item context drawer' })).toBeInTheDocument()
+    expect(screen.getByRole('complementary', { name: 'Context drawer' })).toBeInTheDocument()
   })
 
   it('keeps the active view and drawer intact when deletion fails', async () => {
@@ -2595,7 +2859,7 @@ describe('App', () => {
     expect(drawerToggle).toHaveAttribute('aria-pressed', 'false')
     await user.click(drawerToggle)
     expect(drawerToggle).toHaveAttribute('aria-pressed', 'true')
-    const drawer = screen.getByRole('complementary', { name: 'Home item context drawer' })
+    const drawer = screen.getByRole('complementary', { name: 'Context drawer' })
     const drawerHandle = screen.getByRole('separator', { name: 'Resize context drawer' })
     expect(drawer).toHaveStyle({ width: '336px' })
     fireEvent.keyDown(drawerHandle, { key: 'ArrowLeft' })
@@ -2603,10 +2867,10 @@ describe('App', () => {
     await user.click(drawerToggle)
     expect(drawerToggle).toHaveAttribute('aria-pressed', 'false')
     expect(
-      screen.queryByRole('complementary', { name: 'Home item context drawer' })
+      screen.queryByRole('complementary', { name: 'Context drawer' })
     ).not.toBeInTheDocument()
     await user.click(drawerToggle)
-    expect(screen.getByRole('complementary', { name: 'Home item context drawer' })).toHaveStyle({
+    expect(screen.getByRole('complementary', { name: 'Context drawer' })).toHaveStyle({
       width: '352px'
     })
   })
@@ -2633,8 +2897,8 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'Data & storage' }))
     expect(api.showDataFolder).toHaveBeenCalledOnce()
 
-    await user.click(screen.getByRole('button', { name: 'Home' }))
-    expect(await screen.findByRole('heading', { name: 'Home' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Todos' }))
+    expect(await screen.findByRole('heading', { name: 'Todos' })).toBeVisible()
   })
 
   it('shows a useful error if focus storage fails to load', async () => {

@@ -267,7 +267,11 @@ export function focusContextSidebarItems(
         : {}),
       group: { id: 'focus', label: 'Focus' }
     },
-    ...threads.map((thread) => {
+    ...[...threads]
+      .sort((left, right) => left.title.localeCompare(right.title, undefined, {
+        sensitivity: 'base'
+      }))
+      .map((thread) => {
       const paused = thread.status === 'paused'
       const label = thread.title
       const sunflower = statusSunflowerModel(
@@ -291,7 +295,7 @@ export function focusContextSidebarItems(
         tone: paused ? ('muted' as const) : ('default' as const),
         group: { id: 'threads', label: 'Threads' }
       }
-    })
+      })
   ]
 }
 

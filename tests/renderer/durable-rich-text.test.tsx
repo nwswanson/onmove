@@ -11,7 +11,7 @@ import { useDurableRichText } from '../../src/renderer/src/features/rich-text/us
 import { RichTextDocumentWindow } from '../../src/renderer/src/features/rich-text/rich-text-document-window'
 
 describe('useDurableRichText', () => {
-  it('exposes a draggable native title-bar region in detached document windows', () => {
+  it('exposes a draggable title bar and a full-height editor chain in detached windows', () => {
     const reference = { type: 'note', id: 7, field: 'content' } as const
     const richText = {
       getDocument: vi.fn().mockResolvedValue({
@@ -34,6 +34,14 @@ describe('useDurableRichText', () => {
     const { container } = render(<RichTextDocumentWindow reference={reference} />)
     expect(container.querySelector('[data-slot="rich-text-window-titlebar"]'))
       .toHaveClass('drag-region')
+    expect(container.querySelector('[data-slot="rich-text-window-editor-region"]'))
+      .toHaveClass('flex', 'min-h-0', 'flex-1', 'flex-col')
+    expect(container.querySelector('[data-slot="rich-text-editor"]'))
+      .toHaveClass('flex', 'min-h-0', 'flex-1', 'flex-col')
+    expect(container.querySelector('[data-slot="rich-text-editor-document"]'))
+      .toHaveClass('min-h-0', 'flex-1')
+    expect(container.querySelector('[contenteditable="true"]'))
+      .toHaveClass('h-full', 'resize-none')
   })
 
   it('commits inline, opens a dedicated window, and applies revision broadcasts', async () => {

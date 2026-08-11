@@ -44,7 +44,9 @@ When the Subject stops being effective:
 - it no longer contributes current Thread health, review coverage, Commitment state, or cadence;
 - the Thread, Commitment, Scope, and Subject remain durable;
 - existing Updates retain their exact `{scopeId, subjectId}` attribution;
-- existing scoped Todos retain their exact parent cell and aggregate-list placement;
+- existing individual scoped Todos retain their exact parent cell and aggregate-list placement;
+- a shared Todo drops that Subject's current completion cell and exact-list placement, then derives
+  its parent completion again (removing the last unchecked cell can close the parent);
 - application history is unchanged because the owner still applies the same Scope expression; and
 - historical membership intervals remain queryable.
 
@@ -108,6 +110,41 @@ There is no independent “remove this Thread only for Subject A” record. To n
 changing every consumer of a shared Focus Scope, create a Focus-owned expression based on the
 broader Scope, add a Subject exclusion, and apply that narrower Scope to the Thread. Its Commitments
 follow automatically.
+
+## Moving a Commitment between parent contexts
+
+A Commitment may move among Overall and Threads inside its existing Focus. A cross-Focus move is
+rejected both by the repository and SQLite. The operation is planned before it is written and then
+executed in one transaction.
+
+The Commitment is the durable owner of its Updates, Todos, and Notes. Moving it changes only the
+Commitment's parent columns; those child rows keep the same Commitment id, record ids, content,
+ordering placements, and exact historical `{scopeId, subjectId}` attribution. No subtree record is
+copied or deleted. This also makes a Commitment with no Updates a normal, valid move rather than a
+special case.
+
+The planner compares the canonical Subjects effective in the source context with those effective in
+the destination context:
+
+- when the destination is an exact match or a superset, no Scope definition changes and the UI moves
+  immediately without a confirmation dialog;
+- when canonical Subjects are missing, the plan lists those exact Subject ids and names and requires
+  confirmation before writing;
+- a confirmed Thread destination forks/widens one isolated overlay and applies it to that Thread;
+- a confirmed Overall destination adds the missing canonical Subjects to the Focus Scope; and
+- custom-source evidence keeps its original Scope cell. Scope definitions and evidence history are
+  never structurally rewritten merely because ownership changed.
+
+Confirmation is stale-plan-safe: execution recomputes the plan transactionally and accepts only the
+exact set of Subject ids the user confirmed. If applicability changed after preview, the operation
+is rejected instead of silently widening a different population.
+
+After reparenting, Thread ownership derives `inherited` Commitment applicability from the new Thread;
+Overall ownership remains Open. Existing cells under another Scope remain durable evidence and use
+the established current/former projections. New bounded evidence uses the destination Thread's
+current effective Scope. Each actual move appends an immutable `commitment_parent_transitions` row;
+the initial parent is also recorded, so Thread-to-Thread moves remain observable even though the
+Commitment's declared Scope mode stays `inherited`.
 
 ## Deleting a Subject
 

@@ -18,9 +18,14 @@ export function createMenuTemplate(
       label: 'File',
       submenu: [
         {
+          id: 'new-window',
           label: 'New Window',
           accelerator: 'CmdOrCtrl+N',
-          click: actions.createWindow
+          // Electron supplies (menuItem, browserWindow, event) to click handlers.
+          // Keep those framework values out of the zero-argument window factory:
+          // createWindow's optional argument is reserved for serializable rich-text
+          // document references.
+          click: () => actions.createWindow()
         },
         { type: 'separator' },
         {

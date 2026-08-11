@@ -1,4 +1,4 @@
-import { House, PauseCircle, Plus } from 'lucide-react'
+import { ListChecks, PauseCircle, Plus } from 'lucide-react'
 import {
   SidebarMenu,
   SidebarMenuButton,
@@ -12,7 +12,7 @@ export interface SidebarNavigationItemModel {
   id: string
   label: string
   ariaLabel?: string
-  icon?: 'home' | 'sunflower' | 'paused'
+  icon?: 'todos' | 'sunflower' | 'paused'
   sunflower?: SemanticSunflowerModel
   tone?: 'default' | 'muted'
   disabled?: boolean
@@ -77,8 +77,8 @@ export function SidebarNavigation({
                 disabled={item.disabled}
                 onClick={() => onSelect(item.id)}
               >
-                {item.icon === 'home' ? (
-                  <House aria-hidden="true" />
+                {item.icon === 'todos' ? (
+                  <ListChecks aria-hidden="true" />
                 ) : item.icon === 'paused' ? (
                   <PauseCircle aria-hidden="true" />
                 ) : item.icon === 'sunflower' && item.sunflower ? (

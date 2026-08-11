@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   CommitmentParent,
+  CommitmentMovePlanSnapshot,
   CommitmentSnapshot,
   CreateCommitmentInput,
   CreateThreadInput,
@@ -23,6 +24,7 @@ import {
   ContextualSidebar,
   ContextualSidebarLevel,
   ContextualSidebarNavigation,
+  type ContextualSidebarChildMove,
   useContextualSidebarNavigation
 } from '@/components/ui/contextual-sidebar'
 import { Dialog, DialogField } from '@/components/ui/dialog'
@@ -30,6 +32,9 @@ import { Input } from '@/components/ui/input'
 import { RichTextContent, RichTextEditor } from '@/components/ui/rich-text-editor'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
 import { WorkspaceTabBar } from '@/components/ui/workspace-tab-bar'
+import type {
+  FocusWorkspaceDestination
+} from '@/features/application/application-navigation'
 import {
   CommitmentCollection,
   NewCommitmentDialog
@@ -180,6 +185,8 @@ interface FocusWorkspaceProps {
   onDeleteFocus: () => Promise<void>
   selectedSubjectId: number | null
   onSelectedSubjectChange: (subjectId: number | null) => void
+  destination?: FocusWorkspaceDestination | null
+  onDestinationApplied?: (requestId: number) => void
   hideSensitiveContent?: boolean
 }
 
@@ -192,6 +199,8 @@ export function FocusWorkspace({
   onDeleteFocus,
   selectedSubjectId,
   onSelectedSubjectChange,
+  destination = null,
+  onDestinationApplied,
   hideSensitiveContent = false
 }: FocusWorkspaceProps): React.JSX.Element {
   const model = useFocusWorkspaceModel({ focus })
@@ -209,6 +218,25 @@ export function FocusWorkspace({
     key: string
     message: string
   } | null>(null)
+  const [pendingCommitmentMove, setPendingCommitmentMove] = useState<{
+    plan: CommitmentMovePlanSnapshot
+    commitmentTitle: string
+    targetLabel: string
+  } | null>(null)
+  const [commitmentMoveSaving, setCommitmentMoveSaving] = useState(false)
+  const [commitmentMoveError, setCommitmentMoveError] = useState<string | null>(null)
+  const commitmentMoveRequest = useRef<(move: ContextualSidebarChildMove) => void>(
+    () => undefined
+  )
+  const commitmentMoveExecution = useRef<(
+    plan: CommitmentMovePlanSnapshot,
+    confirmedScopeSubjectIds?: readonly number[]
+  ) => Promise<void>>(async () => undefined)
+  const commitmentAdapterFactory = useRef<(
+    commitment: CommitmentSnapshot
+  ) => ContextDrawerAdapter>(() => {
+    throw new Error('Commitment drawer adapter is not ready.')
+  })
   const [focusLevel] = useState(
     () =>
       new ContextualSidebarLevel({
@@ -221,6 +249,9 @@ export function FocusWorkspace({
           const parent = commitmentParentForContextItem(parentItemId, focus.id)
           if (parent) setNewCommitmentParent(parent)
         },
+        canMoveChild: ({ sourceCollectionId, targetCollectionId }) =>
+          sourceCollectionId === 'commitments' && targetCollectionId === 'commitments',
+        onMoveChild: (move) => commitmentMoveRequest.current(move),
         newItem: {
           label: 'New thread',
           onCreate: () => setNewThreadOpen(true)
@@ -251,6 +282,7 @@ export function FocusWorkspace({
     () => new ContextualSidebarNavigation(focusLevel)
   )
   const navigationSnapshot = useContextualSidebarNavigation(navigation)
+  const appliedDestinationRequest = useRef<number | null>(null)
 
   const visibleThreadRecords = useMemo<readonly ThreadSnapshot[]>(
     () => visibleSensitiveRecords(
@@ -311,6 +343,93 @@ export function FocusWorkspace({
       ? visibleFocusCommitments
       : (visibleThreadCommitments[parent.id] ?? [])
   }
+
+  function allCommitments(): CommitmentSnapshot[] {
+    return [
+      ...model.commitments,
+      ...Object.values(model.threadCommitments).flatMap((items) => items ?? [])
+    ]
+  }
+
+  function commitmentParentLabel(parent: CommitmentParent): string {
+    if (parent.type === 'focus') return 'Overall'
+    return model.threads.find(({ id }) => id === parent.id)?.title ?? 'Thread'
+  }
+
+  async function requestCommitmentMove(move: ContextualSidebarChildMove): Promise<void> {
+    const target = commitmentParentForContextItem(move.targetParentItemId, focus.id)
+    const commitmentId = Number(move.childItemId)
+    const commitment = allCommitments().find(({ id }) => id === commitmentId)
+    if (!target || !commitment || move.sourceCollectionId !== 'commitments') return
+    setCommitmentMoveError(null)
+    try {
+      const plan = await model.planCommitmentMove(commitmentId, target)
+      if (plan.requiresConfirmation) {
+        setPendingCommitmentMove({
+          plan,
+          commitmentTitle: commitment.title,
+          targetLabel: commitmentParentLabel(target)
+        })
+        return
+      }
+      await commitmentMoveExecution.current(plan)
+    } catch {
+      setCommitmentMoveError('The Commitment could not be moved.')
+    }
+  }
+
+  function updateSidebarForMovedCommitment(moved: CommitmentSnapshot): void {
+    const nextByContext = Object.fromEntries(
+      Object.entries(commitmentsByContextItemId).map(([itemId, commitments]) => [
+        itemId,
+        (commitments ?? []).filter(({ id }) => id !== moved.id)
+      ])
+    ) as Record<string, CommitmentSnapshot[]>
+    const targetItemId = contextItemIdForCommitmentParent(moved.parent)
+    nextByContext[targetItemId] = [...(nextByContext[targetItemId] ?? []), moved]
+    focusLevel.setItems(focusContextSidebarItems(
+      visibleThreadRecords,
+      model.threadStatusSummaries,
+      hideSensitiveContent,
+      nextByContext
+    ))
+    navigation.refresh()
+    navigation.selectChild(targetItemId, 'commitments', String(moved.id))
+  }
+
+  async function executeCommitmentMove(
+    plan: CommitmentMovePlanSnapshot,
+    confirmedScopeSubjectIds: readonly number[] = []
+  ): Promise<void> {
+    setCommitmentMoveSaving(true)
+    setCommitmentMoveError(null)
+    try {
+      const moved = await model.moveCommitment(plan.commitmentId, {
+        parent: plan.to,
+        confirmedScopeSubjectIds
+      })
+      updateSidebarForMovedCommitment(moved)
+      if (contextDrawer.pinnedAdapter?.id === `commitment:${moved.id}`) {
+        contextDrawer.onPin(commitmentAdapterFactory.current(moved))
+      }
+      setPendingCommitmentMove(null)
+      try {
+        await onRefreshStatusSummary()
+      } catch {
+        // The transactional move and refreshed workspace are authoritative; a
+        // later aggregate refresh can repair a stale primary-sidebar summary.
+      }
+    } catch {
+      setCommitmentMoveError('The Commitment could not be moved.')
+    } finally {
+      setCommitmentMoveSaving(false)
+    }
+  }
+
+  useEffect(() => {
+    commitmentMoveRequest.current = (move) => void requestCommitmentMove(move)
+    commitmentMoveExecution.current = executeCommitmentMove
+  })
 
   function commitmentsLevelFor(parent: CommitmentParent): ContextualSidebarLevel {
     if (parent.type === 'focus') return focusCommitmentsLevel
@@ -380,6 +499,56 @@ export function FocusWorkspace({
     hideSensitiveContent,
     navigation,
     threadCommitmentLevels
+  ])
+
+  useEffect(() => {
+    if (
+      !destination ||
+      destination.focusId !== focus.id ||
+      appliedDestinationRequest.current === destination.requestId
+    ) return
+
+    const thread = destination.threadId === null
+      ? null
+      : visibleThreadRecords.find(({ id }) => id === destination.threadId)
+    if (destination.threadId !== null && !thread) return
+
+    const parent: CommitmentParent = thread
+      ? { type: 'thread', id: thread.id }
+      : { type: 'focus', id: focus.id }
+    if (destination.commitmentId !== null) {
+      const parentCommitments = parent.type === 'focus'
+        ? visibleFocusCommitments
+        : (visibleThreadCommitments[parent.id] ?? [])
+      const commitment = parentCommitments.find(
+        ({ id }) => id === destination.commitmentId
+      )
+      if (!commitment) return
+    }
+
+    navigation.reset()
+    const parentItemId = contextItemIdForCommitmentParent(parent)
+    if (destination.commitmentId === null) {
+      navigation.select(parentItemId)
+    } else {
+      navigation.selectChild(
+        parentItemId,
+        'commitments',
+        String(destination.commitmentId)
+      )
+    }
+    onSelectedSubjectChange(destination.subjectId)
+    appliedDestinationRequest.current = destination.requestId
+    onDestinationApplied?.(destination.requestId)
+  }, [
+    destination,
+    focus.id,
+    navigation,
+    onDestinationApplied,
+    onSelectedSubjectChange,
+    visibleFocusCommitments,
+    visibleThreadCommitments,
+    visibleThreadRecords
   ])
 
   const rawSelectedThread =
@@ -688,6 +857,10 @@ export function FocusWorkspace({
       // a later refresh can repair a stale aggregate summary.
     }
   }
+
+  useEffect(() => {
+    commitmentAdapterFactory.current = adapterForCommitment
+  })
 
   const contextDrawerAdapter: ContextDrawerAdapter | null = selectedCommitment
     ? adapterForCommitment(selectedCommitment)
@@ -1303,6 +1476,65 @@ export function FocusWorkspace({
           onClose={() => setNewCommitmentParent(null)}
           onCreate={createCommitment}
         />
+      )}
+      {pendingCommitmentMove && (
+        <Dialog
+          open
+          title={`Move ${pendingCommitmentMove.commitmentTitle}?`}
+          description={`Moving it to ${pendingCommitmentMove.targetLabel} will widen that context's Scope.`}
+          onClose={() => !commitmentMoveSaving && setPendingCommitmentMove(null)}
+          footer={
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={commitmentMoveSaving}
+                onClick={() => setPendingCommitmentMove(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                disabled={commitmentMoveSaving}
+                onClick={() => void executeCommitmentMove(
+                  pendingCommitmentMove.plan,
+                  pendingCommitmentMove.plan.scopeSubjectAdditions.map(({ id }) => id)
+                )}
+              >
+                {commitmentMoveSaving ? 'Moving…' : 'Move Commitment'}
+              </Button>
+            </>
+          }
+        >
+          <p className="text-sm leading-6">
+            The following {pendingCommitmentMove.plan.scopeSubjectAdditions.length === 1
+              ? 'Subject is'
+              : 'Subjects are'} not currently covered and will be added:
+          </p>
+          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm">
+            {pendingCommitmentMove.plan.scopeSubjectAdditions.map((subject) => (
+              <li key={subject.id}>{subject.name}</li>
+            ))}
+          </ul>
+          <p className="mt-3 text-xs leading-5 text-muted-foreground">
+            {pendingCommitmentMove.plan.ownedRecords.updates} Updates,{' '}
+            {pendingCommitmentMove.plan.ownedRecords.todos} Todos, and{' '}
+            {pendingCommitmentMove.plan.ownedRecords.notes} Notes remain attached to the Commitment.
+          </p>
+          {commitmentMoveError && (
+            <p role="alert" className="mt-3 text-xs text-destructive">
+              {commitmentMoveError}
+            </p>
+          )}
+        </Dialog>
+      )}
+      {commitmentMoveError && !pendingCommitmentMove && (
+        <p
+          role="alert"
+          className="fixed right-5 bottom-5 z-50 rounded-lg border border-destructive/40 bg-card px-3 py-2 text-xs text-destructive shadow-lg"
+        >
+          {commitmentMoveError}
+        </p>
       )}
     </>
   )

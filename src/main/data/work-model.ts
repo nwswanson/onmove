@@ -3,6 +3,8 @@ import {
   FOCUS_STATUSES,
   HEALTH_STATES,
   type CommitmentParent,
+  type CommitmentMovePlanSnapshot,
+  type CommitmentParentTransition,
   type CommitmentScopeCellSnapshot,
   type CommitmentSnapshot,
   type CommitmentStatus,
@@ -13,6 +15,7 @@ import {
   type CreateUpdateInput,
   type EditUpdateInput,
   type HealthState,
+  type MoveCommitmentInput,
   type ScopeApplicationSnapshot,
   type ScopeApplicationTransition,
   type ScopeOwner,
@@ -30,8 +33,10 @@ import {
 } from '../../shared/contracts'
 import { BaseModel, BaseRepository, ModelNotFoundError, ModelValidationError } from './model'
 import {
+  FocusScopeRepository,
   ScopeApplicationRepository,
-  ScopeRepository
+  ScopeRepository,
+  ThreadScopeRepository
 } from './scope-model'
 import type { SqliteAdapter } from './sqlite-adapter'
 import { NoteRepository } from './note-model'
@@ -109,6 +114,20 @@ interface CommitmentTransitionRow {
   from_status: string | null
   to_status: string
   changed_at: string
+}
+
+interface CommitmentParentTransitionRow {
+  id: number
+  commitment_id: number
+  from_focus_id: number | null
+  from_thread_id: number | null
+  to_focus_id: number | null
+  to_thread_id: number | null
+  changed_at: string
+}
+
+interface CountRow {
+  count: number
 }
 
 function assertId(id: number, modelName: string): void {
@@ -248,6 +267,15 @@ function commitmentParentFromRow(row: CommitmentRow): CommitmentParent {
   return row.focus_id === null
     ? { type: 'thread', id: Number(row.thread_id) }
     : { type: 'focus', id: Number(row.focus_id) }
+}
+
+function commitmentParentFromColumns(
+  focusId: number | null,
+  threadId: number | null
+): CommitmentParent {
+  return focusId === null
+    ? { type: 'thread', id: Number(threadId) }
+    : { type: 'focus', id: Number(focusId) }
 }
 
 function updateParentFromRow(row: UpdateRow): UpdateParent {
@@ -693,6 +721,18 @@ export class CommitmentModel extends BaseModel<CommitmentRecord> {
     return this.repository.statusHistory(this.id)
   }
 
+  movePlan(parent: CommitmentParent): CommitmentMovePlanSnapshot {
+    return this.repository.planMove(this.id, parent)
+  }
+
+  moveTo(input: MoveCommitmentInput): this {
+    return this.replace(this.repository.move(this.id, input))
+  }
+
+  parentHistory(): CommitmentParentTransition[] {
+    return this.repository.parentHistory(this.id)
+  }
+
   scopeMatrix(asOf?: string): CommitmentScopeCellSnapshot[] {
     return this.repository.scopeMatrix(this.id, asOf)
   }
@@ -709,12 +749,16 @@ export class CommitmentModel extends BaseModel<CommitmentRecord> {
 export class CommitmentRepository extends BaseRepository<CommitmentRecord, CommitmentModel> {
   private readonly scopeApplications: ScopeApplicationRepository
   private readonly scopes: ScopeRepository
+  private readonly focusScopes: FocusScopeRepository
+  private readonly threadScopes: ThreadScopeRepository
   private readonly notes: NoteRepository
 
   constructor(private readonly database: SqliteAdapter) {
     super()
     this.scopeApplications = new ScopeApplicationRepository(database)
     this.scopes = new ScopeRepository(database)
+    this.focusScopes = new FocusScopeRepository(database)
+    this.threadScopes = new ThreadScopeRepository(database)
     this.notes = new NoteRepository(database)
   }
 
@@ -797,6 +841,97 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
     return this.update(id, { status })
   }
 
+  /**
+   * Plans a same-Focus reparenting operation without changing durable state.
+   * Child evidence keeps its exact Scope id; canonical Subject coverage decides
+   * whether it remains current under the destination context.
+   */
+  planMove(id: number, parent: CommitmentParent, on = today()): CommitmentMovePlanSnapshot {
+    const current = this.find(id)
+    if (!current) throw new ModelNotFoundError('Commitment', id)
+    this.assertParentExists(parent)
+    const sourceFocusId = this.focusIdForParent(current.parent)
+    const targetFocusId = this.focusIdForParent(parent)
+    if (sourceFocusId !== targetFocusId) {
+      throw new ModelValidationError('a Commitment cannot move outside its Focus')
+    }
+
+    const sourceApplication = current.parent.type === 'thread'
+      ? this.scopeApplications.get({ type: 'thread', id: current.parent.id })
+      : this.scopeApplications.get({ type: 'commitment', id })
+    const targetApplication = this.scopeApplications.get(
+      parent.type === 'focus'
+        ? { type: 'focus', id: parent.id }
+        : { type: 'thread', id: parent.id }
+    )
+    const sourceSubjects = sourceApplication.effectiveScopeId === null
+      ? []
+      : this.scopes.effectiveSubjects(sourceApplication.effectiveScopeId, on)
+    const targetSubjectIds = new Set(
+      targetApplication.effectiveScopeId === null
+        ? []
+        : this.scopes
+            .effectiveSubjects(targetApplication.effectiveScopeId, on)
+            .map(({ id: subjectId }) => subjectId)
+    )
+    const sameParent = current.parent.type === parent.type && current.parent.id === parent.id
+    const scopeSubjectAdditions = sameParent
+      ? []
+      : sourceSubjects.filter(({ id: subjectId }) => !targetSubjectIds.has(subjectId))
+
+    return {
+      commitmentId: id,
+      from: current.parent,
+      to: { ...parent },
+      sourceScopeMode: sourceApplication.mode,
+      sourceScopeId: sourceApplication.effectiveScopeId,
+      targetScopeId: targetApplication.effectiveScopeId,
+      scopeSubjectAdditions,
+      ownedRecords: {
+        updates: this.count('updates', 'commitment_id', id),
+        todos: this.count('todos', 'commitment_id', id),
+        notes: this.count('notes', 'commitment_id', id)
+      },
+      requiresConfirmation: scopeSubjectAdditions.length > 0
+    }
+  }
+
+  move(id: number, input: MoveCommitmentInput, now = new Date()): CommitmentRecord {
+    const plan = this.planMove(id, input.parent, today(now))
+    if (plan.from.type === plan.to.type && plan.from.id === plan.to.id) {
+      return this.find(id) as CommitmentRecord
+    }
+    const required = plan.scopeSubjectAdditions.map(({ id: subjectId }) => subjectId).sort((a, b) => a - b)
+    const confirmed = [...new Set(input.confirmedScopeSubjectIds ?? [])].sort((a, b) => a - b)
+    if (
+      required.length !== confirmed.length ||
+      required.some((subjectId, index) => subjectId !== confirmed[index])
+    ) {
+      throw new ModelValidationError(
+        'Commitment move Scope changes must be planned and explicitly confirmed'
+      )
+    }
+
+    this.database.transaction(() => {
+      if (required.length > 0) {
+        if (input.parent.type === 'focus') {
+          this.focusScopes.ensureSubjects(input.parent.id, required, now)
+        } else {
+          this.threadScopes.ensureSubjects(input.parent.id, required, now)
+        }
+      }
+      const [focusId, threadId] = parentColumns(input.parent)
+      const result = this.database.run(
+        `UPDATE commitments
+         SET focus_id = ?, thread_id = ?, updated_at = ?
+         WHERE id = ?`,
+        [focusId, threadId, timestamp(now), id]
+      )
+      if (result.changes === 0) throw new ModelNotFoundError('Commitment', id)
+    })
+    return this.find(id) as CommitmentRecord
+  }
+
   pokeReview(id: number, now = new Date()): CommitmentRecord {
     assertId(id, 'commitment')
     const reviewDate = today(now)
@@ -835,6 +970,25 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
         to: row.to_status as CommitmentStatus,
         changedAt: row.changed_at
       }))
+  }
+
+  parentHistory(id: number): CommitmentParentTransition[] {
+    if (!this.find(id)) throw new ModelNotFoundError('Commitment', id)
+    return this.database.all<CommitmentParentTransitionRow>(
+      `SELECT id, commitment_id, from_focus_id, from_thread_id,
+              to_focus_id, to_thread_id, changed_at
+       FROM commitment_parent_transitions
+       WHERE commitment_id = ? ORDER BY id`,
+      [id]
+    ).map((row) => ({
+      id: Number(row.id),
+      commitmentId: Number(row.commitment_id),
+      from: row.from_focus_id === null && row.from_thread_id === null
+        ? null
+        : commitmentParentFromColumns(row.from_focus_id, row.from_thread_id),
+      to: commitmentParentFromColumns(row.to_focus_id, row.to_thread_id),
+      changedAt: row.changed_at
+    }))
   }
 
   scopeApplication(id: number): ScopeApplicationSnapshot {
@@ -962,6 +1116,23 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
       parent.id
     ])
     if (!row) throw new ModelNotFoundError(parent.type === 'focus' ? 'Focus' : 'Thread', parent.id)
+  }
+
+  private focusIdForParent(parent: CommitmentParent): number {
+    if (parent.type === 'focus') return parent.id
+    const row = this.database.get<{ focus_id: number }>(
+      'SELECT focus_id FROM threads WHERE id = ?',
+      [parent.id]
+    )
+    if (!row) throw new ModelNotFoundError('Thread', parent.id)
+    return Number(row.focus_id)
+  }
+
+  private count(table: 'updates' | 'todos' | 'notes', column: 'commitment_id', id: number): number {
+    return Number(this.database.get<CountRow>(
+      `SELECT count(*) AS count FROM ${table} WHERE ${column} = ?`,
+      [id]
+    )?.count ?? 0)
   }
 }
 

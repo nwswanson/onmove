@@ -22,7 +22,7 @@ feature modules, main-process code, preload code, or call `window.onmove`.
   pin priority, and empty behavior. A feature supplies a data-only `ContextDrawerAdapter`; the
   outlet never switches on entity types or renders feature-provided markup.
 
-The shell accepts React slots rather than application records, so Home and future screens may omit
+The shell accepts React slots rather than application records, so Todos and future screens may omit
 the contextual sidebar or drawer without changing the framework.
 
 ## Feature model hooks
@@ -33,6 +33,20 @@ Persistence-backed state lives in feature hooks:
   performs Focus mutations and data-folder actions.
 - `useFocusWorkspaceModel` loads Threads and Focus-level Commitments and owns Goal, Thread, and
   Commitment persistence.
+- `useTodoOverviewModel` loads the bounded global Todo projection and owns both ordinary and
+  per-Subject completion mutations; SQLite has already excluded older completed records before this
+  hook receives a snapshot.
+
+The domain-free `TodoList` receiver owns the disclosure and interaction grammar for a shared Todo.
+Feature presenters provide only data: whether the parent may be edited/deleted/checked, its current
+Subject completion rows, and (in an exact tab) the one completion Subject id. The receiver renders
+plain progress children outside the sortable collection and emits ids through the typed mutation;
+it never receives Scope records or decides aggregate completion.
+
+Cross-feature navigation uses the data-only `FocusWorkspaceDestination` contract. The global Todo
+view translates a clicked row into ids, while the Focus workspace atomically restores its own
+contextual-sidebar route and working-context tab. Reusable table and sidebar receivers never see
+domain records or orchestrate each other.
 
 These hooks may use typed shared contracts and the sandboxed `window.onmove` preload API. They do
 not import UI components or define layout.

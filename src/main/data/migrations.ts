@@ -1179,7 +1179,6 @@ const migrations: readonly Migration[] = [
         [table]
       ))
       if (!hasCompleteWorkDomain) return
-
       database.exec(`
         CREATE TABLE todos (
           id INTEGER PRIMARY KEY,
@@ -1576,6 +1575,306 @@ const migrations: readonly Migration[] = [
             length(review_poked_on) = 10 AND review_poked_on = date(review_poked_on)
           )
         );
+      `)
+    }
+  },
+  {
+    version: 16,
+    name: 'commitment_parent_moves',
+    up(database) {
+      const requiredTables = [
+        'focuses',
+        'threads',
+        'commitments',
+        'commitment_scope_applications'
+      ]
+      const hasCompleteWorkDomain = requiredTables.every((table) => database.get<{ found: number }>(
+        "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?",
+        [table]
+      ))
+      if (!hasCompleteWorkDomain) return
+      const commitmentColumns = database.all<{ name: string }>('PRAGMA table_info(commitments)')
+      const initialChangedAt = commitmentColumns.some(({ name }) => name === 'created_at')
+        ? 'created_at'
+        : "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+
+      database.exec(`
+        CREATE TABLE commitment_parent_transitions (
+          id INTEGER PRIMARY KEY,
+          commitment_id INTEGER NOT NULL REFERENCES commitments(id) ON DELETE CASCADE,
+          from_focus_id INTEGER,
+          from_thread_id INTEGER,
+          to_focus_id INTEGER,
+          to_thread_id INTEGER,
+          changed_at TEXT NOT NULL,
+          CHECK (
+            (from_focus_id IS NULL AND from_thread_id IS NULL) OR
+            (from_focus_id IS NOT NULL AND from_thread_id IS NULL) OR
+            (from_focus_id IS NULL AND from_thread_id IS NOT NULL)
+          ),
+          CHECK (
+            (to_focus_id IS NOT NULL AND to_thread_id IS NULL) OR
+            (to_focus_id IS NULL AND to_thread_id IS NOT NULL)
+          ),
+          CHECK (
+            from_focus_id IS NOT to_focus_id OR from_thread_id IS NOT to_thread_id
+          )
+        ) STRICT;
+
+        CREATE INDEX commitment_parent_transitions_commitment_index
+          ON commitment_parent_transitions(commitment_id, id);
+
+        INSERT INTO commitment_parent_transitions (
+          commitment_id, from_focus_id, from_thread_id,
+          to_focus_id, to_thread_id, changed_at
+        )
+        SELECT id, NULL, NULL, focus_id, thread_id, ${initialChangedAt}
+        FROM commitments;
+
+        CREATE TRIGGER commitments_log_initial_parent
+        AFTER INSERT ON commitments
+        BEGIN
+          INSERT INTO commitment_parent_transitions (
+            commitment_id, from_focus_id, from_thread_id,
+            to_focus_id, to_thread_id, changed_at
+          ) VALUES (
+            NEW.id, NULL, NULL, NEW.focus_id, NEW.thread_id,
+            strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          );
+        END;
+
+        CREATE TRIGGER commitments_reject_cross_focus_move
+        BEFORE UPDATE OF focus_id, thread_id ON commitments
+        WHEN
+          OLD.focus_id IS NOT NEW.focus_id OR OLD.thread_id IS NOT NEW.thread_id
+        BEGIN
+          SELECT CASE WHEN
+            COALESCE(
+              OLD.focus_id,
+              (SELECT focus_id FROM threads WHERE id = OLD.thread_id)
+            ) IS NOT COALESCE(
+              NEW.focus_id,
+              (SELECT focus_id FROM threads WHERE id = NEW.thread_id)
+            )
+          THEN RAISE(ABORT, 'a Commitment cannot move outside its Focus') END;
+        END;
+
+        CREATE TRIGGER commitments_sync_scope_after_parent_move
+        AFTER UPDATE OF focus_id, thread_id ON commitments
+        WHEN
+          OLD.focus_id IS NOT NEW.focus_id OR OLD.thread_id IS NOT NEW.thread_id
+        BEGIN
+          UPDATE commitment_scope_applications
+          SET
+            mode = CASE WHEN NEW.thread_id IS NOT NULL THEN 'inherited' ELSE 'open' END,
+            scope_id = NULL,
+            updated_at = NEW.updated_at
+          WHERE commitment_id = NEW.id;
+
+          INSERT INTO commitment_parent_transitions (
+            commitment_id, from_focus_id, from_thread_id,
+            to_focus_id, to_thread_id, changed_at
+          ) VALUES (
+            NEW.id, OLD.focus_id, OLD.thread_id,
+            NEW.focus_id, NEW.thread_id, NEW.updated_at
+          );
+        END;
+
+        CREATE TRIGGER commitment_parent_transitions_are_immutable
+        BEFORE UPDATE ON commitment_parent_transitions
+        BEGIN
+          SELECT RAISE(ABORT, 'Commitment parent transitions are immutable');
+        END;
+
+        CREATE TRIGGER commitment_parent_transitions_delete_only_with_commitment
+        BEFORE DELETE ON commitment_parent_transitions
+        WHEN EXISTS (
+          SELECT 1 FROM commitments WHERE id = OLD.commitment_id
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Commitment parent transitions are immutable');
+        END;
+      `)
+    }
+  },
+  {
+    version: 17,
+    name: 'todo_completion_timestamps',
+    up(database) {
+      const hasTodos = database.get<{ found: number }>(
+        "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = 'todos'"
+      )
+      if (!hasTodos) return
+
+      database.exec(`
+        ALTER TABLE todos ADD COLUMN completed_at TEXT CHECK (
+          completed_at IS NULL OR datetime(completed_at) IS NOT NULL
+        );
+
+        UPDATE todos
+        SET completed_at = COALESCE(updated_at, created_at)
+        WHERE done = 1 AND completed_at IS NULL;
+
+        CREATE INDEX todos_overview_index
+          ON todos(done, completed_at, due_on, id);
+
+        CREATE TRIGGER todos_completion_state_insert
+        BEFORE INSERT ON todos
+        WHEN
+          (NEW.done = 0 AND NEW.completed_at IS NOT NULL) OR
+          (NEW.done = 1 AND NEW.completed_at IS NULL)
+        BEGIN
+          SELECT RAISE(ABORT, 'Todo completion timestamp must match done state');
+        END;
+
+        CREATE TRIGGER todos_completion_state_update
+        BEFORE UPDATE OF done, completed_at ON todos
+        WHEN
+          (NEW.done = 0 AND NEW.completed_at IS NOT NULL) OR
+          (NEW.done = 1 AND NEW.completed_at IS NULL)
+        BEGIN
+          SELECT RAISE(ABORT, 'Todo completion timestamp must match done state');
+        END;
+      `)
+    }
+  },
+  {
+    version: 18,
+    name: 'shared_subject_todos',
+    up(database) {
+      const hasTodos = database.get<{ found: number }>(
+        "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = 'todos'"
+      )
+      if (!hasTodos) return
+
+      database.exec(`
+        ALTER TABLE todos ADD COLUMN shared_across_subjects INTEGER NOT NULL DEFAULT 0
+          CHECK (shared_across_subjects IN (0, 1));
+
+        CREATE TABLE todo_subject_completions (
+          todo_id INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+          subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE NO ACTION,
+          done INTEGER NOT NULL DEFAULT 0 CHECK (done IN (0, 1)),
+          completed_at TEXT CHECK (
+            completed_at IS NULL OR datetime(completed_at) IS NOT NULL
+          ),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (todo_id, subject_id),
+          CHECK (
+            (done = 0 AND completed_at IS NULL) OR
+            (done = 1 AND completed_at IS NOT NULL)
+          )
+        ) STRICT;
+
+        CREATE INDEX todo_subject_completions_subject_index
+          ON todo_subject_completions(subject_id, todo_id);
+
+        CREATE TRIGGER todos_shared_parent_insert
+        BEFORE INSERT ON todos
+        WHEN NEW.shared_across_subjects = 1 AND (
+          NEW.focus_id IS NOT NULL OR
+          (NEW.thread_id IS NULL AND NEW.commitment_id IS NULL) OR
+          NEW.scope_id IS NOT NULL OR NEW.subject_id IS NOT NULL
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'shared Todo requires an aggregate Thread or Commitment parent');
+        END;
+
+        CREATE TRIGGER todos_shared_parent_update
+        BEFORE UPDATE OF shared_across_subjects, focus_id, thread_id, commitment_id, scope_id, subject_id
+        ON todos
+        WHEN NEW.shared_across_subjects = 1 AND (
+          NEW.focus_id IS NOT NULL OR
+          (NEW.thread_id IS NULL AND NEW.commitment_id IS NULL) OR
+          NEW.scope_id IS NOT NULL OR NEW.subject_id IS NOT NULL
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'shared Todo requires an aggregate Thread or Commitment parent');
+        END;
+
+        CREATE TRIGGER todos_shared_mode_is_immutable
+        BEFORE UPDATE OF shared_across_subjects ON todos
+        WHEN OLD.shared_across_subjects IS NOT NEW.shared_across_subjects
+        BEGIN
+          SELECT RAISE(ABORT, 'Todo sharing mode is immutable');
+        END;
+
+        CREATE TRIGGER todo_subject_completion_requires_shared_insert
+        BEFORE INSERT ON todo_subject_completions
+        WHEN NOT EXISTS (
+          SELECT 1 FROM todos
+          WHERE id = NEW.todo_id AND shared_across_subjects = 1
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Todo Subject completion requires a shared Todo');
+        END;
+
+        CREATE TRIGGER todo_subject_completion_identity_is_immutable
+        BEFORE UPDATE OF todo_id, subject_id ON todo_subject_completions
+        WHEN OLD.todo_id IS NOT NEW.todo_id OR OLD.subject_id IS NOT NEW.subject_id
+        BEGIN
+          SELECT RAISE(ABORT, 'Todo Subject completion identity is immutable');
+        END;
+
+        DROP TRIGGER todo_sort_placement_matches_context_insert;
+        DROP TRIGGER todo_sort_placement_matches_context_update;
+
+        CREATE TRIGGER todo_sort_placement_matches_context_insert
+        BEFORE INSERT ON todo_sort_placements
+        WHEN NOT EXISTS (
+          SELECT 1
+          FROM todos todo
+          JOIN todo_lists list ON list.id = NEW.list_id
+          WHERE todo.id = NEW.todo_id
+            AND todo.focus_id IS list.focus_id
+            AND todo.thread_id IS list.thread_id
+            AND todo.commitment_id IS list.commitment_id
+            AND (
+              list.scope_id IS NULL OR (
+                todo.shared_across_subjects = 0 AND
+                todo.scope_id IS list.scope_id AND todo.subject_id IS list.subject_id
+              ) OR (
+                todo.shared_across_subjects = 1 AND todo.scope_id IS NULL AND
+                EXISTS (
+                  SELECT 1 FROM todo_subject_completions completion
+                  WHERE completion.todo_id = todo.id
+                    AND completion.subject_id = list.subject_id
+                )
+              )
+            )
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Todo sort placement must match its parent context');
+        END;
+
+        CREATE TRIGGER todo_sort_placement_matches_context_update
+        BEFORE UPDATE OF todo_id, list_id ON todo_sort_placements
+        WHEN NOT EXISTS (
+          SELECT 1
+          FROM todos todo
+          JOIN todo_lists list ON list.id = NEW.list_id
+          WHERE todo.id = NEW.todo_id
+            AND todo.focus_id IS list.focus_id
+            AND todo.thread_id IS list.thread_id
+            AND todo.commitment_id IS list.commitment_id
+            AND (
+              list.scope_id IS NULL OR (
+                todo.shared_across_subjects = 0 AND
+                todo.scope_id IS list.scope_id AND todo.subject_id IS list.subject_id
+              ) OR (
+                todo.shared_across_subjects = 1 AND todo.scope_id IS NULL AND
+                EXISTS (
+                  SELECT 1 FROM todo_subject_completions completion
+                  WHERE completion.todo_id = todo.id
+                    AND completion.subject_id = list.subject_id
+                )
+              )
+            )
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Todo sort placement must match its parent context');
+        END;
       `)
     }
   }

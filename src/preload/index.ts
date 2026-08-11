@@ -70,6 +70,10 @@ const api: OnMoveApi = {
     createCommitment: (input) => ipcRenderer.invoke(IPC_CHANNELS.createCommitment, input),
     updateCommitment: (id, input) =>
       ipcRenderer.invoke(IPC_CHANNELS.updateCommitment, id, input),
+    planCommitmentMove: (id, parent) =>
+      ipcRenderer.invoke(IPC_CHANNELS.planCommitmentMove, id, parent),
+    moveCommitment: (id, input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.moveCommitment, id, input),
     pokeCommitmentReview: (id) =>
       ipcRenderer.invoke(IPC_CHANNELS.pokeCommitmentReview, id),
     deleteCommitment: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteCommitment, id),
@@ -80,8 +84,11 @@ const api: OnMoveApi = {
     listTodos: (context, options) =>
       ipcRenderer.invoke(IPC_CHANNELS.listTodos, context, options),
     queryTodos: (options) => ipcRenderer.invoke(IPC_CHANNELS.queryTodos, options),
+    getTodoOverview: () => ipcRenderer.invoke(IPC_CHANNELS.getTodoOverview),
     createTodo: (input) => ipcRenderer.invoke(IPC_CHANNELS.createTodo, input),
     updateTodo: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateTodo, id, input),
+    updateTodoSubjectCompletion: (id, subjectId, done) =>
+      ipcRenderer.invoke(IPC_CHANNELS.updateTodoSubjectCompletion, id, subjectId, done),
     reorderTodos: (context, orderedTodoIds) =>
       ipcRenderer.invoke(IPC_CHANNELS.reorderTodos, context, orderedTodoIds),
     deleteTodo: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteTodo, id),

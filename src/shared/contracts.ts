@@ -40,6 +40,8 @@ export const IPC_CHANNELS = {
   getCommitmentWorkingContext: 'domain:get-commitment-working-context',
   createCommitment: 'domain:create-commitment',
   updateCommitment: 'domain:update-commitment',
+  planCommitmentMove: 'domain:plan-commitment-move',
+  moveCommitment: 'domain:move-commitment',
   pokeCommitmentReview: 'domain:poke-commitment-review',
   deleteCommitment: 'domain:delete-commitment',
   listUpdates: 'domain:list-updates',
@@ -48,8 +50,10 @@ export const IPC_CHANNELS = {
   deleteUpdate: 'domain:delete-update',
   listTodos: 'domain:list-todos',
   queryTodos: 'domain:query-todos',
+  getTodoOverview: 'domain:get-todo-overview',
   createTodo: 'domain:create-todo',
   updateTodo: 'domain:update-todo',
+  updateTodoSubjectCompletion: 'domain:update-todo-subject-completion',
   reorderTodos: 'domain:reorder-todos',
   deleteTodo: 'domain:delete-todo',
   listNotes: 'domain:list-notes',
@@ -462,6 +466,43 @@ export interface UpdateCommitmentInput {
   sensitive?: boolean
 }
 
+export interface CommitmentMoveOwnedRecordsSnapshot {
+  updates: number
+  todos: number
+  notes: number
+}
+
+/**
+ * A read-only preview of a Commitment reparenting operation. Exact child Scope
+ * attribution is retained; `scopeSubjectAdditions` is the only ancillary
+ * mutation the operation may perform.
+ */
+export interface CommitmentMovePlanSnapshot {
+  commitmentId: number
+  from: CommitmentParent
+  to: CommitmentParent
+  sourceScopeMode: ScopeMode
+  sourceScopeId: number | null
+  targetScopeId: number | null
+  scopeSubjectAdditions: SubjectSnapshot[]
+  ownedRecords: CommitmentMoveOwnedRecordsSnapshot
+  requiresConfirmation: boolean
+}
+
+export interface MoveCommitmentInput {
+  parent: CommitmentParent
+  /** Must exactly match the planner's additions when scope widening is required. */
+  confirmedScopeSubjectIds?: readonly number[]
+}
+
+export interface CommitmentParentTransition {
+  id: number
+  commitmentId: number
+  from: CommitmentParent | null
+  to: CommitmentParent
+  changedAt: string
+}
+
 export type UpdateParent =
   | { type: 'focus'; id: number }
   | { type: 'thread'; id: number }
@@ -548,18 +589,69 @@ export interface TodoSortPlacementSnapshot {
   position: number
 }
 
+/** One current canonical Subject's durable completion of a shared Todo. */
+export interface TodoSubjectCompletionSnapshot {
+  subject: SubjectSnapshot
+  done: boolean
+  completedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 export interface TodoSnapshot {
   id: number
   name: string
   parent: TodoParent
   /** Resolved canonical Subject for scoped Todos; null for aggregate Todos. */
   subject: SubjectSnapshot | null
+  /** Shared parents project one independently completable cell per current Subject. */
+  sharedAcrossSubjects: boolean
+  subjectCompletions: TodoSubjectCompletionSnapshot[]
   dueDate: string | null
   done: boolean
+  /** Set only while done; reopening clears it and completing again records a new instant. */
+  completedAt: string | null
   /** Independent positions for the exact context and its aggregate rollup. */
   sort: TodoSortPlacementSnapshot[]
   createdAt: string
   updatedAt: string
+}
+
+export interface TodoOverviewFocusSnapshot {
+  id: number
+  title: string
+  sensitive: boolean
+}
+
+export interface TodoOverviewThreadSnapshot {
+  id: number
+  title: string
+  sensitive: boolean
+}
+
+export interface TodoOverviewCommitmentSnapshot {
+  id: number
+  title: string
+  sensitive: boolean
+}
+
+/** One globally queryable Todo with its resolved hierarchy context. */
+export interface TodoOverviewItemSnapshot extends TodoSnapshot {
+  focus: TodoOverviewFocusSnapshot
+  /** The direct Thread, or the owning Thread for a Commitment Todo. */
+  thread: TodoOverviewThreadSnapshot | null
+  commitment: TodoOverviewCommitmentSnapshot | null
+}
+
+/**
+ * Bounded aggregate projection. Completed Todos older than `completedSince`
+ * have already been excluded by SQLite and never cross the IPC boundary.
+ */
+export interface TodoOverviewSnapshot {
+  items: TodoOverviewItemSnapshot[]
+  today: string
+  recentlyCompletedDays: number
+  completedSince: string
 }
 
 export interface CreateTodoInput {
@@ -567,6 +659,8 @@ export interface CreateTodoInput {
   parent: TodoParent
   dueDate?: string | null
   done?: boolean
+  /** Valid only for aggregate Thread/Commitment parents with current Subjects. */
+  sharedAcrossSubjects?: boolean
 }
 
 export interface UpdateTodoInput {
@@ -647,6 +741,11 @@ export interface DomainApi {
   ) => Promise<CommitmentWorkingContextSnapshot>
   createCommitment: (input: CreateCommitmentInput) => Promise<CommitmentSnapshot>
   updateCommitment: (id: number, input: UpdateCommitmentInput) => Promise<CommitmentSnapshot>
+  planCommitmentMove: (
+    id: number,
+    parent: CommitmentParent
+  ) => Promise<CommitmentMovePlanSnapshot>
+  moveCommitment: (id: number, input: MoveCommitmentInput) => Promise<CommitmentSnapshot>
   pokeCommitmentReview: (id: number) => Promise<CommitmentSnapshot>
   deleteCommitment: (id: number) => Promise<boolean>
   listUpdates: (parent: UpdateParent) => Promise<UpdateSnapshot[]>
@@ -656,8 +755,14 @@ export interface DomainApi {
   listTodos: (context: TodoParent, options?: TodoListOptions) => Promise<TodoSnapshot[]>
   /** Cross-context query for future aggregate screens; each Todo appears once. */
   queryTodos: (options?: TodoListOptions) => Promise<TodoSnapshot[]>
+  getTodoOverview: () => Promise<TodoOverviewSnapshot>
   createTodo: (input: CreateTodoInput) => Promise<TodoSnapshot>
   updateTodo: (id: number, input: UpdateTodoInput) => Promise<TodoSnapshot>
+  updateTodoSubjectCompletion: (
+    id: number,
+    subjectId: number,
+    done: boolean
+  ) => Promise<TodoSnapshot>
   reorderTodos: (context: TodoParent, orderedTodoIds: readonly number[]) => Promise<TodoSnapshot[]>
   deleteTodo: (id: number) => Promise<boolean>
   listNotes: (parent: NoteParent) => Promise<NoteSnapshot[]>

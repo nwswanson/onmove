@@ -8,6 +8,7 @@ import {
   ContextualSidebarLevel,
   ContextualSidebarNavigation,
   type ContextualSidebarChildCollectionModel,
+  type ContextualSidebarChildMove,
   type ContextualSidebarNewItemAction,
   useContextualSidebarNavigation
 } from '../../src/renderer/src/components/ui/contextual-sidebar'
@@ -40,6 +41,8 @@ function level(
       collectionId: string,
       actionId: string
     ) => void
+    canMoveChild?: (move: ContextualSidebarChildMove) => boolean
+    onMoveChild?: (move: ContextualSidebarChildMove) => void
     getItemGroup?: (item: TestItem) => { id: string; label: string } | null
     newItem?: ContextualSidebarNewItemAction
   } = {}
@@ -61,7 +64,9 @@ function level(
     newItem: options.newItem,
     onSelect: options.onSelect,
     onSelectChild: options.onSelectChild,
-    onChildCollectionAction: options.onChildCollectionAction
+    onChildCollectionAction: options.onChildCollectionAction,
+    canMoveChild: options.canMoveChild,
+    onMoveChild: options.onMoveChild
   })
 }
 
@@ -225,6 +230,53 @@ describe('ContextualSidebarNavigation', () => {
       'add'
     )
     expect(navigation.getSnapshot().level).toBe(root)
+  })
+
+  it('makes only nested children draggable and reparentable through its generic contract', () => {
+    const onMoveChild = vi.fn()
+    const root = level(
+      'focus:1',
+      'Focus',
+      [
+        {
+          id: 'overall',
+          label: 'Overall',
+          childCollection: {
+            id: 'commitments',
+            label: 'Commitments',
+            items: [{ id: 'quality', label: 'Improve ticket quality' }]
+          }
+        },
+        {
+          id: 'thread:2',
+          label: 'Sprint execution',
+          childCollection: {
+            id: 'commitments',
+            label: 'Commitments',
+            items: []
+          }
+        }
+      ],
+      { onMoveChild }
+    )
+    render(<ContextualSidebar navigation={new ContextualSidebarNavigation(root)} />)
+
+    expect(screen.getByRole('button', { name: 'Improve ticket quality' }))
+      .toHaveAttribute('aria-roledescription', 'draggable')
+    expect(screen.getByRole('button', { name: 'Sprint execution' }))
+      .not.toHaveAttribute('aria-roledescription')
+
+    const move = {
+      sourceParentItemId: 'overall',
+      sourceCollectionId: 'commitments',
+      childItemId: 'quality',
+      targetParentItemId: 'thread:2',
+      targetCollectionId: 'commitments'
+    }
+    expect(root.canMoveChild(move)).toBe(true)
+    root.notifyChildMove(move)
+    expect(onMoveChild).toHaveBeenCalledWith(move)
+    expect(root.canMoveChild({ ...move, targetParentItemId: 'overall' })).toBe(false)
   })
 
   it('falls back to the selected parent when a nested child is removed', () => {

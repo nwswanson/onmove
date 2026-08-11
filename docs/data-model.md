@@ -75,7 +75,8 @@ their requested projection date. A Commitment exposes `lastReviewDate` separatel
 `FocusModel` supplies update, status, history, refresh, and deletion helpers. The renderer reaches
 these operations only through named IPC methods. Threads and Commitments use named list and create
 and update methods; Updates use named list, create, edit, and delete methods. Todos use named
-contextual list, cross-context query, create, update, reorder, and delete methods. Repository
+contextual list, cross-context query, bounded overview, create, update, per-Subject completion,
+reorder, and delete methods. Repository
 dispatch and SQL remain unavailable to the renderer.
 
 ## Notes and durable rich-text documents
@@ -139,6 +140,12 @@ record their enforced initial mode but cannot be directly changed. Membership is
 effective date rather than deleted once used, and structural changes to a used Scope require a new
 Scope definition. Hard-deleting a Thread or Commitment erases that owner's evidence and audit rows
 but leaves Focus-owned Scopes, memberships, and global Subjects intact.
+
+Migration 16 adds same-Focus Commitment reparenting. A read-only plan identifies missing canonical
+Subjects before any write; confirmed widening and the parent change commit atomically. Child
+Updates, Todos, and Notes remain attached through the Commitment id and retain their exact cells and
+sort placements. Immutable `commitment_parent_transitions` make Thread-to-Thread moves observable,
+while SQLite synchronizes the Commitment's derived Scope application and rejects cross-Focus moves.
 
 ## Status is state plus history
 
@@ -229,3 +236,13 @@ After a successful import the app relaunches so every window reads one coherent 
   downgrade write.
 - Add an upgrade test starting from the previous schema and an invariant test for every new foreign
   key, trigger, or constraint.
+
+Migration 17 adds Todo `completed_at`, backfills already-done records from their last durable
+timestamp, enforces agreement between `done` and completion time, and indexes the bounded global
+overview query. The named overview projection applies its seven-day completion cutoff in SQL and
+resolves hierarchy labels without exposing arbitrary queries to the renderer.
+
+Migration 18 adds immutable shared Thread/Commitment Todos and `todo_subject_completions`. One
+shared parent is projected into every current exact Subject list through independent sort
+placements. Repository reconciliation follows the owner's current effective Subject population,
+adds new unchecked cells, removes departed cells, and derives the parent completion timestamp.
