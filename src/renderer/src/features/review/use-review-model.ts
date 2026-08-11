@@ -12,6 +12,7 @@ export interface ReviewModel {
   loading: boolean
   error: string | null
   dismissedKeys: ReadonlySet<string>
+  reviewedKeys: ReadonlySet<string>
   pendingKey: string | null
   editingUpdate: { itemKey: string; update: UpdateSnapshot } | null
   ignore: (itemKey: string) => void
@@ -21,7 +22,7 @@ export interface ReviewModel {
   saveObservation: (value: string) => void
   openObservation: () => void
   finishUpdate: () => void
-  restart: () => Promise<void>
+  refresh: () => Promise<void>
 }
 
 function itemParent(item: ReviewQueueItemSnapshot): UpdateParent {
@@ -40,19 +41,22 @@ export function useReviewModel(): ReviewModel {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [dismissedKeys, setDismissedKeys] = useState<ReadonlySet<string>>(new Set())
+  const [reviewedKeys, setReviewedKeys] = useState<ReadonlySet<string>>(new Set())
   const [pendingKey, setPendingKey] = useState<string | null>(null)
   const [editingUpdate, setEditingUpdate] = useState<{
     itemKey: string
     update: UpdateSnapshot
   } | null>(null)
 
-  async function load(): Promise<void> {
+  async function refresh(): Promise<void> {
     setLoading(true)
     setError(null)
     try {
       const next = await window.onmove.domain.getReviewOverview()
+      const retainedReviews = overview?.asOf === next.asOf ? reviewedKeys : new Set<string>()
       setOverview(next)
-      setDismissedKeys(new Set())
+      setReviewedKeys(retainedReviews)
+      setDismissedKeys(retainedReviews)
       setEditingUpdate(null)
     } catch {
       setError('Review work could not be loaded.')
@@ -84,6 +88,11 @@ export function useReviewModel(): ReviewModel {
     setDismissedKeys((current) => new Set([...current, itemKey]))
   }
 
+  function complete(itemKey: string): void {
+    setReviewedKeys((current) => new Set([...current, itemKey]))
+    dismiss(itemKey)
+  }
+
   function ignore(itemKey: string): void {
     setError(null)
     dismiss(itemKey)
@@ -100,7 +109,7 @@ export function useReviewModel(): ReviewModel {
       } else if (item.commitment) {
         await window.onmove.domain.pokeCommitmentReview(item.commitment.id)
       }
-      dismiss(item.key)
+      complete(item.key)
     } catch {
       setError('The review could not be passed along.')
     } finally {
@@ -176,7 +185,7 @@ export function useReviewModel(): ReviewModel {
 
   function finishUpdate(): void {
     if (!editingUpdate) return
-    dismiss(editingUpdate.itemKey)
+    complete(editingUpdate.itemKey)
     setEditingUpdate(null)
     setError(null)
   }
@@ -186,6 +195,7 @@ export function useReviewModel(): ReviewModel {
     loading,
     error,
     dismissedKeys,
+    reviewedKeys,
     pendingKey,
     editingUpdate,
     ignore,
@@ -195,6 +205,6 @@ export function useReviewModel(): ReviewModel {
     saveObservation,
     openObservation,
     finishUpdate,
-    restart: load
+    refresh
   }
 }

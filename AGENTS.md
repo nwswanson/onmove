@@ -292,7 +292,9 @@ and do not rely on color alone to communicate selection or status.
   rows; a Focus or Thread must never drill into a Commitment from Review. `Ignore` dismisses only the
   current in-memory queue entry, `Pass along` calls the aggregate's typed `pokeReview` operation and
   advances the session, and `Update` immediately creates a blank direct Update before exposing its
-  autosaved editor. The editor's finish action advances the session; it is not a Save button.
+  autosaved editor. The editor's finish action advances the session; it is not a Save button. A
+  same-day queue refresh must retain passed and updated item keys while offering ignored items
+  again; do not present a completed item as fresh work through a replay-style `Review again` action.
 - Preserve scoped review obligations as separate queue entries. A bounded Thread or Commitment
   contributes one entry per due effective Subject cell, and Review-created Updates must use that
   exact Scope/Subject cell. An aggregate Thread poke may advance the current queue session but must

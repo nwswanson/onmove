@@ -277,6 +277,8 @@ export function ReviewWorkspace({
   const current = editingItem ?? remainingItems[0] ?? null
   const currentModel = current ? reviewItemModel(current, hideSensitiveContent) : null
   const completed = visibleItems.length - remainingItems.length
+  const skipped = visibleItems.filter(({ key }) =>
+    review.dismissedKeys.has(key) && !review.reviewedKeys.has(key)).length
   const progress = visibleItems.length === 0 ? 100 : (completed / visibleItems.length) * 100
   const pending = current ? review.pendingKey === current.key : false
   const editing = Boolean(review.editingUpdate && current?.key === review.editingUpdate.itemKey)
@@ -314,7 +316,7 @@ export function ReviewWorkspace({
             ) : review.error && review.overview === null ? (
               <div className="mt-10">
                 <p role="alert" className="text-sm text-destructive">{review.error}</p>
-                <Button className="mt-4" variant="outline" onClick={() => void review.restart()}>
+                <Button className="mt-4" variant="outline" onClick={() => void review.refresh()}>
                   Try again
                 </Button>
               </div>
@@ -374,10 +376,12 @@ export function ReviewWorkspace({
                 </span>
                 <h2 className="text-lg font-semibold">You’re caught up</h2>
                 <p className="mt-1.5 text-sm text-muted-foreground">
-                  There is nothing else in this review session.
+                  {skipped > 0
+                    ? `${skipped} skipped ${skipped === 1 ? 'item is' : 'items are'} available to reconsider.`
+                    : 'No new items need attention.'}
                 </p>
-                <Button className="mt-5" variant="outline" onClick={() => void review.restart()}>
-                  Review again
+                <Button className="mt-5" variant="outline" onClick={() => void review.refresh()}>
+                  {skipped > 0 ? 'Review skipped items' : 'Check again'}
                 </Button>
               </div>
             )}

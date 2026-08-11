@@ -381,26 +381,27 @@ describe('App', () => {
       ...currentThread,
       lastReviewDate: '2026-08-10'
     })
+    const getReviewOverview = vi.fn().mockResolvedValue({
+      asOf: '2026-08-10',
+      items: [
+        reviewItem({
+          key: 'focus:4',
+          focus: currentFocus,
+          commitments: [related]
+        }),
+        reviewItem({
+          key: 'thread:14',
+          kind: 'thread',
+          focus: currentFocus,
+          thread: currentThread,
+          nextReviewDate: '2026-08-10',
+          state: 'yellow',
+          commitments: [related]
+        })
+      ]
+    })
     installApi({
-      getReviewOverview: vi.fn().mockResolvedValue({
-        asOf: '2026-08-10',
-        items: [
-          reviewItem({
-            key: 'focus:4',
-            focus: currentFocus,
-            commitments: [related]
-          }),
-          reviewItem({
-            key: 'thread:14',
-            kind: 'thread',
-            focus: currentFocus,
-            thread: currentThread,
-            nextReviewDate: '2026-08-10',
-            state: 'yellow',
-            commitments: [related]
-          })
-        ]
-      }),
+      getReviewOverview,
       pokeThreadReview
     })
     const user = userEvent.setup()
@@ -422,6 +423,13 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'Pass along' }))
     await waitFor(() => expect(pokeThreadReview).toHaveBeenCalledWith(14))
     expect(await screen.findByRole('heading', { name: 'You’re caught up' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Review again' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Review skipped items' }))
+    expect(await screen.findByRole('article', { name: 'Focus review: Project Atlas' })).toBeVisible()
+    expect(screen.queryByRole('article', {
+      name: 'Thread review: Sprint execution'
+    })).not.toBeInTheDocument()
+    expect(getReviewOverview).toHaveBeenCalledTimes(2)
   })
 
   it('starts an autosaved Update in the exact review Subject cell before advancing', async () => {
@@ -443,21 +451,22 @@ describe('App', () => {
       scope: { scopeId: 51, subjectId: 61 }
     })
     const createUpdate = vi.fn().mockResolvedValue(created)
+    const getReviewOverview = vi.fn().mockResolvedValue({
+      asOf: '2026-08-10',
+      items: [reviewItem({
+        key: 'commitment:25:scope:51:subject:61',
+        kind: 'commitment',
+        focus: currentFocus,
+        thread: currentThread,
+        commitment: currentCommitment,
+        cell: { scopeId: 51, subjectId: 61, subject: subject(61, 'Customer Operations') },
+        lastReviewDate: null,
+        nextReviewDate: '2026-08-10',
+        state: 'none'
+      })]
+    })
     const api = installApi({
-      getReviewOverview: vi.fn().mockResolvedValue({
-        asOf: '2026-08-10',
-        items: [reviewItem({
-          key: 'commitment:25:scope:51:subject:61',
-          kind: 'commitment',
-          focus: currentFocus,
-          thread: currentThread,
-          commitment: currentCommitment,
-          cell: { scopeId: 51, subjectId: 61, subject: subject(61, 'Customer Operations') },
-          lastReviewDate: null,
-          nextReviewDate: '2026-08-10',
-          state: 'none'
-        })]
-      }),
+      getReviewOverview,
       createUpdate,
       updateUpdate: vi.fn(async (_id, input) => ({ ...created, ...input }))
     })
@@ -483,6 +492,10 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Finish update' }))
     expect(await screen.findByRole('heading', { name: 'You’re caught up' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Check again' }))
+    expect(await screen.findByRole('heading', { name: 'You’re caught up' })).toBeVisible()
+    expect(screen.queryByText('Hold weekly check-ins')).not.toBeInTheDocument()
+    expect(getReviewOverview).toHaveBeenCalledTimes(2)
   })
 
   it('lists Tags in the contextual sidebar and opens each use in its containing screen', async () => {
