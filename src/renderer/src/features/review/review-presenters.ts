@@ -37,6 +37,7 @@ export interface ReviewItemModel {
   state: StateLabelModel | null
   lastReviewLabel: string
   nextReviewLabel: string | null
+  due: boolean
   goal: string | null
   description: string | null
   commitmentTypeLabel: string | null
@@ -102,6 +103,7 @@ export function reviewItemModel(
     state: item.state === null ? null : healthStateLabel(item.state),
     lastReviewLabel: dateOrNeverLabel(item.lastReviewDate),
     nextReviewLabel: item.nextReviewDate,
+    due: item.due,
     goal: item.kind === 'focus' && item.focus.goal ? item.focus.goal : null,
     description: item.kind === 'focus' ? item.focus.description : null,
     commitmentTypeLabel: item.commitment ? commitmentTypeLabel(item.commitment.type) : null,

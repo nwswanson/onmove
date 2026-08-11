@@ -573,9 +573,9 @@ export interface ReviewScopeCellSnapshot extends UpdateScopeCell {
 }
 
 /**
- * One due review target with enough domain context to render its full working
+ * One review target with enough domain context to render its full working
  * surface without asking the renderer to reconstruct hierarchy ownership.
- * Thread and Commitment entries are repeated per due Subject cell.
+ * Thread and Commitment entries are repeated per effective Subject cell.
  */
 export interface ReviewQueueItemSnapshot {
   key: string
@@ -586,6 +586,7 @@ export interface ReviewQueueItemSnapshot {
   cell: ReviewScopeCellSnapshot | null
   lastReviewDate: string | null
   nextReviewDate: string | null
+  due: boolean
   state: HealthState | null
   updates: UpdateSnapshot[]
   commitments: CommitmentSnapshot[]

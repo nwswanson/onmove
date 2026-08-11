@@ -19,7 +19,7 @@ describe('Review model', () => {
     rmSync(directory, { recursive: true, force: true })
   })
 
-  it('returns only current aggregate work that participates in review', () => {
+  it('returns every active aggregate that participates in review before it is due', () => {
     const focus = database!.domain.focuses.create({
       title: 'Project Atlas',
       needsReview: false
@@ -44,7 +44,7 @@ describe('Review model', () => {
       title: 'Improve ticket quality',
       cadenceDays: 7
     }, new Date('2026-01-01T12:00:00.000Z'))
-    database!.domain.commitments.create({
+    const unscheduled = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
       type: 'ongoing',
       title: 'Unscheduled expectation'
@@ -57,18 +57,20 @@ describe('Review model', () => {
       state: 'yellow'
     })
 
-    const overview = database!.domain.reviews.getOverview('2026-01-10')
+    const overview = database!.domain.reviews.getOverview('2026-01-03')
 
-    expect(overview.asOf).toBe('2026-01-10')
+    expect(overview.asOf).toBe('2026-01-03')
     expect(overview.items.map(({ key }) => key)).toEqual([
       `commitment:${overall.id}`,
       `thread:${thread.id}`,
-      `commitment:${threaded.id}`
+      `commitment:${threaded.id}`,
+      `commitment:${unscheduled.id}`
     ])
     expect(overview.items.find(({ key }) => key === `thread:${thread.id}`)).toMatchObject({
       kind: 'thread',
       focus: { id: focus.id },
-      thread: { id: thread.id, reviewDue: true },
+      thread: { id: thread.id, reviewDue: false },
+      due: false,
       cell: null,
       commitments: expect.arrayContaining([expect.objectContaining({ id: threaded.id })])
     })
@@ -77,8 +79,11 @@ describe('Review model', () => {
       state: 'yellow',
       lastReviewDate: '2026-01-02',
       nextReviewDate: '2026-01-09',
+      due: false,
       updates: [{ observation: 'Tickets still need examples' }]
     })
+    expect(overview.items.find(({ key }) => key === `commitment:${unscheduled.id}`))
+      .toMatchObject({ nextReviewDate: null, due: false })
   })
 
   it('keeps bounded Thread and Commitment review obligations independent per Subject', () => {
@@ -110,7 +115,7 @@ describe('Review model', () => {
       cadenceDays: 7
     }, new Date('2026-01-01T12:00:00.000Z'))
 
-    const before = database!.domain.reviews.getOverview('2026-01-08')
+    const before = database!.domain.reviews.getOverview('2026-01-02')
     expect(before.items.filter(({ kind }) => kind === 'thread').map(({ cell }) =>
       cell?.subject.name)).toEqual(['Alex', 'Jamie'])
     expect(before.items.filter(({ kind }) => kind === 'commitment').map(({ cell }) =>
@@ -132,12 +137,23 @@ describe('Review model', () => {
 
     const after = database!.domain.reviews.getOverview('2026-01-08')
     expect(after.items.filter(({ kind }) => kind === 'thread').map(({ cell }) =>
-      cell?.subject.name)).toEqual(['Jamie'])
+      cell?.subject.name)).toEqual(['Alex', 'Jamie'])
     expect(after.items.filter(({ kind }) => kind === 'commitment').map(({ cell }) =>
-      cell?.subject.name)).toEqual(['Jamie'])
-    expect(after.items.find(({ kind }) => kind === 'thread')?.key).toContain(
-      `subject:${jamie.id}`
-    )
+      cell?.subject.name)).toEqual(['Alex', 'Jamie'])
+    expect(after.items.filter(({ kind }) => kind === 'thread').map(({ cell, due }) => ({
+      subject: cell?.subject.name,
+      due
+    }))).toEqual([
+      { subject: 'Alex', due: false },
+      { subject: 'Jamie', due: true }
+    ])
+    expect(after.items.filter(({ kind }) => kind === 'commitment').map(({ cell, due }) => ({
+      subject: cell?.subject.name,
+      due
+    }))).toEqual([
+      { subject: 'Alex', due: false },
+      { subject: 'Jamie', due: true }
+    ])
   })
 
   it('omits inactive ancestry and reacts to deletion without retained queue records', () => {

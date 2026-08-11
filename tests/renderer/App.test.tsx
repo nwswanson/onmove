@@ -164,6 +164,7 @@ function reviewItem(
     cell: null,
     lastReviewDate: null,
     nextReviewDate: null,
+    due: false,
     state: null,
     updates: [],
     commitments: [],
@@ -377,9 +378,10 @@ describe('App', () => {
       title: 'Improve ticket quality',
       state: 'yellow'
     })
-    const pokeThreadReview = vi.fn().mockResolvedValue({
-      ...currentThread,
-      lastReviewDate: '2026-08-10'
+    let persistedThread = currentThread
+    const pokeThreadReview = vi.fn(async () => {
+      persistedThread = { ...persistedThread, lastReviewDate: '2026-08-10' }
+      return persistedThread
     })
     const getReviewOverview = vi.fn().mockResolvedValue({
       asOf: '2026-08-10',
@@ -395,12 +397,16 @@ describe('App', () => {
           focus: currentFocus,
           thread: currentThread,
           nextReviewDate: '2026-08-10',
+          due: true,
           state: 'yellow',
           commitments: [related]
         })
       ]
     })
     installApi({
+      listFocuses: vi.fn().mockResolvedValue([currentFocus]),
+      listThreads: vi.fn(async () => [persistedThread]),
+      listCommitments: vi.fn().mockResolvedValue([related]),
       getReviewOverview,
       pokeThreadReview
     })
@@ -430,6 +436,14 @@ describe('App', () => {
       name: 'Thread review: Sprint execution'
     })).not.toBeInTheDocument()
     expect(getReviewOverview).toHaveBeenCalledTimes(2)
+
+    await user.click(screen.getByRole('button', { name: 'Project Atlas' }))
+    await user.click(await screen.findByRole('button', {
+      name: 'Sprint execution'
+    }))
+    expect(await screen.findByLabelText('Thread last reviewed')).toHaveTextContent(
+      'Last reviewed · 2026-08-10'
+    )
   })
 
   it('starts an autosaved Update in the exact review Subject cell before advancing', async () => {
@@ -462,6 +476,7 @@ describe('App', () => {
         cell: { scopeId: 51, subjectId: 61, subject: subject(61, 'Customer Operations') },
         lastReviewDate: null,
         nextReviewDate: '2026-08-10',
+        due: true,
         state: 'none'
       })]
     })

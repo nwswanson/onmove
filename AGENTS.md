@@ -287,16 +287,19 @@ and do not rely on color alone to communicate selection or status.
   renderer collection rule: hide sensitive-only sidebar tags and sensitive use rows, then let the
   contextual navigation reconcile an invalid selection to its first remaining item.
 - Build Review as a full-width, single-item catch-up queue with no contextual sidebar. Review active
-  Focuses whose `needsReview` flag is enabled, due active Threads, and active Commitments whose
-  Update cadence is due. Render direct evidence and child Commitments as non-navigating reference
-  rows; a Focus or Thread must never drill into a Commitment from Review. `Ignore` dismisses only the
-  current in-memory queue entry, `Pass along` calls the aggregate's typed `pokeReview` operation and
-  advances the session, and `Update` immediately creates a blank direct Update before exposing its
-  autosaved editor. The editor's finish action advances the session; it is not a Save button. A
-  same-day queue refresh must retain passed and updated item keys while offering ignored items
-  again; do not present a completed item as fresh work through a replay-style `Review again` action.
+  Focuses and Threads whose `needsReview` flag is enabled, plus every active Commitment. Eligibility
+  is deliberate catch-up coverage, not due filtering: Thread review frequency and Commitment Update
+  cadence remain model-owned attention metadata and determine whether the displayed next date is
+  due. Render direct evidence and child Commitments as non-navigating reference rows; a Focus or
+  Thread must never drill into a Commitment from Review. `Ignore` dismisses only the current
+  in-memory queue entry, `Pass along` calls the aggregate's typed `pokeReview` operation, refreshes
+  the application-owned Focus projection, and advances the session. `Update` immediately creates a
+  blank direct Update before exposing its autosaved editor. The editor's finish action advances the
+  session and refreshes the owning Focus projection; it is not a Save button. A same-day queue
+  refresh must retain passed and updated item keys while offering ignored items again; do not
+  present a completed item as fresh work through a replay-style `Review again` action.
 - Preserve scoped review obligations as separate queue entries. A bounded Thread or Commitment
-  contributes one entry per due effective Subject cell, and Review-created Updates must use that
+  contributes one entry per effective Subject cell, and Review-created Updates must use that
   exact Scope/Subject cell. An aggregate Thread poke may advance the current queue session but must
   not be represented as Subject evidence or clear another Subject's durable due state. Apply the
   same hierarchy-cascading sensitive visibility rule used by other renderer collections.
@@ -322,8 +325,9 @@ and do not rely on color alone to communicate selection or status.
   `review_poked_on` evidence field is the deliberate exception: mutate it only through each
   aggregate's typed `pokeReview` operation, never as a caller-supplied review projection.
 - Return Review through one named, bounded overview projection. The model owns active-ancestor and
-  due filtering, hierarchy context, exact Scope/Subject cells, direct Updates, and direct child
-  Commitments; the renderer must not rebuild review eligibility by fetching every aggregate.
+  inclusion filtering, due metadata, hierarchy context, exact Scope/Subject cells, direct Updates,
+  and direct child Commitments; the renderer must not rebuild review eligibility by fetching every
+  aggregate.
 - Order Commitment Updates by their recorded date without capping them at today. A future-dated
   Update immediately supplies the Commitment's state and cadence baseline.
 - Derive every aggregate `lastReviewDate` as the later of its persisted explicit review poke and its

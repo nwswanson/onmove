@@ -372,6 +372,9 @@ export function App(): React.JSX.Element {
             <ReviewWorkspace
               contextDrawer={contextDrawer}
               hideSensitiveContent={application.sensitiveContentHidden}
+              onReviewChanged={async (focusId) => {
+                await application.refreshFocus(focusId)
+              }}
             />
           ) : selectedFocus ? (
             <FocusWorkspace

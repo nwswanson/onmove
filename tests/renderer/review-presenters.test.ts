@@ -72,6 +72,7 @@ function item(overrides: Partial<ReviewQueueItemSnapshot> = {}): ReviewQueueItem
     cell: null,
     lastReviewDate: null,
     nextReviewDate: '2026-01-08',
+    due: true,
     state: 'yellow',
     updates: [],
     commitments: [commitment],
@@ -89,6 +90,7 @@ describe('review presenters', () => {
       contextLabel: 'Project Atlas',
       lastReviewLabel: 'Never',
       nextReviewLabel: '2026-01-08',
+      due: true,
       state: { label: 'Yellow', tone: 'warning' },
       commitments: [{
         id: '3',

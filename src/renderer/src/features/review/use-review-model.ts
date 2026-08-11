@@ -25,6 +25,10 @@ export interface ReviewModel {
   refresh: () => Promise<void>
 }
 
+interface ReviewModelOptions {
+  onReviewChanged?: (focusId: number) => void | Promise<void>
+}
+
 function itemParent(item: ReviewQueueItemSnapshot): UpdateParent {
   if (item.kind === 'focus') return { type: 'focus', id: item.focus.id }
   if (item.kind === 'thread') {
@@ -36,7 +40,7 @@ function itemParent(item: ReviewQueueItemSnapshot): UpdateParent {
 }
 
 /** Owns the queue session and all persistence-backed review actions. */
-export function useReviewModel(): ReviewModel {
+export function useReviewModel({ onReviewChanged }: ReviewModelOptions = {}): ReviewModel {
   const [overview, setOverview] = useState<ReviewOverviewSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -98,6 +102,15 @@ export function useReviewModel(): ReviewModel {
     dismiss(itemKey)
   }
 
+  async function notifyReviewChanged(focusId: number): Promise<void> {
+    try {
+      await onReviewChanged?.(focusId)
+    } catch {
+      // Persistence already succeeded. A background projection refresh can be
+      // retried by the owning application model without reopening this item.
+    }
+  }
+
   async function pass(item: ReviewQueueItemSnapshot): Promise<void> {
     setPendingKey(item.key)
     setError(null)
@@ -110,6 +123,7 @@ export function useReviewModel(): ReviewModel {
         await window.onmove.domain.pokeCommitmentReview(item.commitment.id)
       }
       complete(item.key)
+      await notifyReviewChanged(item.focus.id)
     } catch {
       setError('The review could not be passed along.')
     } finally {
@@ -185,9 +199,11 @@ export function useReviewModel(): ReviewModel {
 
   function finishUpdate(): void {
     if (!editingUpdate) return
+    const item = overview?.items.find(({ key }) => key === editingUpdate.itemKey)
     complete(editingUpdate.itemKey)
     setEditingUpdate(null)
     setError(null)
+    if (item) void notifyReviewChanged(item.focus.id)
   }
 
   return {

@@ -27,6 +27,7 @@ import { UPDATE_LIST_STATE_OPTIONS } from '@/features/updates/updates-presenters
 interface ReviewWorkspaceProps {
   contextDrawer: ContextDrawerControl
   hideSensitiveContent: boolean
+  onReviewChanged?: (focusId: number) => void | Promise<void>
 }
 
 function ReviewUpdateEditor({
@@ -153,8 +154,14 @@ function ReviewDetails({ model }: { model: ReviewItemModel }): React.JSX.Element
           </div>
           {model.nextReviewLabel && (
             <div className="flex gap-1.5">
-              <dt>{model.kindLabel === 'Commitment' ? 'Update due' : 'Review due'}</dt>
-              <dd className="font-medium text-destructive">{model.nextReviewLabel}</dd>
+              <dt>
+                {model.kindLabel === 'Commitment'
+                  ? (model.due ? 'Update due' : 'Next update')
+                  : (model.due ? 'Review due' : 'Next review')}
+              </dt>
+              <dd className={model.due ? 'font-medium text-destructive' : 'font-medium text-foreground'}>
+                {model.nextReviewLabel}
+              </dd>
             </div>
           )}
           {model.commitmentTypeLabel && (
@@ -265,9 +272,10 @@ function ReviewDetails({ model }: { model: ReviewItemModel }): React.JSX.Element
 
 export function ReviewWorkspace({
   contextDrawer,
-  hideSensitiveContent
+  hideSensitiveContent,
+  onReviewChanged
 }: ReviewWorkspaceProps): React.JSX.Element {
-  const review = useReviewModel()
+  const review = useReviewModel({ onReviewChanged })
   const visibleItems = review.overview?.items.filter((item) =>
     reviewItemIsVisible(item, hideSensitiveContent)) ?? []
   const remainingItems = visibleItems.filter(({ key }) => !review.dismissedKeys.has(key))

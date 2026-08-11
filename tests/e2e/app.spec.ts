@@ -139,10 +139,15 @@ test('sorts all current Todos and bounds recently completed work before renderin
   }
 })
 
-test('reviews due work through typed pokes and autosaved Updates', async () => {
+test('reviews active work before cadence is due and refreshes typed pokes in the workspace', async () => {
   const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-review-e2e-'))
   let application: ElectronApplication | undefined
-  const createdAt = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000)
+  const createdAt = new Date()
+  const reviewDate = [
+    createdAt.getFullYear(),
+    String(createdAt.getMonth() + 1).padStart(2, '0'),
+    String(createdAt.getDate()).padStart(2, '0')
+  ].join('-')
   const seed = new AppDatabase(join(userDataDirectory, 'onmove.sqlite3'))
   const currentFocus = seed.domain.focuses.create({
     title: 'Project Atlas',
@@ -151,13 +156,12 @@ test('reviews due work through typed pokes and autosaved Updates', async () => {
   const currentThread = seed.domain.threads.create({
     focusId: currentFocus.id,
     title: 'Sprint execution',
-    reviewFrequencyDays: 1
+    reviewFrequencyDays: 30
   }, createdAt)
   const currentCommitment = seed.domain.commitments.create({
     parent: { type: 'thread', id: currentThread.id },
     type: 'ongoing',
-    title: 'Improve ticket quality',
-    cadenceDays: 1
+    title: 'Improve ticket quality'
   }, createdAt)
   seed.close()
 
@@ -206,6 +210,12 @@ test('reviews due work through typed pokes and autosaved Updates', async () => {
         observation: expect.stringContaining('Ticket examples are now included')
       }
     })
+
+    await window.getByRole('button', { name: 'Project Atlas', exact: true }).click()
+    await window.getByRole('button', { name: 'Sprint execution', exact: true }).click()
+    await expect(window.getByLabel('Thread last reviewed')).toContainText(
+      `Last reviewed · ${reviewDate}`
+    )
   } finally {
     await application?.close()
     rmSync(userDataDirectory, { recursive: true, force: true })

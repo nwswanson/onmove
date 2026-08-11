@@ -54,7 +54,8 @@ function updatesForCell(
 
 /**
  * Named, bounded review projection. It preserves independent Subject-cell
- * obligations and keeps the renderer from deriving due work from raw records.
+ * review targets and keeps the renderer from deriving eligibility or due state
+ * from raw records.
  */
 export class ReviewRepository {
   private readonly focuses: FocusRepository
@@ -83,12 +84,12 @@ export class ReviewRepository {
       for (const thread of this.threads.listForFocus(focus.id, date)) {
         if (thread.status !== 'active') continue
         const threadCommitments = this.commitments.listForThread(thread.id, date)
-        if (thread.reviewDue) {
-          const dueCells = this.threads.scopeMatrix(thread.id, date).filter(({ reviewDue }) => reviewDue)
-          if (dueCells.length === 0) {
+        if (thread.needsReview) {
+          const cells = this.threads.scopeMatrix(thread.id, date)
+          if (cells.length === 0) {
             items.push(this.threadItem(focus, thread, null, threadCommitments))
           } else {
-            items.push(...dueCells.map((cell) =>
+            items.push(...cells.map((cell) =>
               this.threadItem(focus, thread, cell, threadCommitments)))
           }
         }
@@ -112,6 +113,7 @@ export class ReviewRepository {
       cell: null,
       lastReviewDate: focus.lastReviewDate,
       nextReviewDate: null,
+      due: false,
       state: null,
       updates: this.updates.listForFocus(focus.id),
       commitments
@@ -137,6 +139,7 @@ export class ReviewRepository {
       cell: scopeCell,
       lastReviewDate: cell?.lastReviewDate ?? thread.lastReviewDate,
       nextReviewDate: cell?.nextReviewDate ?? thread.nextReviewDate,
+      due: cell?.reviewDue ?? thread.reviewDue,
       state: cell?.state ?? thread.health,
       updates: updatesForCell(updates, scopeCell),
       commitments
@@ -151,13 +154,12 @@ export class ReviewRepository {
     asOf: string
   ): void {
     for (const commitment of commitments) {
-      if (!commitment.needsUpdate || commitment.status !== 'active') continue
-      const dueCells = this.commitments.scopeMatrix(commitment.id, asOf)
-        .filter(({ needsUpdate }) => needsUpdate)
-      if (dueCells.length === 0) {
+      if (commitment.status !== 'active') continue
+      const cells = this.commitments.scopeMatrix(commitment.id, asOf)
+      if (cells.length === 0) {
         items.push(this.commitmentItem(focus, thread, commitment, null))
       } else {
-        items.push(...dueCells.map((cell) =>
+        items.push(...cells.map((cell) =>
           this.commitmentItem(focus, thread, commitment, cell)))
       }
     }
@@ -182,6 +184,7 @@ export class ReviewRepository {
       cell: scopeCell,
       lastReviewDate: cell?.lastUpdateDate ?? commitment.lastReviewDate,
       nextReviewDate: cell?.nextUpdateDate ?? commitment.nextUpdateDate,
+      due: cell?.needsUpdate ?? commitment.needsUpdate,
       state: cell?.state ?? commitment.state,
       updates: updatesForCell(updates, scopeCell),
       commitments: []
