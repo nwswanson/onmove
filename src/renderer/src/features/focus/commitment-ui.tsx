@@ -8,6 +8,7 @@ import type {
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogField } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { TaggedInput, TaggedText } from '@/components/ui/tagged-text'
 import {
   LifecycleStatusLabel,
   type LifecycleStatusOptionModel
@@ -76,7 +77,7 @@ export function NewCommitmentDialog({
           <label htmlFor="new-commitment-title" className="text-xs font-medium">
             Title <span className="text-destructive">*</span>
           </label>
-          <Input
+          <TaggedInput
             id="new-commitment-title"
             autoFocus
             required
@@ -199,7 +200,7 @@ export function CommitmentCollection({
           onClick={() => onOpen(item.id)}
         >
           <span className="min-w-0 flex-1">
-            <span className="block truncate">{item.title}</span>
+            <span className="block truncate"><TaggedText value={item.title} /></span>
             <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               <span className="text-[0.6875rem] font-medium text-muted-foreground">
                 {item.typeLabel}

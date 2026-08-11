@@ -146,6 +146,30 @@ current effective Scope. Each actual move appends an immutable `commitment_paren
 the initial parent is also recorded, so Thread-to-Thread moves remain observable even though the
 Commitment's declared Scope mode stays `inherited`.
 
+## Moving a Thread between Focuses
+
+Cross-Focus movement preserves the Thread, every Commitment below it, and their Updates, Todos,
+Notes, Subject completion cells, and sort placements. The move changes ownership, not identity.
+The plan/move boundary distinguishes two applicability outcomes:
+
+- Open or inherited follows the destination Focus. Exact/superset Subject coverage moves directly;
+  missing canonical Subjects require confirmation and are added to the destination Focus atomically.
+- Explicit or derived custom applicability is copied as a complete Scope graph into the destination
+  Focus and remains custom. It never changes the destination Focus's own population.
+
+Exact retained evidence needs an additional rule: a `{scopeId, subjectId}` cell cannot keep a Scope
+owned by the old Focus. Every referenced Scope, including bases and derived dependencies, is copied
+and the exact Update/Todo/list cell is remapped to its corresponding copy. The Subject is canonical
+and keeps its id. Matching destination Subject membership is useful for current applicability but
+is not sufficient reason to rewrite historical evidence onto the destination's unrelated Scope.
+
+The transaction uses a short-lived `thread_move_operations` row as an authorization capability.
+Database triggers reject raw Thread Focus changes, reject ordinary Todo context mutation, and reject
+finishing an operation while any current application or exact descendant record still refers to a
+Scope outside the target Focus. Any validation, cloning, remapping, or reconciliation failure rolls
+back the destination widening and the parent change together. Immutable
+`thread_parent_transitions` answers where the Thread began and every Focus it subsequently entered.
+
 ## Deleting a Subject
 
 Subject deletion is intentionally restrictive. It is rejected while the Subject is referenced by:
@@ -229,6 +253,7 @@ history, while global Subjects survive.
 | Which Commitment obligations exist now? | `commitment.scopeMatrix(date)` | One current state/cadence cell per Subject effective in the Commitment's current Scope. |
 | What evidence ever belonged to an owner? | `updates.listForThread/Commitment(id)` | All retained Updates, including cells from former applications or ended memberships. |
 | How did lifecycle status change? | `statusHistory()` | Immutable active/paused/done/cancelled transitions; separate from applicability. |
+| Which Focus owned this Thread over time? | `thread.parentHistory()` | Immutable initial ownership and completed cross-Focus moves. |
 
 `scopeMatrix(date)` uses the owner's **current** application and resolves that Scope's membership on
 the supplied date. It is a current-model projection with dated membership, not application-history

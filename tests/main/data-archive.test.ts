@@ -71,6 +71,7 @@ describe('DataArchiveRepository', () => {
       exportedAt: '2026-08-09T12:00:00.000Z'
     })
     expect(archive.tables.commitment_parent_transitions).toHaveLength(1)
+    expect(archive.tables.thread_parent_transitions).toHaveLength(1)
 
     const target = createDatabase('archive-target')
     target.domain.focuses.create({ title: 'Replaced local data' })
@@ -91,6 +92,10 @@ describe('DataArchiveRepository', () => {
       reviewFrequencyDays: 14,
       lastReviewDate: '2026-08-08'
     })
+    expect(target.domain.threads.requireModel(importedThread.id).parentHistory()).toMatchObject([{
+      fromFocusId: null,
+      toFocusId: importedFocus.id
+    }])
     const importedCommitment = target.domain.commitments.listForThread(importedThread.id)[0]
     expect(importedCommitment).toMatchObject({
       title: 'Improve ticket quality',
@@ -112,6 +117,37 @@ describe('DataArchiveRepository', () => {
       })
     expect(target.domain.commitments.materialize(importedCommitment.id).notes[0].content)
       .toBe('Durable imported note')
+  })
+
+  it('round-trips a Thread Focus move and its immutable parent history', () => {
+    const now = new Date('2026-08-10T12:00:00.000Z')
+    const source = createDatabase('archive-thread-move-source')
+    const firstFocus = source.domain.focuses.create({ title: 'First portfolio' })
+    const secondFocus = source.domain.focuses.create({ title: 'Second portfolio' })
+    const thread = source.domain.threads.create({
+      focusId: firstFocus.id,
+      title: 'Delivery health',
+      reviewFrequencyDays: 7
+    }, now)
+    source.domain.threads.move(thread.id, {
+      focusId: secondFocus.id,
+      plannedFromFocusId: firstFocus.id
+    }, new Date('2026-08-10T13:00:00.000Z'))
+
+    const archive = source.dataArchive.export('9.9.9', now)
+    expect(archive.tables.thread_parent_transitions).toHaveLength(2)
+
+    const target = createDatabase('archive-thread-move-target')
+    expect(target.dataArchive.import(archive, now).issues).toEqual([])
+    expect(target.domain.threads.listForFocus(firstFocus.id)).toEqual([])
+    expect(target.domain.threads.listForFocus(secondFocus.id)).toMatchObject([{
+      id: thread.id,
+      title: 'Delivery health'
+    }])
+    expect(target.domain.threads.requireModel(thread.id).parentHistory()).toMatchObject([
+      { fromFocusId: null, toFocusId: firstFocus.id },
+      { fromFocusId: firstFocus.id, toFocusId: secondFocus.id }
+    ])
   })
 
   it('round-trips shared Todos with independent Subject completion and placements', () => {

@@ -43,6 +43,51 @@ function selectText(editor: HTMLElement, start: number, end: number): void {
 }
 
 describe('RichTextEditor', () => {
+  it('materializes alphanumeric @tags as durable visual nodes', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    const rendered = render(
+      <RichTextEditor value="Plan" ariaLabel="Notes" onChange={onChange} />
+    )
+    const editor = screen.getByRole('textbox', { name: 'Notes' })
+
+    await user.click(editor)
+    await user.type(editor, ' with @Release2, not @release-plan')
+
+    await waitFor(() => {
+      const tags = [...editor.querySelectorAll('[data-text-tag]')]
+      expect(tags.map((tag) => tag.textContent)).toEqual(['@Release2'])
+      expect(onChange.mock.calls.at(-1)?.[0]).toContain('"type":"tag"')
+    })
+    const value = onChange.mock.calls.at(-1)?.[0] as string
+    expect(richTextPlainText(value)).toBe('Plan with @Release2, not @release-plan')
+
+    rendered.unmount()
+    render(<RichTextContent value={value} ariaLabel="Rendered tags" />)
+    expect(screen.getByLabelText('Rendered tags')).toHaveTextContent(
+      'Plan with @Release2, not @release-plan'
+    )
+    expect(screen.getByText('@Release2')).toHaveAttribute('data-text-tag')
+    expect(document.querySelectorAll('[data-text-tag]')).toHaveLength(1)
+  })
+
+  it('removes tag-node semantics when a token gains a disallowed continuation', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    render(<RichTextEditor value="@Release2" ariaLabel="Notes" onChange={onChange} />)
+    const editor = screen.getByRole('textbox', { name: 'Notes' })
+
+    await waitFor(() => expect(editor.querySelector('[data-text-tag]')).not.toBeNull())
+    await user.click(editor)
+    selectText(editor, 9, 9)
+    await user.type(editor, '-plan')
+
+    await waitFor(() => expect(editor.querySelector('[data-text-tag]')).toBeNull())
+    const value = onChange.mock.calls.at(-1)?.[0] as string
+    expect(richTextPlainText(value)).toBe('@Release2-plan')
+    expect(value).not.toContain('"type":"tag"')
+  })
+
   it('imports legacy plain text and emits a reusable serialized document', async () => {
     const onChange = vi.fn()
     const user = userEvent.setup()

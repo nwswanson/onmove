@@ -8,7 +8,9 @@ import type {
   FocusSnapshot,
   FocusScopeSnapshot,
   MoveCommitmentInput,
+  MoveThreadInput,
   ThreadSnapshot,
+  ThreadMovePlanSnapshot,
   ThreadScopeSnapshot,
   ThreadSubjectCellSnapshot,
   UpdateCommitmentInput,
@@ -56,6 +58,8 @@ export interface FocusWorkspaceModel {
   removeFocusScopeSubject: (subjectId: number) => Promise<void>
   createThread: (input: CreateThreadInput) => Promise<ThreadSnapshot>
   updateThread: (id: number, input: UpdateThreadInput) => Promise<ThreadSnapshot>
+  planThreadMove: (id: number, focusId: number) => Promise<ThreadMovePlanSnapshot>
+  moveThread: (id: number, input: MoveThreadInput) => Promise<ThreadSnapshot>
   deleteThread: (id: number) => Promise<boolean>
   customizeThreadScope: (threadId: number) => Promise<ThreadScopeSnapshot>
   followFocusThreadScope: (threadId: number) => Promise<ThreadScopeSnapshot>
@@ -341,6 +345,20 @@ export function useFocusWorkspaceModel({
     return true
   }
 
+  function planThreadMove(id: number, focusId: number): Promise<ThreadMovePlanSnapshot> {
+    return window.onmove.domain.planThreadMove(id, focusId)
+  }
+
+  async function moveThread(id: number, input: MoveThreadInput): Promise<ThreadSnapshot> {
+    const moved = await window.onmove.domain.moveThread(id, input)
+    setThreads((current) => current.filter((thread) => thread.id !== id))
+    setThreadScopes((current) => withoutRecordKey(current, id))
+    setThreadSubjectMatrices((current) => withoutRecordKey(current, id))
+    setThreadCommitments((current) => withoutRecordKey(current, id))
+    setThreadStatusSummaries((current) => withoutRecordKey(current, id))
+    return moved
+  }
+
   async function mutateThreadScope(
     threadId: number,
     operation: () => Promise<ThreadScopeSnapshot>
@@ -548,6 +566,8 @@ export function useFocusWorkspaceModel({
     removeFocusScopeSubject,
     createThread,
     updateThread,
+    planThreadMove,
+    moveThread,
     deleteThread,
     customizeThreadScope,
     followFocusThreadScope,

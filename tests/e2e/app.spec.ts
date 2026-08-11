@@ -139,6 +139,74 @@ test('sorts all current Todos and bounds recently completed work before renderin
   }
 })
 
+test('persists and visually restores text tags in compact and rich-text fields', async () => {
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-text-tags-e2e-'))
+  const databasePath = join(userDataDirectory, 'onmove.sqlite3')
+  let application: ElectronApplication | undefined
+
+  const seed = new AppDatabase(databasePath)
+  const focus = seed.domain.focuses.create({ title: 'Project @Atlas2' })
+  const todo = seed.domain.todos.create({
+    parent: { type: 'focus', id: focus.id },
+    name: 'Coordinate @Launch2 readiness'
+  })
+  seed.close()
+
+  async function launch(): Promise<ElectronApplication> {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    return electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+  }
+
+  function storedText(): { title: string; todo: string; goal: string } {
+    const stored = new DatabaseSync(databasePath, { readOnly: true })
+    const focusRow = stored.prepare('SELECT title, goal FROM focuses WHERE id = ?')
+      .get(focus.id) as { title: string; goal: string }
+    const todoRow = stored.prepare('SELECT name FROM todos WHERE id = ?')
+      .get(todo.id) as { name: string }
+    stored.close()
+    return { title: focusRow.title, todo: todoRow.name, goal: focusRow.goal }
+  }
+
+  try {
+    application = await launch()
+    let window = await application.firstWindow()
+    await expect(window.getByText('@Launch2', { exact: true }).first()).toHaveAttribute(
+      'data-text-tag',
+      'true'
+    )
+    await window.getByRole('button', { name: 'Project @Atlas2', exact: true }).click()
+    await expect(window.getByText('@Atlas2', { exact: true }).first()).toHaveAttribute(
+      'data-text-tag',
+      'true'
+    )
+
+    const goal = window.getByLabel('Goal')
+    await goal.fill('Review @Launch2')
+    await expect(goal.getByText('@Launch2', { exact: true }))
+      .toHaveAttribute('data-text-tag', 'true')
+    await expect.poll(() => storedText().goal).toContain('"type":"tag"')
+
+    await application.close()
+    application = await launch()
+    window = await application.firstWindow()
+    await window.getByRole('button', { name: 'Project @Atlas2', exact: true }).click()
+    await expect(window.getByLabel('Goal').getByText('@Launch2', { exact: true }))
+      .toHaveAttribute('data-text-tag', 'true')
+    expect(storedText()).toMatchObject({
+      title: 'Project @Atlas2',
+      todo: 'Coordinate @Launch2 readiness',
+      goal: expect.stringContaining('"type":"tag"')
+    })
+  } finally {
+    await application?.close()
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
 test('creates, edits, reloads, and deletes a persisted focus across Electron launches', async () => {
   test.setTimeout(60_000)
   const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-e2e-'))
@@ -1604,6 +1672,196 @@ test('drags a Commitment between Threads and confirms required Scope widening', 
   }
 })
 
+test('drags a Thread between Focuses and preserves its scoped subtree', async () => {
+  test.setTimeout(60_000)
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-thread-move-e2e-'))
+  const databasePath = join(userDataDirectory, 'onmove.sqlite3')
+  let application: ElectronApplication | undefined
+
+  const seed = new AppDatabase(databasePath)
+  const sourceFocus = seed.domain.focuses.create({ title: 'Source Portfolio' })
+  const targetFocus = seed.domain.focuses.create({ title: 'Target Portfolio' })
+  seed.domain.focusScopes.addSubject(sourceFocus.id, { name: 'Core Team' })
+  const sourceScope = seed.domain.focusScopes.addSubject(
+    sourceFocus.id,
+    { name: 'Partner Team' }
+  )
+  seed.domain.focusScopes.addSubject(targetFocus.id, { name: 'Core Team' })
+  const partner = sourceScope.subjects.find(({ name }) => name === 'Partner Team')!
+  const thread = seed.domain.threads.create({
+    focusId: sourceFocus.id,
+    title: 'Portable Thread',
+    reviewFrequencyDays: 7
+  })
+  const commitment = seed.domain.commitments.create({
+    parent: { type: 'thread', id: thread.id },
+    type: 'ongoing',
+    title: 'Portable child'
+  })
+  seed.domain.updates.create({
+    parent: { type: 'thread', id: thread.id },
+    observation: 'Thread evidence',
+    state: 'green',
+    scope: { scopeId: sourceScope.scopeId!, subjectId: partner.id }
+  })
+  seed.domain.updates.create({
+    parent: { type: 'commitment', id: commitment.id },
+    observation: 'Commitment evidence',
+    state: 'yellow',
+    scope: { scopeId: sourceScope.scopeId!, subjectId: partner.id }
+  })
+  seed.domain.todos.create({
+    parent: {
+      type: 'thread-scope',
+      id: thread.id,
+      scope: { scopeId: sourceScope.scopeId!, subjectId: partner.id }
+    },
+    name: 'Thread action'
+  })
+  seed.domain.todos.create({
+    parent: {
+      type: 'commitment-scope',
+      id: commitment.id,
+      scope: { scopeId: sourceScope.scopeId!, subjectId: partner.id }
+    },
+    name: 'Commitment action'
+  })
+  const threadNote = thread.snapshot().notes[0]
+  seed.domain.richTextDocuments.save(
+    { type: 'note', id: threadNote.id, field: 'content' },
+    'Thread note survives its move'
+  )
+  seed.close()
+
+  function storedMove(): {
+    focusTitle: string
+    commitments: number
+    updates: number
+    todos: number
+    foreignScopedRecords: number
+    transitions: number
+    targetHasPartner: boolean
+  } {
+    const stored = new DatabaseSync(databasePath, { readOnly: true })
+    const row = stored.prepare(
+      `SELECT focus.title AS focus_title,
+              (SELECT count(*) FROM commitments WHERE thread_id = thread.id) AS commitments,
+              (SELECT count(*) FROM updates update_record
+               LEFT JOIN commitments commitment ON commitment.id = update_record.commitment_id
+               WHERE update_record.thread_id = thread.id OR commitment.thread_id = thread.id)
+                AS updates,
+              (SELECT count(*) FROM todos todo
+               LEFT JOIN commitments commitment ON commitment.id = todo.commitment_id
+               WHERE todo.thread_id = thread.id OR commitment.thread_id = thread.id) AS todos,
+              (SELECT count(*) FROM thread_parent_transitions transition
+               WHERE transition.thread_id = thread.id) AS transitions,
+              (SELECT count(*) FROM (
+                SELECT update_record.scope_id AS scope_id FROM updates update_record
+                LEFT JOIN commitments commitment ON commitment.id = update_record.commitment_id
+                WHERE update_record.scope_id IS NOT NULL
+                  AND (update_record.thread_id = thread.id OR commitment.thread_id = thread.id)
+                UNION ALL
+                SELECT todo.scope_id FROM todos todo
+                LEFT JOIN commitments commitment ON commitment.id = todo.commitment_id
+                WHERE todo.scope_id IS NOT NULL
+                  AND (todo.thread_id = thread.id OR commitment.thread_id = thread.id)
+              ) record JOIN scopes scope ON scope.id = record.scope_id
+               WHERE scope.focus_id <> thread.focus_id) AS foreign_scoped_records
+       FROM threads thread
+       JOIN focuses focus ON focus.id = thread.focus_id
+       WHERE thread.id = ?`
+    ).get(thread.id) as {
+      focus_title: string
+      commitments: number
+      updates: number
+      todos: number
+      foreign_scoped_records: number
+      transitions: number
+    }
+    const partnerCount = stored.prepare(
+      `SELECT count(*) AS count FROM scopes scope
+       JOIN scope_memberships membership ON membership.scope_id = scope.id
+       JOIN subjects subject ON subject.id = membership.subject_id
+       WHERE scope.focus_id = ? AND subject.name = 'Partner Team'`
+    ).get(targetFocus.id) as { count: number }
+    stored.close()
+    return {
+      focusTitle: row.focus_title,
+      commitments: Number(row.commitments),
+      updates: Number(row.updates),
+      todos: Number(row.todos),
+      foreignScopedRecords: Number(row.foreign_scoped_records),
+      transitions: Number(row.transitions),
+      targetHasPartner: Number(partnerCount.count) > 0
+    }
+  }
+
+  async function launch(): Promise<ElectronApplication> {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    return electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+  }
+
+  try {
+    application = await launch()
+    let window = await application.firstWindow()
+    await window.getByRole('button', { name: 'Source Portfolio', exact: true }).click()
+
+    const threadRow = window.getByRole('button', { name: 'Portable Thread', exact: true })
+    const targetRow = window.getByRole('button', { name: 'Target Portfolio', exact: true })
+    const threadBounds = await threadRow.boundingBox()
+    const targetBounds = await targetRow.boundingBox()
+    if (!threadBounds || !targetBounds) throw new Error('Thread move targets need layout')
+    await window.mouse.move(
+      threadBounds.x + threadBounds.width / 2,
+      threadBounds.y + threadBounds.height / 2
+    )
+    await window.mouse.down()
+    await window.mouse.move(
+      targetBounds.x + targetBounds.width / 2,
+      targetBounds.y + targetBounds.height / 2,
+      { steps: 12 }
+    )
+    await expect(targetRow.locator('..')).toHaveAttribute('data-drop-target', 'active')
+    await window.mouse.up()
+
+    const moveDialog = window.getByRole('dialog', { name: 'Move Portable Thread?' })
+    await expect(moveDialog).toBeVisible()
+    await expect(moveDialog.getByText('Partner Team')).toBeVisible()
+    await expect(moveDialog).toContainText('1 Commitments, 2 Updates, 2 Todos, and 2 Notes')
+    await expect(threadRow).toBeVisible()
+    await moveDialog.getByRole('button', { name: 'Move Thread' }).click()
+
+    await expect(targetRow).toHaveAttribute('aria-current', 'page')
+    await expect(window.getByRole('button', { name: 'Portable Thread', exact: true }))
+      .toHaveAttribute('aria-current', 'page')
+    await expect(window.getByRole('heading', { name: 'Portable Thread', exact: true })).toBeVisible()
+    await expect.poll(storedMove).toEqual({
+      focusTitle: 'Target Portfolio',
+      commitments: 1,
+      updates: 2,
+      todos: 2,
+      foreignScopedRecords: 0,
+      transitions: 2,
+      targetHasPartner: true
+    })
+
+    await application.close()
+    application = await launch()
+    window = await application.firstWindow()
+    await window.getByRole('button', { name: 'Target Portfolio', exact: true }).click()
+    await expect(window.getByRole('button', { name: 'Portable Thread', exact: true })).toBeVisible()
+    await expect(window.getByRole('button', { name: 'Source Portfolio', exact: true })).toBeVisible()
+    await expect(storedMove()).toMatchObject({ focusTitle: 'Target Portfolio', transitions: 2 })
+  } finally {
+    await application?.close()
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
 test('applies a custom Thread Scope to Commitments created before that Scope', async () => {
   test.setTimeout(30_000)
   const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-custom-thread-e2e-'))
@@ -1770,7 +2028,7 @@ test('sorts and preserves contextual Todos through Scope changes', async () => {
     const overdueHandle = window.getByLabel('Drag Overdue sponsor review')
     const overdueTodo = overdueHandle.locator('..').locator('..')
     await expect(overdueTodo).toHaveAttribute('data-overdue', 'true')
-    await expect(overdueTodo.getByText('Overdue')).toBeVisible()
+    await expect(overdueTodo.getByText('Overdue', { exact: true })).toBeVisible()
     const nextBriefTodo = window.getByLabel('Drag Prepare next brief').locator('..').locator('..')
     const overdueHandleBounds = await overdueHandle.boundingBox()
     const nextBriefBounds = await nextBriefTodo.boundingBox()

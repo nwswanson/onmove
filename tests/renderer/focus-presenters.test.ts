@@ -205,14 +205,16 @@ describe('Focus presentation adapters', () => {
         ariaLabel: 'Project Atlas',
         icon: 'sunflower',
         sunflower,
-        tone: 'default'
+        tone: 'default',
+        dropTarget: { type: 'focus', id: '1' }
       },
       {
         id: '2',
         label: 'Project Atlas',
         ariaLabel: 'Project Atlas, paused',
         icon: 'paused',
-        tone: 'muted'
+        tone: 'muted',
+        dropTarget: { type: 'focus', id: '2' }
       }
     ])
     expect(focusContextSidebarItems([{ ...thread, status: 'active' }], { 10: summary })).toEqual([
@@ -229,6 +231,7 @@ describe('Focus presentation adapters', () => {
         icon: 'sunflower',
         sunflower,
         tone: 'default',
+        movable: true,
         group: { id: 'threads', label: 'Threads' }
       }
     ])

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { RichTextEditor } from '@/components/ui/rich-text-editor'
+import { TaggedInput, TaggedText } from '@/components/ui/tagged-text'
 import { ResizeHandle } from '@/components/ui/resize-handle'
 import { cn } from '@/lib/utils'
 import { useThrottledAutosave } from '@/lib/use-throttled-autosave'
@@ -793,7 +794,7 @@ function ContextDrawerInspector({
                             field.capitalization === 'capitalize' && 'capitalize'
                           )}
                         >
-                          {field.value}
+                          <TaggedText value={field.value} />
                         </dd>
                       </dl>
                     )
@@ -914,7 +915,7 @@ function ContextDrawerInspector({
                           onChange={(event) => updateValue(field.id, event.target.value)}
                         />
                       ) : (
-                        <Input
+                        <TaggedInput
                           id={inputId}
                           required={field.required}
                           placeholder={field.placeholder}

@@ -8,6 +8,7 @@ import type {
   FocusSnapshot,
   SubjectSnapshot,
   ThreadSnapshot,
+  ThreadMovePlanSnapshot,
   ThreadScopeSnapshot,
   ThreadSubjectCellSnapshot,
   UpdateCommitmentInput,
@@ -25,11 +26,13 @@ import {
   ContextualSidebarLevel,
   ContextualSidebarNavigation,
   type ContextualSidebarChildMove,
+  type ContextualSidebarItemMove,
   useContextualSidebarNavigation
 } from '@/components/ui/contextual-sidebar'
 import { Dialog, DialogField } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { RichTextContent, RichTextEditor } from '@/components/ui/rich-text-editor'
+import { TaggedInput, TaggedText } from '@/components/ui/tagged-text'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
 import { WorkspaceTabBar } from '@/components/ui/workspace-tab-bar'
 import type {
@@ -148,7 +151,7 @@ function NewThreadDialog({
           <label htmlFor="new-thread-title" className="text-xs font-medium">
             Title <span className="text-destructive">*</span>
           </label>
-          <Input
+          <TaggedInput
             id="new-thread-title"
             autoFocus
             required
@@ -188,6 +191,8 @@ interface FocusWorkspaceProps {
   destination?: FocusWorkspaceDestination | null
   onDestinationApplied?: (requestId: number) => void
   hideSensitiveContent?: boolean
+  threadMoveTargets: readonly { id: number; title: string }[]
+  onThreadMoved: (thread: ThreadSnapshot, fromFocusId: number) => void | Promise<void>
 }
 
 export function FocusWorkspace({
@@ -201,7 +206,9 @@ export function FocusWorkspace({
   onSelectedSubjectChange,
   destination = null,
   onDestinationApplied,
-  hideSensitiveContent = false
+  hideSensitiveContent = false,
+  threadMoveTargets,
+  onThreadMoved
 }: FocusWorkspaceProps): React.JSX.Element {
   const model = useFocusWorkspaceModel({ focus })
   const [newThreadOpen, setNewThreadOpen] = useState(false)
@@ -225,6 +232,16 @@ export function FocusWorkspace({
   } | null>(null)
   const [commitmentMoveSaving, setCommitmentMoveSaving] = useState(false)
   const [commitmentMoveError, setCommitmentMoveError] = useState<string | null>(null)
+  const [pendingThreadMove, setPendingThreadMove] = useState<{
+    plan: ThreadMovePlanSnapshot
+    threadTitle: string
+    targetTitle: string
+  } | null>(null)
+  const [threadMoveSaving, setThreadMoveSaving] = useState(false)
+  const [threadMoveError, setThreadMoveError] = useState<string | null>(null)
+  const threadMoveRequest = useRef<(move: ContextualSidebarItemMove) => void>(
+    () => undefined
+  )
   const commitmentMoveRequest = useRef<(move: ContextualSidebarChildMove) => void>(
     () => undefined
   )
@@ -236,6 +253,11 @@ export function FocusWorkspace({
     commitment: CommitmentSnapshot
   ) => ContextDrawerAdapter>(() => {
     throw new Error('Commitment drawer adapter is not ready.')
+  })
+  const threadAdapterFactory = useRef<(
+    thread: ThreadSnapshot
+  ) => ContextDrawerAdapter>(() => {
+    throw new Error('Thread drawer adapter is not ready.')
   })
   const [focusLevel] = useState(
     () =>
@@ -252,6 +274,10 @@ export function FocusWorkspace({
         canMoveChild: ({ sourceCollectionId, targetCollectionId }) =>
           sourceCollectionId === 'commitments' && targetCollectionId === 'commitments',
         onMoveChild: (move) => commitmentMoveRequest.current(move),
+        itemMoveTargetType: 'focus',
+        canMoveItem: ({ itemId, targetId }) =>
+          itemId.startsWith('thread:') && Number(targetId) !== focus.id,
+        onMoveItem: (move) => threadMoveRequest.current(move),
         newItem: {
           label: 'New thread',
           onCreate: () => setNewThreadOpen(true)
@@ -378,6 +404,51 @@ export function FocusWorkspace({
     }
   }
 
+  async function requestThreadMove(move: ContextualSidebarItemMove): Promise<void> {
+    if (!move.itemId.startsWith('thread:') || move.targetType !== 'focus') return
+    const threadId = Number(move.itemId.slice('thread:'.length))
+    const targetFocusId = Number(move.targetId)
+    const thread = model.threads.find((candidate) => candidate.id === threadId)
+    const target = threadMoveTargets.find((candidate) => candidate.id === targetFocusId)
+    if (!thread || !target || targetFocusId === focus.id) return
+    setThreadMoveError(null)
+    try {
+      const plan = await model.planThreadMove(threadId, targetFocusId)
+      if (plan.requiresConfirmation) {
+        setPendingThreadMove({
+          plan,
+          threadTitle: thread.title,
+          targetTitle: target.title
+        })
+        return
+      }
+      await executeThreadMove(plan)
+    } catch {
+      setThreadMoveError('The Thread could not be moved.')
+    }
+  }
+
+  async function executeThreadMove(
+    plan: ThreadMovePlanSnapshot,
+    confirmedScopeSubjectIds: readonly number[] = []
+  ): Promise<void> {
+    setThreadMoveSaving(true)
+    setThreadMoveError(null)
+    try {
+      const moved = await model.moveThread(plan.threadId, {
+        focusId: plan.toFocusId,
+        plannedFromFocusId: plan.fromFocusId,
+        confirmedScopeSubjectIds
+      })
+      setPendingThreadMove(null)
+      await onThreadMoved(moved, plan.fromFocusId)
+    } catch {
+      setThreadMoveError('The Thread could not be moved.')
+    } finally {
+      setThreadMoveSaving(false)
+    }
+  }
+
   function updateSidebarForMovedCommitment(moved: CommitmentSnapshot): void {
     const nextByContext = Object.fromEntries(
       Object.entries(commitmentsByContextItemId).map(([itemId, commitments]) => [
@@ -429,6 +500,7 @@ export function FocusWorkspace({
   useEffect(() => {
     commitmentMoveRequest.current = (move) => void requestCommitmentMove(move)
     commitmentMoveExecution.current = executeCommitmentMove
+    threadMoveRequest.current = (move) => void requestThreadMove(move)
   })
 
   function commitmentsLevelFor(parent: CommitmentParent): ContextualSidebarLevel {
@@ -860,7 +932,27 @@ export function FocusWorkspace({
 
   useEffect(() => {
     commitmentAdapterFactory.current = adapterForCommitment
+    threadAdapterFactory.current = adapterForThread
   })
+
+  useEffect(() => {
+    const pinned = contextDrawer.pinnedAdapter
+    if (!pinned || pinned.invalidationKeys.includes(`focus:${focus.id}`)) return
+    if (pinned.id.startsWith('thread:')) {
+      const threadId = Number(pinned.id.slice('thread:'.length))
+      const thread = model.threads.find((candidate) => candidate.id === threadId)
+      if (thread) contextDrawer.onPin(threadAdapterFactory.current(thread))
+      return
+    }
+    if (pinned.id.startsWith('commitment:')) {
+      const commitmentId = Number(pinned.id.slice('commitment:'.length))
+      const commitment = [
+        ...model.commitments,
+        ...Object.values(model.threadCommitments).flatMap((items) => items ?? [])
+      ].find((candidate) => candidate.id === commitmentId)
+      if (commitment) contextDrawer.onPin(commitmentAdapterFactory.current(commitment))
+    }
+  }, [contextDrawer, focus.id, model.commitments, model.threadCommitments, model.threads])
 
   const contextDrawerAdapter: ContextDrawerAdapter | null = selectedCommitment
     ? adapterForCommitment(selectedCommitment)
@@ -1045,7 +1137,7 @@ export function FocusWorkspace({
                       Commitment
                     </p>
                     <h1 id="commitment-heading" className="text-2xl font-semibold tracking-[-0.025em]">
-                      {selectedCommitment.title}
+                      <TaggedText value={selectedCommitment.title} />
                     </h1>
                     <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                       <p aria-label="Commitment type">
@@ -1165,7 +1257,7 @@ export function FocusWorkspace({
             <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border/70 pb-5">
               <div className="min-w-0 flex-1">
                 <h1 id="thread-heading" className="text-2xl font-semibold tracking-[-0.025em]">
-                  {displayedThread.title}
+                  <TaggedText value={displayedThread.title} />
                 </h1>
                 <p
                   aria-label="Thread last reviewed"
@@ -1305,7 +1397,7 @@ export function FocusWorkspace({
             <div className="flex flex-wrap items-start gap-3 border-b border-border/70 pb-6">
               <div className="min-w-0 flex-1">
                 <h1 id="focus-heading" className="truncate text-2xl font-semibold tracking-[-0.025em]">
-                  {focusTitle}
+                  <TaggedText value={focusTitle} />
                 </h1>
                 <p
                   aria-label="Focus last reviewed"
@@ -1477,6 +1569,58 @@ export function FocusWorkspace({
           onCreate={createCommitment}
         />
       )}
+      {pendingThreadMove && (
+        <Dialog
+          open
+          title={`Move ${pendingThreadMove.threadTitle}?`}
+          description={`Moving it to ${pendingThreadMove.targetTitle} will widen that Focus's Scope.`}
+          onClose={() => !threadMoveSaving && setPendingThreadMove(null)}
+          footer={
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={threadMoveSaving}
+                onClick={() => setPendingThreadMove(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                disabled={threadMoveSaving}
+                onClick={() => void executeThreadMove(
+                  pendingThreadMove.plan,
+                  pendingThreadMove.plan.scopeSubjectAdditions.map(({ id }) => id)
+                )}
+              >
+                {threadMoveSaving ? 'Moving…' : 'Move Thread'}
+              </Button>
+            </>
+          }
+        >
+          <p className="text-sm leading-6">
+            The following {pendingThreadMove.plan.scopeSubjectAdditions.length === 1
+              ? 'Subject is'
+              : 'Subjects are'} not currently covered and will be added:
+          </p>
+          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm">
+            {pendingThreadMove.plan.scopeSubjectAdditions.map((subject) => (
+              <li key={subject.id}>{subject.name}</li>
+            ))}
+          </ul>
+          <p className="mt-3 text-xs leading-5 text-muted-foreground">
+            {pendingThreadMove.plan.ownedRecords.commitments} Commitments,{' '}
+            {pendingThreadMove.plan.ownedRecords.updates} Updates,{' '}
+            {pendingThreadMove.plan.ownedRecords.todos} Todos, and{' '}
+            {pendingThreadMove.plan.ownedRecords.notes} Notes remain attached to the Thread.
+          </p>
+          {threadMoveError && (
+            <p role="alert" className="mt-3 text-xs text-destructive">
+              {threadMoveError}
+            </p>
+          )}
+        </Dialog>
+      )}
       {pendingCommitmentMove && (
         <Dialog
           open
@@ -1534,6 +1678,14 @@ export function FocusWorkspace({
           className="fixed right-5 bottom-5 z-50 rounded-lg border border-destructive/40 bg-card px-3 py-2 text-xs text-destructive shadow-lg"
         >
           {commitmentMoveError}
+        </p>
+      )}
+      {threadMoveError && !pendingThreadMove && (
+        <p
+          role="alert"
+          className="fixed right-5 bottom-5 z-50 rounded-lg border border-destructive/40 bg-card px-3 py-2 text-xs text-destructive shadow-lg"
+        >
+          {threadMoveError}
         </p>
       )}
     </>

@@ -225,6 +225,80 @@ describe('database migrations', () => {
     migrated.close()
   })
 
+  it('upgrades v18 with Thread parent history and guarded Focus moves', () => {
+    const database = new AppDatabase(databasePath)
+    const source = database.domain.focuses.create({ title: 'Source focus' })
+    const target = database.domain.focuses.create({ title: 'Target focus' })
+    const thread = database.domain.threads.create({
+      focusId: source.id,
+      title: 'Existing thread',
+      reviewFrequencyDays: 7
+    })
+    database.close()
+
+    const previous = new DatabaseSync(databasePath)
+    previous.exec(`
+      DROP TRIGGER threads_log_initial_parent;
+      DROP TRIGGER threads_focus_move_requires_operation;
+      DROP TRIGGER threads_log_parent_move;
+      DROP TRIGGER thread_parent_transitions_are_immutable;
+      DROP TRIGGER thread_parent_transitions_delete_only_with_thread;
+      DROP TRIGGER thread_move_operations_are_immutable;
+      DROP TRIGGER thread_move_operation_requires_finished_move;
+      DROP TRIGGER todos_parent_is_immutable;
+      DROP TRIGGER todo_list_context_is_immutable;
+      DROP TABLE thread_parent_transitions;
+      DROP TABLE thread_move_operations;
+
+      CREATE TRIGGER todos_parent_is_immutable
+      BEFORE UPDATE OF focus_id, thread_id, commitment_id, scope_id, subject_id ON todos
+      WHEN
+        OLD.focus_id IS NOT NEW.focus_id OR
+        OLD.thread_id IS NOT NEW.thread_id OR
+        OLD.commitment_id IS NOT NEW.commitment_id OR
+        OLD.scope_id IS NOT NEW.scope_id OR
+        OLD.subject_id IS NOT NEW.subject_id
+      BEGIN
+        SELECT RAISE(ABORT, 'Todo parent context is immutable');
+      END;
+
+      CREATE TRIGGER todo_list_context_is_immutable
+      BEFORE UPDATE OF focus_id, thread_id, commitment_id, scope_id, subject_id ON todo_lists
+      WHEN
+        OLD.focus_id IS NOT NEW.focus_id OR
+        OLD.thread_id IS NOT NEW.thread_id OR
+        OLD.commitment_id IS NOT NEW.commitment_id OR
+        OLD.scope_id IS NOT NEW.scope_id OR
+        OLD.subject_id IS NOT NEW.subject_id
+      BEGIN
+        SELECT RAISE(ABORT, 'Todo list context is immutable');
+      END;
+
+      DELETE FROM schema_migrations WHERE version = 19;
+    `)
+    previous.close()
+
+    const upgraded = new AppDatabase(databasePath)
+    expect(upgraded.domain.threads.requireModel(thread.id).parentHistory()).toMatchObject([{
+      fromFocusId: null,
+      toFocusId: source.id
+    }])
+    upgraded.close()
+
+    const migrated = new DatabaseSync(databasePath)
+    migrated.exec('PRAGMA foreign_keys = ON;')
+    expect(() => migrated.prepare(
+      'UPDATE threads SET focus_id = ? WHERE id = ?'
+    ).run(target.id, thread.id)).toThrow(/planned move operation/)
+    expect(() => migrated.prepare(
+      'UPDATE thread_parent_transitions SET changed_at = changed_at WHERE thread_id = ?'
+    ).run(thread.id)).toThrow(/immutable/)
+    expect(migrated.prepare(
+      'SELECT count(*) AS count FROM thread_parent_transitions WHERE thread_id = ?'
+    ).get(thread.id)).toEqual({ count: 1 })
+    migrated.close()
+  })
+
   it('audits Commitment parent moves and keeps derived Scope applications synchronized', () => {
     const database = new AppDatabase(databasePath)
     const focus = database.domain.focuses.create({ title: 'Primary focus' })

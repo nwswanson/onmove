@@ -62,6 +62,9 @@ const api: OnMoveApi = {
     listThreads: (focusId) => ipcRenderer.invoke(IPC_CHANNELS.listThreads, focusId),
     createThread: (input) => ipcRenderer.invoke(IPC_CHANNELS.createThread, input),
     updateThread: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateThread, id, input),
+    planThreadMove: (id, focusId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.planThreadMove, id, focusId),
+    moveThread: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.moveThread, id, input),
     pokeThreadReview: (id) => ipcRenderer.invoke(IPC_CHANNELS.pokeThreadReview, id),
     deleteThread: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteThread, id),
     listCommitments: (parent) => ipcRenderer.invoke(IPC_CHANNELS.listCommitments, parent),

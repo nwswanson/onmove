@@ -13,6 +13,7 @@ import {
   type CreateUpdateInput,
   type EditUpdateInput,
   type MoveCommitmentInput,
+  type MoveThreadInput,
   type FocusStatus,
   type SetItemStatusInput,
   type TodoListOptions,
@@ -151,6 +152,12 @@ export function registerAppIpc(
   )
   ipcMain.handle(IPC_CHANNELS.updateThread, (_event, id: number, input: UpdateThreadInput) =>
     database.domain.threads.requireModel(id).update(input).snapshot()
+  )
+  ipcMain.handle(IPC_CHANNELS.planThreadMove, (_event, id: number, focusId: number) =>
+    database.domain.threads.planMove(id, focusId)
+  )
+  ipcMain.handle(IPC_CHANNELS.moveThread, (_event, id: number, input: MoveThreadInput) =>
+    database.domain.threads.move(id, input)
   )
   ipcMain.handle(IPC_CHANNELS.pokeThreadReview, (_event, id: number) =>
     database.domain.threads.requireModel(id).pokeReview().snapshot()

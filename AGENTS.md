@@ -48,9 +48,12 @@
   scope and never enters the filtered Commitment level. Do not render a Commitments drilldown in the
   contextual tree.
 - Treat top-level nested Commitment rows as generic dnd-kit draggable children and Overall/Thread
-  rows as stationary drop targets through the contextual sidebar's receiver-owned child-move
-  contract. Threads remain alphabetically ordered and are never draggable. Feature adapters provide
-  only move intent; the shared sidebar owns sensors, drag previews, drop targeting, and accessibility.
+  rows as stationary Commitment drop targets through the contextual sidebar's receiver-owned
+  child-move contract. Top-level Thread rows are also draggable to Focus rows in the primary
+  sidebar; Overall is never draggable, and Threads remain alphabetically ordered rather than being
+  reorderable within a Focus. One shared domain-free sidebar DnD provider must span both sidebar
+  slots. Feature adapters provide only opaque move intent and compatibility; the shared receivers
+  own sensors, drag previews, drop targeting, and accessibility.
 - Route programmatic hierarchy destinations through `ContextualSidebarNavigation.navigateToPath`.
   The navigation owner must resolve asserted ancestor selections and the optional leaf selection
   atomically; feature screens must not manually sequence parent selection, level entry, and leaf
@@ -133,6 +136,13 @@ and do not rely on color alone to communicate selection or status.
 - Persist rich text as the versioned `onmove-rich-text:1:` Lexical JSON envelope in the existing
   text fields. Continue accepting legacy plain text and render it through the same component; do
   not require a destructive content migration.
+- Recognize durable inline text tags only through the shared parser: `@` followed by one or more
+  Unicode alphanumeric characters, outside email-like words. Reject hyphenated and underscored
+  continuations instead of styling a misleading prefix. Rich text stores recognized tokens as
+  Lexical `tag` nodes; compact user-authored strings keep the literal token and use `TaggedInput` /
+  `TaggedText` for the same deep-blue visual treatment. Dates, numbers, URLs, Scope Subject names,
+  and other structured identifiers remain ordinary controls. Tags have no database registry,
+  links, or backreferences yet; do not infer those future semantics in UI receivers.
 - Persist every change from an existing rich-text editor synchronously through the typed
   `richText` preload contract. The main process commits it with `DatabaseSync` before the renderer
   call returns, increments its durable revision, and broadcasts the committed snapshot to every
@@ -331,6 +341,15 @@ and do not rely on color alone to communicate selection or status.
   the destination Focus Scope or an isolated Thread overlay. Record every actual parent change in
   immutable `commitment_parent_transitions` history and keep the derived Commitment Scope
   application synchronized (`inherited` under a Thread, `open` under Overall).
+- Move Threads between Focuses only through the transactional plan/move repository contract. Keep
+  the Thread id and all descendant Commitment, Update, Todo, Note, and sort-placement identities.
+  An Open/inherited Thread follows the destination Focus; canonical Subjects absent there require
+  an exact stale-plan-safe confirmation and atomic Focus widening. Copy a custom Thread Scope graph
+  into the destination without widening its Focus. Recursively copy and remap every retained exact
+  child-evidence Scope into the destination because Scopes are Focus-owned; never relabel historical
+  cells as a different Scope merely because its Subjects match. Authorize those otherwise-immutable
+  Scope-id remaps only inside the move transaction, and append immutable
+  `thread_parent_transitions` for every actual parent change.
 - Model Todos separately from Commitments. A Todo has a required name, immutable Focus/Thread/
   Commitment or exact Thread/Commitment Scope-cell parent, optional due date, boolean done state,
   and contextual sort placements. Individual scoped Todos receive placements in their exact cell

@@ -16,11 +16,14 @@ import {
   type EditUpdateInput,
   type HealthState,
   type MoveCommitmentInput,
+  type MoveThreadInput,
   type ScopeApplicationSnapshot,
   type ScopeApplicationTransition,
   type ScopeOwner,
   type SetScopeApplicationInput,
   type ThreadSnapshot,
+  type ThreadMovePlanSnapshot,
+  type ThreadParentTransition,
   type ThreadScopeCellSnapshot,
   type ThreadSubjectCellSnapshot,
   type ThreadStatus,
@@ -106,6 +109,36 @@ interface ThreadTransitionRow {
   from_status: string | null
   to_status: string
   changed_at: string
+}
+
+interface ThreadParentTransitionRow {
+  id: number
+  thread_id: number
+  from_focus_id: number | null
+  to_focus_id: number
+  changed_at: string
+}
+
+interface ScopeTransferRow {
+  id: number
+  focus_id: number
+  name: string
+  dimension: string
+  source_type: string
+  base_scope_id: number | null
+  derived_relationship: string | null
+  context_subject_id: number | null
+  sensitive: number
+  created_at: string
+  updated_at: string
+}
+
+interface ScopeMembershipTransferRow {
+  subject_id: number
+  effect: string
+  effective_from: string
+  effective_until: string | null
+  created_at: string
 }
 
 interface CommitmentTransitionRow {
@@ -333,6 +366,18 @@ export class ThreadModel extends BaseModel<ThreadRecord> {
     return this.repository.statusHistory(this.id)
   }
 
+  movePlan(focusId: number): ThreadMovePlanSnapshot {
+    return this.repository.planMove(this.id, focusId)
+  }
+
+  moveTo(input: MoveThreadInput): this {
+    return this.replace(this.repository.move(this.id, input))
+  }
+
+  parentHistory(): ThreadParentTransition[] {
+    return this.repository.parentHistory(this.id)
+  }
+
   scopeApplication(): ScopeApplicationSnapshot {
     return this.repository.scopeApplication(this.id)
   }
@@ -358,12 +403,14 @@ export class ThreadModel extends BaseModel<ThreadRecord> {
 export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> {
   private readonly scopeApplications: ScopeApplicationRepository
   private readonly scopes: ScopeRepository
+  private readonly focusScopes: FocusScopeRepository
   private readonly notes: NoteRepository
 
   constructor(private readonly database: SqliteAdapter) {
     super()
     this.scopeApplications = new ScopeApplicationRepository(database)
     this.scopes = new ScopeRepository(database)
+    this.focusScopes = new FocusScopeRepository(database)
     this.notes = new NoteRepository(database)
   }
 
@@ -447,6 +494,137 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
     return this.find(id) as ThreadRecord
   }
 
+  /**
+   * Plans a cross-Focus move without mutating state. Inherited/Open Threads
+   * preserve their current canonical Subject coverage by widening the target
+   * Focus only when required. Explicit/derived Threads carry an isolated copy
+   * of their Scope graph instead.
+   */
+  planMove(id: number, focusId: number, on = today()): ThreadMovePlanSnapshot {
+    assertId(focusId, 'focus')
+    const current = this.find(id)
+    if (!current) throw new ModelNotFoundError('Thread', id)
+    this.assertParentExists('focuses', focusId, 'Focus')
+    const sourceApplication = this.scopeApplications.get({ type: 'thread', id })
+    const targetApplication = this.scopeApplications.get({ type: 'focus', id: focusId })
+    const customScope = sourceApplication.mode === 'explicit' || sourceApplication.mode === 'derived'
+    const sourceSubjects = sourceApplication.effectiveScopeId === null
+      ? []
+      : this.scopes.effectiveSubjects(sourceApplication.effectiveScopeId, on)
+    const targetSubjectIds = new Set(
+      targetApplication.effectiveScopeId === null
+        ? []
+        : this.scopes
+            .effectiveSubjects(targetApplication.effectiveScopeId, on)
+            .map(({ id: subjectId }) => subjectId)
+    )
+    const scopeSubjectAdditions = current.focusId === focusId || customScope
+      ? []
+      : sourceSubjects.filter(({ id: subjectId }) => !targetSubjectIds.has(subjectId))
+
+    return {
+      threadId: id,
+      fromFocusId: current.focusId,
+      toFocusId: focusId,
+      sourceScopeMode: sourceApplication.mode,
+      sourceScopeId: sourceApplication.effectiveScopeId,
+      targetScopeId: targetApplication.effectiveScopeId,
+      scopeStrategy: customScope ? 'copy-custom' : 'follow-destination',
+      scopeSubjectAdditions,
+      ownedRecords: {
+        commitments: this.countThreadCommitments(id),
+        updates: this.countThreadOwned('updates', id),
+        todos: this.countThreadOwned('todos', id),
+        notes: this.countThreadOwned('notes', id)
+      },
+      requiresConfirmation: scopeSubjectAdditions.length > 0
+    }
+  }
+
+  move(id: number, input: MoveThreadInput, now = new Date()): ThreadRecord {
+    assertId(input.focusId, 'focus')
+    assertId(input.plannedFromFocusId, 'planned source focus')
+    return this.database.transaction(() => {
+      const plan = this.planMove(id, input.focusId, today(now))
+      if (plan.fromFocusId !== input.plannedFromFocusId) {
+        throw new ModelValidationError('Thread move plan is stale because its Focus changed')
+      }
+      if (plan.fromFocusId === plan.toFocusId) return this.find(id) as ThreadRecord
+
+      const required = plan.scopeSubjectAdditions
+        .map(({ id: subjectId }) => subjectId)
+        .sort((left, right) => left - right)
+      const confirmed = [...new Set(input.confirmedScopeSubjectIds ?? [])]
+        .sort((left, right) => left - right)
+      if (
+        required.length !== confirmed.length ||
+        required.some((subjectId, index) => subjectId !== confirmed[index])
+      ) {
+        throw new ModelValidationError(
+          'Thread move Scope changes must be planned and explicitly confirmed'
+        )
+      }
+
+      if (required.length > 0) this.focusScopes.ensureSubjects(plan.toFocusId, required, now)
+
+      const createdAt = timestamp(now)
+      this.database.run(
+        `INSERT INTO thread_move_operations (
+           thread_id, from_focus_id, to_focus_id, created_at
+         ) VALUES (?, ?, ?, ?)`,
+        [id, plan.fromFocusId, plan.toFocusId, createdAt]
+      )
+
+      const scopeIds = this.referencedScopeIds(id)
+      if (plan.scopeStrategy === 'copy-custom' && plan.sourceScopeId !== null) {
+        scopeIds.add(plan.sourceScopeId)
+      }
+      const scopeMapping = new Map<number, number>()
+      const visiting = new Set<number>()
+      for (const scopeId of scopeIds) {
+        this.cloneScopeForFocus(
+          scopeId,
+          plan.fromFocusId,
+          plan.toFocusId,
+          scopeMapping,
+          visiting,
+          now
+        )
+      }
+
+      const moved = this.database.run(
+        'UPDATE threads SET focus_id = ?, updated_at = ? WHERE id = ?',
+        [plan.toFocusId, createdAt, id]
+      )
+      if (moved.changes === 0) throw new ModelNotFoundError('Thread', id)
+
+      for (const [sourceScopeId, targetScopeId] of scopeMapping) {
+        this.remapOwnedScope('updates', id, sourceScopeId, targetScopeId)
+        this.remapOwnedScope('todos', id, sourceScopeId, targetScopeId)
+        this.remapOwnedScope('todo_lists', id, sourceScopeId, targetScopeId)
+      }
+
+      if (plan.scopeStrategy === 'copy-custom') {
+        const targetScopeId = plan.sourceScopeId === null
+          ? null
+          : scopeMapping.get(plan.sourceScopeId) ?? null
+        if (targetScopeId === null) {
+          throw new ModelValidationError('Thread custom Scope could not be copied')
+        }
+        this.scopeApplications.set(
+          { type: 'thread', id },
+          { mode: plan.sourceScopeMode as 'explicit' | 'derived', scopeId: targetScopeId },
+          now
+        )
+      } else {
+        this.scopeApplications.set({ type: 'thread', id }, { mode: 'inherited' }, now)
+      }
+
+      this.database.run('DELETE FROM thread_move_operations WHERE thread_id = ?', [id])
+      return this.materialize(id, today(now))
+    })
+  }
+
   setStatus(id: number, status: ThreadStatus): ThreadRecord {
     return this.update(id, { status })
   }
@@ -489,6 +667,21 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
         to: row.to_status as ThreadStatus,
         changedAt: row.changed_at
       }))
+  }
+
+  parentHistory(id: number): ThreadParentTransition[] {
+    if (!this.find(id)) throw new ModelNotFoundError('Thread', id)
+    return this.database.all<ThreadParentTransitionRow>(
+      `SELECT id, thread_id, from_focus_id, to_focus_id, changed_at
+       FROM thread_parent_transitions WHERE thread_id = ? ORDER BY id`,
+      [id]
+    ).map((row) => ({
+      id: Number(row.id),
+      threadId: Number(row.thread_id),
+      fromFocusId: row.from_focus_id === null ? null : Number(row.from_focus_id),
+      toFocusId: Number(row.to_focus_id),
+      changedAt: row.changed_at
+    }))
   }
 
   scopeApplication(id: number): ScopeApplicationSnapshot {
@@ -667,6 +860,147 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
               review_poked_on, created_at, updated_at
        FROM threads WHERE id = ?`,
       [id]
+    )
+  }
+
+  private countThreadCommitments(threadId: number): number {
+    return Number(this.database.get<CountRow>(
+      'SELECT COUNT(*) AS count FROM commitments WHERE thread_id = ?',
+      [threadId]
+    )?.count ?? 0)
+  }
+
+  private countThreadOwned(
+    table: 'updates' | 'todos' | 'notes',
+    threadId: number
+  ): number {
+    return Number(this.database.get<CountRow>(
+      `SELECT COUNT(*) AS count FROM ${table} record
+       LEFT JOIN commitments commitment ON commitment.id = record.commitment_id
+       WHERE record.thread_id = ? OR commitment.thread_id = ?`,
+      [threadId, threadId]
+    )?.count ?? 0)
+  }
+
+  private referencedScopeIds(threadId: number): Set<number> {
+    return new Set(this.database.all<{ scope_id: number }>(
+      `SELECT record.scope_id
+       FROM updates record
+       LEFT JOIN commitments commitment ON commitment.id = record.commitment_id
+       WHERE record.scope_id IS NOT NULL
+         AND (record.thread_id = ? OR commitment.thread_id = ?)
+       UNION
+       SELECT record.scope_id
+       FROM todos record
+       LEFT JOIN commitments commitment ON commitment.id = record.commitment_id
+       WHERE record.scope_id IS NOT NULL
+         AND (record.thread_id = ? OR commitment.thread_id = ?)
+       UNION
+       SELECT record.scope_id
+       FROM todo_lists record
+       LEFT JOIN commitments commitment ON commitment.id = record.commitment_id
+       WHERE record.scope_id IS NOT NULL
+         AND (record.thread_id = ? OR commitment.thread_id = ?)`,
+      [threadId, threadId, threadId, threadId, threadId, threadId]
+    ).map(({ scope_id: scopeId }) => Number(scopeId)))
+  }
+
+  private cloneScopeForFocus(
+    sourceScopeId: number,
+    sourceFocusId: number,
+    targetFocusId: number,
+    mapping: Map<number, number>,
+    visiting: Set<number>,
+    now: Date
+  ): number {
+    const existing = mapping.get(sourceScopeId)
+    if (existing !== undefined) return existing
+    if (visiting.has(sourceScopeId)) {
+      throw new ModelValidationError('Thread move Scope graph contains a cycle')
+    }
+    const source = this.database.get<ScopeTransferRow>(
+      `SELECT id, focus_id, name, dimension, source_type, base_scope_id,
+              derived_relationship, context_subject_id, sensitive, created_at, updated_at
+       FROM scopes WHERE id = ?`,
+      [sourceScopeId]
+    )
+    if (!source) throw new ModelNotFoundError('Scope', sourceScopeId)
+    if (Number(source.focus_id) !== sourceFocusId) {
+      throw new ModelValidationError('Thread evidence references a Scope outside its source Focus')
+    }
+
+    visiting.add(sourceScopeId)
+    const baseScopeId = source.base_scope_id === null
+      ? null
+      : this.cloneScopeForFocus(
+          Number(source.base_scope_id),
+          sourceFocusId,
+          targetFocusId,
+          mapping,
+          visiting,
+          now
+        )
+    const changedAt = timestamp(now)
+    const result = this.database.run(
+      `INSERT INTO scopes (
+         focus_id, name, dimension, source_type, base_scope_id,
+         derived_relationship, context_subject_id, sensitive, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        targetFocusId,
+        source.name,
+        source.dimension,
+        source.source_type,
+        baseScopeId,
+        source.derived_relationship,
+        source.context_subject_id,
+        source.sensitive,
+        changedAt,
+        changedAt
+      ]
+    )
+    const targetScopeId = result.lastInsertRowid
+    mapping.set(sourceScopeId, targetScopeId)
+    visiting.delete(sourceScopeId)
+
+    const memberships = this.database.all<ScopeMembershipTransferRow>(
+      `SELECT subject_id, effect, effective_from, effective_until, created_at
+       FROM scope_memberships WHERE scope_id = ? ORDER BY id`,
+      [sourceScopeId]
+    )
+    for (const membership of memberships) {
+      this.database.run(
+        `INSERT INTO scope_memberships (
+           scope_id, subject_id, effect, effective_from, effective_until, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          targetScopeId,
+          membership.subject_id,
+          membership.effect,
+          membership.effective_from,
+          membership.effective_until,
+          membership.created_at
+        ]
+      )
+    }
+    return targetScopeId
+  }
+
+  private remapOwnedScope(
+    table: 'updates' | 'todos' | 'todo_lists',
+    threadId: number,
+    sourceScopeId: number,
+    targetScopeId: number
+  ): void {
+    this.database.run(
+      `UPDATE ${table}
+       SET scope_id = ?
+       WHERE scope_id = ? AND (
+         thread_id = ? OR commitment_id IN (
+           SELECT id FROM commitments WHERE thread_id = ?
+         )
+       )`,
+      [targetScopeId, sourceScopeId, threadId, threadId]
     )
   }
 

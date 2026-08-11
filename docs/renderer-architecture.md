@@ -18,6 +18,10 @@ feature modules, main-process code, preload code, or call `window.onmove`.
 - `WorkspaceShell` independently composes the contextual sidebar, main view, and context drawer.
 - `SidebarNavigation`, `ContextualSidebarLevel`, and `ContextualSidebarNavigation` own generic hierarchy traversal,
   selection restoration, Back behavior, invalidation, and optional New actions.
+- `SidebarDndProvider` supplies one domain-free drag session across the primary and contextual
+  sidebar slots. Receivers publish opaque source/target types and ids; feature views decide
+  compatibility and translate a completed drop into a typed model operation. It handles nested
+  Commitment moves and cross-slot Thread-to-Focus moves without importing either domain.
 - `ContextDrawerOutlet` owns fields, actions, draft/validation state, generic visibility, sizing,
   pin priority, and empty behavior. A feature supplies a data-only `ContextDrawerAdapter`; the
   outlet never switches on entity types or renders feature-provided markup.
@@ -47,6 +51,13 @@ Cross-feature navigation uses the data-only `FocusWorkspaceDestination` contract
 view translates a clicked row into ids, while the Focus workspace atomically restores its own
 contextual-sidebar route and working-context tab. Reusable table and sidebar receivers never see
 domain records or orchestrate each other.
+
+Cross-Focus Thread movement follows the same separation. The contextual receiver emits only a
+generic Thread item move toward a generic Focus target. `useFocusWorkspaceModel` owns plan/move IPC,
+while the Focus workspace owns any confirmation presentation. After success, the application model
+refreshes both Focus summaries and deep-links through the existing destination path so the primary
+Focus, contextual Thread selection, and main view change atomically. A pinned drawer is rebound to
+the same moved record id and retains pin precedence.
 
 These hooks may use typed shared contracts and the sandboxed `window.onmove` preload API. They do
 not import UI components or define layout.

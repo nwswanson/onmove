@@ -44,6 +44,7 @@
   --rich-text-blue: #2457c5;
   --rich-text-purple: #7040a0;
   --rich-text-highlight: #fff0a6;
+  --text-tag: #174f9b;
   --radius: 0.625rem;
   --background: oklch(0.978 0.002 80);
   --foreground: oklch(0.2 0.01 270);
@@ -105,6 +106,7 @@
     --rich-text-blue: #94baff;
     --rich-text-purple: #d2adff;
     --rich-text-highlight: #493d00;
+    --text-tag: #8ab8ff;
   }
 }
 
@@ -126,6 +128,11 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   user-select: none;
+}
+
+.onmove-text-tag {
+  color: var(--text-tag) !important;
+  font-weight: 600;
 }
 
 button {

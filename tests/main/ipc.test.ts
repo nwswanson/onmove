@@ -130,6 +130,21 @@ describe('registerAppIpc', () => {
         },
         threads: {
           listForFocus: vi.fn(() => [{ id: 21, focusId: 12, title: 'Sprint execution' }]),
+          planMove: vi.fn(() => ({
+            threadId: 21,
+            title: 'Sprint execution',
+            fromFocusId: 12,
+            toFocusId: 13,
+            scopeStrategy: 'follow-destination',
+            subjectsToAdd: [],
+            ownedRecords: { commitments: 1, updates: 2, todos: 3, notes: 4 },
+            requiresConfirmation: false
+          })),
+          move: vi.fn(() => ({
+            id: 21,
+            focusId: 13,
+            title: 'Sprint execution'
+          })),
           subjectMatrix: vi.fn(() => [{
             scopeId: 51,
             subjectId: 61,
@@ -372,6 +387,16 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.updateThread)?.(undefined, 21, {
       needsReview: false
     })).toMatchObject({ id: 21, needsReview: false })
+    expect(await handlers.get(IPC_CHANNELS.planThreadMove)?.(undefined, 21, 13)).toMatchObject({
+      threadId: 21,
+      fromFocusId: 12,
+      toFocusId: 13,
+      requiresConfirmation: false
+    })
+    expect(await handlers.get(IPC_CHANNELS.moveThread)?.(undefined, 21, {
+      focusId: 13,
+      plannedFromFocusId: 12
+    })).toMatchObject({ id: 21, focusId: 13 })
     expect(await handlers.get(IPC_CHANNELS.pokeThreadReview)?.(undefined, 21)).toMatchObject({
       id: 21,
       lastReviewDate: '2026-08-10'

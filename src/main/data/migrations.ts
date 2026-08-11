@@ -1877,6 +1877,212 @@ const migrations: readonly Migration[] = [
         END;
       `)
     }
+  },
+  {
+    version: 19,
+    name: 'thread_focus_moves',
+    up(database) {
+      const requiredTables = [
+        'focuses',
+        'threads',
+        'todos',
+        'todo_lists',
+        'commitments',
+        'thread_scope_applications'
+      ]
+      const hasCompleteDomain = requiredTables.every((table) => database.get<{ found: number }>(
+        "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?",
+        [table]
+      ))
+      if (!hasCompleteDomain) return
+      const threadColumns = database.all<{ name: string }>('PRAGMA table_info(threads)')
+      const hasThreadColumn = (name: string): boolean =>
+        threadColumns.some((column) => column.name === name)
+      const initialChangedAt = hasThreadColumn('created_at')
+        ? 'created_at'
+        : "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+      const movedChangedAt = hasThreadColumn('updated_at')
+        ? 'NEW.updated_at'
+        : "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+
+      database.exec(`
+        CREATE TABLE thread_move_operations (
+          thread_id INTEGER PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+          from_focus_id INTEGER NOT NULL REFERENCES focuses(id) ON DELETE CASCADE,
+          to_focus_id INTEGER NOT NULL REFERENCES focuses(id) ON DELETE CASCADE,
+          created_at TEXT NOT NULL,
+          CHECK (from_focus_id <> to_focus_id)
+        ) STRICT;
+
+        CREATE TABLE thread_parent_transitions (
+          id INTEGER PRIMARY KEY,
+          thread_id INTEGER NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+          from_focus_id INTEGER,
+          to_focus_id INTEGER NOT NULL,
+          changed_at TEXT NOT NULL,
+          CHECK (from_focus_id IS NULL OR from_focus_id <> to_focus_id)
+        ) STRICT;
+
+        CREATE INDEX thread_parent_transitions_thread_index
+          ON thread_parent_transitions(thread_id, id);
+
+        INSERT INTO thread_parent_transitions (
+          thread_id, from_focus_id, to_focus_id, changed_at
+        )
+        SELECT id, NULL, focus_id, ${initialChangedAt} FROM threads;
+
+        CREATE TRIGGER threads_log_initial_parent
+        AFTER INSERT ON threads
+        BEGIN
+          INSERT INTO thread_parent_transitions (
+            thread_id, from_focus_id, to_focus_id, changed_at
+          ) VALUES (
+            NEW.id, NULL, NEW.focus_id,
+            strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          );
+        END;
+
+        CREATE TRIGGER threads_focus_move_requires_operation
+        BEFORE UPDATE OF focus_id ON threads
+        WHEN OLD.focus_id IS NOT NEW.focus_id AND NOT EXISTS (
+          SELECT 1 FROM thread_move_operations operation
+          WHERE operation.thread_id = OLD.id
+            AND operation.from_focus_id = OLD.focus_id
+            AND operation.to_focus_id = NEW.focus_id
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Thread Focus changes require a planned move operation');
+        END;
+
+        CREATE TRIGGER threads_log_parent_move
+        AFTER UPDATE OF focus_id ON threads
+        WHEN OLD.focus_id IS NOT NEW.focus_id
+        BEGIN
+          INSERT INTO thread_parent_transitions (
+            thread_id, from_focus_id, to_focus_id, changed_at
+          ) VALUES (NEW.id, OLD.focus_id, NEW.focus_id, ${movedChangedAt});
+        END;
+
+        CREATE TRIGGER thread_parent_transitions_are_immutable
+        BEFORE UPDATE ON thread_parent_transitions
+        BEGIN
+          SELECT RAISE(ABORT, 'Thread parent transitions are immutable');
+        END;
+
+        CREATE TRIGGER thread_parent_transitions_delete_only_with_thread
+        BEFORE DELETE ON thread_parent_transitions
+        WHEN EXISTS (SELECT 1 FROM threads WHERE id = OLD.thread_id)
+        BEGIN
+          SELECT RAISE(ABORT, 'Thread parent transitions are immutable');
+        END;
+
+        CREATE TRIGGER thread_move_operations_are_immutable
+        BEFORE UPDATE ON thread_move_operations
+        BEGIN
+          SELECT RAISE(ABORT, 'Thread move operations are immutable');
+        END;
+
+        CREATE TRIGGER thread_move_operation_requires_finished_move
+        BEFORE DELETE ON thread_move_operations
+        WHEN EXISTS (
+          SELECT 1 FROM threads thread
+          WHERE thread.id = OLD.thread_id AND (
+            thread.focus_id IS NOT OLD.to_focus_id OR
+            EXISTS (
+              SELECT 1 FROM thread_scope_applications application
+              JOIN scopes scope ON scope.id = application.scope_id
+              WHERE application.thread_id = thread.id
+                AND scope.focus_id IS NOT OLD.to_focus_id
+            ) OR
+            EXISTS (
+              SELECT 1 FROM updates update_record
+              LEFT JOIN commitments commitment
+                ON commitment.id = update_record.commitment_id
+              JOIN scopes scope ON scope.id = update_record.scope_id
+              WHERE (update_record.thread_id = thread.id OR commitment.thread_id = thread.id)
+                AND scope.focus_id IS NOT OLD.to_focus_id
+            ) OR
+            EXISTS (
+              SELECT 1 FROM todos todo
+              LEFT JOIN commitments commitment ON commitment.id = todo.commitment_id
+              JOIN scopes scope ON scope.id = todo.scope_id
+              WHERE (todo.thread_id = thread.id OR commitment.thread_id = thread.id)
+                AND scope.focus_id IS NOT OLD.to_focus_id
+            ) OR
+            EXISTS (
+              SELECT 1 FROM todo_lists list
+              LEFT JOIN commitments commitment ON commitment.id = list.commitment_id
+              JOIN scopes scope ON scope.id = list.scope_id
+              WHERE (list.thread_id = thread.id OR commitment.thread_id = thread.id)
+                AND scope.focus_id IS NOT OLD.to_focus_id
+            )
+          )
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Thread move operation cannot finish with foreign Scope records');
+        END;
+
+        DROP TRIGGER todos_parent_is_immutable;
+        CREATE TRIGGER todos_parent_is_immutable
+        BEFORE UPDATE OF focus_id, thread_id, commitment_id, scope_id, subject_id ON todos
+        WHEN (
+          OLD.focus_id IS NOT NEW.focus_id OR
+          OLD.thread_id IS NOT NEW.thread_id OR
+          OLD.commitment_id IS NOT NEW.commitment_id OR
+          OLD.scope_id IS NOT NEW.scope_id OR
+          OLD.subject_id IS NOT NEW.subject_id
+        ) AND NOT (
+          OLD.focus_id IS NEW.focus_id AND
+          OLD.thread_id IS NEW.thread_id AND
+          OLD.commitment_id IS NEW.commitment_id AND
+          OLD.subject_id IS NEW.subject_id AND
+          OLD.scope_id IS NOT NULL AND NEW.scope_id IS NOT NULL AND
+          EXISTS (
+            SELECT 1
+            FROM thread_move_operations operation
+            JOIN scopes old_scope ON old_scope.id = OLD.scope_id
+            JOIN scopes new_scope ON new_scope.id = NEW.scope_id
+            LEFT JOIN commitments commitment ON commitment.id = NEW.commitment_id
+            WHERE operation.thread_id = COALESCE(NEW.thread_id, commitment.thread_id)
+              AND old_scope.focus_id = operation.from_focus_id
+              AND new_scope.focus_id = operation.to_focus_id
+          )
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Todo parent context is immutable');
+        END;
+
+        DROP TRIGGER todo_list_context_is_immutable;
+        CREATE TRIGGER todo_list_context_is_immutable
+        BEFORE UPDATE OF focus_id, thread_id, commitment_id, scope_id, subject_id ON todo_lists
+        WHEN (
+          OLD.focus_id IS NOT NEW.focus_id OR
+          OLD.thread_id IS NOT NEW.thread_id OR
+          OLD.commitment_id IS NOT NEW.commitment_id OR
+          OLD.scope_id IS NOT NEW.scope_id OR
+          OLD.subject_id IS NOT NEW.subject_id
+        ) AND NOT (
+          OLD.focus_id IS NEW.focus_id AND
+          OLD.thread_id IS NEW.thread_id AND
+          OLD.commitment_id IS NEW.commitment_id AND
+          OLD.subject_id IS NEW.subject_id AND
+          OLD.scope_id IS NOT NULL AND NEW.scope_id IS NOT NULL AND
+          EXISTS (
+            SELECT 1
+            FROM thread_move_operations operation
+            JOIN scopes old_scope ON old_scope.id = OLD.scope_id
+            JOIN scopes new_scope ON new_scope.id = NEW.scope_id
+            LEFT JOIN commitments commitment ON commitment.id = NEW.commitment_id
+            WHERE operation.thread_id = COALESCE(NEW.thread_id, commitment.thread_id)
+              AND old_scope.focus_id = operation.from_focus_id
+              AND new_scope.focus_id = operation.to_focus_id
+          )
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Todo list context is immutable');
+        END;
+      `)
+    }
   }
 ]
 

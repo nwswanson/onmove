@@ -210,7 +210,8 @@ export function focusPrimaryNavigationItems(
       ariaLabel: `${label}${paused ? ', paused' : ''}`,
       icon: paused ? 'paused' : 'sunflower',
       ...(paused ? {} : { sunflower }),
-      tone: paused ? 'muted' : 'default'
+      tone: paused ? 'muted' : 'default',
+      dropTarget: { type: 'focus', id: String(focus.id) }
     }
   })
 }
@@ -293,6 +294,7 @@ export function focusContextSidebarItems(
             }
           : {}),
         tone: paused ? ('muted' as const) : ('default' as const),
+        movable: true,
         group: { id: 'threads', label: 'Threads' }
       }
       })

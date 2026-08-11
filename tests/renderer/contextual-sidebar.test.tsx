@@ -9,6 +9,7 @@ import {
   ContextualSidebarNavigation,
   type ContextualSidebarChildCollectionModel,
   type ContextualSidebarChildMove,
+  type ContextualSidebarItemMove,
   type ContextualSidebarNewItemAction,
   useContextualSidebarNavigation
 } from '../../src/renderer/src/components/ui/contextual-sidebar'
@@ -19,6 +20,7 @@ interface TestItem {
   label: string
   description?: string
   disabled?: boolean
+  movable?: boolean
   stateLabel?: StateLabelModel
   childCollection?: ContextualSidebarChildCollectionModel
 }
@@ -43,6 +45,9 @@ function level(
     ) => void
     canMoveChild?: (move: ContextualSidebarChildMove) => boolean
     onMoveChild?: (move: ContextualSidebarChildMove) => void
+    itemMoveTargetType?: string
+    canMoveItem?: (move: ContextualSidebarItemMove) => boolean
+    onMoveItem?: (move: ContextualSidebarItemMove) => void
     getItemGroup?: (item: TestItem) => { id: string; label: string } | null
     newItem?: ContextualSidebarNewItemAction
   } = {}
@@ -66,7 +71,10 @@ function level(
     onSelectChild: options.onSelectChild,
     onChildCollectionAction: options.onChildCollectionAction,
     canMoveChild: options.canMoveChild,
-    onMoveChild: options.onMoveChild
+    onMoveChild: options.onMoveChild,
+    itemMoveTargetType: options.itemMoveTargetType,
+    canMoveItem: options.canMoveItem,
+    onMoveItem: options.onMoveItem
   })
 }
 
@@ -277,6 +285,38 @@ describe('ContextualSidebarNavigation', () => {
     root.notifyChildMove(move)
     expect(onMoveChild).toHaveBeenCalledWith(move)
     expect(root.canMoveChild({ ...move, targetParentItemId: 'overall' })).toBe(false)
+  })
+
+  it('exposes movable top-level items without making stationary siblings draggable', () => {
+    const onMoveItem = vi.fn()
+    const root = level(
+      'focus:1',
+      'Focus',
+      [
+        { id: 'overall', label: 'Overall' },
+        { id: 'thread:2', label: 'Sprint execution', movable: true }
+      ],
+      {
+        itemMoveTargetType: 'focus',
+        canMoveItem: ({ itemId, targetId }) =>
+          itemId === 'thread:2' && targetId !== '1',
+        onMoveItem
+      }
+    )
+    render(<ContextualSidebar navigation={new ContextualSidebarNavigation(root)} />)
+
+    expect(screen.getByRole('button', { name: 'Overall' }))
+      .not.toHaveAttribute('aria-roledescription')
+    expect(screen.getByRole('button', { name: 'Sprint execution' }))
+      .toHaveAttribute('aria-roledescription', 'draggable')
+    root.notifyItemMove({ itemId: 'thread:2', targetType: 'focus', targetId: '1' })
+    expect(onMoveItem).not.toHaveBeenCalled()
+    root.notifyItemMove({ itemId: 'thread:2', targetType: 'focus', targetId: '3' })
+    expect(onMoveItem).toHaveBeenCalledWith({
+      itemId: 'thread:2',
+      targetType: 'focus',
+      targetId: '3'
+    })
   })
 
   it('falls back to the selected parent when a nested child is removed', () => {

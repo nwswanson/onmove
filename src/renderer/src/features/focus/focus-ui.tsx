@@ -2,8 +2,8 @@ import { useRef, useState } from 'react'
 import type { CreateFocusInput } from '../../../../shared/contracts'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogField } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import { RichTextEditor } from '@/components/ui/rich-text-editor'
+import { TaggedInput } from '@/components/ui/tagged-text'
 
 interface NewFocusDialogProps {
   onClose: () => void
@@ -58,7 +58,7 @@ export function NewFocusDialog({ onClose, onCreate }: NewFocusDialogProps): Reac
           <label htmlFor="new-focus-title" className="text-xs font-medium">
             Title <span className="text-destructive">*</span>
           </label>
-          <Input
+          <TaggedInput
             id="new-focus-title"
             autoFocus
             required

@@ -24,6 +24,7 @@ import { LinkPlugin } from '@lexical/react/LexicalLinkPlugin'
 import { OnChangePlugin } from '@lexical/react/LexicalOnChangePlugin'
 import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin'
 import { LexicalErrorBoundary } from '@lexical/react/LexicalErrorBoundary'
+import { useLexicalTextEntity } from '@lexical/react/useLexicalTextEntity'
 import {
   $getSelectionStyleValueForProperty,
   $patchStyleText
@@ -31,6 +32,7 @@ import {
 import {
   $createParagraphNode,
   $createTextNode,
+  $applyNodeReplacement,
   $getRoot,
   $getSelection,
   $isRootNode,
@@ -48,6 +50,8 @@ import {
   SELECTION_CHANGE_COMMAND,
   $setSelection,
   UNDO_COMMAND,
+  TextNode,
+  type EditorConfig,
   type EditorState,
   type RangeSelection,
   type TextFormatType
@@ -79,6 +83,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { firstTextTag } from '../../../../shared/text-tags'
 
 const RICH_TEXT_PREFIX = 'onmove-rich-text:1:'
 const HIGHLIGHT_FORMAT: TextFormatType = 'highlight'
@@ -124,6 +129,52 @@ const LINK_ATTRIBUTES = {
   target: '_blank',
   rel: 'noopener noreferrer'
 } as const
+
+/** A durable visual token; linking and backreferences intentionally come later. */
+class TagNode extends TextNode {
+  $config() {
+    return this.config('tag', { extends: TextNode })
+  }
+
+  createDOM(config: EditorConfig): HTMLElement {
+    const element = super.createDOM(config)
+    element.classList.add('onmove-text-tag')
+    element.dataset.textTag = 'true'
+    return element
+  }
+
+  canInsertTextBefore(): boolean {
+    return false
+  }
+
+  isTextEntity(): true {
+    return true
+  }
+}
+
+function $createTagNode(text: string, source?: TextNode): TagNode {
+  const node = $applyNodeReplacement(new TagNode(text))
+  if (source) {
+    node.setFormat(source.getFormat())
+    node.setStyle(source.getStyle())
+    node.setDetail(source.getDetail())
+  }
+  return node
+}
+
+function textTagMatch(text: string): { start: number; end: number } | null {
+  const match = firstTextTag(text)
+  return match ? { start: match.start, end: match.end } : null
+}
+
+function createTagNode(source: TextNode): TagNode {
+  return $createTagNode(source.getTextContent(), source)
+}
+
+function TextTagsPlugin(): null {
+  useLexicalTextEntity(textTagMatch, TagNode, createTagNode)
+  return null
+}
 
 function normalizeLinkUrl(value: string): string | null {
   const trimmed = value.trim()
@@ -674,7 +725,7 @@ export function RichTextEditor({
   const config = useMemo<InitialConfigType>(
     () => ({
       namespace: 'OnMoveRichText',
-      nodes: [ListNode, ListItemNode, LinkNode],
+      nodes: [ListNode, ListItemNode, LinkNode, TagNode],
       theme,
       editorState: initialEditorState(value),
       onError(error) {
@@ -727,6 +778,7 @@ export function RichTextEditor({
           <CheckListPlugin />
           <LinkPlugin validateUrl={validLinkUrl} attributes={LINK_ATTRIBUTES} />
           <ClickableLinkPlugin newTab />
+          <TextTagsPlugin />
           <FormattingShortcutsPlugin />
           <ListTabIndentationPlugin />
           <ExternalValuePlugin
@@ -765,7 +817,7 @@ export function RichTextContent({
   const config = useMemo<InitialConfigType>(
     () => ({
       namespace: 'OnMoveRichTextReadOnly',
-      nodes: [ListNode, ListItemNode, LinkNode],
+      nodes: [ListNode, ListItemNode, LinkNode, TagNode],
       theme,
       editable: false,
       editorState: initialEditorState(value),
@@ -793,6 +845,7 @@ export function RichTextContent({
         />
         <ListPlugin />
         <ClickableLinkPlugin newTab />
+        <TextTagsPlugin />
       </LexicalComposer>
       {onOpenInWindow ? (
         <Button

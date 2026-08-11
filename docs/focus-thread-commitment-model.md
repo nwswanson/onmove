@@ -458,6 +458,35 @@ application synchronizes to `inherited` under a Thread or `open` under Overall. 
 `commitment_parent_transitions` record the initial parent and each actual move. SQLite rejects a
 cross-Focus reparent even below the repository boundary.
 
+## Thread Focus moves
+
+A Thread moves between Focuses through a separate two-step plan/move API. Overall is not an entity
+and cannot move. The planner reports the source and target Focus, applicability strategy, canonical
+Subjects that would be added, and counts of descendant Commitments, Updates, Todos, and Notes. A
+delayed confirmation carries the planned source Focus id, so another completed move makes it stale
+instead of accidentally moving from an unexpected owner.
+
+For an Open or inherited Thread, the destination Focus becomes the new inheritance source. If its
+effective Scope is an exact match or superset, the move needs no confirmation. Otherwise the user
+must confirm the exact missing Subject ids, and widening the destination Focus and moving the
+Thread occur in one transaction. For a custom Thread, its full base/include/exclude Scope graph and
+membership intervals are copied under the destination Focus and applied there; this never widens
+the destination Focus's own applicability.
+
+Commitments remain children of the same Thread id, and all descendant records retain identity and
+content. Scopes, however, are Focus-owned. Every old Scope referenced by direct or Commitment-owned
+Updates, Todos, or Todo lists is recursively copied to the destination and those exact records are
+remapped to the corresponding copy. Canonical Subject ids remain unchanged. This preserves what
+the evidence meant without pretending an unrelated destination Scope was its source. Shared Todo
+Subject completion and aggregate/exact sort projections are reconciled after remapping.
+
+SQLite accepts the otherwise-forbidden Thread owner and Todo Scope-id changes only while a matching
+transient move authorization exists. That authorization cannot finish while any application or
+owned evidence still refers to a Scope from another Focus, so any failure rolls the entire move
+back. `thread_parent_transitions` records the initial Focus and every completed move. Deleting the
+old Focus after a move leaves the Thread intact; deleting its new owning Focus performs the normal
+full cascade.
+
 ## Deletion and historical integrity
 
 - Deleting a Focus cascades its Threads, Focus- and Thread-owned Commitments, Updates, status

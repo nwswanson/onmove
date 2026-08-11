@@ -1,4 +1,5 @@
 import { ListChecks, PauseCircle, Plus } from 'lucide-react'
+import { useDroppable } from '@dnd-kit/core'
 import {
   SidebarMenu,
   SidebarMenuButton,
@@ -6,6 +7,11 @@ import {
 } from '@/components/ui/sidebar'
 import { cn } from '@/lib/utils'
 import { SemanticSunflower, type SemanticSunflowerModel } from '@/components/ui/sunflower'
+import { TaggedText } from '@/components/ui/tagged-text'
+import {
+  SidebarDndBoundary,
+  type SidebarTransferTargetData
+} from '@/components/ui/sidebar-dnd'
 
 /** Receiver-owned row contract for primary sidebar navigation. */
 export interface SidebarNavigationItemModel {
@@ -16,6 +22,7 @@ export interface SidebarNavigationItemModel {
   sunflower?: SemanticSunflowerModel
   tone?: 'default' | 'muted'
   disabled?: boolean
+  dropTarget?: { type: string; id: string }
 }
 
 export interface SidebarNavigationActionModel {
@@ -37,6 +44,64 @@ export interface SidebarNavigationProps {
 
 /** Owns primary-navigation row markup, interaction, focus, and selection semantics. */
 export function SidebarNavigation({
+  ...props
+}: SidebarNavigationProps): React.JSX.Element {
+  return (
+    <SidebarDndBoundary>
+      <SidebarNavigationContent {...props} />
+    </SidebarDndBoundary>
+  )
+}
+
+function SidebarNavigationRow({
+  item,
+  selected,
+  onSelect
+}: {
+  item: SidebarNavigationItemModel
+  selected: boolean
+  onSelect: (itemId: string) => void
+}): React.JSX.Element {
+  const { isOver, setNodeRef } = useDroppable({
+    id: `primary-navigation-target:${item.dropTarget?.type ?? 'none'}:${item.id}`,
+    disabled: !item.dropTarget || item.disabled,
+    data: item.dropTarget ? {
+      kind: 'sidebar-transfer-target',
+      targetType: item.dropTarget.type,
+      targetId: item.dropTarget.id
+    } satisfies SidebarTransferTargetData : undefined
+  })
+
+  return (
+    <SidebarMenuItem
+      ref={setNodeRef}
+      data-drop-target={isOver ? 'active' : 'inactive'}
+      className={cn(isOver && 'rounded-lg ring-2 ring-primary/55')}
+    >
+      <SidebarMenuButton
+        type="button"
+        isActive={selected}
+        aria-current={selected ? 'page' : undefined}
+        aria-label={item.ariaLabel ?? item.label}
+        title={item.sunflower?.ariaLabel}
+        className={cn(item.tone === 'muted' && 'text-muted-foreground opacity-55')}
+        disabled={item.disabled}
+        onClick={() => onSelect(item.id)}
+      >
+        {item.icon === 'todos' ? (
+          <ListChecks aria-hidden="true" />
+        ) : item.icon === 'paused' ? (
+          <PauseCircle aria-hidden="true" />
+        ) : item.icon === 'sunflower' && item.sunflower ? (
+          <SemanticSunflower className="!size-6" model={item.sunflower} />
+        ) : null}
+        <span className="truncate"><TaggedText value={item.label} /></span>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  )
+}
+
+function SidebarNavigationContent({
   items,
   selectedItemId,
   emptyLabel = 'No items',
@@ -65,29 +130,12 @@ export function SidebarNavigation({
       ) : (
         items.map((item) => {
           const selected = item.id === selectedItemId
-          return (
-            <SidebarMenuItem key={item.id}>
-              <SidebarMenuButton
-                type="button"
-                isActive={selected}
-                aria-current={selected ? 'page' : undefined}
-                aria-label={item.ariaLabel ?? item.label}
-                title={item.sunflower?.ariaLabel}
-                className={cn(item.tone === 'muted' && 'text-muted-foreground opacity-55')}
-                disabled={item.disabled}
-                onClick={() => onSelect(item.id)}
-              >
-                {item.icon === 'todos' ? (
-                  <ListChecks aria-hidden="true" />
-                ) : item.icon === 'paused' ? (
-                  <PauseCircle aria-hidden="true" />
-                ) : item.icon === 'sunflower' && item.sunflower ? (
-                  <SemanticSunflower className="!size-6" model={item.sunflower} />
-                ) : null}
-                <span className="truncate">{item.label}</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          )
+          return <SidebarNavigationRow
+            key={item.id}
+            item={item}
+            selected={selected}
+            onSelect={onSelect}
+          />
         })
       )}
       {action && (

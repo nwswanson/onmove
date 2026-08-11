@@ -21,6 +21,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { ChevronDown, GripVertical, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { TaggedInput, TaggedText } from '@/components/ui/tagged-text'
 import {
   validateTodoListModel,
   type TodoListItemModel,
@@ -162,7 +163,7 @@ function TodoRow({
             ? void mutateSubject(item.completionSubjectId, event.target.checked)
             : void mutate({ done: event.target.checked })}
         />
-        <Input
+        <TaggedInput
           aria-label="Todo name"
           value={name}
           className={cn('min-w-44 flex-1', item.done && 'text-muted-foreground line-through')}
@@ -282,7 +283,7 @@ function TodoDragPreview({ item }: { item: TodoListItemModel }): React.JSX.Eleme
         'min-w-44 flex-1 truncate rounded-md border border-input bg-background px-3 py-2 text-sm',
         item.done && 'text-muted-foreground line-through'
       )}>
-        {item.name}
+        <TaggedText value={item.name} />
       </span>
       {item.contextLabel && (
         <span className="rounded-full border border-primary/45 bg-primary/15 px-2 py-1 text-[0.6875rem] font-semibold">
@@ -473,7 +474,7 @@ export function TodoList({
     <section className="mt-8" aria-labelledby={headingId} aria-label={ariaLabel}>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <h2 id={headingId} className="mr-auto text-sm font-semibold">Todos</h2>
-        <Input
+        <TaggedInput
           aria-label="New Todo name"
           placeholder="Add a Todo…"
           value={name}

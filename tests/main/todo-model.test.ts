@@ -76,6 +76,21 @@ describe('Todo model', () => {
     expect(commitmentTodo.dueDate).toBeNull()
   })
 
+  it('persists literal text-tag syntax unchanged across database reopen', () => {
+    const focus = database!.domain.focuses.create({ title: 'Tagged work' })
+    const todo = database!.domain.todos.create({
+      parent: { type: 'focus', id: focus.id },
+      name: 'Coordinate @Launch2 readiness'
+    })
+
+    database!.close()
+    database = new AppDatabase(databasePath)
+
+    expect(database.domain.todos.find(todo.id)).toMatchObject({
+      name: 'Coordinate @Launch2 readiness'
+    })
+  })
+
   it('places scoped Todos independently in exact and aggregate lists', () => {
     const now = new Date('2026-08-09T12:00:00.000Z')
     const focus = database!.domain.focuses.create({ title: 'Project Atlas' })

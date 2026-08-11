@@ -15,12 +15,13 @@ SQLite/domain -> typed preload snapshot -> feature model hook -> feature present
 
 | Boundary | Receiver-owned contract | Caller responsibility | Receiver responsibility |
 | --- | --- | --- | --- |
-| Main sidebar | `SidebarNavigationItemModel` | Map visible destinations to ids, labels, semantic tokens, and selection callbacks | Rows, icons, focus, selection, empty state, and action placement |
-| Contextual sidebar | `ContextualSidebarItemModel`, `ContextualSidebarChildCollectionModel`, and `ContextualSidebarLevelOptions` | Map hierarchy records to labels, optional nested child collections/actions, semantic state, and parent/new-item capabilities | Parent/tree row markup, collection-action buttons, simple child state dots, Back, level vs. nested-route selection, atomic deep-link path resolution, accessibility, and deletion reconciliation |
+| Main sidebar | `SidebarNavigationItemModel` | Map visible destinations to ids, labels, semantic tokens, selection callbacks, and optional opaque drop targets | Rows, icons, focus, selection, empty state, action placement, and drop feedback |
+| Contextual sidebar | `ContextualSidebarItemModel`, `ContextualSidebarChildCollectionModel`, and `ContextualSidebarLevelOptions` | Map hierarchy records to labels, optional nested child collections/actions, semantic state, parent/new-item capabilities, and opaque move intent | Parent/tree row markup, collection-action buttons, simple child state dots, Back, level vs. nested-route selection, atomic deep-link path resolution, drag handles/previews, accessibility, and deletion reconciliation |
 | Semantic state label | `StateLabelModel` | Translate a domain state to label text and a semantic tone | Badge markup, dot, sizing, and semantic color tokens |
 | Work status selector | `WorkStatusSelectProps` | Supply one Focus/Thread/Commitment status and a typed mutation callback | Shared domain choices and translation into the low-level lifecycle-select receiver |
 | Sidebar Sunflower | `SemanticSunflowerModel` | Project the newest direct state and active Commitment states into labeled semantic-tone seeds | 24px spiral geometry, product-color resolution, density limits, SVG accessibility, and model validation |
 | Rich text | `RichTextEditorProps` and the drawer's `rich-text` field kind | Supply an opaque persisted string and typed change/save callbacks | Lexical state, legacy-text import, toolbar, formatting, serialization, focus, and accessibility |
+| Inline text tags | `TaggedInput`, `TaggedText`, and Lexical `TagNode` | Preserve the literal user-authored value and existing persistence callback | Shared syntax recognition, deep-blue token presentation, native compact-input behavior, and rich-text node materialization |
 | Existing rich-text persistence | `useDurableRichText` and the typed `richText` preload API | Supply a document reference and initial opaque value | Synchronous SQLite commit, revisions, cross-window updates, detached-window opening, and errors |
 | Compact-field persistence | `useThrottledAutosave` and `ContextDrawerAutosaveModel` | Supply the latest draft, persistence callback, and drawer field capabilities | The 750 ms interval, coalescing, write serialization, blur/close flushing, pending state, and errors |
 | Context drawer | `ContextDrawerModel` inside `ContextDrawerAdapter` | Map the selected record to text/select/checkbox/static fields and typed action capabilities | Inputs/static values, boolean controls, draft state, validation, pending/errors, confirmation, close, resize, and pin UI |
@@ -113,6 +114,12 @@ main-view collection-heading action, not a contextual-tree action.
 If a selected child is deleted or filtered, refresh clears the child route and retains its visible
 parent selection.
 
+Drag and drop keeps the same receiver ownership. `SidebarDndProvider` spans both sidebar slots and
+knows only opaque `{type, id, label}` sources and `{type, id}` targets. The contextual sidebar owns
+which row surface moves and its drag preview; the main sidebar owns Focus drop feedback. The Focus
+feature declares that a Thread may target a different Focus, requests the business move plan, and
+handles confirmation and navigation. Neither receiver knows what a Scope is or mutates records.
+
 Creation uses the same ownership direction. `CommitmentCollection` owns the visible Add button and
 emits a parameterless creation request; the feature supplies the already-known Focus or Thread
 parent to the shared dialog. Once persistence returns the new record from a parent screen, the
@@ -158,6 +165,13 @@ checked state live inside that envelope, so models and IPC continue to treat bot
 opaque text and no data migration is necessary. Inside any list, Tab nests the selection and
 Shift+Tab outdents it; outside a list, Tab retains normal focus navigation instead of trapping
 keyboard users in the editor.
+
+Inline tags use the same receiver-owned rule in compact and multiline text: `@` plus only Unicode
+letters or numbers, outside email-like words. Hyphenated and underscored continuations are rejected
+as complete tokens. Lexical materializes matches as durable `tag` nodes, while `TaggedInput` keeps a
+native input and overlays a synchronized `TaggedText` projection; both use the same adaptive deep
+blue treatment. The stored compact value remains literal text. These receivers deliberately expose
+no tag identity, navigation, or backreference behavior before the future Tags model owns it.
 
 Rich-text persistence belongs to the feature model rather than the generic Lexical receiver.
 `useDurableRichText` accepts a typed document reference, commits every emitted value synchronously,

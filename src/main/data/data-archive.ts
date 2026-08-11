@@ -30,6 +30,7 @@ export const DATA_ARCHIVE_TABLES = [
   'status_transitions',
   'focus_status_transitions',
   'thread_status_transitions',
+  'thread_parent_transitions',
   'commitment_status_transitions',
   'commitment_parent_transitions',
   'scope_application_transitions',
@@ -611,6 +612,18 @@ function repairRequiredRecords(database: SqliteAdapter, now: Date): number {
        )`
     ).changes
   }
+  repaired += database.run(
+    `INSERT INTO thread_parent_transitions (
+       thread_id, from_focus_id, to_focus_id, changed_at
+     )
+     SELECT thread.id, NULL, thread.focus_id, COALESCE(thread.created_at, ?)
+     FROM threads thread
+     WHERE NOT EXISTS (
+       SELECT 1 FROM thread_parent_transitions transition
+       WHERE transition.thread_id = thread.id
+     )`,
+    [timestamp]
+  ).changes
   repaired += database.run(
     `INSERT INTO commitment_parent_transitions (
        commitment_id, from_focus_id, from_thread_id,

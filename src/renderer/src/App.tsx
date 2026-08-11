@@ -24,6 +24,7 @@ import {
   type SidebarNavigationItemModel
 } from '@/components/ui/sidebar-navigation'
 import { Skeleton } from '@/components/ui/skeleton'
+import { SidebarDndProvider } from '@/components/ui/sidebar-dnd'
 import { Toolbar, ToolbarGroup } from '@/components/ui/toolbar'
 import { ApplicationShell, WorkspaceShell } from '@/components/ui/workspace-shell'
 import { useApplicationModel } from '@/features/application/use-application-model'
@@ -36,6 +37,7 @@ import { focusPrimaryNavigationItems } from '@/features/focus/focus-presenters'
 import { FocusWorkspace } from '@/features/focus/focus-workspace'
 import { SettingsWorkspace } from '@/features/settings/settings-workspace'
 import { TodoWorkspace } from '@/features/todos/todo-workspace'
+import type { ThreadSnapshot } from '../../shared/contracts'
 
 const SIDEBAR_MIN = 208
 const SIDEBAR_MAX = 288
@@ -261,8 +263,33 @@ export function App(): React.JSX.Element {
     })
   }
 
+  async function finishThreadMove(
+    thread: ThreadSnapshot,
+    fromFocusId: number
+  ): Promise<void> {
+    await Promise.all([
+      application.refreshFocusStatusSummary(fromFocusId),
+      application.refreshFocusStatusSummary(thread.focusId)
+    ])
+    if (!application.selectFocus(thread.focusId)) {
+      application.goTodos()
+      return
+    }
+    setFocusSubjectSelections((current) => ({
+      ...current,
+      [thread.focusId]: null
+    }))
+    setFocusDestination({
+      focusId: thread.focusId,
+      threadId: thread.id,
+      commitmentId: null,
+      subjectId: null,
+      requestId: ++focusDestinationRequest.current
+    })
+  }
+
   return (
-    <>
+    <SidebarDndProvider>
       <ApplicationShell
         toolbar={
           <AppToolbar
@@ -333,6 +360,11 @@ export function App(): React.JSX.Element {
                 )
               }
               hideSensitiveContent={application.sensitiveContentHidden}
+              threadMoveTargets={application.navigableFocuses.map(({ id, title }) => ({
+                id,
+                title
+              }))}
+              onThreadMoved={finishThreadMove}
             />
           ) : (
             <TodoWorkspace
@@ -367,6 +399,6 @@ export function App(): React.JSX.Element {
           onCreate={application.createFocus}
         />
       )}
-    </>
+    </SidebarDndProvider>
   )
 }

@@ -34,6 +34,8 @@ export const IPC_CHANNELS = {
   listThreads: 'domain:list-threads',
   createThread: 'domain:create-thread',
   updateThread: 'domain:update-thread',
+  planThreadMove: 'domain:plan-thread-move',
+  moveThread: 'domain:move-thread',
   pokeThreadReview: 'domain:poke-thread-review',
   deleteThread: 'domain:delete-thread',
   listCommitments: 'domain:list-commitments',
@@ -423,6 +425,48 @@ export interface UpdateThreadInput {
   sensitive?: boolean
 }
 
+export interface ThreadMoveOwnedRecordsSnapshot {
+  commitments: number
+  updates: number
+  todos: number
+  notes: number
+}
+
+/**
+ * Read-only preview of a cross-Focus Thread move. Inherited Threads follow the
+ * destination Focus and may require explicit Subject widening. Custom Scope
+ * definitions are copied into the destination Focus without widening its
+ * aggregate Scope.
+ */
+export interface ThreadMovePlanSnapshot {
+  threadId: number
+  fromFocusId: number
+  toFocusId: number
+  sourceScopeMode: ScopeMode
+  sourceScopeId: number | null
+  targetScopeId: number | null
+  scopeStrategy: 'follow-destination' | 'copy-custom'
+  scopeSubjectAdditions: SubjectSnapshot[]
+  ownedRecords: ThreadMoveOwnedRecordsSnapshot
+  requiresConfirmation: boolean
+}
+
+export interface MoveThreadInput {
+  focusId: number
+  /** Guards a delayed confirmation from moving a Thread whose owner changed. */
+  plannedFromFocusId: number
+  /** Must exactly match the planner's additions when Focus widening is required. */
+  confirmedScopeSubjectIds?: readonly number[]
+}
+
+export interface ThreadParentTransition {
+  id: number
+  threadId: number
+  fromFocusId: number | null
+  toFocusId: number
+  changedAt: string
+}
+
 export type CommitmentParent =
   | { type: 'focus'; id: number }
   | { type: 'thread'; id: number }
@@ -733,6 +777,8 @@ export interface DomainApi {
   listThreads: (focusId: number) => Promise<ThreadSnapshot[]>
   createThread: (input: CreateThreadInput) => Promise<ThreadSnapshot>
   updateThread: (id: number, input: UpdateThreadInput) => Promise<ThreadSnapshot>
+  planThreadMove: (id: number, focusId: number) => Promise<ThreadMovePlanSnapshot>
+  moveThread: (id: number, input: MoveThreadInput) => Promise<ThreadSnapshot>
   pokeThreadReview: (id: number) => Promise<ThreadSnapshot>
   deleteThread: (id: number) => Promise<boolean>
   listCommitments: (parent: CommitmentParent) => Promise<CommitmentSnapshot[]>

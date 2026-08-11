@@ -2,6 +2,7 @@ import { Fragment, useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { TaggedText } from '@/components/ui/tagged-text'
 import {
   Table,
   TableBody,
@@ -209,7 +210,7 @@ export function TodoOverviewTable({
                       )}
                     </TableCell>
                   <TableCell className={cn('font-medium', row.done && 'line-through')}>
-                    {row.name}
+                    <TaggedText value={row.name} />
                   </TableCell>
                   <TableCell>{row.project}</TableCell>
                   <TableCell>

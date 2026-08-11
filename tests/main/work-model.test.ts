@@ -149,6 +149,281 @@ describe('Thread, Commitment, and Update models', () => {
     ])
   })
 
+  it('moves an inherited Thread subtree across compatible Focuses without losing child identity', () => {
+    const now = new Date('2026-08-10T12:00:00.000Z')
+    const sourceFocus = database!.domain.focuses.create({ title: 'Source portfolio' })
+    const targetFocus = database!.domain.focuses.create({ title: 'Target portfolio' })
+    const sourceFocusScope = database!.domain.focusScopes.addSubject(
+      sourceFocus.id,
+      { name: 'Customer Operations' },
+      now
+    )
+    const targetFocusScope = database!.domain.focusScopes.addSubject(
+      targetFocus.id,
+      { name: 'Customer Operations' },
+      now
+    )
+    const subject = sourceFocusScope.subjects[0]
+    const thread = database!.domain.threads.create({
+      focusId: sourceFocus.id,
+      title: 'Regional rollout',
+      reviewFrequencyDays: 7
+    }, now)
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Keep ticket quality high'
+    }, now)
+    const directUpdate = database!.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2026-08-10',
+      observation: 'Thread evidence',
+      state: 'green',
+      scope: { scopeId: sourceFocusScope.scopeId!, subjectId: subject.id }
+    }, now).toSnapshot()
+    const commitmentUpdate = database!.domain.updates.create({
+      parent: { type: 'commitment', id: commitment.id },
+      date: '2026-08-10',
+      observation: 'Commitment evidence',
+      state: 'yellow',
+      scope: { scopeId: sourceFocusScope.scopeId!, subjectId: subject.id }
+    }, now).toSnapshot()
+    const directTodo = database!.domain.todos.create({
+      parent: {
+        type: 'thread-scope',
+        id: thread.id,
+        scope: { scopeId: sourceFocusScope.scopeId!, subjectId: subject.id }
+      },
+      name: 'Thread action'
+    }, now).toSnapshot()
+    const commitmentTodo = database!.domain.todos.create({
+      parent: {
+        type: 'commitment-scope',
+        id: commitment.id,
+        scope: { scopeId: sourceFocusScope.scopeId!, subjectId: subject.id }
+      },
+      name: 'Commitment action'
+    }, now).toSnapshot()
+
+    const plan = thread.movePlan(targetFocus.id)
+    expect(plan).toMatchObject({
+      fromFocusId: sourceFocus.id,
+      toFocusId: targetFocus.id,
+      sourceScopeMode: 'inherited',
+      sourceScopeId: sourceFocusScope.scopeId,
+      targetScopeId: targetFocusScope.scopeId,
+      scopeStrategy: 'follow-destination',
+      scopeSubjectAdditions: [],
+      ownedRecords: { commitments: 1, updates: 2, todos: 2, notes: 2 },
+      requiresConfirmation: false
+    })
+
+    thread.moveTo({
+      focusId: targetFocus.id,
+      plannedFromFocusId: sourceFocus.id
+    })
+
+    expect(thread.snapshot()).toMatchObject({ focusId: targetFocus.id, title: 'Regional rollout' })
+    expect(thread.scopeApplication()).toMatchObject({
+      mode: 'inherited',
+      effectiveScopeId: targetFocusScope.scopeId,
+      inheritedFrom: { type: 'focus', id: targetFocus.id }
+    })
+    expect(thread.parentHistory().map(({ fromFocusId, toFocusId }) => ({
+      fromFocusId,
+      toFocusId
+    }))).toEqual([
+      { fromFocusId: null, toFocusId: sourceFocus.id },
+      { fromFocusId: sourceFocus.id, toFocusId: targetFocus.id }
+    ])
+    expect(database!.domain.commitments.listForThread(thread.id).map(({ id }) => id))
+      .toEqual([commitment.id])
+    const movedUpdates = [
+      ...database!.domain.updates.listForThread(thread.id),
+      ...database!.domain.updates.listForCommitment(commitment.id)
+    ]
+    expect(movedUpdates.map(({ id }) => id).sort()).toEqual(
+      [directUpdate.id, commitmentUpdate.id].sort()
+    )
+    expect(new Set(movedUpdates.map(({ scope }) => scope?.scopeId))).not.toContain(
+      sourceFocusScope.scopeId
+    )
+    expect(database!.domain.todos.list({ type: 'thread', id: thread.id })
+      .map(({ id }) => id)).toContain(directTodo.id)
+    expect(database!.domain.todos.list({ type: 'commitment', id: commitment.id })
+      .map(({ id }) => id)).toContain(commitmentTodo.id)
+
+    expect(sourceFocus.delete()).toBe(true)
+    expect(thread.snapshot().focusId).toBe(targetFocus.id)
+    expect(database!.domain.commitments.find(commitment.id)).not.toBeNull()
+  })
+
+  it('requires an exact stale-safe confirmation before widening a destination Focus', () => {
+    const now = new Date('2026-08-10T12:00:00.000Z')
+    const sourceFocus = database!.domain.focuses.create({ title: 'Source portfolio' })
+    const targetFocus = database!.domain.focuses.create({ title: 'Target portfolio' })
+    database!.domain.focusScopes.addSubject(sourceFocus.id, { name: 'Core Team' }, now)
+    const sourceScope = database!.domain.focusScopes.addSubject(
+      sourceFocus.id,
+      { name: 'Partner Team' },
+      now
+    )
+    database!.domain.focusScopes.addSubject(targetFocus.id, { name: 'Core Team' }, now)
+    const partner = sourceScope.subjects.find(({ name }) => name === 'Partner Team')!
+    const thread = database!.domain.threads.create({
+      focusId: sourceFocus.id,
+      title: 'Partner readiness',
+      reviewFrequencyDays: 7
+    }, now)
+
+    expect(thread.movePlan(targetFocus.id)).toMatchObject({
+      scopeSubjectAdditions: [{ id: partner.id, name: 'Partner Team' }],
+      requiresConfirmation: true
+    })
+    expect(() => thread.moveTo({
+      focusId: targetFocus.id,
+      plannedFromFocusId: sourceFocus.id
+    })).toThrow('must be planned and explicitly confirmed')
+    expect(() => thread.moveTo({
+      focusId: targetFocus.id,
+      plannedFromFocusId: sourceFocus.id,
+      confirmedScopeSubjectIds: [999]
+    })).toThrow('must be planned and explicitly confirmed')
+    expect(() => thread.moveTo({
+      focusId: targetFocus.id,
+      plannedFromFocusId: targetFocus.id,
+      confirmedScopeSubjectIds: [partner.id]
+    })).toThrow('plan is stale')
+    expect(thread.snapshot().focusId).toBe(sourceFocus.id)
+
+    thread.moveTo({
+      focusId: targetFocus.id,
+      plannedFromFocusId: sourceFocus.id,
+      confirmedScopeSubjectIds: [partner.id]
+    })
+    expect(database!.domain.focusScopes.get(targetFocus.id).subjects.map(({ name }) => name).sort())
+      .toEqual(['Core Team', 'Partner Team'])
+    expect(thread.snapshot().focusId).toBe(targetFocus.id)
+  })
+
+  it('rolls back a stale move target and cascades only from the new owning Focus', () => {
+    const sourceFocus = database!.domain.focuses.create({ title: 'Source portfolio' })
+    const deletedTarget = database!.domain.focuses.create({ title: 'Deleted target' })
+    const thread = database!.domain.threads.create({
+      focusId: sourceFocus.id,
+      title: 'Move safely',
+      reviewFrequencyDays: 7
+    })
+    const child = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Keep child identity'
+    })
+
+    expect(thread.movePlan(deletedTarget.id).requiresConfirmation).toBe(false)
+    deletedTarget.delete()
+    expect(() => thread.moveTo({
+      focusId: deletedTarget.id,
+      plannedFromFocusId: sourceFocus.id
+    })).toThrow(ModelNotFoundError)
+    expect(thread.snapshot().focusId).toBe(sourceFocus.id)
+
+    const survivingTarget = database!.domain.focuses.create({ title: 'Surviving target' })
+    thread.moveTo({
+      focusId: survivingTarget.id,
+      plannedFromFocusId: sourceFocus.id
+    })
+    expect(sourceFocus.delete()).toBe(true)
+    expect(database!.domain.threads.find(thread.id)).not.toBeNull()
+    expect(database!.domain.commitments.find(child.id)).not.toBeNull()
+
+    expect(survivingTarget.delete()).toBe(true)
+    expect(database!.domain.threads.find(thread.id)).toBeNull()
+    expect(database!.domain.commitments.find(child.id)).toBeNull()
+    const raw = new DatabaseSync(databasePath)
+    expect(raw.prepare('SELECT count(*) AS count FROM thread_move_operations').get())
+      .toEqual({ count: 0 })
+    expect(raw.prepare('SELECT count(*) AS count FROM thread_parent_transitions').get())
+      .toEqual({ count: 0 })
+    raw.close()
+  })
+
+  it('copies a custom Thread Scope graph and reconciles shared Todos in the destination', () => {
+    const now = new Date('2026-08-10T12:00:00.000Z')
+    const sourceFocus = database!.domain.focuses.create({ title: 'Source portfolio' })
+    const targetFocus = database!.domain.focuses.create({ title: 'Target portfolio' })
+    database!.domain.focusScopes.addSubject(sourceFocus.id, { name: 'Core Team' }, now)
+    const thread = database!.domain.threads.create({
+      focusId: sourceFocus.id,
+      title: 'Custom regional lens',
+      reviewFrequencyDays: 7
+    }, now)
+    const custom = database!.domain.threadScopes.addSubject(
+      thread.id,
+      { name: 'Partner Team' },
+      now
+    )
+    const partner = custom.subjects.find(({ name }) => name === 'Partner Team')!
+    const update = database!.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2026-08-10',
+      observation: 'Custom evidence',
+      state: 'green',
+      scope: { scopeId: custom.scopeId!, subjectId: partner.id }
+    }, now).toSnapshot()
+    const individual = database!.domain.todos.create({
+      parent: {
+        type: 'thread-scope',
+        id: thread.id,
+        scope: { scopeId: custom.scopeId!, subjectId: partner.id }
+      },
+      name: 'Partner-specific action'
+    }, now).toSnapshot()
+    const shared = database!.domain.todos.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Shared readiness action',
+      sharedAcrossSubjects: true
+    }, now).toSnapshot()
+
+    expect(thread.movePlan(targetFocus.id)).toMatchObject({
+      scopeStrategy: 'copy-custom',
+      scopeSubjectAdditions: [],
+      requiresConfirmation: false
+    })
+    thread.moveTo({
+      focusId: targetFocus.id,
+      plannedFromFocusId: sourceFocus.id
+    })
+
+    const movedScope = database!.domain.threadScopes.get(thread.id)
+    expect(movedScope).toMatchObject({
+      focusId: targetFocus.id,
+      mode: 'explicit',
+      subjects: expect.arrayContaining([
+        expect.objectContaining({ name: 'Core Team' }),
+        expect.objectContaining({ name: 'Partner Team' })
+      ])
+    })
+    expect(movedScope.scopeId).not.toBe(custom.scopeId)
+    expect(database!.domain.focusScopes.get(targetFocus.id)).toMatchObject({
+      mode: 'open',
+      subjects: []
+    })
+    expect(database!.domain.updates.listForThread(thread.id)).toMatchObject([
+      { id: update.id, scope: { scopeId: movedScope.scopeId, subjectId: partner.id } }
+    ])
+    expect(database!.domain.todos.list({ type: 'thread', id: thread.id }, {}, now)
+      .map(({ id }) => id)).toEqual(expect.arrayContaining([individual.id, shared.id]))
+    const movedIndividual = database!.domain.todos.find(individual.id, now)!
+    expect(movedIndividual.parent).toMatchObject({
+      type: 'thread-scope',
+      scope: { scopeId: movedScope.scopeId, subjectId: partner.id }
+    })
+    const movedShared = database!.domain.todos.find(shared.id, now)!
+    expect(movedShared.subjectCompletions).toHaveLength(2)
+    expect(movedShared.sort).toHaveLength(3)
+  })
+
   it('plans and atomically confirms custom Subject widening while retaining child evidence', () => {
     const focus = database!.domain.focuses.create({ title: 'Delivery' })
     const source = database!.domain.threads.create({

@@ -99,6 +99,20 @@ safety trail, not something the UI must replay. A commit returns its new materia
 is broadcast to every renderer window, allowing the main workspace and any detached editor window
 to converge on the same persisted revision without a renderer-owned cache or close-time flush.
 
+### Inline text tags
+
+User-authored strings may contain durable inline tags written as `@` plus a Unicode alphanumeric
+identifier, such as `@Launch2`. The literal syntax remains the source of truth in compact columns
+such as titles and Todo names. Within a rich-text envelope, the same literal text is represented by
+a Lexical `tag` node so its visual identity survives save, reload, detached-window synchronization,
+and read-only rendering. Legacy plain text and older rich-text nodes are recognized lazily by the
+same parser; no destructive migration is required.
+
+This is intentionally not yet a relational tag model. There is no tag table, canonicalization,
+link target, or backreference index. Hyphenated/underscored forms and email-like substrings are not
+recognized, preventing the current durable syntax from promising semantics the future Tags page
+does not yet implement.
+
 The model beneath Focus—Subjects, Focus-owned Scopes, Threads, Commitments, dated Updates, Todos,
 health, reviews, and cadence—is specified as a unified whole in
 [`focus-thread-commitment-model.md`](focus-thread-commitment-model.md). The schema and repository work
@@ -146,6 +160,16 @@ Subjects before any write; confirmed widening and the parent change commit atomi
 Updates, Todos, and Notes remain attached through the Commitment id and retain their exact cells and
 sort placements. Immutable `commitment_parent_transitions` make Thread-to-Thread moves observable,
 while SQLite synchronizes the Commitment's derived Scope application and rejects cross-Focus moves.
+
+Migration 19 adds cross-Focus Thread moves. The Thread and its entire descendant tree retain their
+record ids. An inherited/Open Thread follows the destination Focus and can transactionally widen it
+after exact confirmation; a custom Thread copies its Scope expression into the destination Focus
+without changing that Focus's own application. Because every Scope belongs to one Focus, retained
+exact child evidence is remapped to recursively copied Scope definitions rather than being
+misattributed to a merely equivalent destination Scope. A transient authorization row narrows the
+normally immutable Todo and Todo-list Scope-id changes to this one transaction, and cannot be
+removed until the Thread, application, Updates, Todos, and lists all reference destination-owned
+Scopes. Immutable `thread_parent_transitions` audit both the initial owner and every actual move.
 
 ## Status is state plus history
 
@@ -246,3 +270,8 @@ Migration 18 adds immutable shared Thread/Commitment Todos and `todo_subject_com
 shared parent is projected into every current exact Subject list through independent sort
 placements. Repository reconciliation follows the owner's current effective Subject population,
 adds new unchecked cells, removes departed cells, and derives the parent completion timestamp.
+
+Migration 19 adds guarded cross-Focus Thread moves and immutable Thread parent history. It replaces
+the Todo and Todo-list context guards with equivalent rules that permit only Scope-id remapping
+under an active, matching move authorization. Upgrade backfills one initial parent transition for
+every existing Thread.
