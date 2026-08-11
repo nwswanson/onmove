@@ -450,6 +450,10 @@ entity cascades its transition history.
   their frequency/cadence due state. Applicable Update or poke evidence dated today suppresses that
   exact target for the day. Enabled active Focuses follow the same-day suppression rule and return
   daily because they have no separate frequency.
+- Review exposes the target's direct Todos in the aggregate or exact Scope/Subject context. A
+  successful Todo mutation records an explicit review poke for that same target without creating
+  Update evidence, changing derived state, or satisfying cadence. The active review item remains
+  open so several Todo changes can be made before the reviewer explicitly advances.
 - Review and cadence values are recomputed from durable records whenever a snapshot is materialized.
 
 ## Commitment parent moves

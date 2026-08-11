@@ -59,6 +59,12 @@
   The navigation owner must resolve asserted ancestor selections and the optional leaf selection
   atomically; feature screens must not manually sequence parent selection, level entry, and leaf
   selection for creation results or deep links.
+- Expose the shell-owned command palette through `Cmd-K` and the toolbar search action. Build its
+  interaction from the domain-free shadcn-style `Command` primitives and keep preload loading in a
+  dedicated feature model hook. Search navigable Focuses, their Threads and Commitments, every
+  persisted Todo, and current Tags; apply the same hierarchy-cascading sensitive visibility used by
+  ordinary collections. Result selection must emit a typed destination and reuse atomic Focus or
+  Tag deep-link navigation rather than coordinating sidebar state in the palette.
 - Describe contextual inspectors with the shared `ContextDrawerModel` contract and render them only
   through `ContextDrawerOutlet`. The receiver guarantees a visible close button and requires a
   descriptive accessible label; feature code must not compose the low-level drawer shell directly.
@@ -300,6 +306,12 @@ and do not rely on color alone to communicate selection or status.
   session and refreshes the owning Focus projection; it is not a Save button. A same-day queue
   refresh must retain passed and updated item keys while offering ignored items again; do not
   present a completed item as fresh work through a replay-style `Review again` action.
+- Render the current Review target's direct Todos through the shared `DirectTodos`/`TodoList`
+  contracts, using the exact Scope/Subject cell for a scoped queue entry. Every successful
+  Review-originated Todo mutation records the same typed aggregate or exact-cell review poke and
+  refreshes the owning Focus projection, but it must keep the current queue item onscreen so the
+  user can make multiple changes before advancing. This acknowledgement updates review timing;
+  Todo contents remain separate from Update-derived state and cadence evidence.
 - Preserve scoped review obligations as separate queue entries. A bounded Thread or Commitment
   contributes one eligible entry per effective Subject cell, and Review-created Updates must use
   that exact Scope/Subject cell. Pass persists a typed exact-cell poke so acknowledging one Subject

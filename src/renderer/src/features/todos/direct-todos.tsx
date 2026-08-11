@@ -24,10 +24,12 @@ interface CurrentTodoCell {
 
 export function DirectTodos({
   context,
-  currentCells = []
+  currentCells = [],
+  onMutation
 }: {
   context: TodoParent
   currentCells?: readonly CurrentTodoCell[]
+  onMutation?: () => void | Promise<void>
 }): React.JSX.Element {
   const currentCellsKey = currentCells
     .map(({ cell }) => `${cell.scopeId}:${cell.subjectId}`)
@@ -88,18 +90,23 @@ export function DirectTodos({
             ? { sharedAcrossSubjects: true }
             : {})
         })
+        await onMutation?.()
       }}
       onUpdate={async (itemId, input) => {
         await model.updateTodo(Number(itemId), input)
+        await onMutation?.()
       }}
       onDelete={async (itemId) => {
         await model.deleteTodo(Number(itemId))
+        await onMutation?.()
       }}
       onSubjectCompletionChange={async (itemId, subjectId, done) => {
         await model.updateSubjectCompletion(Number(itemId), Number(subjectId), done)
+        await onMutation?.()
       }}
       onReorder={async (orderedItemIds) => {
         await model.reorderTodos(orderedItemIds.map(Number))
+        await onMutation?.()
       }}
     />
   )

@@ -25,6 +25,8 @@ feature modules, main-process code, preload code, or call `window.onmove`.
 - `ContextDrawerOutlet` owns fields, actions, draft/validation state, generic visibility, sizing,
   pin priority, and empty behavior. A feature supplies a data-only `ContextDrawerAdapter`; the
   outlet never switches on entity types or renders feature-provided markup.
+- The shadcn-style `Command` primitives own the command dialog, filtering, keyboard selection,
+  focus, and result-list markup without importing OnMove records or navigation contracts.
 
 The shell accepts React slots rather than application records, so Todos and future screens may omit
 the contextual sidebar or drawer without changing the framework.
@@ -43,6 +45,9 @@ Persistence-backed state lives in feature hooks:
 - `useTagsModel` loads the canonical-name summary and only the selected tag's bounded field-use list.
   It also invalidates those projections when another window commits rich text; tag parsing and
   hierarchy resolution remain in the main-process repository.
+- `useCommandPaletteModel` loads a fresh searchable graph only while the palette is open. It uses
+  named preload operations to collect navigable Focus hierarchy records, all persisted Todos, and
+  canonical Tags; it does not teach the shared command receiver how those records are stored.
 
 The domain-free `TodoList` receiver owns the disclosure and interaction grammar for a shared Todo.
 Feature presenters provide only data: whether the parent may be edited/deleted/checked, its current
@@ -54,6 +59,14 @@ Cross-feature navigation uses the data-only `FocusWorkspaceDestination` contract
 and Tags views translate a clicked row into ids, while the Focus workspace atomically restores its own
 contextual-sidebar route and working-context tab. Reusable table and sidebar receivers never see
 domain records or orchestrate each other.
+
+The application command presenter translates its on-demand snapshot into data-only grouped result
+models. `Cmd-K` or the toolbar search action opens the shell-owned palette. Selecting a Focus,
+Thread, Commitment, or Todo emits the same `FocusWorkspaceDestination`; selecting a Tag emits a
+request-id Tag destination so its contextual sidebar applies that selection after async tag loading.
+The palette never mutates sidebar controllers directly. Todo search intentionally uses the complete
+Todo query rather than the bounded global-overview projection, so an older completed Todo can still
+lead back to its containing screen.
 
 Cross-Focus Thread movement follows the same separation. The contextual receiver emits only a
 generic Thread item move toward a generic Focus target. `useFocusWorkspaceModel` owns plan/move IPC,

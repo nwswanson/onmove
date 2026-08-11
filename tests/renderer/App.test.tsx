@@ -363,6 +363,70 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'New focus' })).toBeEnabled()
   })
 
+  it('opens the command palette with Cmd-K and deep-links Commitments and Tags', async () => {
+    const project = focus({ id: 5, title: 'Project Atlas' })
+    const sprint = thread({ id: 15, focusId: project.id, title: 'Sprint execution' })
+    const ticketQuality = commitment({
+      id: 25,
+      parent: { type: 'thread', id: sprint.id },
+      title: 'Improve ticket quality'
+    })
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([project]),
+      listThreads: vi.fn(async (focusId) => focusId === project.id ? [sprint] : []),
+      listCommitments: vi.fn(async (parent) =>
+        parent.type === 'thread' && parent.id === sprint.id ? [ticketQuality] : []),
+      queryTodos: vi.fn().mockResolvedValue([
+        todo({
+          id: 75,
+          parent: { type: 'commitment', id: ticketQuality.id },
+          name: 'Confirm launch owner'
+        })
+      ]),
+      listTags: vi.fn().mockResolvedValue([
+        { name: 'launch', useCount: 2, sensitiveUseCount: 0 }
+      ]),
+      listTagUses: vi.fn().mockResolvedValue([])
+    })
+    const user = userEvent.setup()
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Todos' })
+
+    fireEvent.keyDown(document, { key: 'k', metaKey: true })
+    const dialog = await screen.findByRole('dialog', { name: 'Jump to anything' })
+    expect(within(dialog).getByRole('option', { name: /^Project Atlas Focus/ })).toBeVisible()
+    expect(within(dialog).getByRole('option', { name: /^Sprint execution/ })).toBeVisible()
+    expect(within(dialog).getByRole('option', { name: /^Improve ticket quality/ })).toBeVisible()
+    expect(within(dialog).getByRole('option', { name: /^Confirm launch owner/ })).toBeVisible()
+    expect(within(dialog).getByRole('option', { name: /^@launch/ })).toBeVisible()
+
+    await user.type(
+      within(dialog).getByPlaceholderText(/Search Focuses, Threads, Commitments/),
+      'ticket quality'
+    )
+    await user.click(within(dialog).getByRole('option', { name: /^Improve ticket quality/ }))
+    expect(await screen.findByRole('heading', {
+      name: 'Improve ticket quality'
+    })).toBeVisible()
+    expect(screen.getByRole('button', {
+      name: 'Open Sprint execution commitment Improve ticket quality'
+    })).toHaveAttribute('aria-current', 'page')
+
+    fireEvent.keyDown(document, { key: 'k', metaKey: true })
+    const reopened = await screen.findByRole('dialog', { name: 'Jump to anything' })
+    await user.type(
+      within(reopened).getByPlaceholderText(/Search Focuses, Threads, Commitments/),
+      '@launch'
+    )
+    await user.click(within(reopened).getByRole('option', { name: /^@launch/ }))
+
+    expect(await screen.findByRole('heading', { name: '@launch' })).toBeVisible()
+    expect(screen.getByRole('button', { name: '@launch' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+  })
+
   it('reviews full-width Focus and Thread surfaces without commitment drilldown', async () => {
     const currentFocus = focus({ id: 4, title: 'Project Atlas', goal: 'Ship the pilot safely' })
     const currentThread = thread({
@@ -489,6 +553,61 @@ describe('App', () => {
       subjectId: 66
     }))
     expect(await screen.findByRole('heading', { name: 'You’re caught up' })).toBeVisible()
+  })
+
+  it('creates and edits review Todos while poking the current aggregate', async () => {
+    const currentFocus = focus({ id: 7, title: 'Launch board' })
+    const createdTodo = todo({
+      id: 77,
+      parent: { type: 'focus', id: currentFocus.id },
+      name: 'Confirm launch owner'
+    })
+    const createTodo = vi.fn().mockResolvedValue(createdTodo)
+    const updateTodo = vi.fn().mockImplementation(async (_id, input) => ({
+      ...createdTodo,
+      ...input,
+      updatedAt: '2026-08-10T12:01:00.000Z'
+    }))
+    const pokeFocusReview = vi.fn().mockResolvedValue({
+      ...currentFocus,
+      lastReviewDate: '2026-08-10'
+    })
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([currentFocus]),
+      createTodo,
+      updateTodo,
+      pokeFocusReview,
+      getReviewOverview: vi.fn().mockResolvedValue({
+        asOf: '2026-08-10',
+        items: [reviewItem({ key: 'focus:7', focus: currentFocus })]
+      })
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Review' }))
+    await user.type(screen.getByRole('textbox', { name: 'New Todo name' }), 'Confirm launch owner')
+    await user.click(screen.getByRole('button', { name: 'Add Todo' }))
+
+    await waitFor(() => expect(createTodo).toHaveBeenCalledWith({
+      parent: { type: 'focus', id: 7 },
+      name: 'Confirm launch owner',
+      dueDate: null
+    }))
+    await waitFor(() => expect(pokeFocusReview).toHaveBeenCalledWith(7))
+    expect(screen.getByRole('article', { name: 'Focus review: Launch board' })).toBeVisible()
+    expect(screen.getByText('2026-08-10', { selector: 'dd' })).toBeVisible()
+
+    const name = screen.getByRole('textbox', { name: 'Todo name' })
+    await user.clear(name)
+    await user.type(name, 'Confirm launch DRI')
+    await user.tab()
+
+    await waitFor(() => expect(updateTodo).toHaveBeenCalledWith(77, {
+      name: 'Confirm launch DRI'
+    }))
+    await waitFor(() => expect(pokeFocusReview).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('article', { name: 'Focus review: Launch board' })).toBeVisible()
   })
 
   it('starts an autosaved Update in the exact review Subject cell before advancing', async () => {

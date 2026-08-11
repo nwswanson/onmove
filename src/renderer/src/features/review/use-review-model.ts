@@ -17,6 +17,7 @@ export interface ReviewModel {
   editingUpdate: { itemKey: string; update: UpdateSnapshot } | null
   ignore: (itemKey: string) => void
   pass: (item: ReviewQueueItemSnapshot) => Promise<void>
+  recordTodoMutation: (item: ReviewQueueItemSnapshot) => Promise<void>
   beginUpdate: (item: ReviewQueueItemSnapshot) => Promise<void>
   editUpdate: (input: EditUpdateInput) => Promise<void>
   saveObservation: (value: string) => void
@@ -37,6 +38,12 @@ function itemParent(item: ReviewQueueItemSnapshot): UpdateParent {
   }
   if (!item.commitment) throw new Error('A Commitment review item requires a Commitment')
   return { type: 'commitment', id: item.commitment.id }
+}
+
+function addDays(date: string, days: number): string {
+  const result = new Date(`${date}T12:00:00.000Z`)
+  result.setUTCDate(result.getUTCDate() + days)
+  return result.toISOString().slice(0, 10)
 }
 
 /** Owns the queue session and all persistence-backed review actions. */
@@ -111,35 +118,67 @@ export function useReviewModel({ onReviewChanged }: ReviewModelOptions = {}): Re
     }
   }
 
+  async function persistPoke(item: ReviewQueueItemSnapshot): Promise<void> {
+    if (item.kind === 'focus') {
+      await window.onmove.domain.pokeFocusReview(item.focus.id)
+    } else if (item.kind === 'thread' && item.thread) {
+      if (item.cell) {
+        await window.onmove.domain.pokeThreadReview(item.thread.id, {
+          scopeId: item.cell.scopeId,
+          subjectId: item.cell.subjectId
+        })
+      } else {
+        await window.onmove.domain.pokeThreadReview(item.thread.id)
+      }
+    } else if (item.commitment) {
+      if (item.cell) {
+        await window.onmove.domain.pokeCommitmentReview(item.commitment.id, {
+          scopeId: item.cell.scopeId,
+          subjectId: item.cell.subjectId
+        })
+      } else {
+        await window.onmove.domain.pokeCommitmentReview(item.commitment.id)
+      }
+    }
+  }
+
   async function pass(item: ReviewQueueItemSnapshot): Promise<void> {
     setPendingKey(item.key)
     setError(null)
     try {
-      if (item.kind === 'focus') {
-        await window.onmove.domain.pokeFocusReview(item.focus.id)
-      } else if (item.kind === 'thread' && item.thread) {
-        if (item.cell) {
-          await window.onmove.domain.pokeThreadReview(item.thread.id, {
-            scopeId: item.cell.scopeId,
-            subjectId: item.cell.subjectId
-          })
-        } else {
-          await window.onmove.domain.pokeThreadReview(item.thread.id)
-        }
-      } else if (item.commitment) {
-        if (item.cell) {
-          await window.onmove.domain.pokeCommitmentReview(item.commitment.id, {
-            scopeId: item.cell.scopeId,
-            subjectId: item.cell.subjectId
-          })
-        } else {
-          await window.onmove.domain.pokeCommitmentReview(item.commitment.id)
-        }
-      }
+      await persistPoke(item)
       complete(item.key)
       await notifyReviewChanged(item.focus.id)
     } catch {
       setError('The review could not be passed along.')
+    } finally {
+      setPendingKey(null)
+    }
+  }
+
+  async function recordTodoMutation(item: ReviewQueueItemSnapshot): Promise<void> {
+    setPendingKey(item.key)
+    setError(null)
+    try {
+      await persistPoke(item)
+      setOverview((current) => current
+        ? {
+            ...current,
+            items: current.items.map((candidate) => candidate.key === item.key
+              ? {
+                  ...candidate,
+                  lastReviewDate: current.asOf,
+                  due: candidate.kind === 'commitment' ? candidate.due : false,
+                  nextReviewDate: candidate.kind === 'thread' && candidate.thread
+                    ? addDays(current.asOf, candidate.thread.reviewFrequencyDays)
+                    : candidate.nextReviewDate
+                }
+              : candidate)
+          }
+        : current)
+      await notifyReviewChanged(item.focus.id)
+    } catch {
+      setError('The Todo was saved, but its review acknowledgement could not be recorded.')
     } finally {
       setPendingKey(null)
     }
@@ -230,6 +269,7 @@ export function useReviewModel({ onReviewChanged }: ReviewModelOptions = {}): Re
     editingUpdate,
     ignore,
     pass,
+    recordTodoMutation,
     beginUpdate,
     editUpdate,
     saveObservation,

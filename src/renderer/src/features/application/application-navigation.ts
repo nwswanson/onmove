@@ -12,3 +12,9 @@ export interface FocusWorkspaceDestination {
 }
 
 export type FocusWorkspaceDestinationTarget = Omit<FocusWorkspaceDestination, 'requestId'>
+
+/** Data-only destination for selecting a Tag after entering the Tags workspace. */
+export interface TagsWorkspaceDestination {
+  requestId: number
+  name: string
+}

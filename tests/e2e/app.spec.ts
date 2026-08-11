@@ -139,6 +139,81 @@ test('sorts all current Todos and bounds recently completed work before renderin
   }
 })
 
+test('jumps to hierarchy records, all persisted Todos, and Tags through Cmd-K', async () => {
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-command-palette-e2e-'))
+  let application: ElectronApplication | undefined
+  const seed = new AppDatabase(join(userDataDirectory, 'onmove.sqlite3'))
+  const project = seed.domain.focuses.create({ title: 'Project Beacon' })
+  const sprint = seed.domain.threads.create({
+    focusId: project.id,
+    title: 'Sprint execution',
+    reviewFrequencyDays: 7
+  })
+  seed.domain.commitments.create({
+    parent: { type: 'thread', id: sprint.id },
+    type: 'ongoing',
+    title: 'Improve ticket quality'
+  })
+  const oldCompletionDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+  seed.domain.todos.create({
+    parent: { type: 'focus', id: project.id },
+    name: 'Confirm @launch brief',
+    done: true
+  }, oldCompletionDate)
+  seed.close()
+
+  try {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    const window = await application.firstWindow()
+    await expect(window.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
+
+    await window.keyboard.press('Meta+K')
+    let palette = window.getByRole('dialog', { name: 'Jump to anything' })
+    await expect(palette).toBeVisible()
+    await expect(palette.getByRole('option', { name: /^Project Beacon/ })).toBeVisible()
+    await expect(palette.getByRole('option', { name: /^Sprint execution/ })).toBeVisible()
+    await palette.getByRole('combobox').fill('ticket quality')
+    await palette.getByRole('option', { name: /^Improve ticket quality/ }).click()
+    await expect(window.getByRole('heading', {
+      name: 'Improve ticket quality',
+      exact: true
+    })).toBeVisible()
+    await expect(window.getByRole('button', {
+      name: 'Open Sprint execution commitment Improve ticket quality'
+    })).toHaveAttribute('aria-current', 'page')
+
+    await window.keyboard.press('Meta+K')
+    palette = window.getByRole('dialog', { name: 'Jump to anything' })
+    await palette.getByRole('combobox').fill('Confirm launch brief')
+    await palette.getByRole('option', { name: /^Confirm @launch brief/ }).click()
+    await expect(window.getByRole('button', { name: 'Overall', exact: true })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    await expect(window.getByRole('textbox', { name: 'Todo name', exact: true })).toHaveValue(
+      'Confirm @launch brief'
+    )
+
+    await window.keyboard.press('Meta+K')
+    palette = window.getByRole('dialog', { name: 'Jump to anything' })
+    await palette.getByRole('combobox').fill('@launch')
+    await palette.getByRole('option', { name: /^@launch/ }).click()
+    await expect(window.getByRole('heading', { name: '@launch', exact: true })).toBeVisible()
+    await expect(window.getByRole('button', { name: '@launch' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+  } finally {
+    await application?.close()
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
 test('reviews active work before cadence is due and refreshes typed pokes in the workspace', async () => {
   const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-review-e2e-'))
   let application: ElectronApplication | undefined
@@ -187,6 +262,43 @@ test('reviews active work before cadence is due and refreshes typed pokes in the
       name: 'Thread review: Sprint execution'
     })).toBeVisible()
     await expect(window.getByText('Subject · North region')).toBeVisible()
+
+    await window.getByRole('textbox', { name: 'New Todo name' }).fill('Confirm regional owner')
+    await window.getByRole('button', { name: 'Add Todo' }).click()
+    const reviewTodoName = window.getByRole('textbox', { name: 'Todo name', exact: true })
+    await expect(reviewTodoName).toHaveValue('Confirm regional owner')
+    await reviewTodoName.fill('Confirm regional DRI')
+    await reviewTodoName.press('Tab')
+    await expect.poll(() => {
+      const stored = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
+        readOnly: true
+      })
+      const threadReview = stored.prepare(
+        `SELECT reviewed_on AS reviewedOn FROM thread_review_cell_pokes
+         WHERE thread_id = ? AND scope_id = ? AND subject_id = ?`
+      ).get(
+        currentThread.id,
+        threadScope.scopeId,
+        reviewSubject.id
+      ) as { reviewedOn: string } | undefined
+      const todoRow = stored.prepare(
+        `SELECT name, scope_id AS scopeId, subject_id AS subjectId FROM todos
+         WHERE thread_id = ?`
+      ).get(currentThread.id) as {
+        name: string
+        scopeId: number
+        subjectId: number
+      } | undefined
+      stored.close()
+      return { threadReview, todoRow }
+    }).toMatchObject({
+      threadReview: { reviewedOn: reviewDate },
+      todoRow: {
+        name: 'Confirm regional DRI',
+        scopeId: threadScope.scopeId,
+        subjectId: reviewSubject.id
+      }
+    })
 
     await window.getByRole('button', { name: 'Pass along' }).click()
     await expect(window.getByRole('article', {

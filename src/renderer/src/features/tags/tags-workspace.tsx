@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ContextualSidebar,
   ContextualSidebarLevel,
@@ -10,7 +10,10 @@ import {
   type ContextDrawerControl
 } from '@/components/ui/context-drawer'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
-import type { FocusWorkspaceDestinationTarget } from '@/features/application/application-navigation'
+import type {
+  FocusWorkspaceDestinationTarget,
+  TagsWorkspaceDestination
+} from '@/features/application/application-navigation'
 import {
   tagSidebarItems,
   tagUseRows
@@ -25,12 +28,16 @@ interface TagsWorkspaceProps {
   contextDrawer: ContextDrawerControl
   hideSensitiveContent: boolean
   onOpenContext: (destination: FocusWorkspaceDestinationTarget) => void
+  destination?: TagsWorkspaceDestination | null
+  onDestinationApplied?: (requestId: number) => void
 }
 
 export function TagsWorkspace({
   contextDrawer,
   hideSensitiveContent,
-  onOpenContext
+  onOpenContext,
+  destination = null,
+  onDestinationApplied
 }: TagsWorkspaceProps): React.JSX.Element {
   const [sidebarWidth, setSidebarWidth] = useState(248)
   const [level] = useState(() => new ContextualSidebarLevel({
@@ -41,6 +48,7 @@ export function TagsWorkspace({
     emptyState: 'No tags yet'
   }))
   const [navigation] = useState(() => new ContextualSidebarNavigation(level))
+  const appliedDestinationRequest = useRef<number | null>(null)
   const navigationSnapshot = useContextualSidebarNavigation(navigation)
   const selectedTag = navigationSnapshot.selectedItemId
   const model = useTagsModel(selectedTag)
@@ -57,6 +65,17 @@ export function TagsWorkspace({
     level.setItems(sidebarItems)
     navigation.refresh()
   }, [level, navigation, sidebarItems])
+
+  useEffect(() => {
+    if (
+      !destination ||
+      appliedDestinationRequest.current === destination.requestId ||
+      !sidebarItems.some(({ id }) => id === destination.name)
+    ) return
+    navigation.navigateToPath(level, destination.name)
+    appliedDestinationRequest.current = destination.requestId
+    onDestinationApplied?.(destination.requestId)
+  }, [destination, level, navigation, onDestinationApplied, sidebarItems])
 
   return (
     <WorkspaceShell

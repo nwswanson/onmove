@@ -1,0 +1,85 @@
+import { useEffect, useState } from 'react'
+import type {
+  CommitmentSnapshot,
+  FocusSnapshot,
+  TagSummarySnapshot,
+  ThreadSnapshot,
+  TodoSnapshot
+} from '../../../../shared/contracts'
+
+export interface CommandPaletteSnapshot {
+  focuses: readonly FocusSnapshot[]
+  threads: readonly ThreadSnapshot[]
+  commitments: readonly CommitmentSnapshot[]
+  todos: readonly TodoSnapshot[]
+  tags: readonly TagSummarySnapshot[]
+}
+
+export interface CommandPaletteModel {
+  snapshot: CommandPaletteSnapshot | null
+  loading: boolean
+  error: string | null
+}
+
+interface CommandPaletteModelOptions {
+  open: boolean
+  focuses: readonly FocusSnapshot[]
+}
+
+async function loadSnapshot(
+  focuses: readonly FocusSnapshot[]
+): Promise<CommandPaletteSnapshot> {
+  const [focusBundles, todos, tags] = await Promise.all([
+    Promise.all(focuses.map(async (focus) => {
+      const [threads, focusCommitments] = await Promise.all([
+        window.onmove.domain.listThreads(focus.id),
+        window.onmove.domain.listCommitments({ type: 'focus', id: focus.id })
+      ])
+      const threadCommitments = await Promise.all(
+        threads.map((thread) =>
+          window.onmove.domain.listCommitments({ type: 'thread', id: thread.id }))
+      )
+      return { threads, commitments: [...focusCommitments, ...threadCommitments.flat()] }
+    })),
+    window.onmove.domain.queryTodos(),
+    window.onmove.domain.listTags()
+  ])
+
+  return {
+    focuses,
+    threads: focusBundles.flatMap(({ threads }) => threads),
+    commitments: focusBundles.flatMap(({ commitments }) => commitments),
+    todos,
+    tags
+  }
+}
+
+/** Loads the searchable application graph on demand and keeps preload access out of the shell. */
+export function useCommandPaletteModel({
+  open,
+  focuses
+}: CommandPaletteModelOptions): CommandPaletteModel {
+  const [snapshot, setSnapshot] = useState<CommandPaletteSnapshot | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    let active = true
+    loadSnapshot(focuses).then(
+      (next) => {
+        if (!active) return
+        setSnapshot(next)
+        setError(null)
+      },
+      () => {
+        if (!active) return
+        setError('Search destinations could not be loaded.')
+      }
+    )
+    return () => {
+      active = false
+    }
+  }, [focuses, open])
+
+  return { snapshot, loading: snapshot === null && error === null, error }
+}

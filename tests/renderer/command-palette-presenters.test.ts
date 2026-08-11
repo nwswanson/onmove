@@ -1,0 +1,186 @@
+import { describe, expect, it } from 'vitest'
+import type {
+  CommitmentSnapshot,
+  FocusSnapshot,
+  SubjectSnapshot,
+  ThreadSnapshot,
+  TodoSnapshot
+} from '../../src/shared/contracts'
+import { commandPaletteGroups } from '../../src/renderer/src/features/application/command-palette-presenters'
+import type { CommandPaletteSnapshot } from '../../src/renderer/src/features/application/use-command-palette-model'
+
+function focus(overrides: Partial<FocusSnapshot> = {}): FocusSnapshot {
+  return {
+    id: 1,
+    kind: 'generic',
+    title: 'Project Atlas',
+    description: null,
+    goal: '',
+    status: 'active',
+    statusChangedAt: '2026-08-01T12:00:00.000Z',
+    lastReviewDate: null,
+    needsReview: true,
+    sensitive: false,
+    notes: [],
+    createdAt: '2026-08-01T12:00:00.000Z',
+    updatedAt: '2026-08-01T12:00:00.000Z',
+    ...overrides
+  }
+}
+
+function thread(overrides: Partial<ThreadSnapshot> = {}): ThreadSnapshot {
+  return {
+    id: 10,
+    focusId: 1,
+    title: 'Sprint execution',
+    health: 'none',
+    status: 'active',
+    reviewFrequencyDays: 7,
+    lastReviewDate: null,
+    nextReviewDate: '2026-08-08',
+    needsReview: true,
+    reviewDue: false,
+    sensitive: false,
+    notes: [],
+    createdAt: '2026-08-01T12:00:00.000Z',
+    updatedAt: '2026-08-01T12:00:00.000Z',
+    ...overrides
+  }
+}
+
+function commitment(overrides: Partial<CommitmentSnapshot> = {}): CommitmentSnapshot {
+  return {
+    id: 20,
+    parent: { type: 'thread', id: 10 },
+    type: 'ongoing',
+    title: 'Improve ticket quality',
+    status: 'active',
+    state: 'none',
+    dueDate: null,
+    cadenceDays: null,
+    lastReviewDate: null,
+    lastUpdateDate: null,
+    nextUpdateDate: null,
+    needsUpdate: false,
+    sensitive: false,
+    notes: [],
+    createdAt: '2026-08-01T12:00:00.000Z',
+    updatedAt: '2026-08-01T12:00:00.000Z',
+    ...overrides
+  }
+}
+
+function subject(overrides: Partial<SubjectSnapshot> = {}): SubjectSnapshot {
+  return {
+    id: 30,
+    kind: 'generic',
+    name: 'North region',
+    description: null,
+    externalKey: null,
+    sensitive: false,
+    createdAt: '2026-08-01T12:00:00.000Z',
+    updatedAt: '2026-08-01T12:00:00.000Z',
+    ...overrides
+  }
+}
+
+function todo(overrides: Partial<TodoSnapshot> = {}): TodoSnapshot {
+  return {
+    id: 40,
+    name: 'Confirm regional owner',
+    parent: {
+      type: 'commitment-scope',
+      id: 20,
+      scope: { scopeId: 4, subjectId: 30 }
+    },
+    subject: subject(),
+    sharedAcrossSubjects: false,
+    subjectCompletions: [],
+    dueDate: null,
+    done: true,
+    completedAt: '2026-01-01T12:00:00.000Z',
+    sort: [],
+    createdAt: '2026-01-01T12:00:00.000Z',
+    updatedAt: '2026-01-01T12:00:00.000Z',
+    ...overrides
+  }
+}
+
+function snapshot(overrides: Partial<CommandPaletteSnapshot> = {}): CommandPaletteSnapshot {
+  return {
+    focuses: [focus()],
+    threads: [thread()],
+    commitments: [commitment()],
+    todos: [todo()],
+    tags: [{ name: 'launch', useCount: 3, sensitiveUseCount: 1 }],
+    ...overrides
+  }
+}
+
+describe('command palette presenters', () => {
+  it('projects every searchable record kind into an atomic navigation destination', () => {
+    const groups = commandPaletteGroups(snapshot(), false)
+    expect(groups.map(({ label }) => label)).toEqual([
+      'Focuses',
+      'Threads',
+      'Commitments',
+      'Todos',
+      'Tags'
+    ])
+    expect(groups.flatMap(({ items }) => items)).toMatchObject([
+      {
+        id: 'focus:1',
+        label: 'Project Atlas',
+        destination: {
+          type: 'focus',
+          target: { focusId: 1, threadId: null, commitmentId: null, subjectId: null }
+        }
+      },
+      {
+        id: 'thread:10',
+        label: 'Sprint execution',
+        destination: {
+          type: 'focus',
+          target: { focusId: 1, threadId: 10, commitmentId: null, subjectId: null }
+        }
+      },
+      {
+        id: 'commitment:20',
+        label: 'Improve ticket quality',
+        destination: {
+          type: 'focus',
+          target: { focusId: 1, threadId: 10, commitmentId: 20, subjectId: null }
+        }
+      },
+      {
+        id: 'todo:40',
+        label: 'Confirm regional owner',
+        description: 'Project Atlas › Sprint execution › Improve ticket quality › North region',
+        destination: {
+          type: 'focus',
+          target: { focusId: 1, threadId: 10, commitmentId: 20, subjectId: 30 }
+        }
+      },
+      {
+        id: 'tag:launch',
+        label: '@launch',
+        destination: { type: 'tag', name: 'launch' }
+      }
+    ])
+  })
+
+  it('cascades sensitive visibility through descendants and hides sensitive-only Tags', () => {
+    const groups = commandPaletteGroups(snapshot({
+      threads: [thread({ sensitive: true })],
+      tags: [
+        { name: 'public', useCount: 2, sensitiveUseCount: 1 },
+        { name: 'secret', useCount: 2, sensitiveUseCount: 2 }
+      ]
+    }), true)
+
+    expect(groups.map(({ id }) => id)).toEqual(['focuses', 'tags'])
+    expect(groups.find(({ id }) => id === 'tags')?.items).toMatchObject([
+      { label: '@public', description: '1 use' }
+    ])
+  })
+})

@@ -1,6 +1,11 @@
 import { useState } from 'react'
 import { ArrowRight, Check, MessageSquarePlus, SkipForward } from 'lucide-react'
-import type { EditUpdateInput, UpdateSnapshot } from '../../../../shared/contracts'
+import type {
+  EditUpdateInput,
+  ReviewQueueItemSnapshot,
+  TodoParent,
+  UpdateSnapshot
+} from '../../../../shared/contracts'
 import { Button } from '@/components/ui/button'
 import {
   ContextDrawerOutlet,
@@ -22,12 +27,34 @@ import {
 } from '@/features/review/review-presenters'
 import { useReviewModel } from '@/features/review/use-review-model'
 import { SensitivityToggle } from '@/features/shared/sensitivity-toggle'
+import { DirectTodos } from '@/features/todos/direct-todos'
 import { UPDATE_LIST_STATE_OPTIONS } from '@/features/updates/updates-presenters'
 
 interface ReviewWorkspaceProps {
   contextDrawer: ContextDrawerControl
   hideSensitiveContent: boolean
   onReviewChanged?: (focusId: number) => void | Promise<void>
+}
+
+function reviewTodoContext(item: ReviewQueueItemSnapshot): TodoParent {
+  if (item.kind === 'focus') return { type: 'focus', id: item.focus.id }
+  if (item.kind === 'thread' && item.thread) {
+    return item.cell
+      ? {
+          type: 'thread-scope',
+          id: item.thread.id,
+          scope: { scopeId: item.cell.scopeId, subjectId: item.cell.subjectId }
+        }
+      : { type: 'thread', id: item.thread.id }
+  }
+  if (!item.commitment) throw new Error('A Commitment review item requires a Commitment')
+  return item.cell
+    ? {
+        type: 'commitment-scope',
+        id: item.commitment.id,
+        scope: { scopeId: item.cell.scopeId, subjectId: item.cell.subjectId }
+      }
+    : { type: 'commitment', id: item.commitment.id }
 }
 
 function ReviewUpdateEditor({
@@ -334,6 +361,14 @@ export function ReviewWorkspace({
                 className="mt-6 overflow-hidden rounded-xl border border-border/85 bg-card/25 shadow-xs"
               >
                 <ReviewDetails model={currentModel} />
+
+                <div className="border-t border-border/75 px-5 pb-6 sm:px-7">
+                  <DirectTodos
+                    key={current.key}
+                    context={reviewTodoContext(current)}
+                    onMutation={() => review.recordTodoMutation(current)}
+                  />
+                </div>
 
                 {editing && review.editingUpdate ? (
                   <ReviewUpdateEditor

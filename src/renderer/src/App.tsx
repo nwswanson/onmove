@@ -1,5 +1,5 @@
-import { useReducer, useRef, useState } from 'react'
-import { AlertTriangle, FolderOpen, Info, Settings } from 'lucide-react'
+import { useEffect, useReducer, useRef, useState } from 'react'
+import { AlertTriangle, FolderOpen, Info, Search, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   contextDrawerReducer,
@@ -28,9 +28,14 @@ import { SidebarDndProvider } from '@/components/ui/sidebar-dnd'
 import { Toolbar, ToolbarGroup } from '@/components/ui/toolbar'
 import { ApplicationShell, WorkspaceShell } from '@/components/ui/workspace-shell'
 import { useApplicationModel } from '@/features/application/use-application-model'
+import { ApplicationCommandPalette } from '@/features/application/command-palette'
+import type {
+  CommandPaletteDestination
+} from '@/features/application/command-palette-presenters'
 import type {
   FocusWorkspaceDestination,
-  FocusWorkspaceDestinationTarget
+  FocusWorkspaceDestinationTarget,
+  TagsWorkspaceDestination
 } from '@/features/application/application-navigation'
 import { NewFocusDialog } from '@/features/focus/focus-ui'
 import { focusPrimaryNavigationItems } from '@/features/focus/focus-presenters'
@@ -50,6 +55,7 @@ interface AppToolbarProps {
   title: string
   contextOpen: boolean
   enabled: boolean
+  onOpenCommandPalette: () => void
   onToggleContext: () => void
   onShowData: () => void
 }
@@ -58,6 +64,7 @@ function AppToolbar({
   title,
   contextOpen,
   enabled,
+  onOpenCommandPalette,
   onToggleContext,
   onShowData
 }: AppToolbarProps): React.JSX.Element {
@@ -66,6 +73,18 @@ function AppToolbar({
       <div className="w-17 shrink-0" aria-hidden="true" />
       <p className="max-w-72 truncate text-xs font-semibold tracking-tight">{title}</p>
       <ToolbarGroup className="ml-auto">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-8 text-muted-foreground"
+          aria-label="Open command palette"
+          title="Jump to anything (⌘K)"
+          disabled={!enabled}
+          onClick={onOpenCommandPalette}
+        >
+          <Search aria-hidden="true" />
+        </Button>
         <Button
           type="button"
           variant="ghost"
@@ -227,6 +246,7 @@ function LoadingView(): React.JSX.Element {
 export function App(): React.JSX.Element {
   const application = useApplicationModel()
   const [newFocusOpen, setNewFocusOpen] = useState(false)
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
   const [contextDrawerState, dispatchContextDrawer] = useReducer(
     contextDrawerReducer,
     initialContextDrawerState
@@ -238,7 +258,10 @@ export function App(): React.JSX.Element {
   >({})
   const [focusDestination, setFocusDestination] =
     useState<FocusWorkspaceDestination | null>(null)
+  const [tagsDestination, setTagsDestination] =
+    useState<TagsWorkspaceDestination | null>(null)
   const focusDestinationRequest = useRef(0)
+  const tagsDestinationRequest = useRef(0)
   const selectedFocus = application.selectedFocus
   const focusItems = focusPrimaryNavigationItems(
     application.navigableFocuses,
@@ -267,6 +290,24 @@ export function App(): React.JSX.Element {
       dispatchContextDrawer({ type: 'invalidate', keys })
   } satisfies ContextDrawerControl
 
+  useEffect(() => {
+    function handleCommandPaletteShortcut(event: KeyboardEvent): void {
+      if (
+        !application.enabled ||
+        !event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.shiftKey ||
+        event.repeat ||
+        event.key.toLowerCase() !== 'k'
+      ) return
+      event.preventDefault()
+      setCommandPaletteOpen((open) => !open)
+    }
+    document.addEventListener('keydown', handleCommandPaletteShortcut)
+    return () => document.removeEventListener('keydown', handleCommandPaletteShortcut)
+  }, [application.enabled])
+
   async function deleteFocus(focusId: number): Promise<void> {
     await application.deleteFocus(focusId)
     contextDrawer.onInvalidate([`focus:${focusId}`])
@@ -274,6 +315,7 @@ export function App(): React.JSX.Element {
 
   function openTodoContext(destination: FocusWorkspaceDestinationTarget): void {
     if (!application.selectFocus(destination.focusId)) return
+    setTagsDestination(null)
     setFocusSubjectSelections((current) => ({
       ...current,
       [destination.focusId]: destination.subjectId
@@ -282,6 +324,19 @@ export function App(): React.JSX.Element {
       ...destination,
       requestId: ++focusDestinationRequest.current
     })
+  }
+
+  function openCommandPaletteDestination(destination: CommandPaletteDestination): void {
+    if (destination.type === 'focus') {
+      openTodoContext(destination.target)
+      return
+    }
+    setFocusDestination(null)
+    setTagsDestination({
+      name: destination.name,
+      requestId: ++tagsDestinationRequest.current
+    })
+    application.goTags()
   }
 
   async function finishThreadMove(
@@ -317,6 +372,7 @@ export function App(): React.JSX.Element {
             title={toolbarTitle}
             contextOpen={contextDrawerState.open}
             enabled={application.enabled}
+            onOpenCommandPalette={() => setCommandPaletteOpen(true)}
             onToggleContext={() => dispatchContextDrawer({ type: 'toggle' })}
             onShowData={() => void application.showDataFolder()}
           />
@@ -330,14 +386,17 @@ export function App(): React.JSX.Element {
             width={sidebarWidth}
             onTodos={() => {
               setFocusDestination(null)
+              setTagsDestination(null)
               application.goTodos()
             }}
             onTags={() => {
               setFocusDestination(null)
+              setTagsDestination(null)
               application.goTags()
             }}
             onReview={() => {
               setFocusDestination(null)
+              setTagsDestination(null)
               application.goReview()
             }}
             onSettings={application.goSettings}
@@ -367,6 +426,12 @@ export function App(): React.JSX.Element {
               contextDrawer={contextDrawer}
               hideSensitiveContent={application.sensitiveContentHidden}
               onOpenContext={openTodoContext}
+              destination={tagsDestination}
+              onDestinationApplied={(requestId) =>
+                setTagsDestination((current) =>
+                  current?.requestId === requestId ? null : current
+                )
+              }
             />
           ) : application.selectedView === 'review' ? (
             <ReviewWorkspace
@@ -442,6 +507,14 @@ export function App(): React.JSX.Element {
           onCreate={application.createFocus}
         />
       )}
+
+      <ApplicationCommandPalette
+        open={commandPaletteOpen}
+        focuses={application.navigableFocuses}
+        hideSensitiveContent={application.sensitiveContentHidden}
+        onOpenChange={setCommandPaletteOpen}
+        onSelect={openCommandPaletteDestination}
+      />
     </SidebarDndProvider>
   )
 }
