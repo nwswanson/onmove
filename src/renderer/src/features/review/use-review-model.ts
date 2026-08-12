@@ -22,6 +22,7 @@ export interface ReviewModel {
   editUpdate: (input: EditUpdateInput) => Promise<void>
   saveObservation: (value: string) => void
   openObservation: () => void
+  cancelUpdate: () => void
   finishUpdate: () => void
   refresh: () => Promise<void>
 }
@@ -250,6 +251,29 @@ export function useReviewModel({ onReviewChanged }: ReviewModelOptions = {}): Re
     })
   }
 
+  function cancelUpdate(): void {
+    if (!editingUpdate) return
+    const cancelled = editingUpdate
+    // Review Updates are durable from creation onward. Cancelling only exits
+    // the composer and promotes its latest autosaved snapshot into history.
+    setOverview((current) => current
+      ? {
+          ...current,
+          items: current.items.map((item) => item.key === cancelled.itemKey
+            ? {
+                ...item,
+                updates: [
+                  cancelled.update,
+                  ...item.updates.filter(({ id }) => id !== cancelled.update.id)
+                ]
+              }
+            : item)
+        }
+      : current)
+    setEditingUpdate(null)
+    setError(null)
+  }
+
   function finishUpdate(): void {
     if (!editingUpdate) return
     const item = overview?.items.find(({ key }) => key === editingUpdate.itemKey)
@@ -274,6 +298,7 @@ export function useReviewModel({ onReviewChanged }: ReviewModelOptions = {}): Re
     editUpdate,
     saveObservation,
     openObservation,
+    cancelUpdate,
     finishUpdate,
     refresh
   }

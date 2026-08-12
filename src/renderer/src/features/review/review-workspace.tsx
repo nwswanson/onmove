@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowRight, Check, MessageSquarePlus, SkipForward } from 'lucide-react'
+import { ArrowRight, Check, MessageSquarePlus, SkipForward, X } from 'lucide-react'
 import type {
   EditUpdateInput,
   ReviewQueueItemSnapshot,
@@ -64,12 +64,14 @@ function ReviewUpdateEditor({
   onEdit,
   onObservationChange,
   onOpenObservation,
+  onCancel,
   onFinish
 }: {
   update: UpdateSnapshot
   onEdit: (input: EditUpdateInput) => Promise<void>
   onObservationChange: (value: string) => void
   onOpenObservation: () => void
+  onCancel: () => void
   onFinish: () => void
 }): React.JSX.Element {
   const [saving, setSaving] = useState(false)
@@ -150,7 +152,11 @@ function ReviewUpdateEditor({
         onOpenInWindow={onOpenObservation}
       />
 
-      <div className="mt-4 flex justify-end">
+      <div className="mt-4 flex flex-wrap justify-end gap-2">
+        <Button type="button" variant="outline" disabled={saving} onClick={onCancel}>
+          <X aria-hidden="true" />
+          Cancel update
+        </Button>
         <Button type="button" disabled={saving} onClick={onFinish}>
           <Check aria-hidden="true" />
           Finish update
@@ -160,139 +166,102 @@ function ReviewUpdateEditor({
   )
 }
 
-function ReviewDetails({ model }: { model: ReviewItemModel }): React.JSX.Element {
+function ReviewSupportingDetails({
+  model
+}: {
+  model: ReviewItemModel
+}): React.JSX.Element | null {
+  if (!model.goal && !model.description && model.commitments.length === 0) return null
+
   return (
-    <>
-      <header className="border-b border-border/75 px-5 py-6 sm:px-7">
-        <p className="text-[0.6875rem] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
-          {model.contextLabel} · {model.kindLabel}
-        </p>
-        <div className="mt-2 flex flex-wrap items-center gap-2.5">
-          <h2 className="min-w-0 text-xl font-semibold tracking-[-0.02em]">
-            <TaggedText value={model.title} />
-          </h2>
-          <LifecycleStatusLabel model={model.status} />
-          {model.state && <StateLabel model={model.state} />}
-        </div>
-        {model.subjectLabel && (
-          <p className="mt-3 inline-flex rounded-md border border-primary/40 bg-primary/15 px-2 py-1 text-xs font-medium">
-            Subject · {model.subjectLabel}
-          </p>
-        )}
-        <dl className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
-          <div className="flex gap-1.5">
-            <dt>{model.kindLabel === 'Commitment' ? 'Last updated' : 'Last reviewed'}</dt>
-            <dd className="font-medium text-foreground">{model.lastReviewLabel}</dd>
-          </div>
-          {model.nextReviewLabel && (
-            <div className="flex gap-1.5">
-              <dt>
-                {model.kindLabel === 'Commitment'
-                  ? (model.due ? 'Update due' : 'Next update')
-                  : (model.due ? 'Review due' : 'Next review')}
-              </dt>
-              <dd className={model.due ? 'font-medium text-destructive' : 'font-medium text-foreground'}>
-                {model.nextReviewLabel}
-              </dd>
-            </div>
-          )}
-          {model.dueDate && (
-            <div className="flex gap-1.5">
-              <dt>Due</dt>
-              <dd className="font-medium text-foreground">{model.dueDate}</dd>
-            </div>
-          )}
-          {model.cadenceDays && (
-            <div className="flex gap-1.5">
-              <dt>Cadence</dt>
-              <dd className="font-medium text-foreground">Every {model.cadenceDays} days</dd>
-            </div>
-          )}
-        </dl>
-      </header>
-
-      <div className="space-y-7 px-5 py-6 sm:px-7">
-        {model.goal && (
-          <section aria-labelledby="review-goal-heading">
-            <h3 id="review-goal-heading" className="mb-2 text-xs font-semibold text-muted-foreground uppercase">
-              Goal
-            </h3>
-            <RichTextContent value={model.goal} ariaLabel="Focus goal" />
-          </section>
-        )}
-        {model.description && (
-          <section aria-labelledby="review-description-heading">
-            <h3 id="review-description-heading" className="mb-2 text-xs font-semibold text-muted-foreground uppercase">
-              Description
-            </h3>
-            <RichTextContent value={model.description} ariaLabel="Focus description" />
-          </section>
-        )}
-
-        {model.commitments.length > 0 && (
-          <section aria-labelledby="review-commitments-heading">
-            <div className="mb-2 flex items-baseline justify-between gap-3">
-              <h3 id="review-commitments-heading" className="text-xs font-semibold text-muted-foreground uppercase">
-                Commitments
-              </h3>
-              <span className="text-xs text-muted-foreground">{model.commitments.length}</span>
-            </div>
-            <ul
-              aria-label="Related commitments"
-              className="divide-y divide-border/65 overflow-hidden rounded-lg border border-border/80 bg-card/35"
-            >
-              {model.commitments.map((commitment) => (
-                <li key={commitment.id} className="flex min-w-0 flex-wrap items-center gap-2 px-3 py-2">
-                  <span className="min-w-40 flex-1 truncate text-sm">
-                    <TaggedText value={commitment.title} />
-                  </span>
-                  <LifecycleStatusLabel model={commitment.status} size="compact" />
-                  <StateLabel model={commitment.state} size="compact" />
-                  <span className="text-[0.6875rem] text-muted-foreground">
-                    Updated {commitment.lastUpdatedLabel}
-                  </span>
-                </li>
-              ))}
-            </ul>
-            <p className="mt-2 text-[0.6875rem] text-muted-foreground">
-              Commitment rows are reference-only during review.
-            </p>
-          </section>
-        )}
-
-        <section aria-labelledby="review-recent-updates-heading">
-          <div className="mb-2 flex items-baseline justify-between gap-3">
-            <h3 id="review-recent-updates-heading" className="text-xs font-semibold text-muted-foreground uppercase">
-              Recent updates
-            </h3>
-            {model.updates.length > 0 && (
-              <span className="text-xs text-muted-foreground">Latest {model.updates.length}</span>
-            )}
-          </div>
-          {model.updates.length === 0 ? (
-            <p className="border-t border-border/75 py-4 text-sm text-muted-foreground">
-              No direct updates yet.
-            </p>
-          ) : (
-            <ul aria-label="Recent direct updates" className="divide-y divide-border/65 border-y border-border/75">
-              {model.updates.map((update) => (
-                <li key={update.id} className="py-3">
-                  <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                    <time className="text-xs font-medium">{update.date}</time>
-                    <StateLabel model={update.state} size="compact" />
-                  </div>
-                  {update.observation ? (
-                    <RichTextContent value={update.observation} ariaLabel={`Update from ${update.date}`} />
-                  ) : (
-                    <p className="text-sm text-muted-foreground">No observation recorded.</p>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
+    <div className="space-y-7 border-t border-border/75 px-5 py-6 sm:px-7">
+      {model.goal && (
+        <section aria-labelledby="review-goal-heading">
+          <h3 id="review-goal-heading" className="mb-2 text-xs font-semibold text-muted-foreground uppercase">
+            Goal
+          </h3>
+          <RichTextContent value={model.goal} ariaLabel="Focus goal" />
         </section>
+      )}
+      {model.description && (
+        <section aria-labelledby="review-description-heading">
+          <h3 id="review-description-heading" className="mb-2 text-xs font-semibold text-muted-foreground uppercase">
+            Description
+          </h3>
+          <RichTextContent value={model.description} ariaLabel="Focus description" />
+        </section>
+      )}
+
+      {model.commitments.length > 0 && (
+        <section aria-labelledby="review-commitments-heading">
+          <div className="mb-2 flex items-baseline justify-between gap-3">
+            <h3 id="review-commitments-heading" className="text-xs font-semibold text-muted-foreground uppercase">
+              Commitments
+            </h3>
+            <span className="text-xs text-muted-foreground">{model.commitments.length}</span>
+          </div>
+          <ul
+            aria-label="Related commitments"
+            className="divide-y divide-border/65 overflow-hidden rounded-lg border border-border/80 bg-card/35"
+          >
+            {model.commitments.map((commitment) => (
+              <li key={commitment.id} className="flex min-w-0 flex-wrap items-center gap-2 px-3 py-2">
+                <span className="min-w-40 flex-1 truncate text-sm">
+                  <TaggedText value={commitment.title} />
+                </span>
+                <LifecycleStatusLabel model={commitment.status} size="compact" />
+                <StateLabel model={commitment.state} size="compact" />
+                <span className="text-[0.6875rem] text-muted-foreground">
+                  Updated {commitment.lastUpdatedLabel}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[0.6875rem] text-muted-foreground">
+            Commitment rows are reference-only during review.
+          </p>
+        </section>
+      )}
+    </div>
+  )
+}
+
+function ReviewUpdates({ model }: { model: ReviewItemModel }): React.JSX.Element {
+  return (
+    <section
+      aria-labelledby="review-recent-updates-heading"
+      className="border-t border-border/75 px-5 py-6 sm:px-7"
+    >
+      <div className="mb-2 flex items-baseline justify-between gap-3">
+        <h3 id="review-recent-updates-heading" className="text-xs font-semibold text-muted-foreground uppercase">
+          Recent updates
+        </h3>
+        {model.updates.length > 0 && (
+          <span className="text-xs text-muted-foreground">Latest {model.updates.length}</span>
+        )}
       </div>
-    </>
+      {model.updates.length === 0 ? (
+        <p className="border-t border-border/75 py-4 text-sm text-muted-foreground">
+          No direct updates yet.
+        </p>
+      ) : (
+        <ul aria-label="Recent direct updates" className="divide-y divide-border/65 border-y border-border/75">
+          {model.updates.map((update) => (
+            <li key={update.id} className="py-3">
+              <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                <time className="text-xs font-medium">{update.date}</time>
+                <StateLabel model={update.state} size="compact" />
+              </div>
+              {update.observation ? (
+                <RichTextContent value={update.observation} ariaLabel={`Update from ${update.date}`} />
+              ) : (
+                <p className="text-sm text-muted-foreground">No observation recorded.</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   )
 }
 
@@ -327,33 +296,12 @@ export function ReviewWorkspace({
       main={
         <main className="min-w-0 flex-1 overflow-auto bg-background" aria-labelledby="review-heading">
           <section className="mx-auto flex min-h-full w-full max-w-6xl flex-col px-6 py-7 sm:px-10">
-            <div className="flex flex-wrap items-end justify-between gap-3">
-              <div>
-                <h1 id="review-heading" className="text-2xl font-semibold tracking-[-0.025em]">
-                  Review
-                </h1>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Work through the items that currently need attention.
-                </p>
-              </div>
-              {!review.loading && visibleItems.length > 0 && (
-                <p className="text-xs font-medium text-muted-foreground" aria-live="polite">
-                  {remainingItems.length} remaining · {completed} reviewed
-                </p>
-              )}
-            </div>
-
-            <div className="mt-4 h-1 overflow-hidden rounded-full bg-muted" aria-hidden="true">
-              <div
-                className="h-full rounded-full bg-primary transition-[width] duration-300"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
+            <h1 id="review-heading" className="sr-only">Review</h1>
 
             {review.loading ? (
-              <p className="mt-10 text-sm text-muted-foreground">Loading review…</p>
+              <p className="text-sm text-muted-foreground">Loading review…</p>
             ) : review.error && review.overview === null ? (
-              <div className="mt-10">
+              <div>
                 <p role="alert" className="text-sm text-destructive">{review.error}</p>
                 <Button className="mt-4" variant="outline" onClick={() => void review.refresh()}>
                   Try again
@@ -362,11 +310,110 @@ export function ReviewWorkspace({
             ) : current && currentModel ? (
               <article
                 aria-label={`${currentModel.kindLabel} review: ${currentModel.title}`}
-                className="mt-6 overflow-hidden rounded-xl border border-border/85 bg-card/25 shadow-xs"
+                className="overflow-hidden rounded-xl border border-border/85 bg-card/25 shadow-xs"
               >
-                <ReviewDetails model={currentModel} />
+                <div className="border-b border-border/75 bg-muted/15">
+                  <div
+                    role="toolbar"
+                    aria-label="Review actions"
+                    className="flex flex-wrap items-start justify-between gap-4 px-5 py-4 sm:px-7"
+                  >
+                    <div className="min-w-52 flex-1">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <p className="text-[0.6875rem] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
+                          {currentModel.contextLabel} · {currentModel.kindLabel}
+                        </p>
+                        <p className="text-[0.6875rem] font-medium text-muted-foreground" aria-live="polite">
+                          {remainingItems.length} remaining · {completed} reviewed
+                        </p>
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
+                        <p className="min-w-0 text-base font-semibold tracking-[-0.015em]">
+                          <TaggedText value={currentModel.title} />
+                        </p>
+                        <LifecycleStatusLabel model={currentModel.status} />
+                        {currentModel.state && <StateLabel model={currentModel.state} />}
+                        {currentModel.subjectLabel && (
+                          <span className="rounded-md border border-primary/40 bg-primary/15 px-2 py-1 text-xs font-medium">
+                            Subject · {currentModel.subjectLabel}
+                          </span>
+                        )}
+                      </div>
+                      <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-[0.6875rem] text-muted-foreground">
+                        <div className="flex gap-1.5">
+                          <dt>{currentModel.kindLabel === 'Commitment' ? 'Last updated' : 'Last reviewed'}</dt>
+                          <dd className="font-medium text-foreground">{currentModel.lastReviewLabel}</dd>
+                        </div>
+                        {currentModel.nextReviewLabel && (
+                          <div className="flex gap-1.5">
+                            <dt>
+                              {currentModel.kindLabel === 'Commitment'
+                                ? (currentModel.due ? 'Update due' : 'Next update')
+                                : (currentModel.due ? 'Review due' : 'Next review')}
+                            </dt>
+                            <dd className={currentModel.due
+                              ? 'font-medium text-destructive'
+                              : 'font-medium text-foreground'}>
+                              {currentModel.nextReviewLabel}
+                            </dd>
+                          </div>
+                        )}
+                        {currentModel.dueDate && (
+                          <div className="flex gap-1.5">
+                            <dt>Due</dt>
+                            <dd className="font-medium text-foreground">{currentModel.dueDate}</dd>
+                          </div>
+                        )}
+                        {currentModel.cadenceDays && (
+                          <div className="flex gap-1.5">
+                            <dt>Cadence</dt>
+                            <dd className="font-medium text-foreground">
+                              Every {currentModel.cadenceDays} days
+                            </dd>
+                          </div>
+                        )}
+                      </dl>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        disabled={pending || editing}
+                        onClick={() => review.ignore(current.key)}
+                      >
+                        <SkipForward aria-hidden="true" />
+                        Ignore
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={pending || editing}
+                        onClick={() => void review.pass(current)}
+                      >
+                        <ArrowRight aria-hidden="true" />
+                        {pending ? 'Passing…' : 'Pass along'}
+                      </Button>
+                      <Button
+                        type="button"
+                        disabled={pending || editing}
+                        onClick={() => void review.beginUpdate(current)}
+                        aria-keyshortcuts="Meta+P"
+                        title="Add update (⌘P)"
+                      >
+                        <MessageSquarePlus aria-hidden="true" />
+                        {pending ? 'Starting…' : editing ? 'Updating…' : 'Update'}
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="h-1 overflow-hidden bg-muted" aria-hidden="true">
+                    <div
+                      className="h-full bg-primary transition-[width] duration-300"
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
+                </div>
 
-                <div className="border-t border-border/75 px-5 pb-6 sm:px-7">
+                <div className="px-5 pb-6 sm:px-7">
                   <DirectTodos
                     key={current.key}
                     context={reviewTodoContext(current)}
@@ -381,42 +428,13 @@ export function ReviewWorkspace({
                     onEdit={review.editUpdate}
                     onObservationChange={review.saveObservation}
                     onOpenObservation={review.openObservation}
+                    onCancel={review.cancelUpdate}
                     onFinish={review.finishUpdate}
                   />
-                ) : (
-                  <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border/75 bg-muted/15 px-5 py-4 sm:px-7">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      disabled={pending}
-                      onClick={() => review.ignore(current.key)}
-                    >
-                      <SkipForward aria-hidden="true" />
-                      Ignore
-                    </Button>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={pending}
-                        onClick={() => void review.pass(current)}
-                      >
-                        <ArrowRight aria-hidden="true" />
-                        {pending ? 'Passing…' : 'Pass along'}
-                      </Button>
-                      <Button
-                        type="button"
-                        disabled={pending}
-                        onClick={() => void review.beginUpdate(current)}
-                        aria-keyshortcuts="Meta+P"
-                        title="Add update (⌘P)"
-                      >
-                        <MessageSquarePlus aria-hidden="true" />
-                        {pending ? 'Starting…' : 'Update'}
-                      </Button>
-                    </div>
-                  </footer>
-                )}
+                ) : null}
+
+                <ReviewUpdates model={currentModel} />
+                <ReviewSupportingDetails model={currentModel} />
               </article>
             ) : (
               <div className="mx-auto flex max-w-sm flex-1 flex-col items-center justify-center py-16 text-center">

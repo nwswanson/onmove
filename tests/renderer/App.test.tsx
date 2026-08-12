@@ -653,7 +653,7 @@ describe('App', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Review' }))
     expect(screen.getByRole('button', { name: 'Review' })).toHaveAttribute('aria-current', 'page')
-    expect(screen.getByRole('heading', { name: 'Review' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Review' })).toBeInTheDocument()
     expect(screen.queryByLabelText('Contextual sidebar')).not.toBeInTheDocument()
     expect(screen.getByRole('article', { name: 'Focus review: Project Atlas' })).toBeVisible()
     expect(screen.getByText('Ship the pilot safely')).toBeVisible()
@@ -851,6 +851,34 @@ describe('App', () => {
     const reviewEditor = screen.getByRole('heading', { name: 'Add review evidence' }).closest('section')
     expect(reviewEditor).not.toBeNull()
     await waitFor(() => expect(scrollIntoView.mock.instances).toContain(reviewEditor))
+    const reviewArticle = screen.getByRole('article', {
+      name: 'Commitment review: Hold weekly check-ins'
+    })
+    const actionBar = within(reviewArticle).getByRole('toolbar', { name: 'Review actions' })
+    const todos = within(reviewArticle).getByLabelText('commitment Todos')
+    const updates = within(reviewArticle).getByRole('heading', { name: 'Recent updates' })
+      .closest('section')
+    expect(updates).not.toBeNull()
+    expect(actionBar.compareDocumentPosition(todos) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+    expect(todos.compareDocumentPosition(reviewEditor!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+    expect(reviewEditor!.compareDocumentPosition(updates!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+
+    await user.selectOptions(screen.getByLabelText('Review Update state'), 'red')
+    await waitFor(() => expect(within(reviewEditor!).getByText('Red', {
+      selector: '[data-tone="danger"]'
+    })).toBeVisible())
+    await user.click(screen.getByRole('button', { name: 'Cancel update' }))
+    expect(screen.queryByRole('textbox', { name: 'Review Update observation' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Update' })).toBeEnabled()
+    expect(within(screen.getByRole('list', { name: 'Recent direct updates' })).getByText('Red'))
+      .toBeVisible()
+    expect(api.domain.deleteUpdate).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Update' }))
+    const resumedObservation = await screen.findByRole('textbox', {
+      name: 'Review Update observation'
+    })
+    expect(resumedObservation).toHaveFocus()
     await user.keyboard('Customer sentiment improved')
     await waitFor(() => expect(api.richText.saveDocument).toHaveBeenCalled())
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()

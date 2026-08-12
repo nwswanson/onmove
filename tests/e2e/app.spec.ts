@@ -523,7 +523,7 @@ test('reviews active work before cadence is due and refreshes typed pokes in the
     let window = await application.firstWindow()
 
     await window.getByRole('button', { name: 'Review' }).click()
-    await expect(window.getByRole('heading', { name: 'Review', exact: true })).toBeVisible()
+    await expect(window.getByRole('heading', { name: 'Review', exact: true })).toBeAttached()
     await expect(window.getByLabel('Contextual sidebar')).toHaveCount(0)
     await expect(window.getByRole('article', {
       name: 'Thread review: Sprint execution'
@@ -571,8 +571,33 @@ test('reviews active work before cadence is due and refreshes typed pokes in the
     await expect(window.getByRole('article', {
       name: 'Commitment review: Improve ticket quality'
     })).toBeVisible()
+    const commitmentReview = window.getByRole('article', {
+      name: 'Commitment review: Improve ticket quality'
+    })
+    const actionBar = commitmentReview.getByRole('toolbar', { name: 'Review actions' })
+    const todoSection = commitmentReview.locator('[aria-label="commitment Todos"]')
+    const updatesSection = commitmentReview.getByRole('heading', { name: 'Recent updates' })
+      .locator('xpath=..')
+    await expect(actionBar).toBeVisible()
+    expect(await actionBar.evaluate((bar, todo) => Boolean(
+      bar.compareDocumentPosition(todo as Node) & Node.DOCUMENT_POSITION_FOLLOWING
+    ), await todoSection.elementHandle())).toBe(true)
+
     await window.keyboard.press('Meta+p')
-    const observation = window.getByRole('textbox', { name: 'Review Update observation' })
+    let observation = window.getByRole('textbox', { name: 'Review Update observation' })
+    await expect(observation).toBeFocused()
+    expect(await todoSection.evaluate((todo, editor) => Boolean(
+      todo.compareDocumentPosition(editor as Node) & Node.DOCUMENT_POSITION_FOLLOWING
+    ), await observation.elementHandle())).toBe(true)
+    expect(await observation.evaluate((editor, updates) => Boolean(
+      editor.compareDocumentPosition(updates as Node) & Node.DOCUMENT_POSITION_FOLLOWING
+    ), await updatesSection.elementHandle())).toBe(true)
+    await window.getByRole('button', { name: 'Cancel update' }).click()
+    await expect(observation).toBeHidden()
+    await expect(window.getByRole('button', { name: 'Update' })).toBeEnabled()
+
+    await window.keyboard.press('Meta+p')
+    observation = window.getByRole('textbox', { name: 'Review Update observation' })
     await expect(observation).toBeFocused()
     await observation.fill('Ticket examples are now included')
     await window.getByRole('button', { name: 'Finish update' }).click()
@@ -591,7 +616,8 @@ test('reviews active work before cadence is due and refreshes typed pokes in the
         reviewSubject.id
       ) as { reviewedOn: string } | undefined
       const updateRow = stored.prepare(
-        'SELECT observation, commitment_id AS commitmentId FROM updates WHERE commitment_id = ?'
+        `SELECT observation, commitment_id AS commitmentId FROM updates
+         WHERE commitment_id = ? ORDER BY id DESC LIMIT 1`
       ).get(currentCommitment.id) as { observation: string; commitmentId: number } | undefined
       stored.close()
       return { threadReview, updateRow }
