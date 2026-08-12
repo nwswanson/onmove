@@ -35,6 +35,8 @@ export interface UpdateListProps {
   defaultState: string
   loading?: boolean
   loadError?: string | null
+  /** Opaque row id that should be revealed and focused when it enters this list. */
+  revealItemId?: string | null
   /** Returns the opaque created row id when its editor should receive focus. */
   onCreate?: (draft: UpdateListDraft) => Promise<string | void>
   createOptions?: readonly UpdateListCreateOptionModel[]

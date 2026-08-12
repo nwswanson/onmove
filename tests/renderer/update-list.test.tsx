@@ -93,6 +93,45 @@ describe('UpdateList', () => {
     expect(onDelete).toHaveBeenCalledWith('20')
   })
 
+  it('reveals a row created by an external composer', async () => {
+    const scrollIntoView = vi.spyOn(HTMLElement.prototype, 'scrollIntoView')
+    const item = {
+      id: '20',
+      date: '2026-08-01',
+      observation: 'Created globally',
+      state: 'green',
+      sensitive: false
+    }
+    const rendered = render(
+      <UpdateList
+        ariaLabel="External updates"
+        items={[item]}
+        stateOptions={states}
+        defaultDate="2026-08-07"
+        defaultState="none"
+        revealItemId={null}
+        onUpdate={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    )
+
+    rendered.rerender(
+      <UpdateList
+        ariaLabel="External updates"
+        items={[item]}
+        stateOptions={states}
+        defaultDate="2026-08-07"
+        defaultState="none"
+        revealItemId="20"
+        onUpdate={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    )
+
+    const card = screen.getByRole('listitem', { name: 'Update from 2026-08-01' })
+    await waitFor(() => expect(scrollIntoView.mock.instances).toContain(card))
+  })
+
   it('owns choice-based immediate creation without exposing a second create step', async () => {
     const onCreateFor = vi.fn().mockResolvedValue(undefined)
     const user = userEvent.setup()
@@ -128,10 +167,9 @@ describe('UpdateList', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('creates directly with Cmd-P and focuses the persisted observation editor', async () => {
+  it('leaves Cmd-P to the workspace-level update composer', () => {
     const onCreate = vi.fn().mockResolvedValue('42')
-    const scrollIntoView = vi.spyOn(HTMLElement.prototype, 'scrollIntoView')
-    const { rerender } = render(
+    render(
       <UpdateList
         ariaLabel="Shortcut updates"
         items={[]}
@@ -162,45 +200,11 @@ describe('UpdateList', () => {
     })
     document.dispatchEvent(metaEvent)
 
-    expect(metaEvent.defaultPrevented).toBe(true)
-    await waitFor(() => expect(onCreate).toHaveBeenCalledWith({
-      date: '2026-08-11',
-      observation: '',
-      state: 'none',
-      sensitive: false
-    }))
-
-    rerender(
-      <UpdateList
-        ariaLabel="Shortcut updates"
-        items={[{
-          id: '42',
-          date: '2026-08-11',
-          observation: '',
-          state: 'none',
-          sensitive: false
-        }]}
-        stateOptions={states}
-        defaultDate="2026-08-11"
-        defaultState="none"
-        onCreate={onCreate}
-        onUpdate={vi.fn()}
-        onDelete={vi.fn()}
-      />
-    )
-    const observation = screen.getByLabelText('Update observation')
-    const card = screen.getByRole('listitem', { name: 'Update from 2026-08-11' })
-    await waitFor(() => expect(observation).toHaveFocus())
-    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({
-      behavior: 'smooth',
-      block: 'nearest',
-      inline: 'nearest'
-    }))
-    expect(scrollIntoView.mock.instances).toContain(card)
-    scrollIntoView.mockRestore()
+    expect(metaEvent.defaultPrevented).toBe(false)
+    expect(onCreate).not.toHaveBeenCalled()
   })
 
-  it('moves Cmd-P to the Subject picker when creation requires an exact cell', () => {
+  it('does not couple the native Subject picker to the global Cmd-P command', () => {
     const onCreateFor = vi.fn().mockResolvedValue(undefined)
     render(
       <UpdateList
@@ -219,7 +223,7 @@ describe('UpdateList', () => {
 
     fireEvent.keyDown(document, { key: 'p', metaKey: true })
 
-    expect(screen.getByRole('combobox', { name: 'Add update for Subject…' })).toHaveFocus()
+    expect(screen.getByRole('combobox', { name: 'Add update for Subject…' })).not.toHaveFocus()
     expect(onCreateFor).not.toHaveBeenCalled()
   })
 

@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import type {
-  EditUpdateInput,
   ReviewOverviewSnapshot,
   ReviewQueueItemSnapshot,
   UpdateParent,
   UpdateSnapshot
 } from '../../../../shared/contracts'
+import { subscribeToUpdateCreated } from '@/features/updates/update-creation-events'
 
 export interface ReviewModel {
   overview: ReviewOverviewSnapshot | null
@@ -14,17 +14,10 @@ export interface ReviewModel {
   dismissedKeys: ReadonlySet<string>
   reviewedKeys: ReadonlySet<string>
   pendingKey: string | null
-  editingUpdate: { itemKey: string; update: UpdateSnapshot } | null
   ignore: (itemKey: string) => void
   pass: (item: ReviewQueueItemSnapshot) => Promise<void>
   recordTodoMutation: (item: ReviewQueueItemSnapshot) => Promise<void>
   recordNoteMutation: (item: ReviewQueueItemSnapshot) => Promise<void>
-  beginUpdate: (item: ReviewQueueItemSnapshot) => Promise<void>
-  editUpdate: (input: EditUpdateInput) => Promise<void>
-  saveObservation: (value: string) => void
-  openObservation: () => void
-  cancelUpdate: () => void
-  finishUpdate: () => void
   refresh: () => Promise<void>
 }
 
@@ -48,6 +41,18 @@ function addDays(date: string, days: number): string {
   return result.toISOString().slice(0, 10)
 }
 
+function updateMatchesReviewItem(
+  update: UpdateSnapshot,
+  item: ReviewQueueItemSnapshot
+): boolean {
+  const parent = itemParent(item)
+  if (update.parent.type !== parent.type || update.parent.id !== parent.id) return false
+  return item.cell
+    ? update.scope?.scopeId === item.cell.scopeId &&
+      update.scope.subjectId === item.cell.subjectId
+    : update.scope === null
+}
+
 /** Owns the queue session and all persistence-backed review actions. */
 export function useReviewModel({ onReviewChanged }: ReviewModelOptions = {}): ReviewModel {
   const [overview, setOverview] = useState<ReviewOverviewSnapshot | null>(null)
@@ -56,10 +61,6 @@ export function useReviewModel({ onReviewChanged }: ReviewModelOptions = {}): Re
   const [dismissedKeys, setDismissedKeys] = useState<ReadonlySet<string>>(new Set())
   const [reviewedKeys, setReviewedKeys] = useState<ReadonlySet<string>>(new Set())
   const [pendingKey, setPendingKey] = useState<string | null>(null)
-  const [editingUpdate, setEditingUpdate] = useState<{
-    itemKey: string
-    update: UpdateSnapshot
-  } | null>(null)
   const notePokedKeysRef = useRef(new Set<string>())
 
   async function refresh(): Promise<void> {
@@ -71,7 +72,6 @@ export function useReviewModel({ onReviewChanged }: ReviewModelOptions = {}): Re
       setOverview(next)
       setReviewedKeys(retainedReviews)
       setDismissedKeys(retainedReviews)
-      setEditingUpdate(null)
       notePokedKeysRef.current.clear()
     } catch {
       setError('Review work could not be loaded.')
@@ -98,6 +98,28 @@ export function useReviewModel({ onReviewChanged }: ReviewModelOptions = {}): Re
       active = false
     }
   }, [])
+
+  useEffect(() => subscribeToUpdateCreated(({ update }) => {
+    const item = overview?.items.find((candidate) => updateMatchesReviewItem(update, candidate))
+    if (!item) return
+    setOverview((current) => current
+      ? {
+          ...current,
+          items: current.items.map((candidate) => candidate.key === item.key
+            ? {
+                ...candidate,
+                updates: [update, ...candidate.updates.filter(({ id }) => id !== update.id)],
+                lastReviewDate: update.date
+              }
+            : candidate)
+        }
+      : current)
+    setReviewedKeys((current) => new Set([...current, item.key]))
+    setDismissedKeys((current) => new Set([...current, item.key]))
+    void Promise.resolve(onReviewChanged?.(item.focus.id)).catch(() => {
+      // Persistence succeeded; the application can refresh this projection later.
+    })
+  }), [onReviewChanged, overview])
 
   function dismiss(itemKey: string): void {
     setDismissedKeys((current) => new Set([...current, itemKey]))
@@ -217,104 +239,6 @@ export function useReviewModel({ onReviewChanged }: ReviewModelOptions = {}): Re
     }
   }
 
-  async function beginUpdate(item: ReviewQueueItemSnapshot): Promise<void> {
-    setPendingKey(item.key)
-    setError(null)
-    try {
-      const update = await window.onmove.domain.createUpdate({
-        parent: itemParent(item),
-        date: overview?.asOf,
-        observation: '',
-        state: 'none',
-        sensitive: false,
-        ...(item.cell
-          ? { scope: { scopeId: item.cell.scopeId, subjectId: item.cell.subjectId } }
-          : {})
-      })
-      setEditingUpdate({ itemKey: item.key, update })
-    } catch {
-      setError('An Update could not be started for this review.')
-    } finally {
-      setPendingKey(null)
-    }
-  }
-
-  async function editUpdate(input: EditUpdateInput): Promise<void> {
-    if (!editingUpdate) return
-    try {
-      const update = await window.onmove.domain.updateUpdate(editingUpdate.update.id, input)
-      setEditingUpdate((current) => current ? { ...current, update } : current)
-      setError(null)
-    } catch {
-      setError('The Update could not be saved. Your review remains open.')
-      throw new Error('Review Update save failed')
-    }
-  }
-
-  function saveObservation(value: string): void {
-    if (!editingUpdate) return
-    try {
-      const document = window.onmove.richText.saveDocument(
-        { type: 'update', id: editingUpdate.update.id, field: 'observation' },
-        value
-      )
-      setEditingUpdate((current) => current
-        ? {
-            ...current,
-            update: {
-              ...current.update,
-              observation: document.value,
-              updatedAt: document.updatedAt
-            }
-          }
-        : current)
-      setError(null)
-    } catch {
-      setError('The Update text could not be saved. Keep editing to retry.')
-    }
-  }
-
-  function openObservation(): void {
-    if (!editingUpdate) return
-    void window.onmove.richText.openWindow({
-      type: 'update',
-      id: editingUpdate.update.id,
-      field: 'observation'
-    })
-  }
-
-  function cancelUpdate(): void {
-    if (!editingUpdate) return
-    const cancelled = editingUpdate
-    // Review Updates are durable from creation onward. Cancelling only exits
-    // the composer and promotes its latest autosaved snapshot into history.
-    setOverview((current) => current
-      ? {
-          ...current,
-          items: current.items.map((item) => item.key === cancelled.itemKey
-            ? {
-                ...item,
-                updates: [
-                  cancelled.update,
-                  ...item.updates.filter(({ id }) => id !== cancelled.update.id)
-                ]
-              }
-            : item)
-        }
-      : current)
-    setEditingUpdate(null)
-    setError(null)
-  }
-
-  function finishUpdate(): void {
-    if (!editingUpdate) return
-    const item = overview?.items.find(({ key }) => key === editingUpdate.itemKey)
-    complete(editingUpdate.itemKey)
-    setEditingUpdate(null)
-    setError(null)
-    if (item) void notifyReviewChanged(item.focus.id)
-  }
-
   return {
     overview,
     loading,
@@ -322,17 +246,10 @@ export function useReviewModel({ onReviewChanged }: ReviewModelOptions = {}): Re
     dismissedKeys,
     reviewedKeys,
     pendingKey,
-    editingUpdate,
     ignore,
     pass,
     recordTodoMutation,
     recordNoteMutation,
-    beginUpdate,
-    editUpdate,
-    saveObservation,
-    openObservation,
-    cancelUpdate,
-    finishUpdate,
     refresh
   }
 }

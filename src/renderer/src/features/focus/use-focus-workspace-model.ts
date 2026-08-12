@@ -26,6 +26,7 @@ import {
   EMPTY_STATUS_SUMMARY,
   type StatusSummary
 } from '@/features/shared/status-summary'
+import { subscribeToUpdateCreated } from '@/features/updates/update-creation-events'
 
 interface FocusWorkspaceModelOptions {
   focus: FocusSnapshot
@@ -232,6 +233,19 @@ export function useFocusWorkspaceModel({
       active = false
     }
   }, [focus.id])
+
+  useEffect(() => subscribeToUpdateCreated(({ focusId }) => {
+    if (focusId !== focus.id) return
+    const requestId = ++threadProjectionRequest.current
+    void Promise.all([
+      loadFocusThreadWorkspaceData(focus.id),
+      window.onmove.domain.listCommitments({ type: 'focus', id: focus.id })
+    ]).then(([threadData, nextCommitments]) => {
+      if (requestId !== threadProjectionRequest.current) return
+      applyFocusThreadWorkspaceData(threadData)
+      setCommitments(nextCommitments)
+    }).catch(() => setLoadError('The Update was added, but this workspace could not refresh.'))
+  }), [focus.id])
 
   useEffect(() => {
     let active = true

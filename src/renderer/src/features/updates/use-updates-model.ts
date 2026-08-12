@@ -6,6 +6,7 @@ import type {
   UpdateScopeCell,
   UpdateSnapshot
 } from '../../../../shared/contracts'
+import { subscribeToUpdateCreated } from '@/features/updates/update-creation-events'
 
 function sortUpdates(updates: readonly UpdateSnapshot[]): UpdateSnapshot[] {
   return [...updates].sort((left, right) =>
@@ -46,6 +47,7 @@ export interface UpdatesModel {
   updates: UpdateSnapshot[]
   loading: boolean
   loadError: string | null
+  revealUpdateId: number | null
   createUpdate: (
     input: Omit<CreateUpdateInput, 'parent'>
   ) => Promise<UpdateSnapshot>
@@ -65,6 +67,7 @@ export function useUpdatesModel(
   const [updates, setUpdates] = useState<UpdateSnapshot[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [revealUpdateId, setRevealUpdateId] = useState<number | null>(null)
 
   useEffect(() => {
     let active = true
@@ -93,6 +96,14 @@ export function useUpdatesModel(
         : update
     )))
   }), [])
+
+  useEffect(() => subscribeToUpdateCreated(({ update: created }) => {
+    if (created.parent.type !== parentType || created.parent.id !== parentId) return
+    setRevealUpdateId(created.id)
+    setUpdates((current) => current.some(({ id }) => id === created.id)
+      ? current
+      : sortUpdates([...current, created]))
+  }), [parentId, parentType])
 
   async function createUpdate(
     input: Omit<CreateUpdateInput, 'parent'>
@@ -144,6 +155,7 @@ export function useUpdatesModel(
     updates: sortUpdates(updatesForWorkingContext(updates, workingContext)),
     loading,
     loadError,
+    revealUpdateId,
     createUpdate,
     editUpdate,
     saveObservation,

@@ -631,23 +631,26 @@ test('reviews active work before cadence is due and refreshes typed pokes in the
     ), await todoSection.elementHandle())).toBe(true)
 
     await window.keyboard.press('Meta+p')
-    let observation = window.getByRole('textbox', { name: 'Review Update observation' })
-    await expect(observation).toBeFocused()
-    expect(await todoSection.evaluate((todo, editor) => Boolean(
-      todo.compareDocumentPosition(editor as Node) & Node.DOCUMENT_POSITION_FOLLOWING
-    ), await observation.elementHandle())).toBe(true)
-    expect(await observation.evaluate((editor, updates) => Boolean(
-      editor.compareDocumentPosition(updates as Node) & Node.DOCUMENT_POSITION_FOLLOWING
-    ), await updatesSection.elementHandle())).toBe(true)
-    await window.getByRole('button', { name: 'Cancel update' }).click()
-    await expect(observation).toBeHidden()
+    let chooser = window.getByRole('dialog', { name: 'Choose update target' })
+    await chooser.getByRole('option', { name: /^Improve ticket quality/ }).click()
+    let composer = window.getByRole('dialog', { name: 'Add update' })
+    await expect(composer).toContainText('North region')
+    await expect(composer.getByRole('button', { name: /Delete/ })).toHaveCount(0)
+    await expect(composer.getByRole('button', {
+      name: 'Open Update observation in new window'
+    })).toHaveCount(0)
+    await composer.getByRole('button', { name: 'Cancel' }).click()
+    await expect(composer).toBeHidden()
     await expect(window.getByRole('button', { name: 'Update' })).toBeEnabled()
+    expect(updatesSection).toBeTruthy()
 
     await window.keyboard.press('Meta+p')
-    observation = window.getByRole('textbox', { name: 'Review Update observation' })
-    await expect(observation).toBeFocused()
+    chooser = window.getByRole('dialog', { name: 'Choose update target' })
+    await chooser.getByRole('option', { name: /^Improve ticket quality/ }).click()
+    composer = window.getByRole('dialog', { name: 'Add update' })
+    const observation = composer.getByRole('textbox', { name: 'Update observation' })
     await observation.fill('Ticket examples are now included')
-    await window.getByRole('button', { name: 'Finish update' }).click()
+    await composer.getByRole('button', { name: 'Add update' }).click()
     await expect(window.getByRole('heading', { name: 'You’re caught up' })).toBeVisible()
 
     await expect.poll(() => {
@@ -1296,16 +1299,11 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     const focusUpdates = window.getByRole('list', { name: 'Focus updates' })
     await expect(focusUpdates).toBeVisible()
     await window.keyboard.press('Meta+p')
-    await expect.poll(() => storedFocusUpdate()?.state).toBe('none')
-    const focusUpdateDate = storedFocusUpdate()!.date
-    expect(storedFocusUpdate()?.observation).toBe('')
-    await expect(focusUpdates.getByLabel('Update observation')).toBeFocused()
-    await expect.poll(() => isFullyVisibleInMain(
-      focusUpdates.getByRole('listitem', { name: `Update from ${focusUpdateDate}` })
-    )).toBe(true)
-    await expect(window.getByRole('button', { name: 'Create update' })).toHaveCount(0)
-    await focusUpdates.getByLabel('Update observation').fill('Overall review completed')
-    const focusUpdateObservation = focusUpdates.getByLabel('Update observation')
+    let updateChooser = window.getByRole('dialog', { name: 'Choose update target' })
+    await updateChooser.getByRole('option', { name: /^Persistent focus/ }).click()
+    let updateComposer = window.getByRole('dialog', { name: 'Add update' })
+    const focusUpdateObservation = updateComposer.getByLabel('Update observation')
+    await focusUpdateObservation.fill('Overall review completed')
     await focusUpdateObservation.press('Meta+A')
     await focusUpdateObservation
       .locator('xpath=../..')
@@ -1314,11 +1312,17 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     const focusUpdateChecklistItem = focusUpdateObservation.getByRole('checkbox')
     await focusUpdateChecklistItem.click({ position: { x: 7, y: 10 } })
     await expect(focusUpdateChecklistItem).toHaveAttribute('aria-checked', 'true')
-    await focusUpdates.getByLabel('Update state').selectOption('green')
+    await updateComposer.getByLabel('Update state').selectOption('green')
+    await updateComposer.getByRole('button', { name: 'Add update' }).click()
     await expect.poll(() => storedFocusUpdate()?.state, { timeout: 3_000 }).toBe('green')
     await expect
       .poll(() => storedFocusUpdate()?.observation, { timeout: 3_000 })
       .toContain('Overall review completed')
+    const focusUpdateDate = storedFocusUpdate()!.date
+    await expect.poll(() => isFullyVisibleInMain(
+      focusUpdates.getByRole('listitem', { name: `Update from ${focusUpdateDate}` })
+    )).toBe(true)
+    await expect(window.getByRole('button', { name: 'Create update' })).toHaveCount(0)
     await expect(window.getByLabel('Focus last reviewed')).toContainText(
       `Last reviewed · ${focusUpdateDate}`
     )
@@ -1372,10 +1376,12 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     const threadUpdates = window.getByRole('list', { name: 'Thread updates' })
     await expect(threadUpdates).toBeVisible()
     await window.keyboard.press('Meta+p')
-    await expect.poll(() => storedThreadUpdate()?.state).toBe('none')
-    await expect(threadUpdates.getByLabel('Update observation')).toBeFocused()
-    await threadUpdates.getByLabel('Update observation').fill('Sprint review completed')
-    await threadUpdates.getByLabel('Update state').selectOption('green')
+    updateChooser = window.getByRole('dialog', { name: 'Choose update target' })
+    await updateChooser.getByRole('option', { name: /^Sprint execution/ }).click()
+    updateComposer = window.getByRole('dialog', { name: 'Add update' })
+    await updateComposer.getByLabel('Update observation').fill('Sprint review completed')
+    await updateComposer.getByLabel('Update state').selectOption('green')
+    await updateComposer.getByRole('button', { name: 'Add update' }).click()
     await expect.poll(() => storedThreadUpdate()?.state, { timeout: 3_000 }).toBe('green')
     await expect
       .poll(() => storedThreadUpdate()?.observation, { timeout: 3_000 })
@@ -1490,15 +1496,17 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(updateList).toBeVisible()
     await expect(window.getByRole('table')).toHaveCount(0)
     await window.keyboard.press('Meta+p')
-    await expect.poll(() => storedCommitmentUpdate()?.state).toBe('none')
-    expect(storedCommitmentUpdate()?.observation).toBe('')
-    await expect(updateList.getByLabel('Update observation')).toBeFocused()
-    await expect(window.getByRole('button', { name: 'Create update' })).toHaveCount(0)
+    updateChooser = window.getByRole('dialog', { name: 'Choose update target' })
+    await updateChooser.getByRole('option', { name: /^Keep sponsors aligned/ }).click()
+    updateComposer = window.getByRole('dialog', { name: 'Add update' })
     const newUpdateDate = '2099-12-31'
-    await updateList.getByLabel('Update date').fill(newUpdateDate)
-    await updateList.getByLabel('Update state').selectOption('red')
+    await updateComposer.getByLabel('Date', { exact: true }).fill(newUpdateDate)
+    await updateComposer.getByLabel('Update state').selectOption('red')
+    await updateComposer.getByRole('button', { name: 'Add update' }).click()
     await expect.poll(() => storedCommitmentUpdate()?.date, { timeout: 3_000 }).toBe(newUpdateDate)
     await expect.poll(() => storedCommitmentUpdate()?.state, { timeout: 3_000 }).toBe('red')
+    expect(storedCommitmentUpdate()?.observation).toBe('')
+    await expect(window.getByRole('button', { name: 'Create update' })).toHaveCount(0)
     await expect(window.getByLabel('Commitment last updated')).toContainText(
       `Last updated · ${newUpdateDate}`
     )

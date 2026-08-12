@@ -872,8 +872,7 @@ describe('App', () => {
     expect(screen.getByRole('article', { name: 'Focus review: Launch board' })).toBeVisible()
   })
 
-  it('starts an autosaved Update in the exact review Subject cell before advancing', async () => {
-    const scrollIntoView = vi.spyOn(HTMLElement.prototype, 'scrollIntoView')
+  it('chooses an exact review Subject target and persists only after Add', async () => {
     const currentFocus = focus({ id: 5, title: 'People program' })
     const currentThread = thread({ id: 15, focusId: 5, title: 'Team health', reviewDue: true })
     const currentCommitment = commitment({
@@ -891,7 +890,7 @@ describe('App', () => {
       state: 'none',
       scope: { scopeId: 51, subjectId: 61 }
     })
-    const createUpdate = vi.fn().mockResolvedValue(created)
+    const createUpdate = vi.fn(async (input) => ({ ...created, ...input }))
     const getReviewOverview = vi.fn().mockResolvedValue({
       asOf: '2026-08-10',
       items: [reviewItem({
@@ -907,10 +906,35 @@ describe('App', () => {
         state: 'none'
       })]
     })
-    const api = installApi({
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([currentFocus]),
+      listThreads: vi.fn(async (focusId) => focusId === currentFocus.id ? [currentThread] : []),
+      listCommitments: vi.fn(async (parent) =>
+        parent.type === 'thread' && parent.id === currentThread.id ? [currentCommitment] : []),
+      getThreadScope: vi.fn(async () => ({
+        threadId: currentThread.id,
+        focusId: currentFocus.id,
+        mode: 'explicit' as const,
+        scopeId: 51,
+        subjects: [subject(61, 'Customer Operations')],
+        focusSubjects: []
+      })),
+      getCommitmentWorkingContext: vi.fn(async () => ({
+        commitmentId: currentCommitment.id,
+        scopeId: 51,
+        cells: [{
+          scopeId: 51,
+          subjectId: 61,
+          subject: subject(61, 'Customer Operations'),
+          state: 'none' as const,
+          lastReviewDate: null,
+          lastUpdateDate: null,
+          nextUpdateDate: '2026-08-10',
+          needsUpdate: true
+        }]
+      })),
       getReviewOverview,
-      createUpdate,
-      updateUpdate: vi.fn(async (_id, input) => ({ ...created, ...input }))
+      createUpdate
     })
     const user = userEvent.setup()
     render(<App />)
@@ -925,58 +949,59 @@ describe('App', () => {
     })
     document.dispatchEvent(shortcut)
     expect(shortcut.defaultPrevented).toBe(true)
-    await waitFor(() => expect(createUpdate).toHaveBeenCalledWith({
-      parent: { type: 'commitment', id: 25 },
-      date: '2026-08-10',
-      observation: '',
-      state: 'none',
-      sensitive: false,
-      scope: { scopeId: 51, subjectId: 61 }
-    }))
+    const chooser = await screen.findByRole('dialog', { name: 'Choose update target' })
+    expect(createUpdate).not.toHaveBeenCalled()
+    await user.type(within(chooser).getByPlaceholderText(/Filter Focuses, Threads/), 'weekly')
+    await user.click(within(chooser).getByRole('option', { name: /^Hold weekly check-ins/ }))
 
-    const observation = await screen.findByRole('textbox', { name: 'Review Update observation' })
-    expect(observation).toHaveFocus()
-    const reviewEditor = screen.getByRole('heading', { name: 'Add review evidence' }).closest('section')
-    expect(reviewEditor).not.toBeNull()
-    await waitFor(() => expect(scrollIntoView.mock.instances).toContain(reviewEditor))
-    const reviewArticle = screen.getByRole('article', {
+    let composer = await screen.findByRole('dialog', { name: 'Add update' })
+    expect(composer).toHaveTextContent(
+      'Hold weekly check-ins · People program › Team health › Customer Operations'
+    )
+    expect(within(composer).queryByRole('button', { name: /Delete/ })).not.toBeInTheDocument()
+    expect(within(composer).queryByRole('button', {
+      name: 'Open Update observation in new window'
+    })).not.toBeInTheDocument()
+    await user.click(within(composer).getByRole('button', { name: 'Cancel' }))
+    expect(createUpdate).not.toHaveBeenCalled()
+    expect(screen.getByRole('article', {
       name: 'Commitment review: Hold weekly check-ins'
-    })
-    const actionBar = within(reviewArticle).getByRole('toolbar', { name: 'Review actions' })
-    const todos = within(reviewArticle).getByLabelText('commitment Todos')
-    const updates = within(reviewArticle).getByRole('heading', { name: 'Recent updates' })
-      .closest('section')
-    expect(updates).not.toBeNull()
-    expect(actionBar.compareDocumentPosition(todos) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
-    expect(todos.compareDocumentPosition(reviewEditor!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
-    expect(reviewEditor!.compareDocumentPosition(updates!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
-
-    await user.selectOptions(screen.getByLabelText('Review Update state'), 'red')
-    await waitFor(() => expect(within(reviewEditor!).getByText('Red', {
-      selector: '[data-tone="danger"]'
-    })).toBeVisible())
-    await user.click(screen.getByRole('button', { name: 'Cancel update' }))
-    expect(screen.queryByRole('textbox', { name: 'Review Update observation' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Update' })).toBeEnabled()
-    expect(within(screen.getByRole('list', { name: 'Recent direct updates' })).getByText('Red'))
-      .toBeVisible()
-    expect(api.domain.deleteUpdate).not.toHaveBeenCalled()
+    })).toBeVisible()
 
     await user.click(screen.getByRole('button', { name: 'Update' }))
-    const resumedObservation = await screen.findByRole('textbox', {
-      name: 'Review Update observation'
+    const reopenedChooser = await screen.findByRole('dialog', { name: 'Choose update target' })
+    await user.click(within(reopenedChooser).getByRole('option', {
+      name: /^Hold weekly check-ins/
+    }))
+    composer = await screen.findByRole('dialog', { name: 'Add update' })
+    fireEvent.change(within(composer).getByLabelText('Date'), {
+      target: { value: '2026-08-11' }
     })
-    expect(resumedObservation).toHaveFocus()
-    await user.keyboard('Customer sentiment improved')
-    await waitFor(() => expect(api.richText.saveDocument).toHaveBeenCalled())
-    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Finish update' }))
+    await user.selectOptions(within(composer).getByLabelText('Update state'), 'red')
+    await user.click(within(composer).getByRole('checkbox', { name: 'Sensitive' }))
+    const observation = within(composer).getByRole('textbox', { name: 'Update observation' })
+    await user.click(observation)
+    await user.paste('Customer sentiment improved')
+    expect(observation).toHaveTextContent('Customer sentiment improved')
+    expect(createUpdate).not.toHaveBeenCalled()
+    await user.click(within(composer).getByRole('button', { name: 'Add update' }))
+
+    await waitFor(() => expect(createUpdate).toHaveBeenCalledOnce())
+    const input = createUpdate.mock.calls[0][0]
+    expect(input).toMatchObject({
+      parent: { type: 'commitment', id: 25 },
+      date: '2026-08-11',
+      state: 'red',
+      sensitive: true,
+      scope: { scopeId: 51, subjectId: 61 }
+    })
+    expect(isRichText(input.observation)).toBe(true)
+    expect(richTextPlainText(input.observation)).toBe('Customer sentiment improved')
     expect(await screen.findByRole('heading', { name: 'You’re caught up' })).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Check again' }))
     expect(await screen.findByRole('heading', { name: 'You’re caught up' })).toBeVisible()
     expect(screen.queryByText('Hold weekly check-ins')).not.toBeInTheDocument()
     expect(getReviewOverview).toHaveBeenCalledTimes(2)
-    scrollIntoView.mockRestore()
   })
 
   it('leaves Cmd-P inert in the Todos and Tags workspaces', async () => {

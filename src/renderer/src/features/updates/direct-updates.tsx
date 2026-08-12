@@ -109,6 +109,7 @@ export function DirectUpdates({
       defaultState="none"
       loading={model.loading}
       loadError={model.loadError}
+      revealItemId={model.revealUpdateId === null ? null : String(model.revealUpdateId)}
       onCreate={context.mode === 'scope-overview' ? undefined : async (draft: UpdateListDraft) => {
         const created = await model.createUpdate({
           date: draft.date,

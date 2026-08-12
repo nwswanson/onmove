@@ -1,22 +1,16 @@
 import { useState } from 'react'
-import { ArrowRight, Check, ChevronRight, MessageSquarePlus, SkipForward, X } from 'lucide-react'
+import { ArrowRight, Check, ChevronRight, MessageSquarePlus, SkipForward } from 'lucide-react'
 import type {
-  EditUpdateInput,
   ReviewQueueItemSnapshot,
-  TodoParent,
-  UpdateSnapshot
+  TodoParent
 } from '../../../../shared/contracts'
 import { Button } from '@/components/ui/button'
 import {
   ContextDrawerOutlet,
   type ContextDrawerControl
 } from '@/components/ui/context-drawer'
-import { Input } from '@/components/ui/input'
 import { LifecycleStatusLabel } from '@/components/ui/lifecycle-status'
-import {
-  RichTextContent,
-  RichTextEditor
-} from '@/components/ui/rich-text-editor'
+import { RichTextContent } from '@/components/ui/rich-text-editor'
 import { StateLabel } from '@/components/ui/state-label'
 import { TaggedText } from '@/components/ui/tagged-text'
 import { VerticalSplitPane } from '@/components/ui/vertical-split-pane'
@@ -35,12 +29,9 @@ import {
   saveReviewPrimaryPanePercent
 } from '@/features/review/review-split-preference'
 import { useReviewModel } from '@/features/review/use-review-model'
-import { SensitivityToggle } from '@/features/shared/sensitivity-toggle'
 import { WorkKindIcon } from '@/features/shared/work-kind-icon'
 import { DirectTodos } from '@/features/todos/direct-todos'
-import { UPDATE_LIST_STATE_OPTIONS } from '@/features/updates/updates-presenters'
-import { useCommandKeyShortcut } from '@/lib/use-command-key-shortcut'
-import { useRevealElement } from '@/lib/use-reveal-element'
+import { useUpdateComposer } from '@/features/updates/update-composer-context'
 
 interface ReviewWorkspaceProps {
   contextDrawer: ContextDrawerControl
@@ -67,113 +58,6 @@ function reviewTodoContext(item: ReviewQueueItemSnapshot): TodoParent {
         scope: { scopeId: item.cell.scopeId, subjectId: item.cell.subjectId }
       }
     : { type: 'commitment', id: item.commitment.id }
-}
-
-function ReviewUpdateEditor({
-  update,
-  onEdit,
-  onObservationChange,
-  onOpenObservation,
-  onCancel,
-  onFinish
-}: {
-  update: UpdateSnapshot
-  onEdit: (input: EditUpdateInput) => Promise<void>
-  onObservationChange: (value: string) => void
-  onOpenObservation: () => void
-  onCancel: () => void
-  onFinish: () => void
-}): React.JSX.Element {
-  const [saving, setSaving] = useState(false)
-  const state = UPDATE_LIST_STATE_OPTIONS.find(({ value }) => value === update.state)
-  const editorRef = useRevealElement<HTMLElement>()
-
-  async function edit(input: EditUpdateInput): Promise<void> {
-    setSaving(true)
-    try {
-      await onEdit(input)
-    } catch {
-      // The screen-level error remains visible and the editor stays open for retry.
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <section
-      ref={editorRef}
-      aria-labelledby="review-update-heading"
-      className="border-t border-primary/35 bg-primary/7 px-5 py-5 sm:px-7"
-    >
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 id="review-update-heading" className="text-sm font-semibold">Add review evidence</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            This Update already exists. Every edit is saved automatically.
-          </p>
-        </div>
-        {saving && <span role="status" className="text-xs text-muted-foreground">Saving…</span>}
-      </div>
-
-      <div className="mb-3 flex flex-wrap items-end gap-3">
-        <label className="flex min-w-40 flex-col gap-1">
-          <span className="text-[0.6875rem] font-medium text-muted-foreground">Date</span>
-          <Input
-            type="date"
-            aria-label="Review Update date"
-            className="h-9"
-            value={update.date}
-            disabled={saving}
-            onChange={(event) => void edit({ date: event.target.value })}
-          />
-        </label>
-        <label className="flex min-w-48 flex-1 flex-col gap-1">
-          <span className="text-[0.6875rem] font-medium text-muted-foreground">State</span>
-          <span className="flex items-center gap-2">
-            <select
-              aria-label="Review Update state"
-              className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background/80 px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/35"
-              value={update.state}
-              disabled={saving}
-              onChange={(event) => void edit({ state: event.target.value as UpdateSnapshot['state'] })}
-            >
-              {UPDATE_LIST_STATE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-            {state && <StateLabel model={state} />}
-          </span>
-        </label>
-        <SensitivityToggle
-          checked={update.sensitive}
-          disabled={saving}
-          onCheckedChange={(sensitive) => void edit({ sensitive })}
-        />
-      </div>
-
-      <RichTextEditor
-        ariaLabel="Review Update observation"
-        autoFocus
-        value={update.observation}
-        externalRevision={update.updatedAt}
-        placeholder="What changed?"
-        compact
-        onChange={onObservationChange}
-        onOpenInWindow={onOpenObservation}
-      />
-
-      <div className="mt-4 flex flex-wrap justify-end gap-2">
-        <Button type="button" variant="outline" disabled={saving} onClick={onCancel}>
-          <X aria-hidden="true" />
-          Cancel update
-        </Button>
-        <Button type="button" disabled={saving} onClick={onFinish}>
-          <Check aria-hidden="true" />
-          Finish update
-        </Button>
-      </div>
-    </section>
-  )
 }
 
 function ReviewSupportingDetails({
@@ -272,28 +156,20 @@ export function ReviewWorkspace({
   onReviewChanged
 }: ReviewWorkspaceProps): React.JSX.Element {
   const review = useReviewModel({ onReviewChanged })
+  const updateComposer = useUpdateComposer()
   const [splitPreferenceStorage] = useState(reviewSplitPreferenceStorage)
   const [primaryPanePercent] = useState(() =>
     loadReviewPrimaryPanePercent(splitPreferenceStorage))
   const visibleItems = review.overview?.items.filter((item) =>
     reviewItemIsVisible(item, hideSensitiveContent)) ?? []
   const remainingItems = visibleItems.filter(({ key }) => !review.dismissedKeys.has(key))
-  const editingItem = review.editingUpdate
-    ? remainingItems.find(({ key }) => key === review.editingUpdate?.itemKey)
-    : null
-  const current = editingItem ?? remainingItems[0] ?? null
+  const current = remainingItems[0] ?? null
   const currentModel = current ? reviewItemModel(current, hideSensitiveContent) : null
   const completed = visibleItems.length - remainingItems.length
   const skipped = visibleItems.filter(({ key }) =>
     review.dismissedKeys.has(key) && !review.reviewedKeys.has(key)).length
   const progress = visibleItems.length === 0 ? 100 : (completed / visibleItems.length) * 100
   const pending = current ? review.pendingKey === current.key : false
-  const editing = Boolean(review.editingUpdate && current?.key === review.editingUpdate.itemKey)
-
-  useCommandKeyShortcut('p', () => {
-    if (!current || pending || editing) return
-    void review.beginUpdate(current)
-  }, current !== null)
 
   return (
     <WorkspaceShell
@@ -420,7 +296,7 @@ export function ReviewWorkspace({
                       <Button
                         type="button"
                         variant="ghost"
-                        disabled={pending || editing}
+                        disabled={pending}
                         onClick={() => review.ignore(current.key)}
                       >
                         <SkipForward aria-hidden="true" />
@@ -429,7 +305,7 @@ export function ReviewWorkspace({
                       <Button
                         type="button"
                         variant="outline"
-                        disabled={pending || editing}
+                        disabled={pending}
                         onClick={() => void review.pass(current)}
                       >
                         <ArrowRight aria-hidden="true" />
@@ -437,13 +313,13 @@ export function ReviewWorkspace({
                       </Button>
                       <Button
                         type="button"
-                        disabled={pending || editing}
-                        onClick={() => void review.beginUpdate(current)}
+                        disabled={pending}
+                        onClick={updateComposer.open}
                         aria-keyshortcuts="Meta+P"
                         title="Add update (⌘P)"
                       >
                         <MessageSquarePlus aria-hidden="true" />
-                        {pending ? 'Starting…' : editing ? 'Updating…' : 'Update'}
+                        Update
                       </Button>
                     </div>
                   </div>
@@ -462,18 +338,6 @@ export function ReviewWorkspace({
                     onMutation={() => review.recordTodoMutation(current)}
                   />
                 </div>
-
-                {editing && review.editingUpdate ? (
-                  <ReviewUpdateEditor
-                    key={review.editingUpdate.update.id}
-                    update={review.editingUpdate.update}
-                    onEdit={review.editUpdate}
-                    onObservationChange={review.saveObservation}
-                    onOpenObservation={review.openObservation}
-                    onCancel={review.cancelUpdate}
-                    onFinish={review.finishUpdate}
-                  />
-                ) : null}
 
                 <ReviewUpdates model={currentModel} />
                 <ReviewSupportingDetails model={currentModel} />

@@ -75,12 +75,15 @@ import {
   Undo2
 } from 'lucide-react'
 import {
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type ForwardedRef,
   type MutableRefObject
 } from 'react'
 import { Button } from '@/components/ui/button'
@@ -702,6 +705,28 @@ export interface RichTextEditorProps {
   externalRevision?: string | number
 }
 
+export interface RichTextEditorHandle {
+  /** Reads Lexical's committed editor state without waiting for a React render. */
+  getValue: () => string
+}
+
+function RichTextEditorHandlePlugin({
+  editorRef
+}: {
+  editorRef: ForwardedRef<RichTextEditorHandle>
+}): null {
+  const [editor] = useLexicalComposerContext()
+  useImperativeHandle(editorRef, () => ({
+    getValue: () => {
+      // A submit can immediately follow the final input event. A read flushes
+      // Lexical's pending update before we take the durable snapshot.
+      editor.read(() => undefined)
+      return serializeRichText(editor.getEditorState())
+    }
+  }), [editor])
+  return null
+}
+
 function ExternalValuePlugin({
   value,
   currentValueRef,
@@ -740,7 +765,8 @@ function ExternalValuePlugin({
   return null
 }
 
-export function RichTextEditor({
+export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(
+function RichTextEditor({
   id,
   value,
   onChange,
@@ -753,7 +779,7 @@ export function RichTextEditor({
   className,
   onOpenInWindow,
   externalRevision
-}: RichTextEditorProps): React.JSX.Element {
+}: RichTextEditorProps, forwardedRef): React.JSX.Element {
   const currentValue = useRef(value)
   const config = useMemo<InitialConfigType>(
     () => ({
@@ -816,6 +842,7 @@ export function RichTextEditor({
           <TextTagsPlugin />
           <FormattingShortcutsPlugin />
           <ListTabIndentationPlugin />
+          <RichTextEditorHandlePlugin editorRef={forwardedRef} />
           <ExternalValuePlugin
             value={value}
             currentValueRef={currentValue}
@@ -834,7 +861,7 @@ export function RichTextEditor({
       </LexicalComposer>
     </div>
   )
-}
+})
 
 export interface RichTextContentProps {
   value: string

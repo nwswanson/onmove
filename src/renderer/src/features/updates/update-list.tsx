@@ -12,7 +12,6 @@ import {
   type UpdateListProps,
   type UpdateListStateOptionModel
 } from '@/features/updates/update-list-contract'
-import { useCommandKeyShortcut } from '@/lib/use-command-key-shortcut'
 import { useRevealElement } from '@/lib/use-reveal-element'
 import { useThrottledAutosave } from '@/lib/use-throttled-autosave'
 
@@ -229,6 +228,7 @@ export function UpdateList({
   defaultState,
   loading = false,
   loadError,
+  revealItemId,
   onCreate,
   createOptions = [],
   createOptionsLabel = 'Add update for…',
@@ -259,7 +259,6 @@ export function UpdateList({
   const [createError, setCreateError] = useState<string | null>(null)
   const [formerItemsOpen, setFormerItemsOpen] = useState(false)
   const [autoFocusItemId, setAutoFocusItemId] = useState<string | null>(null)
-  const createOptionRef = useRef<HTMLSelectElement>(null)
   const headingId = useId()
   const formerItemsId = useId()
 
@@ -303,24 +302,6 @@ export function UpdateList({
     }
   }
 
-  useCommandKeyShortcut('p', () => {
-    if (adding) return
-    if (onCreate) {
-      void addUpdate()
-      return
-    }
-
-    const select = createOptionRef.current
-    if (!select) return
-    select.focus()
-    try {
-      select.showPicker?.()
-    } catch {
-      // Focusing preserves a usable fallback when the platform does not allow
-      // opening a native picker programmatically.
-    }
-  }, Boolean(onCreate || onCreateFor))
-
   return (
     <section className="mt-8" aria-labelledby={headingId}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
@@ -351,7 +332,6 @@ export function UpdateList({
               className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2"
             />
             <select
-              ref={createOptionRef}
               aria-label={createOptionsLabel}
               aria-keyshortcuts="Meta+P"
               title={`${createOptionsLabel} (⌘P)`}
@@ -386,7 +366,7 @@ export function UpdateList({
               ? () => onOpenObservation(item.id)
               : undefined}
             onDelete={() => onDelete(item.id)}
-            autoFocus={item.id === autoFocusItemId}
+            autoFocus={item.id === autoFocusItemId || item.id === revealItemId}
           />
         ))}
         {items.length === 0 && !loading && (

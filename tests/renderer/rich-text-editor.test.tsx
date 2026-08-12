@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 
 import { render, screen, waitFor } from '@testing-library/react'
-import { useState } from 'react'
+import { createRef, useState } from 'react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import {
   isRichText,
   RichTextContent,
   RichTextEditor,
+  type RichTextEditorHandle,
   richTextPlainText
 } from '../../src/renderer/src/components/ui/rich-text-editor'
 
@@ -43,6 +44,26 @@ function selectText(editor: HTMLElement, start: number, end: number): void {
 }
 
 describe('RichTextEditor', () => {
+  it('exposes the latest committed value for confirmation-based forms', async () => {
+    const editorRef = createRef<RichTextEditorHandle>()
+    const user = userEvent.setup()
+    render(
+      <RichTextEditor
+        ref={editorRef}
+        value=""
+        ariaLabel="Draft"
+        onChange={vi.fn()}
+      />
+    )
+
+    const editor = screen.getByRole('textbox', { name: 'Draft' })
+    await user.click(editor)
+    await user.paste('Latest draft')
+
+    await waitFor(() => expect(richTextPlainText(editorRef.current?.getValue() ?? ''))
+      .toBe('Latest draft'))
+  })
+
   it('materializes alphanumeric @tags as durable visual nodes', async () => {
     const onChange = vi.fn()
     const user = userEvent.setup()

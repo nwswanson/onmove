@@ -44,6 +44,7 @@ import { TodoWorkspace } from '@/features/todos/todo-workspace'
 import { TagsWorkspace } from '@/features/tags/tags-workspace'
 import { ReviewWorkspace } from '@/features/review/review-workspace'
 import { DueWorkspace } from '@/features/due/due-workspace'
+import { UpdateComposerProvider } from '@/features/updates/update-composer'
 import type { ThreadSnapshot } from '../../shared/contracts'
 import type { NavigationBadgeCounts } from '@/features/application/navigation-badge-presenters'
 
@@ -391,7 +392,17 @@ export function App(): React.JSX.Element {
   }
 
   return (
-    <SidebarDndProvider>
+    <UpdateComposerProvider
+      enabled={application.enabled && (
+        application.selectedView === 'focus' || application.selectedView === 'review'
+      )}
+      focuses={application.navigableFocuses}
+      hideSensitiveContent={application.sensitiveContentHidden}
+      onCreated={async (target) => {
+        await application.refreshFocus(target.focusId)
+      }}
+    >
+      <SidebarDndProvider>
       <ApplicationShell
         toolbar={
           <AppToolbar
@@ -556,6 +567,7 @@ export function App(): React.JSX.Element {
         onOpenChange={setCommandPaletteOpen}
         onSelect={openCommandPaletteDestination}
       />
-    </SidebarDndProvider>
+      </SidebarDndProvider>
+    </UpdateComposerProvider>
   )
 }
