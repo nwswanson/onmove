@@ -290,10 +290,10 @@ todo and does not block its parent from closing.
 | Field | Meaning |
 | --- | --- |
 | `parent` | Exactly one Focus or Thread. |
-| `type` | `ongoing` or `action`. |
+| `type` | Legacy persistence value mirrored from `dueDate` (`ongoing` when absent, `action` when present). It is not independently user-authored. |
 | `title` | Required statement of what is expected. |
 | `status` | `active`, `paused`, `done`, or `cancelled`, with transition history. |
-| `dueDate` | Optional due date. |
+| `dueDate` | Optional due date and the sole user-facing distinction between continuing and finite Commitments. |
 | `cadenceDays` | Optional positive whole-number interval between required Updates. |
 | `state` | Derived observed state. |
 | `lastReviewDate` | Later of the latest applicable direct Update and aggregate/exact-cell review poke. |

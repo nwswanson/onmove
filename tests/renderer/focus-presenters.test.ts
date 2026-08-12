@@ -8,12 +8,10 @@ import type {
   ThreadSnapshot
 } from '../../src/shared/contracts'
 import {
-  COMMITMENT_TYPE_OPTIONS,
   commitmentCollectionModel,
   commitmentContextSidebarItems,
   commitmentDueDateLabel,
   commitmentDrawerAdapter,
-  commitmentTypeLabel,
   commitmentWorkingContextModel,
   dateOrNeverLabel,
   focusContextSidebarItems,
@@ -441,13 +439,7 @@ describe('Focus presentation adapters', () => {
     expect(workStatusLabel('cancelled')).toEqual(WORK_STATUS_OPTIONS[3])
   })
 
-  it('maps Commitment types and optional due dates into UI labels', () => {
-    expect(COMMITMENT_TYPE_OPTIONS).toEqual([
-      { value: 'ongoing', label: 'Ongoing' },
-      { value: 'action', label: 'Action' }
-    ])
-    expect(commitmentTypeLabel('ongoing')).toBe('Ongoing')
-    expect(commitmentTypeLabel('action')).toBe('Action')
+  it('maps optional Commitment due dates into UI labels', () => {
     expect(commitmentDueDateLabel(null)).toBe('No due date')
     expect(commitmentDueDateLabel('2026-02-15')).toBe('2026-02-15')
   })
@@ -481,7 +473,6 @@ describe('Focus presentation adapters', () => {
             expect.objectContaining({
               id: 21,
               title: 'Publish the launch plan',
-              typeLabel: 'Action',
               lastUpdatedLabel: '2026-01-07',
               dueDateLabel: '2026-02-15',
               stateLabel: { label: 'Red', tone: 'danger' },
@@ -489,7 +480,6 @@ describe('Focus presentation adapters', () => {
             }),
             expect.objectContaining({
               id: 20,
-              typeLabel: 'Ongoing',
               statusLabel: WORK_STATUS_OPTIONS[0],
               completion: { visible: false, checked: false, disabled: true }
             })
@@ -628,8 +618,7 @@ describe('Focus presentation adapters', () => {
           required: true
         },
         { kind: 'static', id: 'parent', label: 'Parent', value: 'Focus — Project Atlas' },
-        { kind: 'static', id: 'type', label: 'Type', value: 'Ongoing' },
-        { kind: 'static', id: 'due-date', label: 'Due date', value: 'No due date' },
+        { kind: 'date', id: 'due-date', label: 'Due date', value: '' },
         {
           kind: 'static',
           id: 'status',
@@ -659,11 +648,18 @@ describe('Focus presentation adapters', () => {
         }
       ]
     })
-    await adapter.model.autosave?.onInvoke({ title: 'Improve all ticket quality' })
+    await adapter.model.autosave?.onInvoke({
+      title: 'Improve all ticket quality',
+      'due-date': '2026-02-15'
+    })
     const remove = adapter.model.actions?.find((action) => action.id === 'delete')
     await remove?.onInvoke({})
 
-    expect(onSave).toHaveBeenCalledWith({ title: 'Improve all ticket quality' })
+    expect(onSave).toHaveBeenCalledWith({
+      title: 'Improve all ticket quality',
+      dueDate: '2026-02-15',
+      type: 'action'
+    })
     expect(remove?.confirmation?.confirmLabel).toBe('Delete commitment')
     expect(onDelete).toHaveBeenCalledOnce()
   })

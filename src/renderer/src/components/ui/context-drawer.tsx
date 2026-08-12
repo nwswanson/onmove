@@ -56,6 +56,13 @@ export type ContextDrawerFieldModel = (
       placeholder?: string
     }
   | {
+      kind: 'date'
+      id: string
+      label: string
+      value: string
+      required?: boolean
+    }
+  | {
       kind: 'rich-text'
       id: string
       label: string
@@ -417,7 +424,7 @@ export function validateContextDrawerModel(model: ContextDrawerModel): void {
       const field = model.sections.flatMap((section) => section.fields).find(
         (candidate) => candidate.id === fieldId
       )
-      if (!field || !['text', 'rich-text', 'number'].includes(field.kind)) {
+      if (!field || !['text', 'rich-text', 'number', 'date'].includes(field.kind)) {
         throw new Error(`Context drawer autosave field "${fieldId}" must be editable.`)
       }
     }
@@ -961,6 +968,14 @@ function ContextDrawerInspector({
                           max={field.max}
                           step={field.step}
                           placeholder={field.placeholder}
+                          value={drawerStringValue(values, field.id)}
+                          onChange={(event) => updateValue(field.id, event.target.value)}
+                        />
+                      ) : field.kind === 'date' ? (
+                        <Input
+                          id={inputId}
+                          type="date"
+                          required={field.required}
                           value={drawerStringValue(values, field.id)}
                           onChange={(event) => updateValue(field.id, event.target.value)}
                         />

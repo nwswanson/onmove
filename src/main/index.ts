@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell } from 'electron'
 import { AppDatabase } from './database'
 import { registerAppIpc } from './ipc'
 import { createMenuTemplate } from './menu'
@@ -26,13 +26,69 @@ const MAX_IMPORT_BYTES = 512 * 1024 * 1024
 let dataTransferInProgress = false
 let backupMaintenanceTimer: NodeJS.Timeout | undefined
 const BACKUP_MAINTENANCE_CHECK_MS = 60 * 60 * 1000
+const MAIN_WINDOW_DEFAULT_WIDTH = 1120
+const MAIN_WINDOW_DEFAULT_HEIGHT = 760
+const MAIN_WINDOW_MIN_WIDTH = 1040
+const MAIN_WINDOW_MIN_HEIGHT = 600
+const WINDOW_SIZE_SAVE_DELAY_MS = 150
+let pendingMainWindowSize: { width: number; height: number } | undefined
+let windowSizeSaveTimer: NodeJS.Timeout | undefined
+
+function flushMainWindowSize(): void {
+  if (windowSizeSaveTimer) clearTimeout(windowSizeSaveTimer)
+  windowSizeSaveTimer = undefined
+  const size = pendingMainWindowSize
+  pendingMainWindowSize = undefined
+  if (!database || !size) return
+  try {
+    database.windowPreferences.setSize(size)
+  } catch (error) {
+    console.error('OnMove window size could not be saved:', error)
+  }
+}
+
+function scheduleMainWindowSize(window: BrowserWindow): void {
+  if (
+    window.isDestroyed() ||
+    window.isMaximized() ||
+    window.isFullScreen()
+  ) return
+  const [width, height] = window.getSize()
+  pendingMainWindowSize = { width, height }
+  if (windowSizeSaveTimer) clearTimeout(windowSizeSaveTimer)
+  windowSizeSaveTimer = setTimeout(flushMainWindowSize, WINDOW_SIZE_SAVE_DELAY_MS)
+}
+
+function initialMainWindowSize(): { width: number; height: number } {
+  flushMainWindowSize()
+  const saved = database?.windowPreferences.getSize()
+  if (!saved) {
+    return { width: MAIN_WINDOW_DEFAULT_WIDTH, height: MAIN_WINDOW_DEFAULT_HEIGHT }
+  }
+
+  const workArea = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
+  return {
+    width: Math.max(MAIN_WINDOW_MIN_WIDTH, Math.min(saved.width, workArea.width)),
+    height: Math.max(MAIN_WINDOW_MIN_HEIGHT, Math.min(saved.height, workArea.height))
+  }
+}
+
+function persistMainWindowResize(window: BrowserWindow): void {
+  window.on('resize', () => scheduleMainWindowSize(window))
+  window.on('resized', () => {
+    scheduleMainWindowSize(window)
+    flushMainWindowSize()
+  })
+}
 
 function createWindow(richTextTarget?: RichTextDocumentReference): BrowserWindow {
+  const initialSize = richTextTarget
+    ? { width: 820, height: 720 }
+    : initialMainWindowSize()
   const window = new BrowserWindow({
-    width: richTextTarget ? 820 : 1120,
-    height: richTextTarget ? 720 : 760,
-    minWidth: richTextTarget ? 520 : 1040,
-    minHeight: richTextTarget ? 420 : 600,
+    ...initialSize,
+    minWidth: richTextTarget ? 520 : MAIN_WINDOW_MIN_WIDTH,
+    minHeight: richTextTarget ? 420 : MAIN_WINDOW_MIN_HEIGHT,
     show: false,
     backgroundColor: '#f7f7f5',
     titleBarStyle: 'hiddenInset',
@@ -50,6 +106,8 @@ function createWindow(richTextTarget?: RichTextDocumentReference): BrowserWindow
     const webContentsId = window.webContents.id
     richTextWindowTargets.set(webContentsId, structuredClone(richTextTarget))
     window.on('closed', () => richTextWindowTargets.delete(webContentsId))
+  } else {
+    persistMainWindowResize(window)
   }
 
   window.once('ready-to-show', () => window.show())
@@ -270,6 +328,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  flushMainWindowSize()
   if (backupMaintenanceTimer) clearInterval(backupMaintenanceTimer)
   backupMaintenanceTimer = undefined
   unregisterIpc?.()

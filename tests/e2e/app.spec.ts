@@ -7,7 +7,41 @@ import { AppDatabase } from '../../src/main/database'
 
 test('opens and closes multiple main windows through the New Window menu', async () => {
   const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-multi-window-e2e-'))
+  const databasePath = join(userDataDirectory, 'onmove.sqlite3')
   let application: ElectronApplication | undefined
+
+  function storedWindowSize(): { width: number; height: number } | null {
+    if (!existsSync(databasePath)) return null
+    const stored = new DatabaseSync(databasePath, { readOnly: true })
+    try {
+      return stored.prepare(
+        'SELECT width, height FROM app_window_preferences WHERE singleton = 1'
+      ).get() as { width: number; height: number } | undefined ?? null
+    } finally {
+      stored.close()
+    }
+  }
+
+  async function createNewWindow(): Promise<void> {
+    await application?.evaluate(({ BrowserWindow, Menu }) => {
+      const menuItem = Menu.getApplicationMenu()?.getMenuItemById('new-window')
+      if (!menuItem) throw new Error('Missing New Window menu item')
+      // Supply the same arguments Electron supplies for Cmd+N. These objects are
+      // intentionally not structured-cloneable and must stay at the menu boundary.
+      menuItem.click?.(menuItem, BrowserWindow.getFocusedWindow() ?? undefined, {} as never)
+    })
+  }
+
+  async function mainWindowSizes(): Promise<Array<{ id: number; width: number; height: number }>> {
+    return application?.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()
+        .sort((left, right) => left.id - right.id)
+        .map((window) => {
+          const [width, height] = window.getSize()
+          return { id: window.id, width, height }
+        })
+    ) ?? []
+  }
 
   try {
     const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
@@ -20,22 +54,59 @@ test('opens and closes multiple main windows through the New Window menu', async
     const firstWindow = await application.firstWindow()
     await expect(firstWindow.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
 
-    await application.evaluate(({ BrowserWindow, Menu }) => {
-      const menuItem = Menu.getApplicationMenu()?.getMenuItemById('new-window')
-      if (!menuItem) throw new Error('Missing New Window menu item')
-      // Supply the same arguments Electron supplies for Cmd+N. These objects are
-      // intentionally not structured-cloneable and must stay at the menu boundary.
-      menuItem.click?.(menuItem, BrowserWindow.getFocusedWindow() ?? undefined, {} as never)
+    await application.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.setSize(1180, 700)
     })
+    await expect.poll(storedWindowSize).toMatchObject({ width: 1180, height: 700 })
 
+    await createNewWindow()
     await expect.poll(() => application?.windows().length).toBe(2)
     const secondWindow = application.windows().find((window) => window !== firstWindow)
     if (!secondWindow) throw new Error('New Window did not create a second main window')
     await expect(secondWindow.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
+    expect((await mainWindowSizes()).map(({ width, height }) => ({ width, height }))).toEqual([
+      { width: 1180, height: 700 },
+      { width: 1180, height: 700 }
+    ])
+
+    await application.evaluate(({ BrowserWindow }) => {
+      const windows = BrowserWindow.getAllWindows().sort((left, right) => left.id - right.id)
+      windows[0]?.setSize(1160, 680)
+    })
+    await expect.poll(storedWindowSize).toMatchObject({ width: 1160, height: 680 })
+    await application.evaluate(({ BrowserWindow }) => {
+      const windows = BrowserWindow.getAllWindows().sort((left, right) => left.id - right.id)
+      windows[1]?.setSize(1100, 640)
+    })
+    await expect.poll(storedWindowSize).toMatchObject({ width: 1100, height: 640 })
+    expect((await mainWindowSizes()).map(({ width, height }) => ({ width, height }))).toEqual([
+      { width: 1160, height: 680 },
+      { width: 1100, height: 640 }
+    ])
+
+    await createNewWindow()
+    await expect.poll(() => application?.windows().length).toBe(3)
+    expect((await mainWindowSizes()).map(({ width, height }) => ({ width, height }))).toEqual([
+      { width: 1160, height: 680 },
+      { width: 1100, height: 640 },
+      { width: 1100, height: 640 }
+    ])
 
     await secondWindow.close()
-    await expect.poll(() => application?.windows().length).toBe(1)
+    await expect.poll(() => application?.windows().length).toBe(2)
     await expect(firstWindow.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
+
+    await application.close()
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    const restoredWindow = await application.firstWindow()
+    await expect(restoredWindow.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
+    expect((await mainWindowSizes()).map(({ width, height }) => ({ width, height }))).toEqual([
+      { width: 1100, height: 640 }
+    ])
   } finally {
     await application?.close()
     rmSync(userDataDirectory, { recursive: true, force: true })
@@ -1076,9 +1147,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await window.getByRole('button', { name: 'New commitment' }).click()
     const newCommitmentDialog = window.getByRole('dialog', { name: 'New commitment' })
     await newCommitmentDialog.getByLabel(/^Title/).fill('Keep sponsors aligned')
-    const newCommitmentType = newCommitmentDialog.getByRole('combobox', { name: 'Type' })
-    await expect(newCommitmentType).toHaveValue('ongoing')
-    await newCommitmentType.selectOption('action')
+    await expect(newCommitmentDialog.getByLabel('Type')).toHaveCount(0)
     const commitmentDueDate = '2026-09-15'
     await newCommitmentDialog.getByLabel(/Due date/).fill(commitmentDueDate)
     await window.getByRole('button', { name: 'Create commitment' }).click()
@@ -1101,7 +1170,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       'page'
     )
     await expect(window.getByRole('heading', { name: 'Keep sponsors aligned' })).toBeVisible()
-    await expect(window.getByLabel('Commitment type')).toContainText('Type · Action')
+    await expect(window.getByLabel('Commitment type')).toHaveCount(0)
     await expect(window.getByLabel('Commitment due date')).toContainText(
       `Due date · ${commitmentDueDate}`
     )
@@ -1116,8 +1185,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(commitmentDrawer).toBeVisible()
     await expect(commitmentDrawer.getByText('Last updated')).toBeVisible()
     await expect(commitmentDrawer.getByText('Never')).toBeVisible()
-    await expect(commitmentDrawer.getByText('Action', { exact: true })).toBeVisible()
-    await expect(commitmentDrawer.getByText(commitmentDueDate)).toBeVisible()
+    await expect(commitmentDrawer.getByLabel('Due date')).toHaveValue(commitmentDueDate)
     const commitmentStatus = window.getByRole('combobox', { name: 'Commitment status' })
     await expect(commitmentStatus).toHaveValue('active')
     await commitmentStatus.selectOption('paused')
@@ -1188,7 +1256,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     const actionRow = currentCommitments
       .getByRole('button', { name: 'Open commitment Keep sponsors aligned' })
       .locator('..')
-    await expect(actionRow.getByText('Action', { exact: true })).toBeVisible()
+    await expect(actionRow.getByText('Action', { exact: true })).toHaveCount(0)
     await expect(actionRow.getByText(`Due · ${commitmentDueDate}`)).toBeVisible()
     await actionRow
       .getByRole('checkbox', { name: 'Mark commitment Keep sponsors aligned done' })
@@ -1650,7 +1718,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     ).toBeVisible()
     await window.getByRole('button', { name: 'Open commitment Keep sponsors aligned' }).click()
     await expect(window.getByRole('combobox', { name: 'Commitment status' })).toHaveValue('done')
-    await expect(window.getByLabel('Commitment type')).toContainText('Type · Action')
+    await expect(window.getByLabel('Commitment type')).toHaveCount(0)
     await expect(window.getByLabel('Commitment due date')).toContainText(
       `Due date · ${commitmentDueDate}`
     )

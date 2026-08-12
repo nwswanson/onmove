@@ -5,10 +5,7 @@ import type {
 import type { LifecycleStatusOptionModel } from '@/components/ui/lifecycle-status'
 import type { StateLabelModel } from '@/components/ui/state-label'
 import { buildCommitmentListModel } from '@/features/focus/commitment-list-model'
-import {
-  commitmentTypeLabel,
-  dateOrNeverLabel
-} from '@/features/focus/focus-presenters'
+import { dateOrNeverLabel } from '@/features/focus/focus-presenters'
 import { healthStateLabel } from '@/features/shared/state-presenters'
 import { workStatusLabel } from '@/features/shared/work-status'
 
@@ -40,7 +37,6 @@ export interface ReviewItemModel {
   due: boolean
   goal: string | null
   description: string | null
-  commitmentTypeLabel: string | null
   dueDate: string | null
   cadenceDays: number | null
   commitments: ReviewCommitmentRowModel[]
@@ -106,7 +102,6 @@ export function reviewItemModel(
     due: item.due,
     goal: item.kind === 'focus' && item.focus.goal ? item.focus.goal : null,
     description: item.kind === 'focus' ? item.focus.description : null,
-    commitmentTypeLabel: item.commitment ? commitmentTypeLabel(item.commitment.type) : null,
     dueDate: item.commitment?.dueDate ?? null,
     cadenceDays: item.commitment?.cadenceDays ?? null,
     commitments: commitments.map((commitment) => ({

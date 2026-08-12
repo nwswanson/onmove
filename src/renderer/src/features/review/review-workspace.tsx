@@ -193,12 +193,6 @@ function ReviewDetails({ model }: { model: ReviewItemModel }): React.JSX.Element
               </dd>
             </div>
           )}
-          {model.commitmentTypeLabel && (
-            <div className="flex gap-1.5">
-              <dt>Type</dt>
-              <dd className="font-medium text-foreground">{model.commitmentTypeLabel}</dd>
-            </div>
-          )}
           {model.dueDate && (
             <div className="flex gap-1.5">
               <dt>Due</dt>

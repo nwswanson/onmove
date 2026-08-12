@@ -478,6 +478,7 @@ export type CommitmentParent =
 export interface CommitmentSnapshot {
   id: number
   parent: CommitmentParent
+  /** Legacy storage compatibility; user-facing behavior is derived from `dueDate`. */
   type: CommitmentType
   title: string
   status: CommitmentStatus
@@ -497,6 +498,7 @@ export interface CommitmentSnapshot {
 
 export interface CreateCommitmentInput {
   parent: CommitmentParent
+  /** Legacy storage compatibility; callers derive this from `dueDate`. */
   type: CommitmentType
   title: string
   status?: CommitmentStatus
@@ -506,6 +508,7 @@ export interface CreateCommitmentInput {
 }
 
 export interface UpdateCommitmentInput {
+  /** Legacy storage compatibility; callers derive this from `dueDate`. */
   type?: CommitmentType
   title?: string
   status?: CommitmentStatus

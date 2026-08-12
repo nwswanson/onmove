@@ -98,6 +98,31 @@ describe('Thread, Commitment, and Update models', () => {
     expect(database!.domain.commitments.listForFocus(focus.id)).toHaveLength(1)
   })
 
+  it('mirrors the legacy commitment type whenever due-date presence changes', () => {
+    const focus = database!.domain.focuses.create({ title: 'Project execution' })
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'focus', id: focus.id },
+      type: 'ongoing',
+      title: 'Publish the launch plan'
+    })
+
+    const dueDated = database!.domain.commitments.update(commitment.id, {
+      dueDate: '2026-09-15'
+    })
+    expect(dueDated).toMatchObject({
+      dueDate: '2026-09-15',
+      type: 'action'
+    })
+
+    const undated = database!.domain.commitments.update(commitment.id, {
+      dueDate: null
+    })
+    expect(undated).toMatchObject({
+      dueDate: null,
+      type: 'ongoing'
+    })
+  })
+
   it('moves a Commitment subtree between compatible inherited Threads without scope mutation', () => {
     const focus = database!.domain.focuses.create({ title: 'Delivery' })
     const focusScope = database!.domain.focusScopes.addSubject(

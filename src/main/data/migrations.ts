@@ -2121,6 +2121,20 @@ const migrations: readonly Migration[] = [
         ) STRICT, WITHOUT ROWID;
       `)
     }
+  },
+  {
+    version: 21,
+    name: 'main_window_size_preference',
+    up(database) {
+      database.exec(`
+        CREATE TABLE app_window_preferences (
+          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+          width INTEGER NOT NULL CHECK (width BETWEEN 1 AND 32767),
+          height INTEGER NOT NULL CHECK (height BETWEEN 1 AND 32767),
+          updated_at TEXT NOT NULL
+        ) STRICT, WITHOUT ROWID;
+      `)
+    }
   }
 ]
 

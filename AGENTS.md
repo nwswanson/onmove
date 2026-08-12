@@ -30,6 +30,10 @@
   seed color alone.
 - Preserve the native macOS inset title bar and draggable regions. Interactive controls must remain
   outside draggable hit targets.
+- Persist one last-write-wins main-workspace window size in SQLite. Every normal main window may
+  replace it after resizing, but existing windows must never subscribe to or apply later writes;
+  read and display-clamp the preference only while constructing the next main window. Detached
+  rich-text editor windows retain their independent defaults and do not overwrite this preference.
 - The sidebar is resizable. Contextual editing belongs in the resizable right-side drawer, which
   participates in layout and shrinks the main canvas instead of overlaying it.
 - Use “contextual sidebar” for the secondary left-side hierarchy pane and “context drawer” for the
@@ -228,11 +232,12 @@ foreground colors and do not rely on color alone to communicate selection or sta
   requests or Commitment ids for open, pin, and completion actions. Successful parent-page
   creation must select the new nested Commitment route without entering the filtered Commitment
   level; creation from an already-filtered level remains in that level.
-- New Commitments expose `ongoing` and `action` types and default to `ongoing`; their optional due
-  date must be visible in the selected Commitment screen. Render the one-way completion checkbox
-  only on Action Commitment list rows. Checking an active or paused Action sends `status: done`
-  through the existing typed mutation so transition auditing remains intact; closed Actions cannot
-  be reopened through the checkbox, and Ongoing rows never expose it.
+- Treat due-date presence as the only user-facing Commitment mode. Do not expose an independent
+  `ongoing` / `action` selector or label. Until a later migration removes the legacy persisted type,
+  mirror undated Commitments to `ongoing` and due-dated Commitments to `action` at the typed model
+  boundary. Render the one-way completion checkbox only on due-dated Commitment list rows. Checking
+  an active or paused due-dated Commitment sends `status: done` through the existing typed mutation
+  so transition auditing remains intact; closed Commitments cannot be reopened through the checkbox.
 - Render Focus, Thread, and Commitment Todos through the shared receiver-owned `TodoList`. The
   receiver owns inline creation, editable name/due date/done controls, overdue presentation, delete,
   and dnd-kit sortable ordering. Overdue means incomplete with a due date before the current local

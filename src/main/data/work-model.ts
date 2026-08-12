@@ -1211,15 +1211,24 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
   update(id: number, input: UpdateCommitmentInput): CommitmentRecord {
     const current = this.find(id)
     if (!current) throw new ModelNotFoundError('Commitment', id)
+    const dueDate = input.dueDate === undefined
+      ? current.dueDate
+      : normalizeOptionalDate(input.dueDate, 'dueDate')
+    // `commitment_type` remains for archive/schema compatibility. New UI
+    // behavior is defined solely by due-date presence; remove this mirrored
+    // write when a future migration drops the legacy column and contract field.
+    const legacyType = input.dueDate === undefined
+      ? (input.type === undefined ? current.type : normalizeCommitmentType(input.type))
+      : (dueDate === null ? 'ongoing' : 'action')
     this.database.run(
       `UPDATE commitments
        SET commitment_type = ?, title = ?, status = ?, due_on = ?, cadence_days = ?, sensitive = ?, updated_at = ?
-       WHERE id = ?`,
+      WHERE id = ?`,
       [
-        input.type === undefined ? current.type : normalizeCommitmentType(input.type),
+        legacyType,
         input.title === undefined ? current.title : normalizeTitle(input.title, 'commitment'),
         input.status === undefined ? current.status : normalizeStatus(input.status),
-        input.dueDate === undefined ? current.dueDate : normalizeOptionalDate(input.dueDate, 'dueDate'),
+        dueDate,
         input.cadenceDays === undefined
           ? current.cadenceDays
           : normalizeOptionalDays(input.cadenceDays, 'cadenceDays'),

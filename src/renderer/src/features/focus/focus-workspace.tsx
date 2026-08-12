@@ -53,7 +53,6 @@ import {
   commitmentDueDateLabel,
   commitmentDrawerAdapter,
   commitmentWorkingContextModel,
-  commitmentTypeLabel,
   dateOrNeverLabel,
   focusContextSidebarItems,
   focusDrawerAdapter,
@@ -1195,10 +1194,6 @@ export function FocusWorkspace({
                       <TaggedText value={selectedCommitment.title} />
                     </h1>
                     <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                      <p aria-label="Commitment type">
-                        <span className="font-medium text-foreground/80">Type</span>
-                        {' · '}{commitmentTypeLabel(selectedCommitment.type)}
-                      </p>
                       <p aria-label="Commitment due date">
                         <span className="font-medium text-foreground/80">Due date</span>
                         {' · '}{commitmentDueDateLabel(selectedCommitment.dueDate)}

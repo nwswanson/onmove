@@ -2,7 +2,6 @@ import { Fragment, useState } from 'react'
 import { ChevronDown, ChevronRight, Info, Plus } from 'lucide-react'
 import type {
   CommitmentParent,
-  CommitmentType,
   CreateCommitmentInput
 } from '../../../../shared/contracts'
 import { Button } from '@/components/ui/button'
@@ -14,9 +13,7 @@ import {
   type LifecycleStatusOptionModel
 } from '@/components/ui/lifecycle-status'
 import { StateLabel, type StateLabelModel } from '@/components/ui/state-label'
-import {
-  COMMITMENT_TYPE_OPTIONS
-} from '@/features/focus/focus-presenters'
+import { legacyCommitmentTypeForDueDate } from '@/features/focus/commitment-list-model'
 
 interface NewCommitmentDialogProps {
   parent: CommitmentParent
@@ -31,7 +28,6 @@ export function NewCommitmentDialog({
   onCreate
 }: NewCommitmentDialogProps): React.JSX.Element {
   const [title, setTitle] = useState('')
-  const [type, setType] = useState<CommitmentType>('ongoing')
   const [dueDate, setDueDate] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -42,7 +38,13 @@ export function NewCommitmentDialog({
     setSaving(true)
     setError(null)
     try {
-      await onCreate({ parent, type, title, dueDate: dueDate || null })
+      const normalizedDueDate = dueDate || null
+      await onCreate({
+        parent,
+        title,
+        dueDate: normalizedDueDate,
+        type: legacyCommitmentTypeForDueDate(normalizedDueDate)
+      })
       onClose()
     } catch {
       setError('The commitment could not be created. Please try again.')
@@ -86,21 +88,6 @@ export function NewCommitmentDialog({
           />
         </DialogField>
         <DialogField>
-          <label htmlFor="new-commitment-type" className="text-xs font-medium">
-            Type
-          </label>
-          <select
-            id="new-commitment-type"
-            className="h-9 w-full rounded-lg border border-border bg-background/75 px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/35"
-            value={type}
-            onChange={(event) => setType(event.target.value as CommitmentType)}
-          >
-            {COMMITMENT_TYPE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </DialogField>
-        <DialogField>
           <label htmlFor="new-commitment-due-date" className="text-xs font-medium">
             Due date <span className="font-normal text-muted-foreground">(optional)</span>
           </label>
@@ -120,7 +107,6 @@ export function NewCommitmentDialog({
 export interface CommitmentCollectionItemModel {
   id: number
   title: string
-  typeLabel: string
   statusLabel: LifecycleStatusOptionModel
   lastUpdatedLabel: string
   dueDateLabel: string | null
@@ -204,9 +190,6 @@ export function CommitmentCollection({
           <span className="min-w-0 flex-1">
             <span className="block truncate"><TaggedText value={item.title} /></span>
             <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-              <span className="text-[0.6875rem] font-medium text-muted-foreground">
-                {item.typeLabel}
-              </span>
               <LifecycleStatusLabel
                 model={item.statusLabel}
                 size="compact"

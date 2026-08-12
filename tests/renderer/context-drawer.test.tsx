@@ -87,6 +87,7 @@ describe('ContextDrawerOutlet', () => {
                     value: true,
                     description: 'Include this item in review workflows.'
                   },
+                  { kind: 'date', id: 'due-date', label: 'Due date', value: '' },
                   { kind: 'static', id: 'parent', label: 'Parent', value: 'Focus — Atlas' }
                 ]
               }
@@ -120,6 +121,7 @@ describe('ContextDrawerOutlet', () => {
     await user.type(screen.getByLabelText('Notes'), ' updated')
     await user.selectOptions(screen.getByLabelText('Status'), 'paused')
     await user.click(screen.getByLabelText('Needs review'))
+    await user.type(screen.getByLabelText('Due date'), '2026-09-15')
     await user.click(screen.getByRole('button', { name: 'Save' }))
 
     expect(save).toHaveBeenCalledOnce()
@@ -127,7 +129,8 @@ describe('ContextDrawerOutlet', () => {
     expect(values).toMatchObject({
       title: 'Revised',
       status: 'paused',
-      'needs-review': false
+      'needs-review': false,
+      'due-date': '2026-09-15'
     })
     expect(isRichText(values.notes)).toBe(true)
     expect(richTextPlainText(values.notes)).toBe(' updatedExisting notes')

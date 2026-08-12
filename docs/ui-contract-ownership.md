@@ -27,7 +27,7 @@ SQLite/domain -> typed preload snapshot -> feature model hook -> feature present
 | Existing rich-text persistence | `useDurableRichText` and the typed `richText` preload API | Supply a document reference and initial opaque value | Synchronous SQLite commit, revisions, cross-window updates, detached-window opening, and errors |
 | Compact-field persistence | `useThrottledAutosave` and `ContextDrawerAutosaveModel` | Supply the latest draft, persistence callback, and drawer field capabilities | The 750 ms interval, coalescing, write serialization, blur/close flushing, pending state, and errors |
 | Context drawer | `ContextDrawerModel` inside `ContextDrawerAdapter` | Map the selected record to text/select/checkbox/static fields and typed action capabilities | Inputs/static values, boolean controls, draft state, validation, pending/errors, confirmation, close, resize, and pin UI |
-| Commitment collection | `CommitmentCollectionModel` | Translate the ordered Commitment projection into display labels, state/status models, and completion capabilities | Group/list markup, empty states, Add action, Action checkbox, disclosure and info controls, accessibility, creation requests, and id-only item events |
+| Commitment collection | `CommitmentCollectionModel` | Translate the ordered Commitment projection into display labels, state/status models, and due-date-derived completion capabilities | Group/list markup, empty states, Add action, due-dated completion checkbox, disclosure and info controls, accessibility, creation requests, and id-only item events |
 | Direct updates | `UpdateListItemModel`, `UpdateListDraft`, and `UpdateListStateOptionModel` | Bind one typed Focus, Thread, or Commitment parent; map Update snapshots, provide explicit creation defaults, and translate drafts into typed mutations | Responsive cards, inline editors, immediate blank-record creation, automatic edit persistence, delete actions, validation, empty/loading/errors, accessible owner label, and visible state labels/colors |
 | Sensitive visibility | `SensitiveRecord`, hierarchy visibility helpers, plus `SensitivityToggleProps` / Update draft `sensitive` | Filter collection membership with the app-wide preference and ancestor flags; persist typed flag changes; resolve hidden routes upward | Sensitivity-control markup and complete selected-record editing models |
 | Main view | `WorkspaceShellProps.main` UI-composition slot | A feature view renders its own screen from feature-model data | Shell placement, sizing, and clipping |
@@ -99,7 +99,7 @@ translates those groups into the receiver-owned display contract used unchanged 
 screens; the receiver receives labels and semantic UI models, not domain records. The sidebar
 presenter consumes the same ordered business projection independently, so neither UI receiver
 embeds lifecycle or health priority rules. The adjacent `commitmentCompletionModel` is the
-business/view-model boundary for the list-only Action checkbox: it declares visibility, checked
+business/view-model boundary for the list-only due-dated completion checkbox: it declares visibility, checked
 state, and one-way availability; the row owns checkbox markup and emits only the Commitment id to
 the feature callback.
 

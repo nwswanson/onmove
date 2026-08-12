@@ -82,28 +82,28 @@ describe('buildCommitmentListModel', () => {
     expect(input).toEqual([first, second])
   })
 
-  it('exposes a one-way completion affordance only for Action commitments', () => {
-    expect(commitmentCompletionModel({ type: 'ongoing', status: 'active' })).toEqual({
+  it('exposes a one-way completion affordance only for due-dated commitments', () => {
+    expect(commitmentCompletionModel({ dueDate: null, status: 'active' })).toEqual({
       visible: false,
       checked: false,
       disabled: true
     })
-    expect(commitmentCompletionModel({ type: 'action', status: 'active' })).toEqual({
+    expect(commitmentCompletionModel({ dueDate: '2026-09-15', status: 'active' })).toEqual({
       visible: true,
       checked: false,
       disabled: false
     })
-    expect(commitmentCompletionModel({ type: 'action', status: 'paused' })).toEqual({
+    expect(commitmentCompletionModel({ dueDate: '2026-09-15', status: 'paused' })).toEqual({
       visible: true,
       checked: false,
       disabled: false
     })
-    expect(commitmentCompletionModel({ type: 'action', status: 'done' })).toEqual({
+    expect(commitmentCompletionModel({ dueDate: '2026-09-15', status: 'done' })).toEqual({
       visible: true,
       checked: true,
       disabled: true
     })
-    expect(commitmentCompletionModel({ type: 'action', status: 'cancelled' })).toEqual({
+    expect(commitmentCompletionModel({ dueDate: '2026-09-15', status: 'cancelled' })).toEqual({
       visible: true,
       checked: false,
       disabled: true

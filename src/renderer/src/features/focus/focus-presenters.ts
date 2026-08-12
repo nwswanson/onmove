@@ -1,7 +1,6 @@
 import type {
   CommitmentSnapshot,
   CommitmentWorkingContextSnapshot,
-  CommitmentType,
   FocusSnapshot,
   FocusScopeSnapshot,
   FocusStatus,
@@ -35,6 +34,7 @@ import type { WorkspaceTabBarModel } from '@/components/ui/workspace-tab-bar'
 import {
   buildCommitmentListModel,
   commitmentCompletionModel,
+  legacyCommitmentTypeForDueDate,
   type CommitmentListModel
 } from '@/features/focus/commitment-list-model'
 import { healthStateLabel } from '@/features/shared/state-presenters'
@@ -47,17 +47,6 @@ import {
   WORK_STATUS_OPTIONS,
   workStatusLabel
 } from '@/features/shared/work-status'
-
-export const COMMITMENT_TYPE_OPTIONS = [
-  { value: 'ongoing', label: 'Ongoing' },
-  { value: 'action', label: 'Action' }
-] as const satisfies readonly { value: CommitmentType; label: string }[]
-
-export function commitmentTypeLabel(type: CommitmentType): string {
-  const option = COMMITMENT_TYPE_OPTIONS.find((candidate) => candidate.value === type)
-  if (!option) throw new Error(`Unsupported Commitment type "${type}".`)
-  return option.label
-}
 
 export function commitmentDueDateLabel(dueDate: string | null): string {
   return dueDate ?? 'No due date'
@@ -330,7 +319,6 @@ export function commitmentCollectionModel(
     items: group.commitments.map((commitment) => ({
       id: commitment.id,
       title: commitment.title,
-      typeLabel: commitmentTypeLabel(commitment.type),
       statusLabel: workStatusLabel(commitment.status),
       lastUpdatedLabel: dateOrNeverLabel(commitment.lastUpdateDate),
       dueDateLabel: commitment.dueDate,
@@ -721,16 +709,10 @@ export function commitmentDrawerAdapter({
               value: `${parentKind} — ${parentTitle}`
             },
             {
-              kind: 'static',
-              id: 'type',
-              label: 'Type',
-              value: commitmentTypeLabel(commitment.type)
-            },
-            {
-              kind: 'static',
+              kind: 'date',
               id: 'due-date',
               label: 'Due date',
-              value: commitmentDueDateLabel(commitment.dueDate)
+              value: commitment.dueDate ?? ''
             },
             {
               kind: 'static',
@@ -763,9 +745,16 @@ export function commitmentDrawerAdapter({
         }
       ],
       autosave: {
-        fieldIds: ['title'],
-        errorMessage: 'The commitment title could not be saved. Please try again.',
-        onInvoke: (values) => onSave({ title: textValue(values, 'title') })
+        fieldIds: ['title', 'due-date'],
+        errorMessage: 'The commitment details could not be saved. Please try again.',
+        onInvoke: (values) => {
+          const dueDate = textValue(values, 'due-date') || null
+          return onSave({
+            title: textValue(values, 'title'),
+            dueDate,
+            type: legacyCommitmentTypeForDueDate(dueDate)
+          })
+        }
       },
       actions: [
         {
@@ -790,11 +779,15 @@ export function commitmentDrawerAdapter({
           requiresValidFields: true,
           includesAutosaveFields: true,
           errorMessage: 'The commitment could not be updated. Please try again.',
-          onInvoke: (values) =>
-            onSave({
+          onInvoke: (values) => {
+            const dueDate = textValue(values, 'due-date') || null
+            return onSave({
               title: textValue(values, 'title'),
+              dueDate,
+              type: legacyCommitmentTypeForDueDate(dueDate),
               sensitive: booleanValue(values, 'sensitive')
             })
+          }
         }
       ]
     }

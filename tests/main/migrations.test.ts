@@ -142,6 +142,33 @@ describe('database migrations', () => {
     migrated.close()
   })
 
+  it('adds a constrained singleton for the last main window size', () => {
+    const database = new AppDatabase(databasePath)
+    database.windowPreferences.setSize(
+      { width: 1180, height: 720 },
+      new Date('2026-08-11T10:00:00.000Z')
+    )
+    database.close()
+
+    const migrated = new DatabaseSync(databasePath)
+    expect(migrated.prepare(
+      'SELECT singleton, width, height, updated_at FROM app_window_preferences'
+    ).get()).toEqual({
+      singleton: 1,
+      width: 1180,
+      height: 720,
+      updated_at: '2026-08-11T10:00:00.000Z'
+    })
+    expect(() => migrated.prepare(`
+      INSERT INTO app_window_preferences (singleton, width, height, updated_at)
+      VALUES (2, 1200, 800, '2026-08-11T10:00:01.000Z')
+    `).run()).toThrow()
+    expect(() => migrated.prepare(`
+      UPDATE app_window_preferences SET width = 0 WHERE singleton = 1
+    `).run()).toThrow()
+    migrated.close()
+  })
+
   it('backfills and enforces Todo completion timestamps', () => {
     const database = new AppDatabase(databasePath)
     const focus = database.domain.focuses.create({ title: 'Completion history' })

@@ -6,6 +6,7 @@ import { DataArchiveRepository } from './data/data-archive'
 import { runMigrations } from './data/migrations'
 import { SqliteAdapter } from './data/sqlite-adapter'
 import { RollingBackupRepository } from './data/rolling-backup'
+import { WindowPreferenceRepository } from './data/window-preferences'
 
 interface CountRow {
   count: number
@@ -20,6 +21,7 @@ export class AppDatabase {
   readonly domain: DomainStore
   readonly dataArchive: DataArchiveRepository
   readonly backups: RollingBackupRepository
+  readonly windowPreferences: WindowPreferenceRepository
 
   constructor(private readonly databasePath: string) {
     mkdirSync(dirname(databasePath), { recursive: true })
@@ -29,6 +31,7 @@ export class AppDatabase {
       this.domain = new DomainStore(this.database)
       this.dataArchive = new DataArchiveRepository(this.database)
       this.backups = new RollingBackupRepository(this.database, databasePath)
+      this.windowPreferences = new WindowPreferenceRepository(this.database)
     } catch (error) {
       this.database.close()
       throw error

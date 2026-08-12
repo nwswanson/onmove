@@ -2226,7 +2226,7 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'New commitment' }))
     const dialog = screen.getByRole('dialog', { name: 'New commitment' })
     expect(within(dialog).getByText('Add a Thread-level commitment.')).toBeVisible()
-    expect(within(dialog).getByRole('combobox', { name: 'Type' })).toHaveValue('ongoing')
+    expect(within(dialog).queryByLabelText('Type')).not.toBeInTheDocument()
     await user.type(within(dialog).getByLabelText(/^Title/), 'Keep refinement healthy')
     await user.click(within(dialog).getByRole('button', { name: 'Create commitment' }))
     expect(createCommitment).toHaveBeenCalledWith({
@@ -2561,43 +2561,52 @@ describe('App', () => {
     ).toBeVisible()
   })
 
-  it('closes Action commitments from list rows through the audited status mutation', async () => {
+  it('closes due-dated commitments from list rows through the audited status mutation', async () => {
     const current = focus()
-    const ongoingCommitment = commitment({ id: 20, title: 'Maintain team health' })
-    const actionCommitment = commitment({
-      id: 21,
+    const undatedLegacyAction = commitment({
+      id: 20,
       type: 'action',
+      title: 'Maintain team health'
+    })
+    const dueDatedLegacyOngoing = commitment({
+      id: 21,
+      type: 'ongoing',
       title: 'Publish launch plan',
       dueDate: '2026-09-15'
     })
     const doneAction = commitment({
-      ...actionCommitment,
+      ...dueDatedLegacyOngoing,
       status: 'done'
     })
     const updateCommitment = vi.fn().mockResolvedValue(doneAction)
     installApi({
       listFocuses: vi.fn().mockResolvedValue([current]),
-      listCommitments: vi.fn().mockResolvedValue([ongoingCommitment, actionCommitment]),
+      listCommitments: vi.fn().mockResolvedValue([
+        undatedLegacyAction,
+        dueDatedLegacyOngoing
+      ]),
       updateCommitment
     })
     const user = userEvent.setup()
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: 'Quarterly plan' }))
-    const ongoingRow = screen
+    const undatedRow = screen
       .getByRole('button', { name: 'Open commitment Maintain team health' })
       .closest<HTMLElement>('[role="listitem"]')
-    const actionRow = screen
+    const dueDatedRow = screen
       .getByRole('button', { name: 'Open commitment Publish launch plan' })
       .closest<HTMLElement>('[role="listitem"]')
-    expect(ongoingRow).not.toBeNull()
-    expect(actionRow).not.toBeNull()
-    expect(within(ongoingRow!).queryByRole('checkbox')).not.toBeInTheDocument()
-    expect(within(actionRow!).getByText('Action')).toBeVisible()
-    expect(within(actionRow!).getByText('Due · 2026-09-15')).toBeVisible()
+    expect(undatedRow).not.toBeNull()
+    expect(dueDatedRow).not.toBeNull()
+    expect(within(undatedRow!).queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(within(dueDatedRow!).queryByText('Action')).not.toBeInTheDocument()
+    expect(within(dueDatedRow!).getByText('Due · 2026-09-15')).toBeVisible()
 
     await user.click(
-      within(actionRow!).getByRole('checkbox', { name: 'Mark commitment Publish launch plan done' })
+      within(dueDatedRow!).getByRole('checkbox', {
+        name: 'Mark commitment Publish launch plan done'
+      })
     )
 
     expect(updateCommitment).toHaveBeenCalledWith(21, { status: 'done' })
@@ -2620,7 +2629,7 @@ describe('App', () => {
     expect(
       screen.queryByRole('checkbox', { name: /Mark commitment/ })
     ).not.toBeInTheDocument()
-    expect(screen.getByLabelText('Commitment type')).toHaveTextContent('Type · Action')
+    expect(screen.queryByLabelText('Commitment type')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Commitment due date')).toHaveTextContent(
       'Due date · 2026-09-15'
     )
@@ -2776,9 +2785,8 @@ describe('App', () => {
       screen.getByRole('button', { name: 'Add commitment to Overall' })
     )
     const dialog = screen.getByRole('dialog', { name: 'New commitment' })
-    expect(within(dialog).getByRole('combobox', { name: 'Type' })).toHaveValue('ongoing')
+    expect(within(dialog).queryByLabelText('Type')).not.toBeInTheDocument()
     await user.type(within(dialog).getByLabelText(/^Title/), 'Publish the launch boundary')
-    await user.selectOptions(within(dialog).getByRole('combobox', { name: 'Type' }), 'action')
     await user.type(within(dialog).getByLabelText(/Due date/), '2026-09-15')
     await user.click(screen.getByRole('button', { name: 'Create commitment' }))
 
@@ -2796,7 +2804,7 @@ describe('App', () => {
     ).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('button', { name: 'New thread' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Publish the launch boundary' })).toBeInTheDocument()
-    expect(screen.getByLabelText('Commitment type')).toHaveTextContent('Type · Action')
+    expect(screen.queryByLabelText('Commitment type')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Commitment due date')).toHaveTextContent(
       'Due date · 2026-09-15'
     )
@@ -3169,7 +3177,9 @@ describe('App', () => {
       reviewFrequencyDays: 14
     }))
     const updateCommitment = vi.fn().mockResolvedValue(commitment({
-      title: 'Keep sponsors closely aligned'
+      title: 'Keep sponsors closely aligned',
+      type: 'action',
+      dueDate: '2026-09-15'
     }))
     installApi({
       listFocuses: vi.fn().mockResolvedValue([current]),
@@ -3216,10 +3226,13 @@ describe('App', () => {
     const commitmentTitle = within(drawer).getByLabelText(/^Title/)
     await user.clear(commitmentTitle)
     await user.type(commitmentTitle, 'Keep sponsors closely aligned')
+    await user.type(within(drawer).getByLabelText('Due date'), '2026-09-15')
     await user.click(within(drawer).getByRole('button', { name: 'Save changes' }))
 
     expect(updateCommitment).toHaveBeenCalledWith(focusCommitment.id, {
       title: 'Keep sponsors closely aligned',
+      dueDate: '2026-09-15',
+      type: 'action',
       sensitive: false
     })
     expect(await screen.findByRole('heading', { name: 'Keep sponsors closely aligned' }))
