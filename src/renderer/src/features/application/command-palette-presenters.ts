@@ -97,6 +97,9 @@ export function commandPaletteGroups(
     return Boolean(context) && (!hideSensitiveContent || !commitment.sensitive)
   })
   const commitmentById = new Map(commitments.map((commitment) => [commitment.id, commitment]))
+  const commitmentContextById = new Map(
+    snapshot.commitmentWorkingContexts.map((context) => [context.commitmentId, context])
+  )
 
   const groups: CommandPaletteGroupModel[] = [
     {
@@ -136,17 +139,55 @@ export function commandPaletteGroups(
         const context = commitmentContext(commitment, focusById, threadById)
         if (!context) return []
         const parent = context.thread?.title ?? 'Overall'
-        return [{
+        const path = `${context.focus.title} › ${parent}`
+        const workingContext = commitmentContextById.get(commitment.id)
+        const ordinaryContextLabel = workingContext?.scopeId === null
+          ? 'Commitment-wide'
+          : 'All subjects'
+        const ordinaryDestination: CommandPaletteItemModel = {
           id: `commitment:${commitment.id}`,
           icon: 'item' as const,
           label: commitment.title,
-          description: `${context.focus.title} › ${parent}`,
-          keywords: ['commitment', commitment.title, context.focus.title, parent],
+          description: `${path} › ${ordinaryContextLabel}`,
+          keywords: [
+            'commitment',
+            commitment.title,
+            context.focus.title,
+            parent,
+            ordinaryContextLabel
+          ],
           destination: {
             type: 'focus' as const,
             target: focusTarget(context.focus.id, context.thread?.id ?? null, commitment.id)
           }
-        }]
+        }
+        const scopedDestinations = (workingContext?.cells ?? [])
+          .filter(({ subject }) => !hideSensitiveContent || !subject.sensitive)
+          .map((cell): CommandPaletteItemModel => ({
+            id: `commitment:${commitment.id}:scope:${cell.scopeId}:subject:${cell.subjectId}`,
+            icon: 'item',
+            label: commitment.title,
+            description: `${path} › ${cell.subject.name}`,
+            keywords: [
+              'commitment',
+              'scope',
+              'subject',
+              commitment.title,
+              context.focus.title,
+              parent,
+              cell.subject.name
+            ],
+            destination: {
+              type: 'focus',
+              target: focusTarget(
+                context.focus.id,
+                context.thread?.id ?? null,
+                commitment.id,
+                cell.subjectId
+              )
+            }
+          }))
+        return [ordinaryDestination, ...scopedDestinations]
       }))
     },
     {

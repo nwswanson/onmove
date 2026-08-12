@@ -1,5 +1,6 @@
 import { LATEST_SCHEMA_VERSION } from './migrations'
 import type { SqlValue, SqliteAdapter } from './sqlite-adapter'
+import { UPDATE_ARCHIVE_DELETE_TRIGGER } from './update-archive'
 
 export const DATA_ARCHIVE_FORMAT = 'onmove-data'
 export const DATA_ARCHIVE_VERSION = 1
@@ -24,6 +25,7 @@ export const DATA_ARCHIVE_TABLES = [
   'thread_review_cell_pokes',
   'commitment_review_cell_pokes',
   'updates',
+  'archived_updates',
   'todos',
   'todo_subject_completions',
   'todo_lists',
@@ -93,6 +95,7 @@ const INTEGER_COLUMNS = new Set([
   'focus_id',
   'thread_id',
   'commitment_id',
+  'update_id',
   'scope_id',
   'subject_id',
   'base_scope_id',
@@ -114,7 +117,7 @@ const INTEGER_COLUMNS = new Set([
   'content_revision',
   'revision'
 ])
-const TIMESTAMP_COLUMNS = new Set(['created_at', 'updated_at', 'changed_at'])
+const TIMESTAMP_COLUMNS = new Set(['created_at', 'updated_at', 'changed_at', 'deleted_at'])
 const OPTIONAL_TIMESTAMP_COLUMNS = new Set(['completed_at'])
 const DATE_COLUMNS = new Set(['recorded_on', 'effective_from', 'reviewed_on'])
 const OPTIONAL_DATE_COLUMNS = new Set(['due_on', 'effective_until', 'review_poked_on'])
@@ -253,7 +256,10 @@ function normalizeRow(
   if (table === 'commitments' && !['action', 'ongoing'].includes(String(row.commitment_type))) {
     row.commitment_type = 'ongoing'
   }
-  if (table === 'updates' && !['red', 'yellow', 'green', 'none'].includes(String(row.state))) {
+  if (
+    (table === 'updates' || table === 'archived_updates') &&
+    !['red', 'yellow', 'green', 'none'].includes(String(row.state))
+  ) {
     row.state = 'none'
   }
   if (table === 'scopes' && !['explicit', 'derived'].includes(String(row.source_type))) {
@@ -294,7 +300,7 @@ function normalizeRow(
   if (table === 'commitments') {
     keepOneParent(row, ['thread_id', 'focus_id'])
   }
-  if (['updates', 'todos', 'todo_lists', 'notes'].includes(table)) {
+  if (['updates', 'archived_updates', 'todos', 'todo_lists', 'notes'].includes(table)) {
     keepOneParent(row, ['commitment_id', 'thread_id', 'focus_id'])
   }
   if (table === 'scope_application_transitions') {
@@ -333,7 +339,7 @@ function tableNames(value: ArchiveRow): string[] {
 function dropAndRememberTriggers(database: SqliteAdapter): TriggerRow[] {
   const triggers = database.all<TriggerRow>(
     "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND sql IS NOT NULL ORDER BY name"
-  )
+  ).filter(({ name }) => name !== UPDATE_ARCHIVE_DELETE_TRIGGER)
   for (const trigger of triggers) database.exec(`DROP TRIGGER ${quoteIdentifier(trigger.name)}`)
   return triggers
 }
@@ -689,6 +695,7 @@ export class DataArchiveRepository {
       this.database.exec('PRAGMA defer_foreign_keys = ON')
       const triggers = dropAndRememberTriggers(this.database)
       for (const table of [...DATA_ARCHIVE_TABLES].reverse()) {
+        if (table === 'archived_updates') continue
         this.database.run(`DELETE FROM ${quoteIdentifier(table)}`)
       }
 
@@ -711,7 +718,7 @@ export class DataArchiveRepository {
           try {
             this.database.transaction(() => {
               this.database.run(
-                `INSERT INTO ${quoteIdentifier(table)} (${names.map(quoteIdentifier).join(', ')})
+                `INSERT ${table === 'archived_updates' ? 'OR IGNORE ' : ''}INTO ${quoteIdentifier(table)} (${names.map(quoteIdentifier).join(', ')})
                  VALUES (${names.map(() => '?').join(', ')})`,
                 names.map((name) => row[name])
               )

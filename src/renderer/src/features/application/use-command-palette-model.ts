@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type {
   CommitmentSnapshot,
+  CommitmentWorkingContextSnapshot,
   FocusSnapshot,
   TagSummarySnapshot,
   ThreadSnapshot,
@@ -11,6 +12,7 @@ export interface CommandPaletteSnapshot {
   focuses: readonly FocusSnapshot[]
   threads: readonly ThreadSnapshot[]
   commitments: readonly CommitmentSnapshot[]
+  commitmentWorkingContexts: readonly CommitmentWorkingContextSnapshot[]
   todos: readonly TodoSnapshot[]
   tags: readonly TagSummarySnapshot[]
 }
@@ -39,7 +41,11 @@ async function loadSnapshot(
         threads.map((thread) =>
           window.onmove.domain.listCommitments({ type: 'thread', id: thread.id }))
       )
-      return { threads, commitments: [...focusCommitments, ...threadCommitments.flat()] }
+      const commitments = [...focusCommitments, ...threadCommitments.flat()]
+      const commitmentWorkingContexts = await Promise.all(
+        commitments.map(({ id }) => window.onmove.domain.getCommitmentWorkingContext(id))
+      )
+      return { threads, commitments, commitmentWorkingContexts }
     })),
     window.onmove.domain.queryTodos(),
     window.onmove.domain.listTags()
@@ -49,6 +55,9 @@ async function loadSnapshot(
     focuses,
     threads: focusBundles.flatMap(({ threads }) => threads),
     commitments: focusBundles.flatMap(({ commitments }) => commitments),
+    commitmentWorkingContexts: focusBundles.flatMap(
+      ({ commitmentWorkingContexts }) => commitmentWorkingContexts
+    ),
     todos,
     tags
   }

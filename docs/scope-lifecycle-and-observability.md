@@ -184,12 +184,14 @@ deleted. Ending membership removes it from current work but preserves identity a
 archive or anonymization feature should be used for privacy/lifecycle needs that require hiding the
 Subject without corrupting attribution.
 
-Only a completely unreferenced Subject can be hard deleted. Subject deletion never cascades into a
-Scope, Thread, Commitment, or Update.
+Only a completely unreferenced Subject can currently be hard deleted. Subject deletion therefore
+does not normally cascade into a Scope, Thread, Commitment, or live Update. Independently, every
+Update delete is protected by the database archive trigger; if a future Subject lifecycle performs
+a cascade, the exact Update cell is rescued before its Subject foreign key disappears.
 
 ## Deleting a Thread
 
-Thread deletion is a hard, destructive cascade. It removes:
+Thread deletion is a hard cascade from the live hierarchy. It removes:
 
 - the Thread;
 - direct Thread Updates;
@@ -207,16 +209,18 @@ It does **not** remove:
 - Subjects; or
 - Focus-owned Commitments outside the Thread.
 
-After deletion there is intentionally no application audit for the deleted Thread: hard deletion is
-the product's erasure boundary. Use `done` or `cancelled` when the record and its history should
-remain observable. A future soft-delete/archive model would be a separate lifecycle feature rather
-than a change to Scope semantics.
+After deletion there is intentionally no live Thread or Thread lifecycle audit. Its direct Updates
+and its Commitments' Updates are first copied into `archived_updates`, retaining their former parent
+and exact Scope/Subject ids plus deletion time. Use `done` or `cancelled` when the complete hierarchy
+should remain queryable in ordinary screens; the Update archive is recovery evidence, not a soft-
+deleted Thread model.
 
 ## Deleting a Commitment
 
-Commitment deletion behaves like the narrower Thread cascade. It removes the Commitment, its
-Updates, lifecycle transitions, Scope application, and application-transition history. Its parent,
-Scope, memberships, and Subjects remain.
+Commitment deletion behaves like the narrower Thread cascade. It removes the Commitment and its
+Updates from the live hierarchy plus lifecycle transitions, Scope application, and application-
+transition history. Every deleted Update is first copied to `archived_updates`; its parent, Scope,
+memberships, and Subjects otherwise remain.
 
 Closing a Commitment with `done` or `cancelled` retains all of those records and is the correct
 operation when the user wants historical accountability rather than erasure.

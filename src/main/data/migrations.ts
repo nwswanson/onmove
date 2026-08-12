@@ -2149,6 +2149,99 @@ const migrations: readonly Migration[] = [
         );
       `)
     }
+  },
+  {
+    version: 23,
+    name: 'durable_update_archive',
+    up(database) {
+      const updateColumns = database.all<{ name: string }>('PRAGMA table_info(updates)')
+      const requiredColumns = [
+        'id',
+        'focus_id',
+        'thread_id',
+        'commitment_id',
+        'scope_id',
+        'subject_id',
+        'recorded_on',
+        'observation',
+        'state',
+        'sensitive',
+        'observation_revision',
+        'created_at',
+        'updated_at'
+      ]
+      if (!requiredColumns.every((column) =>
+        updateColumns.some(({ name }) => name === column))) return
+
+      database.exec(`
+        CREATE TABLE archived_updates (
+          archive_id TEXT PRIMARY KEY
+            DEFAULT (lower(hex(randomblob(16))))
+            CHECK (length(archive_id) = 32),
+          update_id INTEGER NOT NULL CHECK (update_id > 0),
+          focus_id INTEGER,
+          thread_id INTEGER,
+          commitment_id INTEGER,
+          scope_id INTEGER,
+          subject_id INTEGER,
+          recorded_on TEXT NOT NULL CHECK (
+            length(recorded_on) = 10 AND recorded_on = date(recorded_on)
+          ),
+          observation TEXT NOT NULL DEFAULT '',
+          state TEXT NOT NULL DEFAULT 'none'
+            CHECK (state IN ('red', 'yellow', 'green', 'none')),
+          sensitive INTEGER NOT NULL DEFAULT 0 CHECK (sensitive IN (0, 1)),
+          observation_revision INTEGER NOT NULL DEFAULT 0
+            CHECK (observation_revision >= 0),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          deleted_at TEXT NOT NULL CHECK (datetime(deleted_at) IS NOT NULL),
+          CHECK (
+            (focus_id IS NOT NULL AND thread_id IS NULL AND commitment_id IS NULL) OR
+            (focus_id IS NULL AND thread_id IS NOT NULL AND commitment_id IS NULL) OR
+            (focus_id IS NULL AND thread_id IS NULL AND commitment_id IS NOT NULL)
+          ),
+          CHECK (
+            (scope_id IS NULL AND subject_id IS NULL) OR
+            (scope_id IS NOT NULL AND subject_id IS NOT NULL AND focus_id IS NULL)
+          )
+        ) STRICT, WITHOUT ROWID;
+
+        CREATE INDEX archived_updates_original_id_index
+          ON archived_updates(update_id, deleted_at DESC);
+        CREATE INDEX archived_updates_deleted_at_index
+          ON archived_updates(deleted_at DESC, archive_id);
+        CREATE INDEX archived_updates_scope_cell_index
+          ON archived_updates(scope_id, subject_id, deleted_at DESC);
+
+        CREATE TRIGGER updates_archive_before_delete
+        BEFORE DELETE ON updates
+        BEGIN
+          INSERT INTO archived_updates (
+            update_id, focus_id, thread_id, commitment_id, scope_id, subject_id,
+            recorded_on, observation, state, sensitive, observation_revision,
+            created_at, updated_at, deleted_at
+          ) VALUES (
+            OLD.id, OLD.focus_id, OLD.thread_id, OLD.commitment_id, OLD.scope_id, OLD.subject_id,
+            OLD.recorded_on, OLD.observation, OLD.state, OLD.sensitive, OLD.observation_revision,
+            OLD.created_at, OLD.updated_at,
+            strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          );
+        END;
+
+        CREATE TRIGGER archived_updates_are_immutable
+        BEFORE UPDATE ON archived_updates
+        BEGIN
+          SELECT RAISE(ABORT, 'Archived Updates are immutable');
+        END;
+
+        CREATE TRIGGER archived_updates_cannot_be_deleted
+        BEFORE DELETE ON archived_updates
+        BEGIN
+          SELECT RAISE(ABORT, 'Archived Updates cannot be deleted');
+        END;
+      `)
+    }
   }
 ]
 

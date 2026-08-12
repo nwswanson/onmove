@@ -67,6 +67,38 @@ describe('database migrations', () => {
     expect(() => new AppDatabase(databasePath)).toThrow(/newer than supported/)
   })
 
+  it('upgrades the previous schema with an append-only archive without touching live Updates', () => {
+    const current = new AppDatabase(databasePath)
+    const focus = current.domain.focuses.create({ title: 'Existing focus' })
+    const update = current.domain.updates.create({
+      parent: { type: 'focus', id: focus.id },
+      date: '2026-08-11',
+      observation: 'Existing evidence',
+      state: 'yellow'
+    })
+    current.close()
+
+    const previous = new DatabaseSync(databasePath)
+    previous.exec(`
+      DROP TRIGGER archived_updates_cannot_be_deleted;
+      DROP TRIGGER archived_updates_are_immutable;
+      DROP TRIGGER updates_archive_before_delete;
+      DROP TABLE archived_updates;
+      DELETE FROM schema_migrations WHERE version = 23;
+    `)
+    previous.close()
+
+    const migrated = new AppDatabase(databasePath)
+    expect(migrated.domain.updates.find(update.id)).toMatchObject({
+      observation: 'Existing evidence',
+      state: 'yellow'
+    })
+    expect(migrated.domain.archivedUpdates.list()).toEqual([])
+    expect(migrated.domain.updates.delete(update.id)).toBe(true)
+    expect(migrated.domain.archivedUpdates.listForOriginalUpdate(update.id)).toHaveLength(1)
+    migrated.close()
+  })
+
   it('adds nullable, calendar-validated review poke dates to every reviewable aggregate', () => {
     const database = new AppDatabase(databasePath)
     const focus = database.domain.focuses.create({ title: 'Reviewable focus' })

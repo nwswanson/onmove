@@ -24,6 +24,7 @@ import {
   ThreadScopeRepository
 } from './scope-model'
 import { TodoRepository } from './todo-model'
+import { UpdateArchiveRepository } from './update-archive'
 import { CommitmentRepository, ThreadRepository, UpdateRepository } from './work-model'
 import { NoteRepository } from './note-model'
 import { RichTextDocumentRepository } from './rich-text-model'
@@ -548,6 +549,7 @@ export class DomainStore {
   readonly threads: ThreadRepository
   readonly commitments: CommitmentRepository
   readonly updates: UpdateRepository
+  readonly archivedUpdates: UpdateArchiveRepository
   readonly todos: TodoRepository
   readonly notes: NoteRepository
   readonly richTextDocuments: RichTextDocumentRepository
@@ -569,6 +571,7 @@ export class DomainStore {
     this.threads = new ThreadRepository(database)
     this.commitments = new CommitmentRepository(database)
     this.updates = new UpdateRepository(database)
+    this.archivedUpdates = new UpdateArchiveRepository(database)
     this.todos = new TodoRepository(database)
     this.notes = new NoteRepository(database)
     this.richTextDocuments = new RichTextDocumentRepository(database)

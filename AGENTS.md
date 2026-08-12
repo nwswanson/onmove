@@ -75,9 +75,11 @@
 - Expose the shell-owned command palette through `Cmd-K` and the toolbar search action. Build its
   interaction from the domain-free shadcn-style `Command` primitives and keep preload loading in a
   dedicated feature model hook. Search navigable Focuses, their Threads and Commitments, every
-  persisted Todo, and current Tags; apply the same hierarchy-cascading sensitive visibility used by
-  ordinary collections. Result selection must emit a typed destination and reuse atomic Focus or
-  Tag deep-link navigation rather than coordinating sidebar state in the palette.
+  persisted Todo, and current Tags. Keep both an All Subjects destination and one destination per
+  current Commitment Scope/Subject cell so search can deep-link directly into a Commitment lens;
+  apply the same hierarchy-cascading sensitive visibility used by ordinary collections, including
+  sensitive Subjects. Result selection must emit a typed destination and reuse atomic Focus or Tag
+  deep-link navigation rather than coordinating sidebar state in the palette.
 - Describe contextual inspectors with the shared `ContextDrawerModel` contract and render them only
   through `ContextDrawerOutlet`. The receiver guarantees a visible close button and requires a
   descriptive accessible label; feature code must not compose the low-level drawer shell directly.
@@ -366,6 +368,13 @@ foreground colors and do not rely on color alone to communicate selection or sta
 ## Data model
 
 - Add schema changes as new numbered migrations; never edit a migration already released to users.
+- Rescue every Update deletion through the SQLite-owned `updates_archive_before_delete` trigger.
+  `archived_updates` is append-only and mirrors every live Update field plus its original id and
+  deletion timestamp without foreign keys, so direct deletes and Focus, Thread, Commitment, Scope,
+  or Subject cascades cannot erase evidence. Keep `UpdateArchiveRepository`'s startup schema check:
+  any future Update column or table rebuild must update the archive table and trigger before the app
+  may write. Portable import may merge archive rows but must never disable this deletion trigger or
+  clear the local archive bucket.
 - Persist Todo closure time independently as `completed_at`: the first open-to-done transition sets
   it, edits to an already-done Todo preserve it, reopening clears it, and closing again records a new
   instant. The global overview returns every open Todo plus only completed Todos from the last seven

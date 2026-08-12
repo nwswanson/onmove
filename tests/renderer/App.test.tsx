@@ -569,6 +569,7 @@ describe('App', () => {
   it('opens the command palette with Cmd-K and deep-links Commitments and Tags', async () => {
     const project = focus({ id: 5, title: 'Project Atlas' })
     const sprint = thread({ id: 15, focusId: project.id, title: 'Sprint execution' })
+    const customerOperations = subject(61, 'Customer Operations')
     const ticketQuality = commitment({
       id: 25,
       parent: { type: 'thread', id: sprint.id },
@@ -577,8 +578,48 @@ describe('App', () => {
     installApi({
       listFocuses: vi.fn().mockResolvedValue([project]),
       listThreads: vi.fn(async (focusId) => focusId === project.id ? [sprint] : []),
+      getThreadScope: vi.fn(async (threadId) => ({
+        threadId,
+        focusId: project.id,
+        mode: 'explicit' as const,
+        scopeId: 51,
+        subjects: [customerOperations],
+        focusSubjects: [customerOperations]
+      })),
+      getThreadSubjectMatrix: vi.fn(async () => [{
+        scopeId: 51,
+        subjectId: customerOperations.id,
+        subject: customerOperations,
+        state: 'green' as const,
+        lastReviewDate: '2026-08-10',
+        nextReviewDate: '2026-08-17',
+        reviewDue: false,
+        commitments: [{
+          scopeId: 51,
+          subjectId: customerOperations.id,
+          commitmentId: ticketQuality.id,
+          state: 'green' as const,
+          lastUpdateDate: '2026-08-10',
+          nextUpdateDate: null,
+          needsUpdate: false
+        }]
+      }]),
       listCommitments: vi.fn(async (parent) =>
         parent.type === 'thread' && parent.id === sprint.id ? [ticketQuality] : []),
+      getCommitmentWorkingContext: vi.fn(async (commitmentId) => ({
+        commitmentId,
+        scopeId: 51,
+        cells: [{
+          scopeId: 51,
+          subjectId: customerOperations.id,
+          subject: customerOperations,
+          state: 'green' as const,
+          lastReviewDate: '2026-08-10',
+          lastUpdateDate: '2026-08-10',
+          nextUpdateDate: null,
+          needsUpdate: false
+        }]
+      })),
       queryTodos: vi.fn().mockResolvedValue([
         todo({
           id: 75,
@@ -599,7 +640,12 @@ describe('App', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Jump to anything' })
     expect(within(dialog).getByRole('option', { name: /^Project Atlas Focus/ })).toBeVisible()
     expect(within(dialog).getByRole('option', { name: /^Sprint execution/ })).toBeVisible()
-    expect(within(dialog).getByRole('option', { name: /^Improve ticket quality/ })).toBeVisible()
+    expect(within(dialog).getByRole('option', {
+      name: /Improve ticket quality Project Atlas › Sprint execution › All subjects/
+    })).toBeVisible()
+    expect(within(dialog).getByRole('option', {
+      name: /Improve ticket quality Project Atlas › Sprint execution › Customer Operations/
+    })).toBeVisible()
     expect(within(dialog).getByRole('option', { name: /^Confirm launch owner/ })).toBeVisible()
     expect(within(dialog).getByRole('option', { name: /^@launch/ })).toBeVisible()
 
@@ -607,7 +653,9 @@ describe('App', () => {
       within(dialog).getByPlaceholderText(/Search Focuses, Threads, Commitments/),
       'ticket quality'
     )
-    await user.click(within(dialog).getByRole('option', { name: /^Improve ticket quality/ }))
+    await user.click(within(dialog).getByRole('option', {
+      name: /Improve ticket quality Project Atlas › Sprint execution › All subjects/
+    }))
     expect(await screen.findByRole('heading', {
       name: 'Improve ticket quality'
     })).toBeVisible()
@@ -619,9 +667,22 @@ describe('App', () => {
     const reopened = await screen.findByRole('dialog', { name: 'Jump to anything' })
     await user.type(
       within(reopened).getByPlaceholderText(/Search Focuses, Threads, Commitments/),
+      'customer operations'
+    )
+    await user.click(within(reopened).getByRole('option', {
+      name: /Improve ticket quality Project Atlas › Sprint execution › Customer Operations/
+    }))
+
+    expect(await screen.findByRole('tab', { name: 'Work in Customer Operations' }))
+      .toHaveAttribute('aria-selected', 'true')
+
+    fireEvent.keyDown(document, { key: 'k', metaKey: true })
+    const tagsSearch = await screen.findByRole('dialog', { name: 'Jump to anything' })
+    await user.type(
+      within(tagsSearch).getByPlaceholderText(/Search Focuses, Threads, Commitments/),
       '@launch'
     )
-    await user.click(within(reopened).getByRole('option', { name: /^@launch/ }))
+    await user.click(within(tagsSearch).getByRole('option', { name: /^@launch/ }))
 
     expect(await screen.findByRole('heading', { name: '@launch' })).toBeVisible()
     expect(screen.getByRole('button', { name: '@launch' })).toHaveAttribute(

@@ -508,14 +508,17 @@ full cascade.
 
 ## Deletion and historical integrity
 
-- Deleting a Focus cascades its Threads, Focus- and Thread-owned Commitments, Updates, status
-  histories, Scope definitions, memberships, and Scope applications.
-- Deleting a Thread cascades its direct Updates, Commitments, their Updates, histories, and Scope
-  applications. It does not delete Focus-owned Commitments.
-- Deleting a Commitment cascades its Updates, status history, and Scope application.
+- Deleting a Focus cascades its Threads, Focus- and Thread-owned Commitments, live Updates, status
+  histories, Scope definitions, memberships, and Scope applications. Every live Update is copied
+  into the foreign-key-free Update archive before the cascade removes it.
+- Deleting a Thread cascades its direct live Updates, Commitments, their live Updates, histories,
+  and Scope applications. It does not delete Focus-owned Commitments; its Updates are archived.
+- Deleting a Commitment cascades its live Updates, status history, and Scope application after the
+  Updates have been archived.
 - Thread and Commitment deletion also cascades their Scope-application transition history. It does
   not delete shared Focus-owned Scopes, memberships, or Subjects.
-- Deleting an Update immediately changes every derived value that depended on it.
+- Deleting an Update immediately changes every live derived value that depended on it and appends
+  one immutable archive row with its original parent/cell attribution and deletion time.
 - Subjects are global and survive Focus deletion unless explicitly deleted later.
 - Scope, Subject, and membership operations reject changes that would invalidate retained scoped
   Update history.
@@ -538,6 +541,7 @@ The main process accesses these repositories through `database.domain`:
 ```ts
 database.domain.subjects
 database.domain.scopes
+database.domain.archivedUpdates
 database.domain.scopeMemberships
 database.domain.scopeApplications
 database.domain.focusScopes

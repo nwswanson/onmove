@@ -29,6 +29,8 @@ scopes    1 ─────── 0..n scope membership overlays          ON DEL
 focus/thread/commitment ── exactly one Scope application
 
 scoped Update ── exactly one Scope + Subject cell
+
+updates DELETE ── archived_updates                         BEFORE DELETE rescue
 ```
 
 - An item can have one parent and any number of children.
@@ -37,6 +39,8 @@ scoped Update ── exactly one Scope + Subject cell
 - Deleting a relation preserves the item and changes its `relationId` to `null`.
 - Repository reparenting rejects self-parenting and descendant cycles before writing.
 - `meta` and status-event `meta` must be JSON objects. Their contents remain application-defined.
+- An Update leaving the live graph is copied to the append-only archive before SQLite completes
+  the direct delete or ancestor cascade.
 
 ## Focuses
 
@@ -114,6 +118,27 @@ The active record remains the materialized value used by normal snapshots. Revis
 safety trail, not something the UI must replay. A commit returns its new materialized snapshot and
 is broadcast to every renderer window, allowing the main workspace and any detached editor window
 to converge on the same persisted revision without a renderer-owned cache or close-time flush.
+
+## Archived Updates
+
+`archived_updates` is the durable deletion boundary for observation evidence. It mirrors every
+column on the live `updates` table, stores the original Update id as `update_id`, and adds a unique
+archive id plus `deleted_at`. Its former parent, Scope, and Subject ids are deliberately scalar
+values rather than foreign keys: the archived row must remain valid after those records disappear.
+
+The `updates_archive_before_delete` SQLite trigger is the only archive writer. Because it runs
+`BEFORE DELETE ON updates`, it covers an explicit Update delete, Focus/Thread/Commitment foreign-key
+cascades, importer repairs, and any future Scope or Subject cascade without requiring each caller to
+remember an application service. Archive rows reject update and deletion. The read-only
+`UpdateArchiveRepository` verifies at application startup that the trigger exists and that every
+live Update column has a corresponding archive column. Adding a live field or rebuilding `updates`
+therefore fails closed until the archive schema and trigger are advanced in the same migration.
+
+Portable import keeps the archive trigger installed while other invariant triggers are temporarily
+removed. Clearing replacement data consequently archives the outgoing live Updates in the same
+transaction. Existing local archive rows are never cleared; archive rows from the imported file
+merge by their stable random archive ids. A failed import rolls back both the replacement and any
+archive writes. Rolling SQLite backups include this table naturally.
 
 ### Inline text tags
 
@@ -278,8 +303,9 @@ visibility is presentation state rather than a database filter.
 ## Portable data archives
 
 The native File menu exports a versioned `onmove-data` JSON archive. It contains named raw fields
-for durable domain tables plus archive, schema, application, and timestamp metadata. Runtime-only
-preferences and launch counters are not user data and are not exported.
+for durable domain tables, including rescued Updates, plus archive, schema, application, and
+timestamp metadata. Runtime-only preferences and launch counters are not user data and are not
+exported.
 
 Import is a replacement operation, never a blind SQL restore. The importer intersects archived
 fields with columns known to the running version, accepts snake_case and camelCase field names,
@@ -317,3 +343,8 @@ Migration 19 adds guarded cross-Focus Thread moves and immutable Thread parent h
 the Todo and Todo-list context guards with equivalent rules that permit only Scope-id remapping
 under an active, matching move authorization. Upgrade backfills one initial parent transition for
 every existing Thread.
+
+Migration 23 adds the append-only `archived_updates` table, its read indexes, immutability guards,
+and the single `updates_archive_before_delete` rescue trigger. The migration copies no live rows
+because archival begins only when a row leaves `updates`; upgrading is non-destructive and
+immediately protects every existing Update.

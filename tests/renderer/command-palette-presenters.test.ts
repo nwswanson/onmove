@@ -113,6 +113,29 @@ function snapshot(overrides: Partial<CommandPaletteSnapshot> = {}): CommandPalet
     focuses: [focus()],
     threads: [thread()],
     commitments: [commitment()],
+    commitmentWorkingContexts: [{
+      commitmentId: 20,
+      scopeId: 4,
+      cells: [{
+        scopeId: 4,
+        subjectId: 30,
+        subject: subject(),
+        state: 'yellow',
+        lastReviewDate: '2026-08-03',
+        lastUpdateDate: '2026-08-03',
+        nextUpdateDate: null,
+        needsUpdate: false
+      }, {
+        scopeId: 4,
+        subjectId: 31,
+        subject: subject({ id: 31, name: 'South region' }),
+        state: 'green',
+        lastReviewDate: null,
+        lastUpdateDate: null,
+        nextUpdateDate: null,
+        needsUpdate: false
+      }]
+    }],
     todos: [todo()],
     tags: [{ name: 'launch', useCount: 3, sensitiveUseCount: 1 }],
     ...overrides
@@ -149,9 +172,28 @@ describe('command palette presenters', () => {
       {
         id: 'commitment:20',
         label: 'Improve ticket quality',
+        description: 'Project Atlas › Sprint execution › All subjects',
         destination: {
           type: 'focus',
           target: { focusId: 1, threadId: 10, commitmentId: 20, subjectId: null }
+        }
+      },
+      {
+        id: 'commitment:20:scope:4:subject:30',
+        label: 'Improve ticket quality',
+        description: 'Project Atlas › Sprint execution › North region',
+        destination: {
+          type: 'focus',
+          target: { focusId: 1, threadId: 10, commitmentId: 20, subjectId: 30 }
+        }
+      },
+      {
+        id: 'commitment:20:scope:4:subject:31',
+        label: 'Improve ticket quality',
+        description: 'Project Atlas › Sprint execution › South region',
+        destination: {
+          type: 'focus',
+          target: { focusId: 1, threadId: 10, commitmentId: 20, subjectId: 31 }
         }
       },
       {
@@ -183,6 +225,29 @@ describe('command palette presenters', () => {
     expect(groups.map(({ id }) => id)).toEqual(['focuses', 'tags'])
     expect(groups.find(({ id }) => id === 'tags')?.items).toMatchObject([
       { label: '@public', description: '1 use' }
+    ])
+  })
+
+  it('filters sensitive Commitment scope cells without hiding their ordinary destination', () => {
+    const groups = commandPaletteGroups(snapshot({
+      commitmentWorkingContexts: [{
+        commitmentId: 20,
+        scopeId: 4,
+        cells: [{
+          scopeId: 4,
+          subjectId: 30,
+          subject: subject({ sensitive: true }),
+          state: 'none',
+          lastReviewDate: null,
+          lastUpdateDate: null,
+          nextUpdateDate: null,
+          needsUpdate: false
+        }]
+      }]
+    }), true)
+
+    expect(groups.find(({ id }) => id === 'commitments')?.items).toMatchObject([
+      { id: 'commitment:20' }
     ])
   })
 })

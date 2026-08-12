@@ -119,6 +119,38 @@ describe('DataArchiveRepository', () => {
       .toBe('Durable imported note')
   })
 
+  it('exports rescued Updates and merges them with Updates archived by replacement import', () => {
+    const now = new Date('2026-08-12T12:00:00.000Z')
+    const source = createDatabase('archive-rescued-update-source')
+    const sourceFocus = source.domain.focuses.create({ title: 'Imported focus' })
+    const sourceDeleted = source.domain.updates.create({
+      parent: { type: 'focus', id: sourceFocus.id },
+      observation: 'Already rescued evidence'
+    }, now)
+    source.domain.updates.delete(sourceDeleted.id)
+    const archive = source.dataArchive.export('9.9.9', now)
+    expect(archive.tables.archived_updates).toHaveLength(1)
+
+    const target = createDatabase('archive-rescued-update-target')
+    const targetFocus = target.domain.focuses.create({ title: 'Outgoing local focus' })
+    const outgoing = target.domain.updates.create({
+      parent: { type: 'focus', id: targetFocus.id },
+      observation: 'Archive me during replacement'
+    }, now)
+
+    expect(target.dataArchive.import(archive, now).issues).toEqual([])
+    expect(target.domain.archivedUpdates.list()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        originalUpdateId: sourceDeleted.id,
+        observation: 'Already rescued evidence'
+      }),
+      expect.objectContaining({
+        originalUpdateId: outgoing.id,
+        observation: 'Archive me during replacement'
+      })
+    ]))
+  })
+
   it('round-trips a Thread Focus move and its immutable parent history', () => {
     const now = new Date('2026-08-10T12:00:00.000Z')
     const source = createDatabase('archive-thread-move-source')
