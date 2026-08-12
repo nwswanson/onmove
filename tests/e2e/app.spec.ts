@@ -210,6 +210,122 @@ test('sorts all current Todos and bounds recently completed work before renderin
   }
 })
 
+test('operates every explicit hierarchy deadline from the global Due worklist', async () => {
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-due-work-e2e-'))
+  const databasePath = join(userDataDirectory, 'onmove.sqlite3')
+  let application: ElectronApplication | undefined
+
+  const seed = new AppDatabase(databasePath)
+  const focus = seed.domain.focuses.create({
+    title: 'Project Atlas',
+    dueDate: '2099-01-10'
+  })
+  const thread = seed.domain.threads.create({
+    focusId: focus.id,
+    title: 'Sprint execution',
+    reviewFrequencyDays: 7,
+    dueDate: '2099-01-05'
+  })
+  const commitment = seed.domain.commitments.create({
+    parent: { type: 'thread', id: thread.id },
+    type: 'action',
+    title: 'Improve ticket quality',
+    dueDate: '2099-01-12'
+  })
+  seed.domain.commitments.create({
+    parent: { type: 'thread', id: thread.id },
+    type: 'ongoing',
+    title: 'Undated expectation'
+  })
+  seed.close()
+
+  async function launch(): Promise<ElectronApplication> {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    return electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+  }
+
+  function storedDeadlines(): {
+    focusDue: string | null
+    threadDue: string | null
+    commitmentStatus: string
+  } {
+    const stored = new DatabaseSync(databasePath, { readOnly: true })
+    try {
+      const focusRow = stored.prepare('SELECT due_on AS dueDate FROM focuses WHERE id = ?')
+        .get(focus.id) as { dueDate: string | null }
+      const threadRow = stored.prepare('SELECT due_on AS dueDate FROM threads WHERE id = ?')
+        .get(thread.id) as { dueDate: string | null }
+      const commitmentRow = stored.prepare('SELECT status FROM commitments WHERE id = ?')
+        .get(commitment.id) as { status: string }
+      return {
+        focusDue: focusRow.dueDate,
+        threadDue: threadRow.dueDate,
+        commitmentStatus: commitmentRow.status
+      }
+    } finally {
+      stored.close()
+    }
+  }
+
+  try {
+    application = await launch()
+    let window = await application.firstWindow()
+    await window.getByRole('button', { name: 'Due', exact: true }).click()
+
+    const table = window.getByRole('table', { name: 'Due work' })
+    await expect(window.getByRole('heading', { name: 'Due', exact: true })).toBeVisible()
+    await expect(table.locator(`[data-due-item="focus:${focus.id}"]`)
+      .getByText('Project Atlas', { exact: true })).toBeVisible()
+    await expect(table.locator(`[data-due-item="thread:${thread.id}"]`)
+      .getByText('Sprint execution', { exact: true })).toBeVisible()
+    await expect(table.locator(`[data-due-item="commitment:${commitment.id}"]`)
+      .getByText('Improve ticket quality', { exact: true })).toBeVisible()
+    await expect(table.getByText('Undated expectation')).toHaveCount(0)
+    await expect(table.getByLabel(
+      'Due date 2099-01-12 is after the parent Thread due date 2099-01-05.'
+    )).toBeVisible()
+
+    const threadRow = table.locator(`[data-due-item="thread:${thread.id}"]`)
+    await threadRow.getByLabel('Thread due date', { exact: true }).fill('2099-01-11')
+    const commitmentRow = table.locator(`[data-due-item="commitment:${commitment.id}"]`)
+    await commitmentRow.getByLabel('Commitment Improve ticket quality status')
+      .selectOption('paused')
+    const focusRow = table.locator(`[data-due-item="focus:${focus.id}"]`)
+    await focusRow.getByLabel('Focus due date', { exact: true }).fill('')
+
+    await expect.poll(storedDeadlines).toEqual({
+      focusDue: null,
+      threadDue: '2099-01-11',
+      commitmentStatus: 'paused'
+    })
+    await expect(table.locator('[data-due-item="focus:' + focus.id + '"]')).toHaveCount(0)
+
+    await commitmentRow.getByRole('link', {
+      name: 'Open Commitment Improve ticket quality in Project Atlas › Sprint execution'
+    }).click()
+    await expect(window.getByRole('heading', { name: 'Improve ticket quality' })).toBeVisible()
+    await expect(window.getByRole('button', { name: 'Project Atlas' }))
+      .toHaveAttribute('aria-current', 'page')
+
+    await application.close()
+    application = await launch()
+    window = await application.firstWindow()
+    await window.getByRole('button', { name: 'Due', exact: true }).click()
+    await expect(window.getByRole('table', { name: 'Due work' }).getByText(
+      'Improve ticket quality',
+      { exact: true }
+    )).toBeVisible()
+    await expect(window.getByText('2 dated items')).toBeVisible()
+  } finally {
+    await application?.close()
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
 test('jumps to hierarchy records, all persisted Todos, and Tags through Cmd-K', async () => {
   const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-command-palette-e2e-'))
   let application: ElectronApplication | undefined

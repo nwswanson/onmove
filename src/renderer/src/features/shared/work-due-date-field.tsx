@@ -11,6 +11,7 @@ interface WorkDueDateFieldProps {
   entityLabel: string
   value: string | null
   parent?: ParentDueDateModel | null
+  showLabel?: boolean
   disabled?: boolean
   onValueChange: (value: string | null) => Promise<boolean>
 }
@@ -19,6 +20,7 @@ function WorkDueDateEditor({
   entityLabel,
   value,
   parent = null,
+  showLabel = true,
   disabled = false,
   onValueChange
 }: WorkDueDateFieldProps): React.JSX.Element {
@@ -43,7 +45,10 @@ function WorkDueDateEditor({
 
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-      <label htmlFor={inputId} className="text-xs font-medium text-foreground/80">
+      <label
+        htmlFor={inputId}
+        className={showLabel ? 'text-xs font-medium text-foreground/80' : 'sr-only'}
+      >
         Due date
       </label>
       <Input

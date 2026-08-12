@@ -20,14 +20,15 @@ export interface ApplicationModel {
   focusStatusSummaries: Readonly<Record<number, StatusSummary | undefined>>
   selectedFocus: FocusSnapshot | null
   selectedFocusId: number | null
-  selectedView: 'todos' | 'tags' | 'review' | 'focus' | 'settings'
+  selectedView: 'todos' | 'tags' | 'review' | 'due' | 'focus' | 'settings'
   sensitiveContentHidden: boolean
   enabled: boolean
   goTodos: () => void
   goTags: () => void
   goReview: () => void
+  goDue: () => void
   goSettings: () => void
-  selectFocus: (focusId: number) => boolean
+  selectFocus: (focusId: number, options?: { includeClosed?: boolean }) => boolean
   createFocus: (input: CreateFocusInput) => Promise<void>
   updateFocus: (focusId: number, input: UpdateFocusInput) => Promise<void>
   refreshFocus: (focusId: number) => Promise<FocusSnapshot>
@@ -49,8 +50,9 @@ export function useApplicationModel(): ApplicationModel {
     Record<number, StatusSummary | undefined>
   >({})
   const [selectedFocusId, setSelectedFocusId] = useState<number | null>(null)
+  const [closedFocusSelectionId, setClosedFocusSelectionId] = useState<number | null>(null)
   const [selectedView, setSelectedView] = useState<
-    'todos' | 'tags' | 'review' | 'focus' | 'settings'
+    'todos' | 'tags' | 'review' | 'due' | 'focus' | 'settings'
   >('todos')
   const [sensitiveContentHidden, setSensitiveContentHidden] = useState(false)
 
@@ -65,6 +67,7 @@ export function useApplicationModel(): ApplicationModel {
           focusesRef.current.some((focus) => focus.id === current && focus.sensitive)
             ? (() => {
                 setSelectedView('todos')
+                setClosedFocusSelectionId(null)
                 return null
               })()
             : current
@@ -134,37 +137,48 @@ export function useApplicationModel(): ApplicationModel {
       : (focuses.find(
           (focus) =>
             focus.id === selectedFocusId &&
-            isVisibleFocus(focus) &&
+            (isVisibleFocus(focus) || focus.id === closedFocusSelectionId) &&
             sensitiveRecordIsVisible(focus, sensitiveContentHidden)
         ) ?? null)
 
   function goTodos(): void {
     setSelectedFocusId(null)
+    setClosedFocusSelectionId(null)
     setSelectedView('todos')
   }
 
   function goTags(): void {
     setSelectedFocusId(null)
+    setClosedFocusSelectionId(null)
     setSelectedView('tags')
   }
 
   function goReview(): void {
     setSelectedFocusId(null)
+    setClosedFocusSelectionId(null)
     setSelectedView('review')
+  }
+
+  function goDue(): void {
+    setSelectedFocusId(null)
+    setClosedFocusSelectionId(null)
+    setSelectedView('due')
   }
 
   function goSettings(): void {
     setSelectedFocusId(null)
+    setClosedFocusSelectionId(null)
     setSelectedView('settings')
   }
 
-  function selectFocus(focusId: number): boolean {
+  function selectFocus(focusId: number, options: { includeClosed?: boolean } = {}): boolean {
     const focus = focuses.find((candidate) => candidate.id === focusId)
     if (
       !focus ||
-      !isVisibleFocus(focus) ||
+      (!isVisibleFocus(focus) && !options.includeClosed) ||
       !sensitiveRecordIsVisible(focus, sensitiveContentHidden)
     ) return false
+    setClosedFocusSelectionId(isVisibleFocus(focus) ? null : focus.id)
     setSelectedFocusId(focusId)
     setSelectedView('focus')
     return true
@@ -187,6 +201,7 @@ export function useApplicationModel(): ApplicationModel {
       return next
     })
     setSelectedFocusId(focus.id)
+    setClosedFocusSelectionId(null)
     setSelectedView('focus')
     void refreshFocusStatusSummary(focus.id)
   }
@@ -200,11 +215,17 @@ export function useApplicationModel(): ApplicationModel {
       focusesRef.current = next
       return next
     })
+    if (isVisibleFocus(updated) && closedFocusSelectionId === focusId) {
+      setClosedFocusSelectionId(null)
+    }
     if (
-      !isVisibleFocus(updated) ||
-      !sensitiveRecordIsVisible(updated, sensitiveContentHidden)
+      selectedView === 'focus' &&
+      selectedFocusId === focusId &&
+      ((!isVisibleFocus(updated) && closedFocusSelectionId !== focusId) ||
+        !sensitiveRecordIsVisible(updated, sensitiveContentHidden))
     ) {
       setSelectedFocusId(null)
+      setClosedFocusSelectionId(null)
       setSelectedView('todos')
     }
   }
@@ -215,11 +236,17 @@ export function useApplicationModel(): ApplicationModel {
     if (!refreshed) throw new Error('Focus no longer exists')
     focusesRef.current = nextFocuses
     setFocuses(nextFocuses)
+    if (isVisibleFocus(refreshed) && closedFocusSelectionId === focusId) {
+      setClosedFocusSelectionId(null)
+    }
     if (
-      !isVisibleFocus(refreshed) ||
-      !sensitiveRecordIsVisible(refreshed, sensitiveContentHidden)
+      selectedView === 'focus' &&
+      selectedFocusId === focusId &&
+      ((!isVisibleFocus(refreshed) && closedFocusSelectionId !== focusId) ||
+        !sensitiveRecordIsVisible(refreshed, sensitiveContentHidden))
     ) {
       setSelectedFocusId(null)
+      setClosedFocusSelectionId(null)
       setSelectedView('todos')
     }
     await refreshFocusStatusSummary(focusId)
@@ -238,6 +265,7 @@ export function useApplicationModel(): ApplicationModel {
       Object.fromEntries(Object.entries(current).filter(([id]) => Number(id) !== focusId))
     )
     setSelectedFocusId(null)
+    setClosedFocusSelectionId(null)
     setSelectedView('todos')
   }
 
@@ -259,6 +287,7 @@ export function useApplicationModel(): ApplicationModel {
     goTodos,
     goTags,
     goReview,
+    goDue,
     goSettings,
     selectFocus,
     createFocus,

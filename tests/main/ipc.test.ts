@@ -272,6 +272,12 @@ describe('registerAppIpc', () => {
             items: [{ key: 'focus:12', kind: 'focus', focus: { id: 12 } }]
           }))
         },
+        due: {
+          getOverview: vi.fn(() => ({
+            asOf: '2026-08-10',
+            items: [{ key: 'focus:12', kind: 'focus', dueDate: '2026-09-01' }]
+          }))
+        },
         richTextDocuments: {
           get: vi.fn((reference) => ({
             reference,
@@ -515,6 +521,10 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.getReviewOverview)?.()).toMatchObject({
       asOf: '2026-08-10',
       items: [{ key: 'focus:12', kind: 'focus' }]
+    })
+    expect(await handlers.get(IPC_CHANNELS.getDueOverview)?.()).toMatchObject({
+      asOf: '2026-08-10',
+      items: [{ key: 'focus:12', kind: 'focus', dueDate: '2026-09-01' }]
     })
     expect(await handlers.get(IPC_CHANNELS.getRichTextDocument)?.(undefined, {
       type: 'focus', id: 12, field: 'goal'

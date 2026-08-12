@@ -99,7 +99,8 @@ const api: OnMoveApi = {
     listNotes: (parent) => ipcRenderer.invoke(IPC_CHANNELS.listNotes, parent),
     listTags: () => ipcRenderer.invoke(IPC_CHANNELS.listTags),
     listTagUses: (name) => ipcRenderer.invoke(IPC_CHANNELS.listTagUses, name),
-    getReviewOverview: () => ipcRenderer.invoke(IPC_CHANNELS.getReviewOverview)
+    getReviewOverview: () => ipcRenderer.invoke(IPC_CHANNELS.getReviewOverview),
+    getDueOverview: () => ipcRenderer.invoke(IPC_CHANNELS.getDueOverview)
   },
   richText: {
     getDocument: (reference) =>

@@ -62,6 +62,7 @@ export const IPC_CHANNELS = {
   listTags: 'domain:list-tags',
   listTagUses: 'domain:list-tag-uses',
   getReviewOverview: 'domain:get-review-overview',
+  getDueOverview: 'domain:get-due-overview',
   getRichTextDocument: 'rich-text:get-document',
   openRichTextDocumentWindow: 'rich-text:open-window',
   getRichTextWindowTarget: 'rich-text:get-window-target'
@@ -607,6 +608,34 @@ export interface ReviewOverviewSnapshot {
   items: ReviewQueueItemSnapshot[]
 }
 
+export type DueWorkKind = 'focus' | 'thread' | 'commitment'
+
+/** Direct hierarchy parent used to explain deadline alignment without constraining it. */
+export interface DueWorkParentSnapshot {
+  kind: 'focus' | 'thread'
+  title: string
+  dueDate: string | null
+}
+
+/**
+ * One due-dated work record with enough ownership context for global ordering,
+ * mutation, sensitivity filtering, and a single atomic workspace destination.
+ */
+export interface DueWorkItemSnapshot {
+  key: string
+  kind: DueWorkKind
+  focus: FocusSnapshot
+  thread: ThreadSnapshot | null
+  commitment: CommitmentSnapshot | null
+  dueDate: string
+  parent: DueWorkParentSnapshot | null
+}
+
+export interface DueOverviewSnapshot {
+  asOf: string
+  items: DueWorkItemSnapshot[]
+}
+
 export type NoteParent =
   | { type: 'focus'; id: number }
   | { type: 'thread'; id: number }
@@ -909,6 +938,7 @@ export interface DomainApi {
   listTags: () => Promise<TagSummarySnapshot[]>
   listTagUses: (name: string) => Promise<TagUseSnapshot[]>
   getReviewOverview: () => Promise<ReviewOverviewSnapshot>
+  getDueOverview: () => Promise<DueOverviewSnapshot>
 }
 
 export interface RichTextApi {

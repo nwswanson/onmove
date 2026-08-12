@@ -280,6 +280,10 @@ function installApi(
       asOf: '2026-08-10',
       items: []
     }),
+    getDueOverview: vi.fn().mockResolvedValue({
+      asOf: '2026-08-10',
+      items: []
+    }),
     ...domainOverrides
   }
   const api: OnMoveApi = {
@@ -363,6 +367,119 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: 'Focus' })).not.toBeInTheDocument()
     expect(screen.getByText('No focuses yet')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'New focus' })).toBeEnabled()
+  })
+
+  it('operates the global Due worklist and deep-links its hierarchy', async () => {
+    const currentFocus = focus({
+      id: 5,
+      title: 'Project Atlas',
+      status: 'done',
+      dueDate: '2026-08-10'
+    })
+    let currentThread = thread({
+      id: 15,
+      focusId: currentFocus.id,
+      title: 'Sprint execution',
+      dueDate: '2026-08-09'
+    })
+    let currentCommitment = commitment({
+      id: 25,
+      parent: { type: 'thread', id: currentThread.id },
+      title: 'Improve ticket quality',
+      dueDate: '2026-08-12'
+    })
+    const dueOverview = () => ({
+      asOf: '2026-08-10',
+      items: [
+        currentFocus.dueDate ? {
+          key: `focus:${currentFocus.id}`,
+          kind: 'focus' as const,
+          focus: currentFocus,
+          thread: null,
+          commitment: null,
+          dueDate: currentFocus.dueDate,
+          parent: null
+        } : null,
+        currentThread.dueDate ? {
+          key: `thread:${currentThread.id}`,
+          kind: 'thread' as const,
+          focus: currentFocus,
+          thread: currentThread,
+          commitment: null,
+          dueDate: currentThread.dueDate,
+          parent: {
+            kind: 'focus' as const,
+            title: currentFocus.title,
+            dueDate: currentFocus.dueDate
+          }
+        } : null,
+        currentCommitment.dueDate ? {
+          key: `commitment:${currentCommitment.id}`,
+          kind: 'commitment' as const,
+          focus: currentFocus,
+          thread: currentThread,
+          commitment: currentCommitment,
+          dueDate: currentCommitment.dueDate,
+          parent: {
+            kind: 'thread' as const,
+            title: currentThread.title,
+            dueDate: currentThread.dueDate
+          }
+        } : null
+      ].filter((item) => item !== null)
+    })
+    const updateThread = vi.fn(async (_id: number, input: { dueDate?: string | null }) => {
+      currentThread = { ...currentThread, ...input }
+      return currentThread
+    })
+    const updateCommitment = vi.fn(async (
+      _id: number,
+      input: { status?: CommitmentSnapshot['status'] }
+    ) => {
+      currentCommitment = { ...currentCommitment, ...input }
+      return currentCommitment
+    })
+    installApi({
+      listFocuses: vi.fn(async () => [currentFocus]),
+      listThreads: vi.fn(async () => [currentThread]),
+      listCommitments: vi.fn(async (parent) =>
+        parent.type === 'thread' ? [currentCommitment] : []),
+      getDueOverview: vi.fn(async () => dueOverview()),
+      updateThread,
+      updateCommitment
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Due' }))
+    expect(screen.getByRole('button', { name: 'Due' })).toHaveAttribute('aria-current', 'page')
+    const table = await screen.findByRole('table', { name: 'Due work' })
+    expect(within(table).getByText('Overdue')).toBeVisible()
+    expect(within(table).getByText('Due today')).toBeVisible()
+    expect(within(table).getByText('Upcoming')).toBeVisible()
+    expect(within(table).getByLabelText(
+      'Due date 2026-08-12 is after the parent Thread due date 2026-08-09.'
+    )).toBeVisible()
+
+    fireEvent.change(within(table).getByLabelText('Thread due date'), {
+      target: { value: '2026-08-11' }
+    })
+    await waitFor(() => expect(updateThread).toHaveBeenCalledWith(15, {
+      dueDate: '2026-08-11'
+    }))
+    await user.selectOptions(
+      within(table).getByLabelText('Commitment Improve ticket quality status'),
+      'paused'
+    )
+    await waitFor(() => expect(updateCommitment).toHaveBeenCalledWith(25, {
+      status: 'paused'
+    }))
+
+    await user.click(within(table).getByRole('link', {
+      name: 'Open Commitment Improve ticket quality in Project Atlas › Sprint execution'
+    }))
+    expect(await screen.findByRole('heading', { name: 'Improve ticket quality' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Project Atlas' })).not.toBeInTheDocument()
   })
 
   it('opens the command palette with Cmd-K and deep-links Commitments and Tags', async () => {

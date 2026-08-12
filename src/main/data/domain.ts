@@ -29,6 +29,7 @@ import { NoteRepository } from './note-model'
 import { RichTextDocumentRepository } from './rich-text-model'
 import { TagRepository } from './tag-model'
 import { ReviewRepository } from './review-model'
+import { DueRepository } from './due-model'
 
 type RelationRecord = RelationSnapshot
 
@@ -551,6 +552,7 @@ export class DomainStore {
   readonly richTextDocuments: RichTextDocumentRepository
   readonly tags: TagRepository
   readonly reviews: ReviewRepository
+  readonly due: DueRepository
 
   constructor(database: SqliteAdapter) {
     this.relations = new RelationRepository(database)
@@ -570,5 +572,6 @@ export class DomainStore {
     this.richTextDocuments = new RichTextDocumentRepository(database)
     this.tags = new TagRepository(database)
     this.reviews = new ReviewRepository(database)
+    this.due = new DueRepository(database)
   }
 }

@@ -71,6 +71,14 @@ enforce chronological containment: a child may be due after its direct parent. M
 surface that condition as an advisory warning so planning remains observable without clipping or
 rejecting valid dates.
 
+`DueRepository.getOverview()` is the named cross-hierarchy deadline projection. It returns only
+Focuses, Threads, and Commitments whose own due date is non-null, including done and cancelled work,
+and supplies each row's direct parent and full containing hierarchy. Rows are globally ordered by
+due date before hierarchy and title. The renderer uses the returned materialization date to group
+Overdue, Due today, and Upcoming, applies the global sensitive-content preference at the collection
+boundary, and routes mutations back through the existing typed entity update operations so lifecycle
+transition auditing remains unchanged. Clearing a due date removes the record from the next projection.
+
 Focuses, Threads, and Commitments can be explicitly “poked” as reviewed without creating a
 synthetic Update. Open aggregates store their monotonic latest `review_poked_on` calendar date;
 bounded Threads and Commitments additionally store exact Scope/Subject pokes in dedicated tables.

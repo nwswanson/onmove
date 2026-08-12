@@ -45,6 +45,9 @@ Persistence-backed state lives in feature hooks:
 - `useTagsModel` loads the canonical-name summary and only the selected tag's bounded field-use list.
   It also invalidates those projections when another window commits rich text; tag parsing and
   hierarchy resolution remain in the main-process repository.
+- `useDueModel` loads one named main-process deadline projection and routes date/status mutations
+  through typed Focus, Thread, and Commitment methods before rematerializing the aggregate. The Due
+  table receives urgency-grouped row contracts and never traverses the hierarchy or calls IPC itself.
 - `useCommandPaletteModel` loads a fresh searchable graph only while the palette is open. It uses
   named preload operations to collect navigable Focus hierarchy records, all persisted Todos, and
   canonical Tags; it does not teach the shared command receiver how those records are stored.

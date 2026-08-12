@@ -6,7 +6,7 @@
 - Keep one macOS-style toolbar across the full window, with the sidebar and main workspace beneath
   it. Do not add view-level breadcrumb bars above the main canvas.
 - Put primary item destinations at the top of the sidebar. `Todos` is selectable and is the default
-  aggregate workspace; `Tags` and `Review` are its peer destinations immediately below it;
+  aggregate workspace; `Tags`, `Review`, and `Due` are its peer destinations immediately below it;
   `Focuses` is a section label with focus records and the `New focus` action exposed directly
   beneath it.
 - Focus records with `active` or `paused` status appear in the selector. Paused focuses remain
@@ -325,6 +325,15 @@ foreground colors and do not rely on color alone to communicate selection or sta
   session and refreshes the owning Focus projection; it is not a Save button. A same-day queue
   refresh must retain passed and updated item keys while offering ignored items again; do not
   present a completed item as fresh work through a replay-style `Review again` action.
+- Build Due as a full-width aggregate worklist with no contextual sidebar. Load it through one named
+  main-process projection that returns every Focus, Thread, and Commitment with an explicit due date,
+  including done and cancelled records; never issue a renderer-side hierarchy fan-out. Group rows as
+  Overdue, Due today, and Upcoming, ordered globally by due date within those sections. Every row owns
+  a type label, name, atomic containing-screen destination, editable due date, and the shared lifecycle
+  status selector. Preserve direct-parent date misalignment as the existing advisory warning. Clearing
+  a due date removes the row after persistence. Apply hierarchy-cascading sensitive filtering at the
+  presenter collection boundary. A link may open a closed Focus without restoring it to normal sidebar
+  navigation.
 - Render the current Review target's direct Todos through the shared `DirectTodos`/`TodoList`
   contracts, using the exact Scope/Subject cell for a scoped queue entry. Every successful
   Review-originated Todo mutation records the same typed aggregate or exact-cell review poke and
@@ -382,6 +391,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - Persist nullable, calendar-validated due dates independently on Focus, Thread, and Commitment.
   Parent dates are advisory planning boundaries, not database constraints: descendants may extend
   beyond them and the renderer owns the direct-parent warning.
+  `DueRepository` is the named read projection for all explicit dates. It includes direct ownership
+  context, sorts globally by date, and excludes only records whose due date is null; lifecycle status
+  does not change aggregate membership.
 - Treat Subject, Scope, and Scope application as distinct model concepts. Subjects are canonical and
   generic; Scopes are Focus-owned applicability expressions; editable applications belong to Focus
   and Thread. Persist Commitment application rows only as enforced derived projections:

@@ -44,6 +44,7 @@ import { SettingsWorkspace } from '@/features/settings/settings-workspace'
 import { TodoWorkspace } from '@/features/todos/todo-workspace'
 import { TagsWorkspace } from '@/features/tags/tags-workspace'
 import { ReviewWorkspace } from '@/features/review/review-workspace'
+import { DueWorkspace } from '@/features/due/due-workspace'
 import type { ThreadSnapshot } from '../../shared/contracts'
 
 const SIDEBAR_MIN = 208
@@ -118,12 +119,13 @@ function AppToolbar({
 interface AppSidebarProps {
   focusItems: readonly SidebarNavigationItemModel[]
   selectedFocusId: string | null
-  selectedView: 'todos' | 'tags' | 'review' | 'focus' | 'settings'
+  selectedView: 'todos' | 'tags' | 'review' | 'due' | 'focus' | 'settings'
   enabled: boolean
   width: number
   onTodos: () => void
   onTags: () => void
   onReview: () => void
+  onDue: () => void
   onSettings: () => void
   onSelectFocus: (focusId: string) => void
   onNewFocus: () => void
@@ -139,13 +141,15 @@ function AppSidebar({
   onTodos,
   onTags,
   onReview,
+  onDue,
   onSettings,
   onSelectFocus,
   onNewFocus,
   onShowData
 }: AppSidebarProps): React.JSX.Element {
   const selectedItemId =
-    selectedView === 'todos' || selectedView === 'tags' || selectedView === 'review'
+    selectedView === 'todos' || selectedView === 'tags' ||
+      selectedView === 'review' || selectedView === 'due'
       ? selectedView
       : null
 
@@ -175,12 +179,14 @@ function AppSidebar({
             items={[
               { id: 'todos', label: 'Todos', icon: 'todos' },
               { id: 'tags', label: 'Tags', icon: 'tags' },
-              { id: 'review', label: 'Review', icon: 'review' }
+              { id: 'review', label: 'Review', icon: 'review' },
+              { id: 'due', label: 'Due', icon: 'due' }
             ]}
             selectedItemId={selectedItemId}
             onSelect={(itemId) => {
               if (itemId === 'tags') onTags()
               else if (itemId === 'review') onReview()
+              else if (itemId === 'due') onDue()
               else onTodos()
             }}
           />
@@ -270,11 +276,13 @@ export function App(): React.JSX.Element {
   )
   const toolbarTitle = application.selectedView === 'settings'
     ? 'Settings'
-    : application.selectedView === 'review'
-      ? 'Review'
-      : application.selectedView === 'tags'
-        ? 'Tags'
-        : (selectedFocus?.title ?? 'Todos')
+    : application.selectedView === 'due'
+      ? 'Due'
+      : application.selectedView === 'review'
+        ? 'Review'
+        : application.selectedView === 'tags'
+          ? 'Tags'
+          : (selectedFocus?.title ?? 'Todos')
   const contextDrawer = {
     open: contextDrawerState.open,
     pinnedAdapter: contextDrawerState.pinnedAdapter,
@@ -313,8 +321,11 @@ export function App(): React.JSX.Element {
     contextDrawer.onInvalidate([`focus:${focusId}`])
   }
 
-  function openTodoContext(destination: FocusWorkspaceDestinationTarget): void {
-    if (!application.selectFocus(destination.focusId)) return
+  function openWorkContext(
+    destination: FocusWorkspaceDestinationTarget,
+    includeClosed = false
+  ): void {
+    if (!application.selectFocus(destination.focusId, { includeClosed })) return
     setTagsDestination(null)
     setFocusSubjectSelections((current) => ({
       ...current,
@@ -328,7 +339,7 @@ export function App(): React.JSX.Element {
 
   function openCommandPaletteDestination(destination: CommandPaletteDestination): void {
     if (destination.type === 'focus') {
-      openTodoContext(destination.target)
+      openWorkContext(destination.target)
       return
     }
     setFocusDestination(null)
@@ -399,6 +410,11 @@ export function App(): React.JSX.Element {
               setTagsDestination(null)
               application.goReview()
             }}
+            onDue={() => {
+              setFocusDestination(null)
+              setTagsDestination(null)
+              application.goDue()
+            }}
             onSettings={application.goSettings}
             onSelectFocus={(focusId) => {
               setFocusDestination(null)
@@ -425,7 +441,7 @@ export function App(): React.JSX.Element {
             <TagsWorkspace
               contextDrawer={contextDrawer}
               hideSensitiveContent={application.sensitiveContentHidden}
-              onOpenContext={openTodoContext}
+              onOpenContext={openWorkContext}
               destination={tagsDestination}
               onDestinationApplied={(requestId) =>
                 setTagsDestination((current) =>
@@ -438,6 +454,15 @@ export function App(): React.JSX.Element {
               contextDrawer={contextDrawer}
               hideSensitiveContent={application.sensitiveContentHidden}
               onReviewChanged={async (focusId) => {
+                await application.refreshFocus(focusId)
+              }}
+            />
+          ) : application.selectedView === 'due' ? (
+            <DueWorkspace
+              contextDrawer={contextDrawer}
+              hideSensitiveContent={application.sensitiveContentHidden}
+              onOpenContext={(destination) => openWorkContext(destination, true)}
+              onWorkChanged={async (focusId) => {
                 await application.refreshFocus(focusId)
               }}
             />
@@ -478,7 +503,7 @@ export function App(): React.JSX.Element {
             <TodoWorkspace
               contextDrawer={contextDrawer}
               hideSensitiveContent={application.sensitiveContentHidden}
-              onOpenContext={openTodoContext}
+              onOpenContext={openWorkContext}
             />
           )
         ) : application.error ? (

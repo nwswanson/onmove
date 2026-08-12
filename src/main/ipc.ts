@@ -259,6 +259,9 @@ export function registerAppIpc(
   ipcMain.handle(IPC_CHANNELS.getReviewOverview, () =>
     database.domain.reviews.getOverview()
   )
+  ipcMain.handle(IPC_CHANNELS.getDueOverview, () =>
+    database.domain.due.getOverview()
+  )
   ipcMain.handle(
     IPC_CHANNELS.getRichTextDocument,
     (_event, reference: RichTextDocumentReference) =>

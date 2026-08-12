@@ -1,4 +1,4 @@
-import { ClipboardCheck, ListChecks, PauseCircle, Plus, Tags } from 'lucide-react'
+import { CalendarClock, ClipboardCheck, ListChecks, PauseCircle, Plus, Tags } from 'lucide-react'
 import { useDroppable } from '@dnd-kit/core'
 import {
   SidebarMenu,
@@ -18,7 +18,7 @@ export interface SidebarNavigationItemModel {
   id: string
   label: string
   ariaLabel?: string
-  icon?: 'todos' | 'tags' | 'review' | 'sunflower' | 'paused'
+  icon?: 'todos' | 'tags' | 'review' | 'due' | 'sunflower' | 'paused'
   sunflower?: SemanticSunflowerModel
   tone?: 'default' | 'muted'
   disabled?: boolean
@@ -94,6 +94,8 @@ function SidebarNavigationRow({
           <Tags aria-hidden="true" />
         ) : item.icon === 'review' ? (
           <ClipboardCheck aria-hidden="true" />
+        ) : item.icon === 'due' ? (
+          <CalendarClock aria-hidden="true" />
         ) : item.icon === 'paused' ? (
           <PauseCircle aria-hidden="true" />
         ) : item.icon === 'sunflower' && item.sunflower ? (
