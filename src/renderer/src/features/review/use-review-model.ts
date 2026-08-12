@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type {
   EditUpdateInput,
   ReviewOverviewSnapshot,
@@ -18,6 +18,7 @@ export interface ReviewModel {
   ignore: (itemKey: string) => void
   pass: (item: ReviewQueueItemSnapshot) => Promise<void>
   recordTodoMutation: (item: ReviewQueueItemSnapshot) => Promise<void>
+  recordNoteMutation: (item: ReviewQueueItemSnapshot) => Promise<void>
   beginUpdate: (item: ReviewQueueItemSnapshot) => Promise<void>
   editUpdate: (input: EditUpdateInput) => Promise<void>
   saveObservation: (value: string) => void
@@ -59,6 +60,7 @@ export function useReviewModel({ onReviewChanged }: ReviewModelOptions = {}): Re
     itemKey: string
     update: UpdateSnapshot
   } | null>(null)
+  const notePokedKeysRef = useRef(new Set<string>())
 
   async function refresh(): Promise<void> {
     setLoading(true)
@@ -70,6 +72,7 @@ export function useReviewModel({ onReviewChanged }: ReviewModelOptions = {}): Re
       setReviewedKeys(retainedReviews)
       setDismissedKeys(retainedReviews)
       setEditingUpdate(null)
+      notePokedKeysRef.current.clear()
     } catch {
       setError('Review work could not be loaded.')
     } finally {
@@ -185,6 +188,35 @@ export function useReviewModel({ onReviewChanged }: ReviewModelOptions = {}): Re
     }
   }
 
+  async function recordNoteMutation(item: ReviewQueueItemSnapshot): Promise<void> {
+    if (notePokedKeysRef.current.has(item.key)) return
+    // Rich-text changes can arrive faster than the IPC round trip. Reserve the
+    // key synchronously so one typing session records one durable review poke.
+    notePokedKeysRef.current.add(item.key)
+    setError(null)
+    try {
+      await persistPoke(item)
+      setOverview((current) => current
+        ? {
+            ...current,
+            items: current.items.map((candidate) => candidate.key === item.key
+              ? {
+                  ...candidate,
+                  lastReviewDate: current.asOf,
+                  nextReviewDate: candidate.kind === 'thread' && candidate.thread
+                    ? addDays(current.asOf, candidate.thread.reviewFrequencyDays)
+                    : candidate.nextReviewDate
+                }
+              : candidate)
+          }
+        : current)
+      await notifyReviewChanged(item.focus.id)
+    } catch {
+      notePokedKeysRef.current.delete(item.key)
+      setError('The Note was saved, but its review acknowledgement could not be recorded.')
+    }
+  }
+
   async function beginUpdate(item: ReviewQueueItemSnapshot): Promise<void> {
     setPendingKey(item.key)
     setError(null)
@@ -294,6 +326,7 @@ export function useReviewModel({ onReviewChanged }: ReviewModelOptions = {}): Re
     ignore,
     pass,
     recordTodoMutation,
+    recordNoteMutation,
     beginUpdate,
     editUpdate,
     saveObservation,

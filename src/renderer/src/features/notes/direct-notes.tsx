@@ -1,25 +1,53 @@
 import type { NoteSnapshot } from '../../../../shared/contracts'
 import { RichTextEditor } from '@/components/ui/rich-text-editor'
 import { useDurableRichText } from '@/features/rich-text/use-durable-rich-text'
+import { cn } from '@/lib/utils'
 
-function NoteEditor({ note }: { note: NoteSnapshot }): React.JSX.Element {
+export interface NoteEditorModel {
+  id: number
+  title: string
+  content: string
+}
+
+interface NoteEditorProps {
+  note: NoteEditorModel
+  fillHeight?: boolean
+  onContentChange?: () => void
+  className?: string
+}
+
+export function NoteEditor({
+  note,
+  fillHeight = false,
+  onContentChange,
+  className
+}: NoteEditorProps): React.JSX.Element {
   const document = useDurableRichText(
     { type: 'note', id: note.id, field: 'content' },
     note.content
   )
 
   return (
-    <article className="rounded-xl border border-border/80 bg-card/55 p-3 shadow-xs">
+    <article className={cn(
+      'rounded-xl border border-border/80 bg-card/55 p-3 shadow-xs',
+      fillHeight && 'flex h-full min-h-0 flex-col',
+      className
+    )}>
       <div className="mb-2 flex items-center justify-between gap-3">
         <h3 className="text-xs font-semibold">{note.title}</h3>
         <span className="text-[0.6875rem] text-muted-foreground">Saved as you type</span>
       </div>
       <RichTextEditor
+        className={cn(fillHeight && 'min-h-0 flex-1')}
         ariaLabel={`${note.title} note`}
         placeholder="Write a note…"
         value={document.value}
         externalRevision={document.revision}
-        onChange={document.save}
+        fillHeight={fillHeight}
+        onChange={(value) => {
+          document.save(value)
+          onContentChange?.()
+        }}
         onOpenInWindow={document.openInWindow}
       />
       {document.error ? (

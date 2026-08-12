@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type {
   CommitmentSnapshot,
   FocusSnapshot,
+  NoteSnapshot,
   ReviewQueueItemSnapshot,
   ThreadSnapshot
 } from '../../src/shared/contracts'
@@ -25,6 +26,17 @@ const focus: FocusSnapshot = {
   notes: [],
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z'
+}
+
+const defaultNote: NoteSnapshot = {
+  id: 7,
+  parent: { type: 'thread', id: 2 },
+  title: 'Default',
+  content: 'Working review notes',
+  revision: 3,
+  sort: 0,
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-02T00:00:00.000Z'
 }
 
 const thread: ThreadSnapshot = {
@@ -84,7 +96,7 @@ function item(overrides: Partial<ReviewQueueItemSnapshot> = {}): ReviewQueueItem
 
 describe('review presenters', () => {
   it('projects compact non-navigating supporting details', () => {
-    const model = reviewItemModel(item(), false)
+    const model = reviewItemModel(item({ thread: { ...thread, notes: [defaultNote] } }), false)
 
     expect(model).toMatchObject({
       kindLabel: 'Thread',
@@ -99,8 +111,23 @@ describe('review presenters', () => {
         id: '3',
         title: 'Improve ticket quality',
         state: { label: 'Red', tone: 'danger' }
-      }]
+      }],
+      defaultNote: {
+        id: 7,
+        title: 'Default',
+        content: 'Working review notes'
+      }
     })
+  })
+
+  it('only exposes the hardcoded Default note and tolerates a missing note', () => {
+    expect(reviewItemModel(item({
+      thread: {
+        ...thread,
+        notes: [{ ...defaultNote, id: 8, title: 'Planning' }, defaultNote]
+      }
+    }), false).defaultNote).toMatchObject({ id: 7, title: 'Default' })
+    expect(reviewItemModel(item(), false).defaultNote).toBeNull()
   })
 
   it('applies sensitive ancestry to queue entries and supporting records', () => {

@@ -500,6 +500,7 @@ test('reviews active work before cadence is due and refreshes typed pokes in the
     title: 'Sprint execution',
     reviewFrequencyDays: 30
   }, createdAt)
+  const currentThreadNote = currentThread.snapshot().notes[0]
   const threadScope = seed.domain.threadScopes.addSubject(
     currentThread.id,
     { name: 'North region' },
@@ -529,6 +530,36 @@ test('reviews active work before cadence is due and refreshes typed pokes in the
       name: 'Thread review: Sprint execution'
     })).toBeVisible()
     await expect(window.getByText('Subject · North region')).toBeVisible()
+    const reviewDivider = window.getByRole('separator', {
+      name: 'Resize review and note panes'
+    })
+    await expect(reviewDivider).toHaveAttribute('aria-orientation', 'horizontal')
+    const reviewNote = window.getByRole('textbox', { name: 'Default note' })
+    await reviewNote.fill('Regional review working notes')
+    await expect(window.getByRole('article', {
+      name: 'Thread review: Sprint execution'
+    })).toBeVisible()
+    await expect.poll(() => {
+      const stored = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
+        readOnly: true
+      })
+      const noteRow = stored.prepare(
+        'SELECT content FROM notes WHERE id = ?'
+      ).get(currentThreadNote.id) as { content: string } | undefined
+      const threadReview = stored.prepare(
+        `SELECT reviewed_on AS reviewedOn FROM thread_review_cell_pokes
+         WHERE thread_id = ? AND scope_id = ? AND subject_id = ?`
+      ).get(
+        currentThread.id,
+        threadScope.scopeId,
+        reviewSubject.id
+      ) as { reviewedOn: string } | undefined
+      stored.close()
+      return { noteContent: noteRow?.content, threadReview }
+    }).toMatchObject({
+      noteContent: expect.stringContaining('Regional review working notes'),
+      threadReview: { reviewedOn: reviewDate }
+    })
 
     await window.getByRole('textbox', { name: 'New Todo name' }).fill('Confirm regional owner')
     await window.getByRole('button', { name: 'Add Todo' }).click()

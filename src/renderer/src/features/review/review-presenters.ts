@@ -24,6 +24,12 @@ export interface ReviewUpdateRowModel {
   state: StateLabelModel
 }
 
+export interface ReviewDefaultNoteModel {
+  id: number
+  title: string
+  content: string
+}
+
 export interface ReviewItemModel {
   key: string
   kindLabel: 'Focus' | 'Thread' | 'Commitment'
@@ -41,6 +47,7 @@ export interface ReviewItemModel {
   cadenceDays: number | null
   commitments: ReviewCommitmentRowModel[]
   updates: ReviewUpdateRowModel[]
+  defaultNote: ReviewDefaultNoteModel | null
 }
 
 export function reviewItemIsVisible(
@@ -80,6 +87,7 @@ export function reviewItemModel(
       ? right.id - left.id
       : right.date.localeCompare(left.date))
     .slice(0, 5)
+  const defaultNote = record.notes.find(({ title }) => title === 'Default') ?? null
 
   return {
     key: item.key,
@@ -116,6 +124,9 @@ export function reviewItemModel(
       date: update.date,
       observation: update.observation,
       state: healthStateLabel(update.state)
-    }))
+    })),
+    defaultNote: defaultNote
+      ? { id: defaultNote.id, title: defaultNote.title, content: defaultNote.content }
+      : null
   }
 }

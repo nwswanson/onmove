@@ -19,7 +19,9 @@ import {
 } from '@/components/ui/rich-text-editor'
 import { StateLabel } from '@/components/ui/state-label'
 import { TaggedText } from '@/components/ui/tagged-text'
+import { VerticalSplitPane } from '@/components/ui/vertical-split-pane'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
+import { NoteEditor } from '@/features/notes/direct-notes'
 import {
   reviewItemIsVisible,
   reviewItemModel,
@@ -294,8 +296,11 @@ export function ReviewWorkspace({
   return (
     <WorkspaceShell
       main={
-        <main className="min-w-0 flex-1 overflow-auto bg-background" aria-labelledby="review-heading">
-          <section className="mx-auto flex min-h-full w-full max-w-6xl flex-col px-6 py-7 sm:px-10">
+        <main
+          className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
+          aria-labelledby="review-heading"
+        >
+          <section className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col px-6 py-7 sm:px-10">
             <h1 id="review-heading" className="sr-only">Review</h1>
 
             {review.loading ? (
@@ -308,10 +313,13 @@ export function ReviewWorkspace({
                 </Button>
               </div>
             ) : current && currentModel ? (
-              <article
-                aria-label={`${currentModel.kindLabel} review: ${currentModel.title}`}
-                className="overflow-hidden rounded-xl border border-border/85 bg-card/25 shadow-xs"
-              >
+              <VerticalSplitPane
+                separatorLabel="Resize review and note panes"
+                primary={(
+                  <article
+                    aria-label={`${currentModel.kindLabel} review: ${currentModel.title}`}
+                    className="overflow-hidden rounded-xl border border-border/85 bg-card/25 shadow-xs"
+                  >
                 <div className="border-b border-border/75 bg-muted/15">
                   <div
                     role="toolbar"
@@ -435,7 +443,30 @@ export function ReviewWorkspace({
 
                 <ReviewUpdates model={currentModel} />
                 <ReviewSupportingDetails model={currentModel} />
-              </article>
+                  </article>
+                )}
+                secondary={(
+                  <section
+                    aria-label={`${currentModel.kindLabel} default note`}
+                    className="h-full min-h-0 pt-2"
+                  >
+                    {currentModel.defaultNote ? (
+                      <NoteEditor
+                        key={currentModel.defaultNote.id}
+                        note={currentModel.defaultNote}
+                        fillHeight
+                        onContentChange={() => void review.recordNoteMutation(current)}
+                      />
+                    ) : (
+                      <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-border/80 bg-muted/10 px-5 text-center">
+                        <p className="text-sm text-muted-foreground">
+                          This item does not have a Default note.
+                        </p>
+                      </div>
+                    )}
+                  </section>
+                )}
+              />
             ) : (
               <div className="mx-auto flex max-w-sm flex-1 flex-col items-center justify-center py-16 text-center">
                 <span className="mb-4 flex size-11 items-center justify-center rounded-full bg-success/15 text-success-foreground">

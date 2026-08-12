@@ -8,6 +8,7 @@ import type {
   CommitmentSnapshot,
   DomainApi,
   FocusSnapshot,
+  NoteSnapshot,
   OnMoveApi,
   ReviewQueueItemSnapshot,
   RichTextDocumentSnapshot,
@@ -89,6 +90,20 @@ function commitment(overrides: Partial<CommitmentSnapshot> = {}): CommitmentSnap
     needsUpdate: false,
     sensitive: false,
     notes: [],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides
+  }
+}
+
+function note(overrides: Partial<NoteSnapshot> = {}): NoteSnapshot {
+  return {
+    id: 40,
+    parent: { type: 'focus', id: 1 },
+    title: 'Default',
+    content: 'Existing working notes',
+    revision: 0,
+    sort: 0,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides
@@ -727,6 +742,51 @@ describe('App', () => {
       subjectId: 66
     }))
     expect(await screen.findByRole('heading', { name: 'You’re caught up' })).toBeVisible()
+  })
+
+  it('keeps the Default note in a resizable lower pane and pokes without advancing', async () => {
+    const currentNote = note({ id: 47, parent: { type: 'focus', id: 7 } })
+    const currentFocus = focus({
+      id: 7,
+      title: 'Launch board',
+      notes: [currentNote]
+    })
+    const pokeFocusReview = vi.fn().mockResolvedValue({
+      ...currentFocus,
+      lastReviewDate: '2026-08-10'
+    })
+    const api = installApi({
+      listFocuses: vi.fn().mockResolvedValue([currentFocus]),
+      pokeFocusReview,
+      getReviewOverview: vi.fn().mockResolvedValue({
+        asOf: '2026-08-10',
+        items: [reviewItem({ key: 'focus:7', focus: currentFocus })]
+      })
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Review' }))
+    const reviewArticle = screen.getByRole('article', { name: 'Focus review: Launch board' })
+    const notePane = screen.getByRole('region', { name: 'Focus default note' })
+    const divider = screen.getByRole('separator', { name: 'Resize review and note panes' })
+    expect(reviewArticle).toBeVisible()
+    expect(notePane).toBeVisible()
+    expect(divider).toHaveAttribute('aria-orientation', 'horizontal')
+    expect(divider).toHaveAttribute('aria-valuenow', '62')
+
+    fireEvent.keyDown(divider, { key: 'ArrowDown' })
+    expect(divider).toHaveAttribute('aria-valuenow', '67')
+
+    const editor = within(notePane).getByRole('textbox', { name: 'Default note' })
+    await user.click(editor)
+    await user.keyboard(' decision')
+    await waitFor(() => expect(api.richText.saveDocument).toHaveBeenCalled())
+    await waitFor(() => expect(pokeFocusReview).toHaveBeenCalledWith(7))
+    expect(pokeFocusReview).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('article', { name: 'Focus review: Launch board' })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'You’re caught up' })).not.toBeInTheDocument()
+    expect(within(reviewArticle).getByText('2026-08-10', { selector: 'dd' })).toBeVisible()
   })
 
   it('creates and edits review Todos while poking the current aggregate', async () => {
