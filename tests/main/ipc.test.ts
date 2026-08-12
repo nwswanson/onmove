@@ -224,6 +224,16 @@ describe('registerAppIpc', () => {
           })),
           delete: vi.fn(() => true)
         },
+        archivedUpdates: {
+          overview: vi.fn(() => ({
+            generatedAt: '2026-08-12T12:00:00.000Z',
+            retainedSince: '2026-07-13T12:00:00.000Z',
+            retentionDays: 30,
+            items: [{ archiveId: 'a'.repeat(32), observation: 'Deleted evidence' }]
+          })),
+          delete: vi.fn(() => true),
+          clear: vi.fn(() => 1)
+        },
         todos: {
           list: vi.fn(() => [{ id: 71, name: 'Review plan', done: false }]),
           query: vi.fn(() => [{ id: 72, name: 'Cross-context Todo', done: false }]),
@@ -491,6 +501,15 @@ describe('registerAppIpc', () => {
       state: 'yellow'
     })).toMatchObject({ id: 43, observation: 'Edited update', state: 'yellow' })
     expect(await handlers.get(IPC_CHANNELS.deleteUpdate)?.(undefined, 43)).toBe(true)
+    expect(await handlers.get(IPC_CHANNELS.getArchivedUpdateOverview)?.()).toMatchObject({
+      retentionDays: 30,
+      items: [{ observation: 'Deleted evidence' }]
+    })
+    expect(await handlers.get(IPC_CHANNELS.deleteArchivedUpdate)?.(
+      undefined,
+      'a'.repeat(32)
+    )).toBe(true)
+    expect(await handlers.get(IPC_CHANNELS.clearArchivedUpdates)?.()).toBe(1)
     expect(await handlers.get(IPC_CHANNELS.listTodos)?.(undefined, {
       type: 'thread',
       id: 21

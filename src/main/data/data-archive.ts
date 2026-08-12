@@ -1,6 +1,9 @@
 import { LATEST_SCHEMA_VERSION } from './migrations'
 import type { SqlValue, SqliteAdapter } from './sqlite-adapter'
-import { UPDATE_ARCHIVE_DELETE_TRIGGER } from './update-archive'
+import {
+  purgeExpiredArchivedUpdates,
+  UPDATE_ARCHIVE_DELETE_TRIGGER
+} from './update-archive'
 
 export const DATA_ARCHIVE_FORMAT = 'onmove-data'
 export const DATA_ARCHIVE_VERSION = 1
@@ -654,6 +657,7 @@ export class DataArchiveRepository {
   constructor(private readonly database: SqliteAdapter) {}
 
   export(appVersion: string, now = new Date()): DataArchive {
+    purgeExpiredArchivedUpdates(this.database, now)
     const tables = {} as DataArchive['tables']
     for (const table of DATA_ARCHIVE_TABLES) {
       tables[table] = this.database.all<ArchiveRow>(
@@ -739,6 +743,7 @@ export class DataArchiveRepository {
 
       skippedRows += removeForeignKeyViolations(this.database)
       skippedRows += cleanSemanticViolations(this.database)
+      purgeExpiredArchivedUpdates(this.database, now)
       importedRows = DATA_ARCHIVE_TABLES.reduce((count, table) => {
         const row = this.database.get<{ count: number }>(
           `SELECT COUNT(*) AS count FROM ${quoteIdentifier(table)}`

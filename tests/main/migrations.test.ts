@@ -67,7 +67,7 @@ describe('database migrations', () => {
     expect(() => new AppDatabase(databasePath)).toThrow(/newer than supported/)
   })
 
-  it('upgrades the previous schema with an append-only archive without touching live Updates', () => {
+  it('upgrades the previous schema with a bounded archive without touching live Updates', () => {
     const current = new AppDatabase(databasePath)
     const focus = current.domain.focuses.create({ title: 'Existing focus' })
     const update = current.domain.updates.create({
@@ -80,11 +80,17 @@ describe('database migrations', () => {
 
     const previous = new DatabaseSync(databasePath)
     previous.exec(`
-      DROP TRIGGER archived_updates_cannot_be_deleted;
+      DROP TRIGGER archived_updates_enforce_retention;
       DROP TRIGGER archived_updates_are_immutable;
       DROP TRIGGER updates_archive_before_delete;
+      DROP TRIGGER focuses_prepare_update_archive_context;
+      DROP TRIGGER threads_prepare_update_archive_context;
+      DROP TRIGGER commitments_prepare_update_archive_context;
+      DROP TRIGGER scopes_prepare_update_archive_context;
+      DROP TRIGGER subjects_prepare_update_archive_context;
+      DROP TABLE update_archive_context;
       DROP TABLE archived_updates;
-      DELETE FROM schema_migrations WHERE version = 23;
+      DELETE FROM schema_migrations WHERE version >= 23;
     `)
     previous.close()
 
@@ -95,7 +101,10 @@ describe('database migrations', () => {
     })
     expect(migrated.domain.archivedUpdates.list()).toEqual([])
     expect(migrated.domain.updates.delete(update.id)).toBe(true)
-    expect(migrated.domain.archivedUpdates.listForOriginalUpdate(update.id)).toHaveLength(1)
+    expect(migrated.domain.archivedUpdates.listForOriginalUpdate(update.id)).toMatchObject([{
+      context: { focusTitle: 'Existing focus' },
+      effectiveSensitive: false
+    }])
     migrated.close()
   })
 

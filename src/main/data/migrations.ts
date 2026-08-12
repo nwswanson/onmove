@@ -2242,6 +2242,259 @@ const migrations: readonly Migration[] = [
         END;
       `)
     }
+  },
+  {
+    version: 24,
+    name: 'bounded_update_archive',
+    up(database) {
+      const archiveColumns = database.all<{ name: string }>('PRAGMA table_info(archived_updates)')
+      if (archiveColumns.length === 0) return
+
+      database.exec(`
+        ALTER TABLE archived_updates ADD COLUMN focus_title TEXT;
+        ALTER TABLE archived_updates ADD COLUMN thread_title TEXT;
+        ALTER TABLE archived_updates ADD COLUMN commitment_title TEXT;
+        ALTER TABLE archived_updates ADD COLUMN subject_name TEXT;
+        ALTER TABLE archived_updates ADD COLUMN effective_sensitive INTEGER NOT NULL DEFAULT 0
+          CHECK (effective_sensitive IN (0, 1));
+
+        CREATE TABLE update_archive_context (
+          update_id INTEGER PRIMARY KEY CHECK (update_id > 0),
+          focus_title TEXT,
+          thread_title TEXT,
+          commitment_title TEXT,
+          subject_name TEXT,
+          effective_sensitive INTEGER NOT NULL DEFAULT 0
+            CHECK (effective_sensitive IN (0, 1))
+        ) STRICT;
+
+        DROP TRIGGER updates_archive_before_delete;
+        DROP TRIGGER archived_updates_cannot_be_deleted;
+
+        CREATE TRIGGER updates_archive_before_delete
+        BEFORE DELETE ON updates
+        BEGIN
+          INSERT INTO archived_updates (
+            update_id, focus_id, thread_id, commitment_id, scope_id, subject_id,
+            recorded_on, observation, state, sensitive, observation_revision,
+            created_at, updated_at,
+            focus_title, thread_title, commitment_title, subject_name,
+            effective_sensitive, deleted_at
+          ) VALUES (
+            OLD.id, OLD.focus_id, OLD.thread_id, OLD.commitment_id, OLD.scope_id, OLD.subject_id,
+            OLD.recorded_on, OLD.observation, OLD.state, OLD.sensitive, OLD.observation_revision,
+            OLD.created_at, OLD.updated_at,
+            COALESCE(
+              (SELECT focus_title FROM update_archive_context WHERE update_id = OLD.id),
+              (SELECT title FROM focuses WHERE id = OLD.focus_id),
+              (SELECT focus.title
+               FROM threads thread JOIN focuses focus ON focus.id = thread.focus_id
+               WHERE thread.id = OLD.thread_id),
+              (SELECT focus.title
+               FROM commitments commitment
+               JOIN focuses focus ON focus.id = commitment.focus_id
+               WHERE commitment.id = OLD.commitment_id),
+              (SELECT focus.title
+               FROM commitments commitment
+               JOIN threads thread ON thread.id = commitment.thread_id
+               JOIN focuses focus ON focus.id = thread.focus_id
+               WHERE commitment.id = OLD.commitment_id)
+            ),
+            COALESCE(
+              (SELECT thread_title FROM update_archive_context WHERE update_id = OLD.id),
+              (SELECT title FROM threads WHERE id = OLD.thread_id),
+              (SELECT thread.title
+               FROM commitments commitment
+               JOIN threads thread ON thread.id = commitment.thread_id
+               WHERE commitment.id = OLD.commitment_id)
+            ),
+            COALESCE(
+              (SELECT commitment_title FROM update_archive_context WHERE update_id = OLD.id),
+              (SELECT title FROM commitments WHERE id = OLD.commitment_id)
+            ),
+            COALESCE(
+              (SELECT subject_name FROM update_archive_context WHERE update_id = OLD.id),
+              (SELECT name FROM subjects WHERE id = OLD.subject_id)
+            ),
+            CASE WHEN
+              EXISTS (SELECT 1 FROM update_archive_context
+                      WHERE update_id = OLD.id AND effective_sensitive = 1) OR
+              OLD.sensitive = 1 OR
+              EXISTS (SELECT 1 FROM focuses
+                      WHERE id = OLD.focus_id AND sensitive = 1) OR
+              EXISTS (SELECT 1 FROM threads
+                      WHERE id = OLD.thread_id AND sensitive = 1) OR
+              EXISTS (SELECT 1 FROM commitments
+                      WHERE id = OLD.commitment_id AND sensitive = 1) OR
+              EXISTS (SELECT 1 FROM threads thread
+                      JOIN focuses focus ON focus.id = thread.focus_id
+                      WHERE thread.id = OLD.thread_id AND focus.sensitive = 1) OR
+              EXISTS (SELECT 1 FROM commitments commitment
+                      JOIN focuses focus ON focus.id = commitment.focus_id
+                      WHERE commitment.id = OLD.commitment_id AND focus.sensitive = 1) OR
+              EXISTS (SELECT 1 FROM commitments commitment
+                      JOIN threads thread ON thread.id = commitment.thread_id
+                      JOIN focuses focus ON focus.id = thread.focus_id
+                      WHERE commitment.id = OLD.commitment_id
+                        AND (thread.sensitive = 1 OR focus.sensitive = 1)) OR
+              EXISTS (SELECT 1 FROM scopes
+                      WHERE id = OLD.scope_id AND sensitive = 1) OR
+              EXISTS (SELECT 1 FROM subjects
+                      WHERE id = OLD.subject_id AND sensitive = 1)
+            THEN 1 ELSE 0 END,
+            strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          );
+          DELETE FROM update_archive_context WHERE update_id = OLD.id;
+        END;
+
+        CREATE TRIGGER focuses_prepare_update_archive_context
+        BEFORE DELETE ON focuses
+        BEGIN
+          INSERT OR IGNORE INTO update_archive_context (
+            update_id, focus_title, thread_title, commitment_title,
+            subject_name, effective_sensitive
+          )
+          SELECT update_row.id, OLD.title,
+                 COALESCE(direct_thread.title, commitment_thread.title),
+                 commitment.title, subject.name,
+                 CASE WHEN
+                   update_row.sensitive = 1 OR OLD.sensitive = 1 OR
+                   COALESCE(direct_thread.sensitive, 0) = 1 OR
+                   COALESCE(commitment_thread.sensitive, 0) = 1 OR
+                   COALESCE(commitment.sensitive, 0) = 1 OR
+                   COALESCE(scope.sensitive, 0) = 1 OR
+                   COALESCE(subject.sensitive, 0) = 1
+                 THEN 1 ELSE 0 END
+          FROM updates update_row
+          LEFT JOIN threads direct_thread ON direct_thread.id = update_row.thread_id
+          LEFT JOIN commitments commitment ON commitment.id = update_row.commitment_id
+          LEFT JOIN threads commitment_thread ON commitment_thread.id = commitment.thread_id
+          LEFT JOIN scopes scope ON scope.id = update_row.scope_id
+          LEFT JOIN subjects subject ON subject.id = update_row.subject_id
+          WHERE update_row.focus_id = OLD.id OR
+                direct_thread.focus_id = OLD.id OR
+                commitment.focus_id = OLD.id OR
+                commitment_thread.focus_id = OLD.id;
+        END;
+
+        CREATE TRIGGER threads_prepare_update_archive_context
+        BEFORE DELETE ON threads
+        BEGIN
+          INSERT OR IGNORE INTO update_archive_context (
+            update_id, focus_title, thread_title, commitment_title,
+            subject_name, effective_sensitive
+          )
+          SELECT update_row.id, focus.title, OLD.title, commitment.title, subject.name,
+                 CASE WHEN
+                   update_row.sensitive = 1 OR OLD.sensitive = 1 OR
+                   COALESCE(focus.sensitive, 0) = 1 OR
+                   COALESCE(commitment.sensitive, 0) = 1 OR
+                   COALESCE(scope.sensitive, 0) = 1 OR
+                   COALESCE(subject.sensitive, 0) = 1
+                 THEN 1 ELSE 0 END
+          FROM updates update_row
+          LEFT JOIN focuses focus ON focus.id = OLD.focus_id
+          LEFT JOIN commitments commitment ON commitment.id = update_row.commitment_id
+          LEFT JOIN scopes scope ON scope.id = update_row.scope_id
+          LEFT JOIN subjects subject ON subject.id = update_row.subject_id
+          WHERE update_row.thread_id = OLD.id OR commitment.thread_id = OLD.id;
+        END;
+
+        CREATE TRIGGER commitments_prepare_update_archive_context
+        BEFORE DELETE ON commitments
+        BEGIN
+          INSERT OR IGNORE INTO update_archive_context (
+            update_id, focus_title, thread_title, commitment_title,
+            subject_name, effective_sensitive
+          )
+          SELECT update_row.id, focus.title, thread.title, OLD.title, subject.name,
+                 CASE WHEN
+                   update_row.sensitive = 1 OR OLD.sensitive = 1 OR
+                   COALESCE(focus.sensitive, 0) = 1 OR
+                   COALESCE(thread.sensitive, 0) = 1 OR
+                   COALESCE(scope.sensitive, 0) = 1 OR
+                   COALESCE(subject.sensitive, 0) = 1
+                 THEN 1 ELSE 0 END
+          FROM updates update_row
+          LEFT JOIN threads thread ON thread.id = OLD.thread_id
+          LEFT JOIN focuses focus ON focus.id = COALESCE(OLD.focus_id, thread.focus_id)
+          LEFT JOIN scopes scope ON scope.id = update_row.scope_id
+          LEFT JOIN subjects subject ON subject.id = update_row.subject_id
+          WHERE update_row.commitment_id = OLD.id;
+        END;
+
+        CREATE TRIGGER scopes_prepare_update_archive_context
+        BEFORE DELETE ON scopes
+        BEGIN
+          INSERT OR IGNORE INTO update_archive_context (
+            update_id, focus_title, thread_title, commitment_title,
+            subject_name, effective_sensitive
+          )
+          SELECT update_row.id, focus.title,
+                 COALESCE(direct_thread.title, commitment_thread.title),
+                 commitment.title, subject.name,
+                 CASE WHEN
+                   update_row.sensitive = 1 OR OLD.sensitive = 1 OR
+                   COALESCE(focus.sensitive, 0) = 1 OR
+                   COALESCE(direct_thread.sensitive, 0) = 1 OR
+                   COALESCE(commitment_thread.sensitive, 0) = 1 OR
+                   COALESCE(commitment.sensitive, 0) = 1 OR
+                   COALESCE(subject.sensitive, 0) = 1
+                 THEN 1 ELSE 0 END
+          FROM updates update_row
+          LEFT JOIN threads direct_thread ON direct_thread.id = update_row.thread_id
+          LEFT JOIN commitments commitment ON commitment.id = update_row.commitment_id
+          LEFT JOIN threads commitment_thread ON commitment_thread.id = commitment.thread_id
+          LEFT JOIN focuses focus ON focus.id = COALESCE(
+            update_row.focus_id,
+            direct_thread.focus_id,
+            commitment.focus_id,
+            commitment_thread.focus_id
+          )
+          LEFT JOIN subjects subject ON subject.id = update_row.subject_id
+          WHERE update_row.scope_id = OLD.id;
+        END;
+
+        CREATE TRIGGER subjects_prepare_update_archive_context
+        BEFORE DELETE ON subjects
+        BEGIN
+          INSERT OR IGNORE INTO update_archive_context (
+            update_id, focus_title, thread_title, commitment_title,
+            subject_name, effective_sensitive
+          )
+          SELECT update_row.id, focus.title,
+                 COALESCE(direct_thread.title, commitment_thread.title),
+                 commitment.title, OLD.name,
+                 CASE WHEN
+                   update_row.sensitive = 1 OR OLD.sensitive = 1 OR
+                   COALESCE(focus.sensitive, 0) = 1 OR
+                   COALESCE(direct_thread.sensitive, 0) = 1 OR
+                   COALESCE(commitment_thread.sensitive, 0) = 1 OR
+                   COALESCE(commitment.sensitive, 0) = 1 OR
+                   COALESCE(scope.sensitive, 0) = 1
+                 THEN 1 ELSE 0 END
+          FROM updates update_row
+          LEFT JOIN threads direct_thread ON direct_thread.id = update_row.thread_id
+          LEFT JOIN commitments commitment ON commitment.id = update_row.commitment_id
+          LEFT JOIN threads commitment_thread ON commitment_thread.id = commitment.thread_id
+          LEFT JOIN focuses focus ON focus.id = COALESCE(
+            update_row.focus_id,
+            direct_thread.focus_id,
+            commitment.focus_id,
+            commitment_thread.focus_id
+          )
+          LEFT JOIN scopes scope ON scope.id = update_row.scope_id
+          WHERE update_row.subject_id = OLD.id;
+        END;
+
+        CREATE TRIGGER archived_updates_enforce_retention
+        AFTER INSERT ON archived_updates
+        BEGIN
+          DELETE FROM archived_updates
+          WHERE julianday(deleted_at) < julianday('now', '-30 days');
+        END;
+      `)
+    }
   }
 ]
 

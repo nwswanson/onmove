@@ -211,9 +211,10 @@ It does **not** remove:
 
 After deletion there is intentionally no live Thread or Thread lifecycle audit. Its direct Updates
 and its Commitments' Updates are first copied into `archived_updates`, retaining their former parent
-and exact Scope/Subject ids plus deletion time. Use `done` or `cancelled` when the complete hierarchy
-should remain queryable in ordinary screens; the Update archive is recovery evidence, not a soft-
-deleted Thread model.
+and exact Scope/Subject ids, readable hierarchy labels, effective sensitivity, and deletion time.
+Those rescued Updates are retained for 30 days unless permanently cleared sooner. Use `done` or
+`cancelled` when the complete hierarchy should remain queryable in ordinary screens; the Update
+archive is recovery evidence, not a soft-deleted Thread model.
 
 ## Deleting a Commitment
 

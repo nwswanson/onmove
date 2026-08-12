@@ -23,7 +23,7 @@ describe('UpdateArchiveRepository', () => {
   })
 
   it('archives an explicit Update delete exactly once with its complete durable state', () => {
-    const focus = database!.domain.focuses.create({ title: 'Project Atlas' })
+    const focus = database!.domain.focuses.create({ title: 'Project Atlas', sensitive: true })
     const update = database!.domain.updates.create({
       parent: { type: 'focus', id: focus.id },
       date: '2026-08-12',
@@ -46,6 +46,13 @@ describe('UpdateArchiveRepository', () => {
       observationRevision: 0,
       createdAt: '2026-08-12T12:00:00.000Z',
       updatedAt: '2026-08-12T12:00:00.000Z',
+      context: {
+        focusTitle: 'Project Atlas',
+        threadTitle: null,
+        commitmentTitle: null,
+        subjectName: null
+      },
+      effectiveSensitive: true,
       deletedAt: expect.any(String)
     }])
     expect(Number.isNaN(Date.parse(database!.domain.archivedUpdates.list()[0].deletedAt)))
@@ -53,7 +60,7 @@ describe('UpdateArchiveRepository', () => {
   })
 
   it('rescues every direct and descendant Update when a Focus cascade deletes its tree', () => {
-    const focus = database!.domain.focuses.create({ title: 'Project Atlas' })
+    const focus = database!.domain.focuses.create({ title: 'Project Atlas', sensitive: true })
     const thread = database!.domain.threads.create({
       focusId: focus.id,
       title: 'Sprint execution',
@@ -92,18 +99,32 @@ describe('UpdateArchiveRepository', () => {
 
     expect(database!.domain.focuses.delete(focus.id)).toBe(true)
     expect(database!.domain.archivedUpdates.list()).toHaveLength(3)
+    expect(database!.domain.archivedUpdates.list().every(({ effectiveSensitive }) =>
+      effectiveSensitive)).toBe(true)
     expect(new Set(database!.domain.archivedUpdates.list().map(({ originalUpdateId }) =>
       originalUpdateId))).toEqual(new Set(updates.map(({ id }) => id)))
     expect(database!.domain.archivedUpdates.list()).toEqual(expect.arrayContaining([
       expect.objectContaining({
         parent: { type: 'thread', id: thread.id },
         scope: cell,
-        observation: 'Thread evidence'
+        observation: 'Thread evidence',
+        context: {
+          focusTitle: 'Project Atlas',
+          threadTitle: 'Sprint execution',
+          commitmentTitle: null,
+          subjectName: 'Customer Operations'
+        }
       }),
       expect.objectContaining({
         parent: { type: 'commitment', id: commitment.id },
         scope: cell,
-        observation: 'Commitment evidence'
+        observation: 'Commitment evidence',
+        context: {
+          focusTitle: 'Project Atlas',
+          threadTitle: 'Sprint execution',
+          commitmentTitle: 'Improve ticket quality',
+          subjectName: 'Customer Operations'
+        }
       })
     ]))
   })
@@ -138,7 +159,7 @@ describe('UpdateArchiveRepository', () => {
     }])
   })
 
-  it('keeps archive rows immutable at the SQLite boundary', () => {
+  it('keeps archived content immutable while allowing repository-owned permanent deletion', () => {
     const focus = database!.domain.focuses.create({ title: 'Project Atlas' })
     const update = database!.domain.updates.create({
       parent: { type: 'focus', id: focus.id },
@@ -153,10 +174,46 @@ describe('UpdateArchiveRepository', () => {
     expect(() => raw.prepare(
       'UPDATE archived_updates SET observation = ? WHERE archive_id = ?'
     ).run('Changed', archived.archiveId)).toThrow(/immutable/)
-    expect(() => raw.prepare(
-      'DELETE FROM archived_updates WHERE archive_id = ?'
-    ).run(archived.archiveId)).toThrow(/cannot be deleted/)
     raw.close()
+
+    database = new AppDatabase(databasePath)
+    expect(database.domain.archivedUpdates.delete('not-an-archive-id')).toBe(false)
+    expect(database.domain.archivedUpdates.delete(archived.archiveId)).toBe(true)
+    expect(database.domain.archivedUpdates.delete(archived.archiveId)).toBe(false)
+    expect(database.domain.archivedUpdates.list()).toEqual([])
+  })
+
+  it('keeps only the rolling 30-day window and clears retained rows explicitly', () => {
+    database!.close()
+    database = undefined
+    const now = new Date()
+    const expiredAt = new Date(now.getTime() - 31 * 24 * 60 * 60 * 1_000).toISOString()
+    const retainedAt = new Date(now.getTime() - 29 * 24 * 60 * 60 * 1_000).toISOString()
+    const raw = new DatabaseSync(databasePath)
+    const retention = raw.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?"
+    ).get('archived_updates_enforce_retention') as { sql: string }
+    raw.exec('DROP TRIGGER archived_updates_enforce_retention')
+    const insert = raw.prepare(`
+      INSERT INTO archived_updates (
+        archive_id, update_id, focus_id, recorded_on, created_at, updated_at, deleted_at
+      ) VALUES (?, ?, 1, '2026-08-12', ?, ?, ?)
+    `)
+    insert.run('11111111111111111111111111111111', 1, expiredAt, expiredAt, expiredAt)
+    insert.run('22222222222222222222222222222222', 2, retainedAt, retainedAt, retainedAt)
+    raw.exec(retention.sql)
+    raw.close()
+
+    database = new AppDatabase(databasePath)
+    const overview = database.domain.archivedUpdates.overview(now)
+    expect(overview.retentionDays).toBe(30)
+    expect(overview.retainedSince).toBe(
+      new Date(now.getTime() - 30 * 24 * 60 * 60 * 1_000).toISOString()
+    )
+    expect(overview.items.map(({ originalUpdateId }) => originalUpdateId)).toEqual([2])
+    expect(database.domain.archivedUpdates.clear()).toBe(1)
+    expect(database.domain.archivedUpdates.clear()).toBe(0)
+    expect(database.domain.archivedUpdates.list(now)).toEqual([])
   })
 
   it('rolls archive writes back atomically when the deleting transaction fails', () => {

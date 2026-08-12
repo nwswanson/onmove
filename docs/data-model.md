@@ -39,8 +39,8 @@ updates DELETE ── archived_updates                         BEFORE DELETE res
 - Deleting a relation preserves the item and changes its `relationId` to `null`.
 - Repository reparenting rejects self-parenting and descendant cycles before writing.
 - `meta` and status-event `meta` must be JSON objects. Their contents remain application-defined.
-- An Update leaving the live graph is copied to the append-only archive before SQLite completes
-  the direct delete or ancestor cascade.
+- An Update leaving the live graph is copied to the immutable-content, 30-day archive before SQLite
+  completes the direct delete or ancestor cascade.
 
 ## Focuses
 
@@ -121,24 +121,37 @@ to converge on the same persisted revision without a renderer-owned cache or clo
 
 ## Archived Updates
 
-`archived_updates` is the durable deletion boundary for observation evidence. It mirrors every
-column on the live `updates` table, stores the original Update id as `update_id`, and adds a unique
-archive id plus `deleted_at`. Its former parent, Scope, and Subject ids are deliberately scalar
-values rather than foreign keys: the archived row must remain valid after those records disappear.
+`archived_updates` is the durable, temporary deletion boundary for observation evidence. It mirrors
+every column on the live `updates` table, stores the original Update id as `update_id`, and adds a
+unique archive id plus `deleted_at`. Its former parent, Scope, and Subject ids are deliberately
+scalar values rather than foreign keys: the archived row must remain valid after those records
+disappear. It also captures the former Focus, Thread, Commitment, and Subject labels plus effective
+sensitivity so the archive remains understandable and respects privacy after an ancestor cascade.
 
 The `updates_archive_before_delete` SQLite trigger is the only archive writer. Because it runs
 `BEFORE DELETE ON updates`, it covers an explicit Update delete, Focus/Thread/Commitment foreign-key
 cascades, importer repairs, and any future Scope or Subject cascade without requiring each caller to
-remember an application service. Archive rows reject update and deletion. The read-only
-`UpdateArchiveRepository` verifies at application startup that the trigger exists and that every
-live Update column has a corresponding archive column. Adding a live field or rebuilding `updates`
-therefore fails closed until the archive schema and trigger are advanced in the same migration.
+remember an application service. Focus, Thread, Commitment, Scope, and Subject `BEFORE DELETE`
+triggers first place context that SQLite is about to remove in `update_archive_context`; the generic
+Update trigger consumes and clears that staging row. Archive content rejects updates.
+`UpdateArchiveRepository` verifies at application startup that the rescue, context-preparation, and
+retention triggers exist and that every live Update column has a corresponding archive column.
+Adding a live field or rebuilding `updates` therefore fails closed until the archive schema and
+triggers are advanced in the same migration.
+
+Archive retention is a rolling 30 × 24-hour window based on `deleted_at`. Rows older than the cutoff
+are deleted in SQLite on application startup, every archive read, portable export/import, and after
+each new archive insert; expired rows never cross IPC. The named repository is the supported write
+boundary for permanent deletion of one archive id and Clear all. These operations remove only the
+rescued copy and never modify live Updates. The top-level Archive view renders retained observations
+through the read-only rich-text receiver and requires confirmation before either destructive action.
 
 Portable import keeps the archive trigger installed while other invariant triggers are temporarily
 removed. Clearing replacement data consequently archives the outgoing live Updates in the same
 transaction. Existing local archive rows are never cleared; archive rows from the imported file
 merge by their stable random archive ids. A failed import rolls back both the replacement and any
-archive writes. Rolling SQLite backups include this table naturally.
+archive writes. Imported archive rows past the retention cutoff are discarded in the import
+transaction. Rolling SQLite backups include the currently retained window naturally.
 
 ### Inline text tags
 
@@ -348,3 +361,8 @@ Migration 23 adds the append-only `archived_updates` table, its read indexes, im
 and the single `updates_archive_before_delete` rescue trigger. The migration copies no live rows
 because archival begins only when a row leaves `updates`; upgrading is non-destructive and
 immediately protects every existing Update.
+
+Migration 24 bounds the Update archive to 30 days, removes the deletion prohibition while keeping
+content immutable, captures former hierarchy labels and effective sensitivity, adds cascade-context
+staging triggers, and adds automatic insert-time retention pruning. Existing archive rows remain
+valid; labels unavailable before this migration remain nullable and use a stable UI fallback.

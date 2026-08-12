@@ -90,6 +90,11 @@ const api: OnMoveApi = {
     createUpdate: (input) => ipcRenderer.invoke(IPC_CHANNELS.createUpdate, input),
     updateUpdate: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateUpdate, id, input),
     deleteUpdate: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteUpdate, id),
+    getArchivedUpdateOverview: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.getArchivedUpdateOverview),
+    deleteArchivedUpdate: (archiveId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.deleteArchivedUpdate, archiveId),
+    clearArchivedUpdates: () => ipcRenderer.invoke(IPC_CHANNELS.clearArchivedUpdates),
     listTodos: (context, options) =>
       ipcRenderer.invoke(IPC_CHANNELS.listTodos, context, options),
     queryTodos: (options) => ipcRenderer.invoke(IPC_CHANNELS.queryTodos, options),

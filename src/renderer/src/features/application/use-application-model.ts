@@ -23,13 +23,14 @@ export interface ApplicationModel {
   navigationBadges: NavigationBadgeCounts | null
   selectedFocus: FocusSnapshot | null
   selectedFocusId: number | null
-  selectedView: 'todos' | 'tags' | 'review' | 'due' | 'focus' | 'settings'
+  selectedView: 'todos' | 'tags' | 'review' | 'due' | 'archive' | 'focus' | 'settings'
   sensitiveContentHidden: boolean
   enabled: boolean
   goTodos: () => void
   goTags: () => void
   goReview: () => void
   goDue: () => void
+  goArchive: () => void
   goSettings: () => void
   selectFocus: (focusId: number, options?: { includeClosed?: boolean }) => boolean
   createFocus: (input: CreateFocusInput) => Promise<void>
@@ -55,7 +56,7 @@ export function useApplicationModel(): ApplicationModel {
   const [selectedFocusId, setSelectedFocusId] = useState<number | null>(null)
   const [closedFocusSelectionId, setClosedFocusSelectionId] = useState<number | null>(null)
   const [selectedView, setSelectedView] = useState<
-    'todos' | 'tags' | 'review' | 'due' | 'focus' | 'settings'
+    'todos' | 'tags' | 'review' | 'due' | 'archive' | 'focus' | 'settings'
   >('todos')
   const [sensitiveContentHidden, setSensitiveContentHidden] = useState(false)
   const navigationBadges = useNavigationBadges(sensitiveContentHidden)
@@ -167,6 +168,12 @@ export function useApplicationModel(): ApplicationModel {
     setSelectedFocusId(null)
     setClosedFocusSelectionId(null)
     setSelectedView('due')
+  }
+
+  function goArchive(): void {
+    setSelectedFocusId(null)
+    setClosedFocusSelectionId(null)
+    setSelectedView('archive')
   }
 
   function goSettings(): void {
@@ -293,6 +300,7 @@ export function useApplicationModel(): ApplicationModel {
     goTags,
     goReview,
     goDue,
+    goArchive,
     goSettings,
     selectFocus,
     createFocus,

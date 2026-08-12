@@ -50,6 +50,9 @@ export const IPC_CHANNELS = {
   createUpdate: 'domain:create-update',
   updateUpdate: 'domain:update-update',
   deleteUpdate: 'domain:delete-update',
+  getArchivedUpdateOverview: 'domain:get-archived-update-overview',
+  deleteArchivedUpdate: 'domain:delete-archived-update',
+  clearArchivedUpdates: 'domain:clear-archived-updates',
   listTodos: 'domain:list-todos',
   queryTodos: 'domain:query-todos',
   getTodoOverview: 'domain:get-todo-overview',
@@ -757,6 +760,40 @@ export interface EditUpdateInput {
   sensitive?: boolean
 }
 
+/** Former hierarchy labels captured before a parent cascade removes them. */
+export interface ArchivedUpdateContextSnapshot {
+  focusTitle: string | null
+  threadTitle: string | null
+  commitmentTitle: string | null
+  subjectName: string | null
+}
+
+/** Immutable Update evidence retained temporarily after leaving the live graph. */
+export interface ArchivedUpdateSnapshot {
+  archiveId: string
+  originalUpdateId: number
+  parent: UpdateParent
+  scope: UpdateScopeCell | null
+  date: string
+  observation: string
+  state: HealthState
+  sensitive: boolean
+  effectiveSensitive: boolean
+  observationRevision: number
+  createdAt: string
+  updatedAt: string
+  context: ArchivedUpdateContextSnapshot
+  deletedAt: string
+}
+
+/** SQLite-bounded retention projection; expired rows never cross IPC. */
+export interface ArchivedUpdateOverviewSnapshot {
+  generatedAt: string
+  retainedSince: string
+  retentionDays: number
+  items: ArchivedUpdateSnapshot[]
+}
+
 export type TodoEntityParent =
   | { type: 'focus'; id: number }
   | { type: 'thread'; id: number }
@@ -941,6 +978,9 @@ export interface DomainApi {
   createUpdate: (input: CreateUpdateInput) => Promise<UpdateSnapshot>
   updateUpdate: (id: number, input: EditUpdateInput) => Promise<UpdateSnapshot>
   deleteUpdate: (id: number) => Promise<boolean>
+  getArchivedUpdateOverview: () => Promise<ArchivedUpdateOverviewSnapshot>
+  deleteArchivedUpdate: (archiveId: string) => Promise<boolean>
+  clearArchivedUpdates: () => Promise<number>
   listTodos: (context: TodoParent, options?: TodoListOptions) => Promise<TodoSnapshot[]>
   /** Cross-context query for future aggregate screens; each Todo appears once. */
   queryTodos: (options?: TodoListOptions) => Promise<TodoSnapshot[]>

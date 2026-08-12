@@ -277,6 +277,14 @@ function installApi(
     createUpdate: vi.fn(),
     updateUpdate: vi.fn(),
     deleteUpdate: vi.fn(),
+    getArchivedUpdateOverview: vi.fn().mockResolvedValue({
+      generatedAt: '2026-08-12T12:00:00.000Z',
+      retainedSince: '2026-07-13T12:00:00.000Z',
+      retentionDays: 30,
+      items: []
+    }),
+    deleteArchivedUpdate: vi.fn(),
+    clearArchivedUpdates: vi.fn(),
     listTodos: vi.fn().mockResolvedValue([]),
     queryTodos: vi.fn().mockResolvedValue([]),
     getTodoOverview: vi.fn().mockResolvedValue({
@@ -396,6 +404,92 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'New focus' })).toBeEnabled()
     expect(screen.queryByText('Placeholder')).not.toBeInTheDocument()
     expect(screen.queryByText('Overview')).not.toBeInTheDocument()
+  })
+
+  it('shows retained Updates read-only and permanently deletes one or all from Archive', async () => {
+    const retained = [
+      {
+        archiveId: 'a'.repeat(32),
+        originalUpdateId: 41,
+        parent: { type: 'commitment' as const, id: 31 },
+        scope: { scopeId: 51, subjectId: 61 },
+        date: '2026-08-10',
+        observation: 'North region readiness is green.',
+        state: 'green' as const,
+        sensitive: false,
+        effectiveSensitive: false,
+        observationRevision: 2,
+        createdAt: '2026-08-10T10:00:00.000Z',
+        updatedAt: '2026-08-10T11:00:00.000Z',
+        context: {
+          focusTitle: 'Project Atlas',
+          threadTitle: 'Sprint execution',
+          commitmentTitle: 'Improve ticket quality',
+          subjectName: 'North region'
+        },
+        deletedAt: '2026-08-12T12:00:00.000Z'
+      },
+      {
+        archiveId: 'b'.repeat(32),
+        originalUpdateId: 42,
+        parent: { type: 'focus' as const, id: 8 },
+        scope: null,
+        date: '2026-08-11',
+        observation: '',
+        state: 'none' as const,
+        sensitive: false,
+        effectiveSensitive: false,
+        observationRevision: 0,
+        createdAt: '2026-08-11T10:00:00.000Z',
+        updatedAt: '2026-08-11T10:00:00.000Z',
+        context: {
+          focusTitle: 'Project Beacon',
+          threadTitle: null,
+          commitmentTitle: null,
+          subjectName: null
+        },
+        deletedAt: '2026-08-12T13:00:00.000Z'
+      }
+    ]
+    const deleteArchivedUpdate = vi.fn().mockResolvedValue(true)
+    const clearArchivedUpdates = vi.fn().mockResolvedValue(1)
+    installApi({
+      getArchivedUpdateOverview: vi.fn().mockResolvedValue({
+        generatedAt: '2026-08-12T14:00:00.000Z',
+        retainedSince: '2026-07-13T14:00:00.000Z',
+        retentionDays: 30,
+        items: retained
+      }),
+      deleteArchivedUpdate,
+      clearArchivedUpdates
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Archive' }))
+    expect(screen.getByRole('button', { name: 'Archive' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('heading', { name: 'Archive' })).toBeVisible()
+    expect(screen.getByRole('list', { name: 'Archived updates' })).toHaveTextContent(
+      'Project Atlas › Sprint execution › Improve ticket quality › North region'
+    )
+    expect(screen.getByLabelText('Archived update observation from 2026-08-10'))
+      .toHaveAttribute('contenteditable', 'false')
+    expect(screen.getByText('No observation recorded.')).toBeVisible()
+    expect(screen.queryByLabelText('Update date')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', {
+      name: /Permanently delete archived update from Project Atlas/
+    }))
+    expect(screen.getByRole('dialog', { name: 'Delete archived update?' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Delete permanently' }))
+    expect(deleteArchivedUpdate).toHaveBeenCalledWith('a'.repeat(32))
+    expect(screen.queryByText('North region readiness is green.')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Clear all' }))
+    expect(screen.getByRole('dialog', { name: 'Clear the archive?' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Clear archive' }))
+    expect(clearArchivedUpdates).toHaveBeenCalledOnce()
+    expect(screen.getByText('No deleted updates from the last 30 days.')).toBeVisible()
   })
 
   it('badges actionable primary destinations and refreshes invalidated review counts', async () => {

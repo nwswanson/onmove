@@ -14,6 +14,10 @@
   from navigation.
 - Put workspace utilities such as Settings, help, and data/storage actions at the bottom of the
   sidebar.
+- Expose `Archive` as a top-level item destination. It renders only deleted Updates retained by the
+  bounded archive projection, never editable Update controls. The receiver owns permanent per-row
+  deletion and a confirmed Clear all action; sensitive archive rows follow the application-wide
+  list visibility preference.
 - Keep the primary sidebar free of summary-card placeholders. Put bounded, receiver-owned numeric
   badges on actionable destinations instead: Todos counts open items overdue or due today, Review
   counts remaining review targets, and Due counts open/paused dated work overdue or due within the
@@ -369,12 +373,16 @@ foreground colors and do not rely on color alone to communicate selection or sta
 
 - Add schema changes as new numbered migrations; never edit a migration already released to users.
 - Rescue every Update deletion through the SQLite-owned `updates_archive_before_delete` trigger.
-  `archived_updates` is append-only and mirrors every live Update field plus its original id and
-  deletion timestamp without foreign keys, so direct deletes and Focus, Thread, Commitment, Scope,
-  or Subject cascades cannot erase evidence. Keep `UpdateArchiveRepository`'s startup schema check:
-  any future Update column or table rebuild must update the archive table and trigger before the app
-  may write. Portable import may merge archive rows but must never disable this deletion trigger or
-  clear the local archive bucket.
+  `archived_updates` mirrors every live Update field plus its original id, former hierarchy labels,
+  effective sensitivity, and deletion timestamp without foreign keys, so direct deletes and Focus,
+  Thread, Commitment, Scope, or Subject cascades cannot erase evidence. Parent/Scope/Subject
+  `BEFORE DELETE` preparation triggers must stage context before SQLite removes ancestor rows. Keep
+  `UpdateArchiveRepository`'s startup schema check: any future Update column or table rebuild must
+  update the archive table, staging triggers, and rescue trigger before the app may write. Archived
+  content is immutable, but repository-owned permanent delete, Clear all, and automatic 30-day
+  retention pruning are supported. Enforce the cutoff in SQLite before snapshots cross IPC and
+  prune on startup, archive access, portable export/import, and new archive inserts. Portable import
+  may merge retained rows but must never disable the rescue trigger or clear local rows implicitly.
 - Persist Todo closure time independently as `completed_at`: the first open-to-done transition sets
   it, edits to an already-done Todo preserve it, reopening clears it, and closing again records a new
   instant. The global overview returns every open Todo plus only completed Todos from the last seven

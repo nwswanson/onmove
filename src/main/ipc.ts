@@ -227,6 +227,15 @@ export function registerAppIpc(
   ipcMain.handle(IPC_CHANNELS.deleteUpdate, (_event, id: number) =>
     mutation(() => database.domain.updates.delete(id))
   )
+  ipcMain.handle(IPC_CHANNELS.getArchivedUpdateOverview, () =>
+    database.domain.archivedUpdates.overview()
+  )
+  ipcMain.handle(IPC_CHANNELS.deleteArchivedUpdate, (_event, archiveId: string) =>
+    database.domain.archivedUpdates.delete(archiveId)
+  )
+  ipcMain.handle(IPC_CHANNELS.clearArchivedUpdates, () =>
+    database.domain.archivedUpdates.clear()
+  )
   ipcMain.handle(
     IPC_CHANNELS.listTodos,
     (_event, context: TodoParent, options?: TodoListOptions) =>

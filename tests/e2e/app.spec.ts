@@ -290,6 +290,69 @@ test('sorts all current Todos and bounds recently completed work before renderin
   }
 })
 
+test('shows cascade-rescued Updates read-only in Archive and permanently deletes them', async () => {
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-update-archive-e2e-'))
+  const databasePath = join(userDataDirectory, 'onmove.sqlite3')
+  let application: ElectronApplication | undefined
+
+  const seed = new AppDatabase(databasePath)
+  const focus = seed.domain.focuses.create({ title: 'Project Atlas' })
+  const thread = seed.domain.threads.create({
+    focusId: focus.id,
+    title: 'Sprint execution',
+    reviewFrequencyDays: 7
+  })
+  const commitment = seed.domain.commitments.create({
+    parent: { type: 'thread', id: thread.id },
+    type: 'ongoing',
+    title: 'Improve ticket quality'
+  })
+  seed.domain.updates.create({
+    parent: { type: 'commitment', id: commitment.id },
+    date: localDate(),
+    observation: 'Archived delivery evidence.',
+    state: 'yellow'
+  })
+  seed.domain.focuses.delete(focus.id)
+  seed.close()
+
+  try {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    const window = await application.firstWindow()
+    await window.getByRole('button', { name: 'Archive', exact: true }).click()
+
+    await expect(window.getByRole('heading', { name: 'Archive', exact: true })).toBeVisible()
+    const archived = window.getByRole('listitem', {
+      name: 'Archived update in Project Atlas › Sprint execution › Improve ticket quality'
+    })
+    await expect(archived).toContainText('Archived delivery evidence.')
+    await expect(archived).toContainText('Yellow')
+    await expect(archived.getByLabel(`Archived update observation from ${localDate()}`))
+      .toHaveAttribute('contenteditable', 'false')
+    await expect(archived.getByLabel('Update date')).toHaveCount(0)
+
+    await archived.getByRole('button', { name: /Permanently delete archived update/ }).click()
+    await window.getByRole('button', { name: 'Delete permanently' }).click()
+    await expect(window.getByText('No deleted updates from the last 30 days.')).toBeVisible()
+    await expect.poll(() => {
+      const stored = new DatabaseSync(databasePath, { readOnly: true })
+      try {
+        return stored.prepare('SELECT count(*) AS count FROM archived_updates').get()
+      } finally {
+        stored.close()
+      }
+    }).toMatchObject({ count: 0 })
+  } finally {
+    await application?.close()
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
 test('operates every explicit hierarchy deadline from the global Due worklist', async () => {
   const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-due-work-e2e-'))
   const databasePath = join(userDataDirectory, 'onmove.sqlite3')

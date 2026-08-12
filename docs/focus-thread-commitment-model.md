@@ -518,7 +518,9 @@ full cascade.
 - Thread and Commitment deletion also cascades their Scope-application transition history. It does
   not delete shared Focus-owned Scopes, memberships, or Subjects.
 - Deleting an Update immediately changes every live derived value that depended on it and appends
-  one immutable archive row with its original parent/cell attribution and deletion time.
+  one immutable-content archive row with its original parent/cell attribution, former hierarchy
+  labels, effective sensitivity, and deletion time. That retained copy expires after 30 days and
+  may be permanently removed sooner through the explicit Archive controls.
 - Subjects are global and survive Focus deletion unless explicitly deleted later.
 - Scope, Subject, and membership operations reject changes that would invalidate retained scoped
   Update history.
