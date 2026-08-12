@@ -329,8 +329,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
   main-process projection that returns every Focus, Thread, and Commitment with an explicit due date,
   including done and cancelled records; never issue a renderer-side hierarchy fan-out. Group rows as
   Overdue, Due today, and Upcoming, ordered globally by due date within those sections. Every row owns
-  a type label, name, atomic containing-screen destination, editable due date, and the shared lifecycle
-  status selector. Preserve direct-parent date misalignment as the existing advisory warning. Clearing
+  the shared semantic work-kind glyph (Target for Focus, Git branch for Thread, Handshake for
+  Commitment), name, atomic containing-screen destination, editable due date, and the shared lifecycle
+  status selector. Glyphs require an accessible label and hover title. Preserve direct-parent date
+  misalignment as the existing advisory warning. Clearing
   a due date removes the row after persistence. Apply hierarchy-cascading sensitive filtering at the
   presenter collection boundary. A link may open a closed Focus without restoring it to normal sidebar
   navigation.

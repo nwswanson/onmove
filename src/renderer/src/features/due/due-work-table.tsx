@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/table'
 import type { DueWorkGroupModel } from '@/features/due/due-presenters'
 import { WorkDueDateField } from '@/features/shared/work-due-date-field'
+import { WorkKindIcon } from '@/features/shared/work-kind-icon'
 import { WorkStatusSelect } from '@/features/shared/work-status-select'
 import type { WorkStatus } from '@/features/shared/work-status'
 
@@ -76,9 +77,7 @@ export function DueWorkTable({
                 <TableRow key={row.id} data-due-item={row.id}>
                   <TableCell>
                     <div className="flex min-w-0 items-center gap-2">
-                      <span className="shrink-0 rounded border border-border bg-muted/45 px-1.5 py-0.5 text-[0.625rem] font-semibold text-muted-foreground">
-                        {row.kindLabel}
-                      </span>
+                      <WorkKindIcon kind={row.kind} />
                       <span className="truncate font-medium">
                         <TaggedText value={row.title} />
                       </span>
