@@ -278,6 +278,15 @@ describe('registerAppIpc', () => {
             items: [{ key: 'focus:12', kind: 'focus', dueDate: '2026-09-01' }]
           }))
         },
+        navigation: {
+          getBadgeOverview: vi.fn(() => ({
+            asOf: '2026-08-10',
+            dueThrough: '2026-08-17',
+            todos: { total: 2, nonSensitive: 1 },
+            review: { total: 3, nonSensitive: 2 },
+            due: { total: 4, nonSensitive: 3 }
+          }))
+        },
         richTextDocuments: {
           get: vi.fn((reference) => ({
             reference,
@@ -297,12 +306,15 @@ describe('registerAppIpc', () => {
       }
     }
     const shell = { showItemInFolder: vi.fn(), openPath: vi.fn().mockResolvedValue('') }
+    const invalidateNavigationBadges = vi.fn()
 
     const cleanup = registerAppIpc(
       ipcMain as never,
       database as never,
       shell as never,
-      () => true
+      () => true,
+      undefined,
+      invalidateNavigationBadges
     )
 
     expect(ipcMain.handle).toHaveBeenCalledTimes(Object.keys(IPC_CHANNELS).length)
@@ -526,6 +538,12 @@ describe('registerAppIpc', () => {
       asOf: '2026-08-10',
       items: [{ key: 'focus:12', kind: 'focus', dueDate: '2026-09-01' }]
     })
+    expect(await handlers.get(IPC_CHANNELS.getNavigationBadgeOverview)?.()).toMatchObject({
+      todos: { total: 2, nonSensitive: 1 },
+      review: { total: 3, nonSensitive: 2 },
+      due: { total: 4, nonSensitive: 3 }
+    })
+    expect(invalidateNavigationBadges).toHaveBeenCalled()
     expect(await handlers.get(IPC_CHANNELS.getRichTextDocument)?.(undefined, {
       type: 'focus', id: 12, field: 'goal'
     })).toMatchObject({ value: 'Ship', revision: 1 })

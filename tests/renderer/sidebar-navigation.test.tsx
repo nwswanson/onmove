@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { SidebarNavigation } from '../../src/renderer/src/components/ui/sidebar-navigation'
@@ -30,7 +30,8 @@ describe('SidebarNavigation', () => {
             label: 'Paused focus',
             ariaLabel: 'Paused focus, paused',
             icon: 'paused',
-            tone: 'muted'
+            tone: 'muted',
+            badge: { value: 3, label: '3 remaining' }
           }
         ]}
         selectedItemId="1"
@@ -57,8 +58,11 @@ describe('SidebarNavigation', () => {
       'fill',
       'var(--destructive)'
     )
-    expect(screen.getByRole('button', { name: 'Paused focus, paused' })).toHaveClass('opacity-55')
-    await user.click(screen.getByRole('button', { name: 'Paused focus, paused' }))
+    const paused = screen.getByRole('button', { name: 'Paused focus, paused, 3 remaining' })
+    expect(paused).toHaveClass('opacity-55')
+    expect(within(paused)
+      .getByText('3')).toBeVisible()
+    await user.click(paused)
     await user.click(screen.getByRole('button', { name: 'New focus' }))
     expect(onSelect).toHaveBeenCalledWith('2')
     expect(onAdd).toHaveBeenCalledOnce()

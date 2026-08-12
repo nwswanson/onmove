@@ -15,6 +15,11 @@ const api: OnMoveApi = {
     ipcRenderer.on(IPC_EVENTS.sensitiveContentVisibilityChanged, handler)
     return () => ipcRenderer.removeListener(IPC_EVENTS.sensitiveContentVisibilityChanged, handler)
   },
+  onNavigationBadgesInvalidated: (listener) => {
+    const handler = (): void => listener()
+    ipcRenderer.on(IPC_EVENTS.navigationBadgesInvalidated, handler)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.navigationBadgesInvalidated, handler)
+  },
   recordGreeting: () => ipcRenderer.invoke(IPC_CHANNELS.recordGreeting),
   showDataFolder: () => ipcRenderer.invoke(IPC_CHANNELS.showDataFolder),
   backups: {
@@ -99,6 +104,8 @@ const api: OnMoveApi = {
     listNotes: (parent) => ipcRenderer.invoke(IPC_CHANNELS.listNotes, parent),
     listTags: () => ipcRenderer.invoke(IPC_CHANNELS.listTags),
     listTagUses: (name) => ipcRenderer.invoke(IPC_CHANNELS.listTagUses, name),
+    getNavigationBadgeOverview: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.getNavigationBadgeOverview),
     getReviewOverview: () => ipcRenderer.invoke(IPC_CHANNELS.getReviewOverview),
     getDueOverview: () => ipcRenderer.invoke(IPC_CHANNELS.getDueOverview)
   },

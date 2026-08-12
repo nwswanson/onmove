@@ -156,6 +156,11 @@ opens the required Subject picker rather than inventing a Scope cell, then appli
 reveal behavior after selection. Review maps that behavior to its current typed review target.
 Screens without an Update creation contract do not register or consume the shortcut.
 
+`SidebarNavigation` optionally receives a numeric badge model with a value and accessible label.
+The receiver validates and renders that model; application callers cannot provide badge markup or
+classes. The application navigation presenter consumes only the bounded count partitions returned
+by the named navigation-badge IPC projection, selecting the non-sensitive partition when required.
+
 Multiline content follows one shared receiver contract. `RichTextEditor` owns a deliberately small
 Lexical configuration: undo/redo, bold, italic, underline, strikethrough, a fixed yellow highlight,
 bulleted, numbered, and check lists, links, and a conventional text-color palette. The palette uses

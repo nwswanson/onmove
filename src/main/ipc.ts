@@ -50,8 +50,15 @@ export function registerAppIpc(
   database: AppDatabase,
   shell: FolderOpener,
   getSensitiveContentHidden: () => boolean = () => false,
-  richTextWindows: RichTextWindowCoordinator = emptyRichTextWindows
+  richTextWindows: RichTextWindowCoordinator = emptyRichTextWindows,
+  invalidateNavigationBadges: () => void = () => undefined
 ): () => void {
+  function mutation<T>(operation: () => T): T {
+    const result = operation()
+    invalidateNavigationBadges()
+    return result
+  }
+
   ipcMain.handle(IPC_CHANNELS.getAppState, () => database.getState())
   ipcMain.handle(IPC_CHANNELS.getSensitiveContentHidden, getSensitiveContentHidden)
   ipcMain.handle(IPC_CHANNELS.recordGreeting, () => database.recordGreeting())
@@ -93,19 +100,19 @@ export function registerAppIpc(
   )
   ipcMain.handle(IPC_CHANNELS.listFocuses, () => database.domain.focuses.list())
   ipcMain.handle(IPC_CHANNELS.createFocus, (_event, input: CreateFocusInput) =>
-    database.domain.focuses.create(input).toSnapshot()
+    mutation(() => database.domain.focuses.create(input).toSnapshot())
   )
   ipcMain.handle(IPC_CHANNELS.updateFocus, (_event, id: number, input: UpdateFocusInput) =>
-    database.domain.focuses.requireModel(id).update(input).toSnapshot()
+    mutation(() => database.domain.focuses.requireModel(id).update(input).toSnapshot())
   )
   ipcMain.handle(IPC_CHANNELS.pokeFocusReview, (_event, id: number) =>
-    database.domain.focuses.requireModel(id).pokeReview().toSnapshot()
+    mutation(() => database.domain.focuses.requireModel(id).pokeReview().toSnapshot())
   )
   ipcMain.handle(IPC_CHANNELS.setFocusStatus, (_event, id: number, status: FocusStatus) =>
-    database.domain.focuses.requireModel(id).setStatus(status).toSnapshot()
+    mutation(() => database.domain.focuses.requireModel(id).setStatus(status).toSnapshot())
   )
   ipcMain.handle(IPC_CHANNELS.deleteFocus, (_event, id: number) =>
-    database.domain.focuses.delete(id)
+    mutation(() => database.domain.focuses.delete(id))
   )
   ipcMain.handle(IPC_CHANNELS.getFocusStatusHistory, (_event, id: number) =>
     database.domain.focuses.statusHistory(id)
@@ -116,12 +123,12 @@ export function registerAppIpc(
   ipcMain.handle(
     IPC_CHANNELS.addFocusScopeSubject,
     (_event, focusId: number, input: AddFocusScopeSubjectInput) =>
-      database.domain.focusScopes.addSubject(focusId, input)
+      mutation(() => database.domain.focusScopes.addSubject(focusId, input))
   )
   ipcMain.handle(
     IPC_CHANNELS.removeFocusScopeSubject,
     (_event, focusId: number, subjectId: number) =>
-      database.domain.focusScopes.removeSubject(focusId, subjectId)
+      mutation(() => database.domain.focusScopes.removeSubject(focusId, subjectId))
   )
   ipcMain.handle(IPC_CHANNELS.getThreadScope, (_event, threadId: number) =>
     database.domain.threadScopes.get(threadId)
@@ -130,41 +137,41 @@ export function registerAppIpc(
     database.domain.threads.subjectMatrix(threadId)
   )
   ipcMain.handle(IPC_CHANNELS.customizeThreadScope, (_event, threadId: number) =>
-    database.domain.threadScopes.customize(threadId)
+    mutation(() => database.domain.threadScopes.customize(threadId))
   )
   ipcMain.handle(
     IPC_CHANNELS.addThreadScopeSubject,
     (_event, threadId: number, input: AddFocusScopeSubjectInput) =>
-      database.domain.threadScopes.addSubject(threadId, input)
+      mutation(() => database.domain.threadScopes.addSubject(threadId, input))
   )
   ipcMain.handle(
     IPC_CHANNELS.removeThreadScopeSubject,
     (_event, threadId: number, subjectId: number) =>
-      database.domain.threadScopes.removeSubject(threadId, subjectId)
+      mutation(() => database.domain.threadScopes.removeSubject(threadId, subjectId))
   )
   ipcMain.handle(IPC_CHANNELS.followFocusThreadScope, (_event, threadId: number) =>
-    database.domain.threadScopes.followFocus(threadId)
+    mutation(() => database.domain.threadScopes.followFocus(threadId))
   )
   ipcMain.handle(IPC_CHANNELS.listThreads, (_event, focusId: number) =>
     database.domain.threads.listForFocus(focusId)
   )
   ipcMain.handle(IPC_CHANNELS.createThread, (_event, input: CreateThreadInput) =>
-    database.domain.threads.create(input).snapshot()
+    mutation(() => database.domain.threads.create(input).snapshot())
   )
   ipcMain.handle(IPC_CHANNELS.updateThread, (_event, id: number, input: UpdateThreadInput) =>
-    database.domain.threads.requireModel(id).update(input).snapshot()
+    mutation(() => database.domain.threads.requireModel(id).update(input).snapshot())
   )
   ipcMain.handle(IPC_CHANNELS.planThreadMove, (_event, id: number, focusId: number) =>
     database.domain.threads.planMove(id, focusId)
   )
   ipcMain.handle(IPC_CHANNELS.moveThread, (_event, id: number, input: MoveThreadInput) =>
-    database.domain.threads.move(id, input)
+    mutation(() => database.domain.threads.move(id, input))
   )
   ipcMain.handle(IPC_CHANNELS.pokeThreadReview, (_event, id: number, cell?: UpdateScopeCell) =>
-    database.domain.threads.requireModel(id).pokeReview(new Date(), cell).snapshot()
+    mutation(() => database.domain.threads.requireModel(id).pokeReview(new Date(), cell).snapshot())
   )
   ipcMain.handle(IPC_CHANNELS.deleteThread, (_event, id: number) =>
-    database.domain.threads.delete(id)
+    mutation(() => database.domain.threads.delete(id))
   )
   ipcMain.handle(IPC_CHANNELS.listCommitments, (_event, parent: CommitmentParent) =>
     parent.type === 'focus'
@@ -180,12 +187,12 @@ export function registerAppIpc(
     }
   })
   ipcMain.handle(IPC_CHANNELS.createCommitment, (_event, input: CreateCommitmentInput) =>
-    database.domain.commitments.create(input).snapshot()
+    mutation(() => database.domain.commitments.create(input).snapshot())
   )
   ipcMain.handle(
     IPC_CHANNELS.updateCommitment,
     (_event, id: number, input: UpdateCommitmentInput) =>
-      database.domain.commitments.requireModel(id).update(input).snapshot()
+      mutation(() => database.domain.commitments.requireModel(id).update(input).snapshot())
   )
   ipcMain.handle(
     IPC_CHANNELS.planCommitmentMove,
@@ -195,15 +202,16 @@ export function registerAppIpc(
   ipcMain.handle(
     IPC_CHANNELS.moveCommitment,
     (_event, id: number, input: MoveCommitmentInput) =>
-      database.domain.commitments.move(id, input)
+      mutation(() => database.domain.commitments.move(id, input))
   )
   ipcMain.handle(
     IPC_CHANNELS.pokeCommitmentReview,
     (_event, id: number, cell?: UpdateScopeCell) =>
-      database.domain.commitments.requireModel(id).pokeReview(new Date(), cell).snapshot()
+      mutation(() =>
+        database.domain.commitments.requireModel(id).pokeReview(new Date(), cell).snapshot())
   )
   ipcMain.handle(IPC_CHANNELS.deleteCommitment, (_event, id: number) =>
-    database.domain.commitments.delete(id)
+    mutation(() => database.domain.commitments.delete(id))
   )
   ipcMain.handle(IPC_CHANNELS.listUpdates, (_event, parent: UpdateParent) => {
     if (parent.type === 'focus') return database.domain.updates.listForFocus(parent.id)
@@ -211,13 +219,13 @@ export function registerAppIpc(
     return database.domain.updates.listForCommitment(parent.id)
   })
   ipcMain.handle(IPC_CHANNELS.createUpdate, (_event, input: CreateUpdateInput) =>
-    database.domain.updates.create(input).toSnapshot()
+    mutation(() => database.domain.updates.create(input).toSnapshot())
   )
   ipcMain.handle(IPC_CHANNELS.updateUpdate, (_event, id: number, input: EditUpdateInput) =>
-    database.domain.updates.requireModel(id).update(input).toSnapshot()
+    mutation(() => database.domain.updates.requireModel(id).update(input).toSnapshot())
   )
   ipcMain.handle(IPC_CHANNELS.deleteUpdate, (_event, id: number) =>
-    database.domain.updates.delete(id)
+    mutation(() => database.domain.updates.delete(id))
   )
   ipcMain.handle(
     IPC_CHANNELS.listTodos,
@@ -231,15 +239,15 @@ export function registerAppIpc(
     database.domain.todos.overview()
   )
   ipcMain.handle(IPC_CHANNELS.createTodo, (_event, input: CreateTodoInput) =>
-    database.domain.todos.create(input).toSnapshot()
+    mutation(() => database.domain.todos.create(input).toSnapshot())
   )
   ipcMain.handle(IPC_CHANNELS.updateTodo, (_event, id: number, input: UpdateTodoInput) =>
-    database.domain.todos.requireModel(id).update(input).toSnapshot()
+    mutation(() => database.domain.todos.requireModel(id).update(input).toSnapshot())
   )
   ipcMain.handle(
     IPC_CHANNELS.updateTodoSubjectCompletion,
     (_event, id: number, subjectId: number, done: boolean) =>
-      database.domain.todos.updateSubjectCompletion(id, subjectId, done)
+      mutation(() => database.domain.todos.updateSubjectCompletion(id, subjectId, done))
   )
   ipcMain.handle(
     IPC_CHANNELS.reorderTodos,
@@ -247,7 +255,7 @@ export function registerAppIpc(
       database.domain.todos.reorder(context, orderedTodoIds)
   )
   ipcMain.handle(IPC_CHANNELS.deleteTodo, (_event, id: number) =>
-    database.domain.todos.delete(id)
+    mutation(() => database.domain.todos.delete(id))
   )
   ipcMain.handle(IPC_CHANNELS.listNotes, (_event, parent: NoteParent) =>
     database.domain.notes.list(parent)
@@ -255,6 +263,9 @@ export function registerAppIpc(
   ipcMain.handle(IPC_CHANNELS.listTags, () => database.domain.tags.list())
   ipcMain.handle(IPC_CHANNELS.listTagUses, (_event, name: string) =>
     database.domain.tags.uses(name)
+  )
+  ipcMain.handle(IPC_CHANNELS.getNavigationBadgeOverview, () =>
+    database.domain.navigation.getBadgeOverview()
   )
   ipcMain.handle(IPC_CHANNELS.getReviewOverview, () =>
     database.domain.reviews.getOverview()

@@ -24,6 +24,58 @@ async function isFullyVisibleInMain(locator: Locator): Promise<boolean> {
   })
 }
 
+function localDate(now = new Date()): string {
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+test('badges actionable navigation and decrements Review after persistence', async () => {
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-navigation-badges-e2e-'))
+  const databasePath = join(userDataDirectory, 'onmove.sqlite3')
+  const today = localDate()
+  const seeded = new AppDatabase(databasePath)
+  const focus = seeded.domain.focuses.create({ title: 'Badge launch', dueDate: today })
+  seeded.domain.todos.create({
+    parent: { type: 'focus', id: focus.id },
+    name: 'Badge Todo',
+    dueDate: today
+  })
+  seeded.close()
+  let application: ElectronApplication | undefined
+
+  try {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    const window = await application.firstWindow()
+
+    await expect(window.getByRole('button', {
+      name: 'Todos, 1 overdue or due today',
+      exact: true
+    })).toBeVisible()
+    await expect(window.getByRole('button', {
+      name: 'Review, 1 remaining',
+      exact: true
+    })).toBeVisible()
+    await expect(window.getByRole('button', {
+      name: 'Due, 1 overdue or due within seven days',
+      exact: true
+    })).toBeVisible()
+
+    await window.getByRole('button', { name: 'Review, 1 remaining', exact: true }).click()
+    await window.getByRole('button', { name: 'Pass along' }).click()
+    await expect(window.getByRole('button', { name: 'Review', exact: true })).toBeVisible()
+  } finally {
+    await application?.close().catch(() => undefined)
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
 test('opens and closes multiple main windows through the New Window menu', async () => {
   const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-multi-window-e2e-'))
   const databasePath = join(userDataDirectory, 'onmove.sqlite3')
@@ -998,7 +1050,8 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     }))).toEqual({ importLabel: 'Import Data…', exportLabel: 'Export Data…' })
     await expect(window.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
     await expect(window.getByRole('toolbar', { name: 'Application toolbar' })).toBeVisible()
-    await expect(window.getByText('Overview')).toBeVisible()
+    await expect(window.getByText('Placeholder')).toHaveCount(0)
+    await expect(window.getByText('Overview')).toHaveCount(0)
     await expect(window.getByText('Focuses', { exact: true })).toBeVisible()
     await window.getByRole('button', { name: 'New focus' }).click()
     await window.getByLabel(/^Title/).fill('Persistent focus')

@@ -276,6 +276,13 @@ function installApi(
     listNotes: vi.fn().mockResolvedValue([]),
     listTags: vi.fn().mockResolvedValue([]),
     listTagUses: vi.fn().mockResolvedValue([]),
+    getNavigationBadgeOverview: vi.fn().mockResolvedValue({
+      asOf: '2026-08-10',
+      dueThrough: '2026-08-17',
+      todos: { total: 0, nonSensitive: 0 },
+      review: { total: 0, nonSensitive: 0 },
+      due: { total: 0, nonSensitive: 0 }
+    }),
     getReviewOverview: vi.fn().mockResolvedValue({
       asOf: '2026-08-10',
       items: []
@@ -290,6 +297,7 @@ function installApi(
     getAppState: vi.fn().mockResolvedValue(initialState),
     getSensitiveContentHidden: vi.fn().mockResolvedValue(false),
     onSensitiveContentVisibilityChanged: vi.fn(() => () => undefined),
+    onNavigationBadgesInvalidated: vi.fn(() => () => undefined),
     recordGreeting: vi.fn().mockResolvedValue(initialState),
     showDataFolder: vi.fn().mockResolvedValue(undefined),
     backups: {
@@ -367,6 +375,53 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: 'Focus' })).not.toBeInTheDocument()
     expect(screen.getByText('No focuses yet')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'New focus' })).toBeEnabled()
+    expect(screen.queryByText('Placeholder')).not.toBeInTheDocument()
+    expect(screen.queryByText('Overview')).not.toBeInTheDocument()
+  })
+
+  it('badges actionable primary destinations and refreshes invalidated review counts', async () => {
+    let invalidateBadges: (() => void) | undefined
+    const getNavigationBadgeOverview = vi.fn()
+      .mockResolvedValueOnce({
+        asOf: '2026-08-10',
+        dueThrough: '2026-08-17',
+        todos: { total: 2, nonSensitive: 2 },
+        review: { total: 4, nonSensitive: 4 },
+        due: { total: 3, nonSensitive: 3 }
+      })
+      .mockResolvedValue({
+        asOf: '2026-08-10',
+        dueThrough: '2026-08-17',
+        todos: { total: 2, nonSensitive: 2 },
+        review: { total: 3, nonSensitive: 3 },
+        due: { total: 3, nonSensitive: 3 }
+      })
+    installApi(
+      { getNavigationBadgeOverview },
+      {
+        onNavigationBadgesInvalidated: vi.fn((listener) => {
+          invalidateBadges = listener
+          return () => undefined
+        })
+      }
+    )
+    render(<App />)
+
+    const todos = await screen.findByRole('button', {
+      name: 'Todos, 2 overdue or due today'
+    })
+    expect(within(todos).getByText('2')).toBeVisible()
+    expect(within(screen.getByRole('button', { name: 'Review, 4 remaining' }))
+      .getByText('4')).toBeVisible()
+    expect(within(screen.getByRole('button', {
+      name: 'Due, 3 overdue or due within seven days'
+    })).getByText('3')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Tags' })).not.toHaveTextContent(/\d/)
+
+    act(() => invalidateBadges?.())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Review, 3 remaining' }))
+      .toBeVisible())
+    expect(getNavigationBadgeOverview).toHaveBeenCalledTimes(2)
   })
 
   it('operates the global Due worklist and deep-links its hierarchy', async () => {

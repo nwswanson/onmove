@@ -23,6 +23,10 @@ export interface SidebarNavigationItemModel {
   tone?: 'default' | 'muted'
   disabled?: boolean
   dropTarget?: { type: string; id: string }
+  badge?: {
+    value: number
+    label: string
+  }
 }
 
 export interface SidebarNavigationActionModel {
@@ -82,7 +86,9 @@ function SidebarNavigationRow({
         type="button"
         isActive={selected}
         aria-current={selected ? 'page' : undefined}
-        aria-label={item.ariaLabel ?? item.label}
+        aria-label={`${item.ariaLabel ?? item.label}${
+          item.badge ? `, ${item.badge.label}` : ''
+        }`}
         title={item.sunflower?.ariaLabel}
         className={cn(item.tone === 'muted' && 'text-muted-foreground opacity-55')}
         disabled={item.disabled}
@@ -102,6 +108,14 @@ function SidebarNavigationRow({
           <SemanticSunflower className="!size-6" model={item.sunflower} />
         ) : null}
         <span className="truncate"><TaggedText value={item.label} /></span>
+        {item.badge && (
+          <span
+            aria-hidden="true"
+            className="ml-auto min-w-5 shrink-0 rounded-full bg-sidebar-accent px-1.5 py-0.5 text-center text-[0.6875rem] font-semibold tabular-nums text-sidebar-accent-foreground group-data-[active=true]/menu-button:bg-primary/45"
+          >
+            {item.badge.value}
+          </span>
+        )}
       </SidebarMenuButton>
     </SidebarMenuItem>
   )
@@ -122,6 +136,13 @@ function SidebarNavigationContent({
     }
     if ((item.icon === 'sunflower') !== (item.sunflower !== undefined)) {
       throw new Error(`Primary sidebar item "${item.id}" has an invalid Sunflower model.`)
+    }
+    if (item.badge && (
+      !Number.isSafeInteger(item.badge.value) ||
+      item.badge.value < 0 ||
+      !item.badge.label.trim()
+    )) {
+      throw new Error(`Primary sidebar item "${item.id}" has an invalid badge model.`)
     }
     itemIds.add(id)
   }

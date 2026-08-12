@@ -14,6 +14,10 @@
   from navigation.
 - Put workspace utilities such as Settings, help, and data/storage actions at the bottom of the
   sidebar.
+- Keep the primary sidebar free of summary-card placeholders. Put bounded, receiver-owned numeric
+  badges on actionable destinations instead: Todos counts open items overdue or due today, Review
+  counts remaining review targets, and Due counts open/paused dated work overdue or due within the
+  next seven calendar days. Hide zero badges and recompute at local calendar-day rollover.
 - Keep Settings selectable in the primary sidebar. Its backup pane exposes the fixed automatic
   policy, last/next backup dates, retained snapshots, `Back up now`, and `Show backups`; it must use
   only the typed backup preload contract and must not expose arbitrary filesystem paths or SQL.

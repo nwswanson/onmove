@@ -14,7 +14,6 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupLabel,
-  SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem
@@ -46,6 +45,7 @@ import { TagsWorkspace } from '@/features/tags/tags-workspace'
 import { ReviewWorkspace } from '@/features/review/review-workspace'
 import { DueWorkspace } from '@/features/due/due-workspace'
 import type { ThreadSnapshot } from '../../shared/contracts'
+import type { NavigationBadgeCounts } from '@/features/application/navigation-badge-presenters'
 
 const SIDEBAR_MIN = 208
 const SIDEBAR_MAX = 288
@@ -118,6 +118,7 @@ function AppToolbar({
 
 interface AppSidebarProps {
   focusItems: readonly SidebarNavigationItemModel[]
+  navigationBadges: NavigationBadgeCounts | null
   selectedFocusId: string | null
   selectedView: 'todos' | 'tags' | 'review' | 'due' | 'focus' | 'settings'
   enabled: boolean
@@ -134,6 +135,7 @@ interface AppSidebarProps {
 
 function AppSidebar({
   focusItems,
+  navigationBadges,
   selectedFocusId,
   selectedView,
   enabled,
@@ -155,32 +157,45 @@ function AppSidebar({
 
   return (
     <Sidebar aria-label="Primary sidebar" style={{ width }}>
-      <SidebarHeader className="p-3 pb-4">
-        <div className="rounded-xl border border-primary/35 bg-primary/12 p-3.5 shadow-xs">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[0.625rem] font-semibold tracking-[0.1em] text-muted-foreground uppercase">
-              Placeholder
-            </p>
-            <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
-          </div>
-          <p className="mt-2 text-sm font-semibold tracking-tight">Overview</p>
-          <div className="mt-3 grid grid-cols-3 gap-1.5" aria-hidden="true">
-            <span className="h-1.5 rounded-full bg-primary/55" />
-            <span className="h-1.5 rounded-full bg-success/55" />
-            <span className="h-1.5 rounded-full bg-muted" />
-          </div>
-        </div>
-      </SidebarHeader>
-
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupLabel>Items</SidebarGroupLabel>
           <SidebarNavigation
             items={[
-              { id: 'todos', label: 'Todos', icon: 'todos' },
+              {
+                id: 'todos',
+                label: 'Todos',
+                icon: 'todos',
+                badge: navigationBadges && navigationBadges.todos > 0
+                  ? {
+                      value: navigationBadges.todos,
+                      label: `${navigationBadges.todos} overdue or due today`
+                    }
+                  : undefined
+              },
               { id: 'tags', label: 'Tags', icon: 'tags' },
-              { id: 'review', label: 'Review', icon: 'review' },
-              { id: 'due', label: 'Due', icon: 'due' }
+              {
+                id: 'review',
+                label: 'Review',
+                icon: 'review',
+                badge: navigationBadges && navigationBadges.review > 0
+                  ? {
+                      value: navigationBadges.review,
+                      label: `${navigationBadges.review} remaining`
+                    }
+                  : undefined
+              },
+              {
+                id: 'due',
+                label: 'Due',
+                icon: 'due',
+                badge: navigationBadges && navigationBadges.due > 0
+                  ? {
+                      value: navigationBadges.due,
+                      label: `${navigationBadges.due} overdue or due within seven days`
+                    }
+                  : undefined
+              }
             ]}
             selectedItemId={selectedItemId}
             onSelect={(itemId) => {
@@ -391,6 +406,7 @@ export function App(): React.JSX.Element {
         primarySidebar={
           <AppSidebar
             focusItems={focusItems}
+            navigationBadges={application.navigationBadges}
             selectedFocusId={selectedFocus ? String(selectedFocus.id) : null}
             selectedView={application.selectedView}
             enabled={application.enabled}

@@ -141,6 +141,14 @@ function broadcastRichTextChange(change: RichTextDocumentChange): void {
   }
 }
 
+function invalidateNavigationBadges(): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(IPC_EVENTS.navigationBadgesInvalidated)
+    }
+  }
+}
+
 function showDataFolder(): void {
   if (database) {
     shell.showItemInFolder(database.getState().databasePath)
@@ -299,7 +307,8 @@ app.whenReady().then(() => {
       open: openRichTextDocumentWindow,
       targetFor: (webContentsId) => richTextWindowTargets.get(webContentsId) ?? null,
       broadcast: broadcastRichTextChange
-    }
+    },
+    invalidateNavigationBadges
   )
 
   Menu.setApplicationMenu(

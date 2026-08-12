@@ -11,6 +11,8 @@ import {
   loadFocusStatusSummary,
   type StatusSummary
 } from '@/features/shared/status-summary'
+import { useNavigationBadges } from '@/features/application/use-navigation-badges'
+import type { NavigationBadgeCounts } from '@/features/application/navigation-badge-presenters'
 
 export interface ApplicationModel {
   state: AppState | null
@@ -18,6 +20,7 @@ export interface ApplicationModel {
   focuses: FocusSnapshot[]
   navigableFocuses: FocusSnapshot[]
   focusStatusSummaries: Readonly<Record<number, StatusSummary | undefined>>
+  navigationBadges: NavigationBadgeCounts | null
   selectedFocus: FocusSnapshot | null
   selectedFocusId: number | null
   selectedView: 'todos' | 'tags' | 'review' | 'due' | 'focus' | 'settings'
@@ -55,6 +58,7 @@ export function useApplicationModel(): ApplicationModel {
     'todos' | 'tags' | 'review' | 'due' | 'focus' | 'settings'
   >('todos')
   const [sensitiveContentHidden, setSensitiveContentHidden] = useState(false)
+  const navigationBadges = useNavigationBadges(sensitiveContentHidden)
 
   useEffect(() => {
     let active = true
@@ -279,6 +283,7 @@ export function useApplicationModel(): ApplicationModel {
         sensitiveRecordIsVisible(focus, sensitiveContentHidden)
     ),
     focusStatusSummaries,
+    navigationBadges,
     selectedFocus,
     selectedFocusId,
     selectedView,

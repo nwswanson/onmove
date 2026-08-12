@@ -61,6 +61,7 @@ export const IPC_CHANNELS = {
   listNotes: 'domain:list-notes',
   listTags: 'domain:list-tags',
   listTagUses: 'domain:list-tag-uses',
+  getNavigationBadgeOverview: 'domain:get-navigation-badge-overview',
   getReviewOverview: 'domain:get-review-overview',
   getDueOverview: 'domain:get-due-overview',
   getRichTextDocument: 'rich-text:get-document',
@@ -74,6 +75,7 @@ export const IPC_SYNC_CHANNELS = {
 
 export const IPC_EVENTS = {
   sensitiveContentVisibilityChanged: 'app:sensitive-content-visibility-changed',
+  navigationBadgesInvalidated: 'app:navigation-badges-invalidated',
   richTextDocumentChanged: 'rich-text:document-changed'
 } as const
 
@@ -636,6 +638,22 @@ export interface DueOverviewSnapshot {
   items: DueWorkItemSnapshot[]
 }
 
+export interface NavigationBadgeCountSnapshot {
+  /** Count before applying the presentation-level sensitive-content preference. */
+  total: number
+  /** Count whose complete hierarchy is non-sensitive. */
+  nonSensitive: number
+}
+
+/** Bounded, actionable counts for the primary application navigation. */
+export interface NavigationBadgeOverviewSnapshot {
+  asOf: string
+  dueThrough: string
+  todos: NavigationBadgeCountSnapshot
+  review: NavigationBadgeCountSnapshot
+  due: NavigationBadgeCountSnapshot
+}
+
 export type NoteParent =
   | { type: 'focus'; id: number }
   | { type: 'thread'; id: number }
@@ -937,6 +955,7 @@ export interface DomainApi {
   listNotes: (parent: NoteParent) => Promise<NoteSnapshot[]>
   listTags: () => Promise<TagSummarySnapshot[]>
   listTagUses: (name: string) => Promise<TagUseSnapshot[]>
+  getNavigationBadgeOverview: () => Promise<NavigationBadgeOverviewSnapshot>
   getReviewOverview: () => Promise<ReviewOverviewSnapshot>
   getDueOverview: () => Promise<DueOverviewSnapshot>
 }
@@ -987,6 +1006,7 @@ export interface OnMoveApi {
   getAppState: () => Promise<AppState>
   getSensitiveContentHidden: () => Promise<boolean>
   onSensitiveContentVisibilityChanged: (listener: (hidden: boolean) => void) => () => void
+  onNavigationBadgesInvalidated: (listener: () => void) => () => void
   recordGreeting: () => Promise<AppState>
   showDataFolder: () => Promise<void>
   backups: BackupApi

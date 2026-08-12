@@ -261,6 +261,20 @@ To introduce another entity type, subclass `BaseModel` and `BaseRepository`, add
 new numbered migration, and expose only specific operations over IPC. Avoid generic renderer-driven
 SQL or arbitrary model method dispatch; named IPC operations keep the sandbox boundary auditable.
 
+## Primary-navigation count projection
+
+`NavigationRepository.getBadgeOverview()` materializes bounded, actionable counts rather than
+returning records to the application shell. Todos includes only unfinished items due on or before
+the local materialization date. Review reuses the canonical review queue, so successful pokes and
+Updates remove acknowledged targets. Due includes active or paused Focuses, Threads, and
+Commitments overdue or dated no later than seven calendar days after that date; done and cancelled
+work never inflates the badge.
+
+Each count contains `total` and `nonSensitive` partitions. Sensitivity cascades through the same
+Focus → Thread → Commitment and Subject boundaries as list presentation. The repository does not
+read the View-menu preference: the renderer selects a partition, preserving the rule that content
+visibility is presentation state rather than a database filter.
+
 ## Portable data archives
 
 The native File menu exports a versioned `onmove-data` JSON archive. It contains named raw fields

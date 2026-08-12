@@ -78,6 +78,14 @@ observation editor and reveal the full new card with minimal `nearest` scrolling
 the same domain-free shortcut, focus, and reveal behavior for its current queue target. Todos, Tags,
 Settings, and empty Review states leave the key event untouched.
 
+Primary-navigation badges use a separate bounded aggregate snapshot. The main-process navigation
+model returns only total and non-sensitive count partitions for Todos, Review, and Due; it does not
+send their underlying records to the shell. A successful hierarchy, Update, Todo, Scope, deadline,
+status, or review mutation broadcasts badge invalidation to every window. The application hook
+coalesces those signals, refreshes the named snapshot, and also refreshes after local midnight. Its
+presenter selects the total or non-sensitive partition, while `SidebarNavigation` exclusively owns
+badge markup and accessible labeling.
+
 Cross-Focus Thread movement follows the same separation. The contextual receiver emits only a
 generic Thread item move toward a generic Focus target. `useFocusWorkspaceModel` owns plan/move IPC,
 while the Focus workspace owns any confirmation presentation. After success, the application model
