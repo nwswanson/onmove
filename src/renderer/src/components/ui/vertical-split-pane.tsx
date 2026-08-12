@@ -9,6 +9,7 @@ interface VerticalSplitPaneProps extends React.ComponentProps<'div'> {
   initialPrimaryPercent?: number
   minPrimaryPercent?: number
   maxPrimaryPercent?: number
+  onPrimaryPercentChange?: (value: number) => void
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -23,6 +24,7 @@ export function VerticalSplitPane({
   initialPrimaryPercent = 62,
   minPrimaryPercent = 30,
   maxPrimaryPercent = 78,
+  onPrimaryPercentChange,
   className,
   ...props
 }: VerticalSplitPaneProps): React.JSX.Element {
@@ -32,6 +34,12 @@ export function VerticalSplitPane({
     minPrimaryPercent,
     maxPrimaryPercent
   ))
+
+  function changePrimaryPercent(value: number): void {
+    const next = clamp(value, minPrimaryPercent, maxPrimaryPercent)
+    setPrimaryPercent(next)
+    onPrimaryPercentChange?.(next)
+  }
 
   function beginResize(event: React.PointerEvent<HTMLDivElement>): void {
     if (event.button !== 0) return
@@ -43,11 +51,7 @@ export function VerticalSplitPane({
 
     function resize(moveEvent: PointerEvent): void {
       const deltaPercent = ((moveEvent.clientY - startY) / height) * 100
-      setPrimaryPercent(clamp(
-        startPercent + deltaPercent,
-        minPrimaryPercent,
-        maxPrimaryPercent
-      ))
+      changePrimaryPercent(startPercent + deltaPercent)
     }
 
     function finish(): void {
@@ -64,11 +68,7 @@ export function VerticalSplitPane({
   function resizeWithKeyboard(event: React.KeyboardEvent<HTMLDivElement>): void {
     if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
     event.preventDefault()
-    setPrimaryPercent((current) => clamp(
-      current + (event.key === 'ArrowDown' ? 5 : -5),
-      minPrimaryPercent,
-      maxPrimaryPercent
-    ))
+    changePrimaryPercent(primaryPercent + (event.key === 'ArrowDown' ? 5 : -5))
   }
 
   return (

@@ -99,9 +99,10 @@ describe('review presenters', () => {
     const model = reviewItemModel(item({ thread: { ...thread, notes: [defaultNote] } }), false)
 
     expect(model).toMatchObject({
+      kind: 'thread',
       kindLabel: 'Thread',
       title: 'Sprint execution',
-      contextLabel: 'Project Atlas',
+      contextPath: ['Project Atlas', 'Sprint execution'],
       lastReviewLabel: 'Never',
       nextReviewLabel: '2026-01-08',
       due: true,
@@ -118,6 +119,38 @@ describe('review presenters', () => {
         content: 'Working review notes'
       }
     })
+  })
+
+  it('projects complete hierarchy paths for Focus and Commitment reviews', () => {
+    expect(reviewItemModel(item({
+      key: 'focus:1',
+      kind: 'focus',
+      thread: null,
+      state: null
+    }), false).contextPath).toEqual(['Portfolio', 'Project Atlas'])
+
+    expect(reviewItemModel(item({
+      key: 'commitment:3',
+      kind: 'commitment',
+      commitment,
+      state: 'red'
+    }), false).contextPath).toEqual([
+      'Project Atlas',
+      'Sprint execution',
+      'Improve ticket quality'
+    ])
+
+    expect(reviewItemModel(item({
+      key: 'commitment:3',
+      kind: 'commitment',
+      thread: null,
+      commitment: { ...commitment, parent: { type: 'focus', id: 1 } },
+      state: 'red'
+    }), false).contextPath).toEqual([
+      'Project Atlas',
+      'Overall',
+      'Improve ticket quality'
+    ])
   })
 
   it('only exposes the hardcoded Default note and tolerates a missing note', () => {

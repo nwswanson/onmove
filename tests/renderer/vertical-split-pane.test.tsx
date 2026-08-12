@@ -6,11 +6,13 @@ import { VerticalSplitPane } from '../../src/renderer/src/components/ui/vertical
 
 describe('vertical split pane', () => {
   it('resizes its top region with the keyboard and exposes receiver-owned semantics', () => {
+    const onPrimaryPercentChange = vi.fn()
     const { container } = render(
       <VerticalSplitPane
         separatorLabel="Resize working regions"
         primary={<section>Primary work</section>}
         secondary={<section>Secondary work</section>}
+        onPrimaryPercentChange={onPrimaryPercentChange}
       />
     )
 
@@ -23,6 +25,7 @@ describe('vertical split pane', () => {
     fireEvent.keyDown(separator, { key: 'ArrowDown' })
     expect(separator).toHaveAttribute('aria-valuenow', '67')
     expect(primary).toHaveStyle({ flexBasis: '67%' })
+    expect(onPrimaryPercentChange).toHaveBeenLastCalledWith(67)
 
     fireEvent.keyDown(separator, { key: 'ArrowUp' })
     expect(separator).toHaveAttribute('aria-valuenow', '62')

@@ -617,7 +617,12 @@ describe('App', () => {
   })
 
   it('reviews full-width Focus and Thread surfaces without commitment drilldown', async () => {
-    const currentFocus = focus({ id: 4, title: 'Project Atlas', goal: 'Ship the pilot safely' })
+    const currentFocus = focus({
+      id: 4,
+      title: 'Project Atlas',
+      goal: 'Ship the pilot safely',
+      description: 'Coordinate a measured customer rollout.'
+    })
     const currentThread = thread({
       id: 14,
       focusId: 4,
@@ -671,6 +676,13 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Review' })).toBeInTheDocument()
     expect(screen.queryByLabelText('Contextual sidebar')).not.toBeInTheDocument()
     expect(screen.getByRole('article', { name: 'Focus review: Project Atlas' })).toBeVisible()
+    expect(screen.getByRole('img', { name: 'Focus type' })).toBeVisible()
+    expect(screen.getByRole('navigation', { name: 'Review context' })).toHaveTextContent(
+      'PortfolioProject Atlas'
+    )
+    expect(screen.getByLabelText('Focus description')).toHaveTextContent(
+      'Coordinate a measured customer rollout.'
+    )
     expect(screen.getByText('Ship the pilot safely')).toBeVisible()
     expect(screen.getByRole('list', { name: 'Related commitments' })).toHaveTextContent(
       'Improve ticket quality'
@@ -679,6 +691,10 @@ describe('App', () => {
 
     await user.click(screen.getByRole('button', { name: 'Ignore' }))
     expect(screen.getByRole('article', { name: 'Thread review: Sprint execution' })).toBeVisible()
+    expect(screen.getByRole('img', { name: 'Thread type' })).toBeVisible()
+    expect(screen.getByRole('navigation', { name: 'Review context' })).toHaveTextContent(
+      'Project AtlasSprint execution'
+    )
     await user.click(screen.getByRole('button', { name: 'Pass along' }))
     await waitFor(() => expect(pokeThreadReview).toHaveBeenCalledWith(14))
     expect(await screen.findByRole('heading', { name: 'You’re caught up' })).toBeVisible()
@@ -745,6 +761,7 @@ describe('App', () => {
   })
 
   it('keeps the Default note in a resizable lower pane and pokes without advancing', async () => {
+    window.localStorage.removeItem('onmove.review.primary-pane-percent')
     const currentNote = note({ id: 47, parent: { type: 'focus', id: 7 } })
     const currentFocus = focus({
       id: 7,
@@ -778,7 +795,17 @@ describe('App', () => {
     fireEvent.keyDown(divider, { key: 'ArrowDown' })
     expect(divider).toHaveAttribute('aria-valuenow', '67')
 
-    const editor = within(notePane).getByRole('textbox', { name: 'Default note' })
+    await user.click(screen.getByRole('button', { name: 'Todos' }))
+    await user.click(screen.getByRole('button', { name: 'Review' }))
+    expect(screen.getByRole('separator', {
+      name: 'Resize review and note panes'
+    })).toHaveAttribute('aria-valuenow', '67')
+
+    const restoredNotePane = screen.getByRole('region', { name: 'Focus default note' })
+    const restoredReviewArticle = screen.getByRole('article', {
+      name: 'Focus review: Launch board'
+    })
+    const editor = within(restoredNotePane).getByRole('textbox', { name: 'Default note' })
     await user.click(editor)
     await user.keyboard(' decision')
     await waitFor(() => expect(api.richText.saveDocument).toHaveBeenCalled())
@@ -786,7 +813,7 @@ describe('App', () => {
     expect(pokeFocusReview).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('article', { name: 'Focus review: Launch board' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'You’re caught up' })).not.toBeInTheDocument()
-    expect(within(reviewArticle).getByText('2026-08-10', { selector: 'dd' })).toBeVisible()
+    expect(within(restoredReviewArticle).getByText('2026-08-10', { selector: 'dd' })).toBeVisible()
   })
 
   it('creates and edits review Todos while poking the current aggregate', async () => {

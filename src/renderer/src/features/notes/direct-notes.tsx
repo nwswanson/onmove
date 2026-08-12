@@ -1,5 +1,10 @@
+import { useRef } from 'react'
 import type { NoteSnapshot } from '../../../../shared/contracts'
-import { RichTextEditor } from '@/components/ui/rich-text-editor'
+import {
+  isRichText,
+  RichTextEditor,
+  richTextPlainText
+} from '@/components/ui/rich-text-editor'
 import { useDurableRichText } from '@/features/rich-text/use-durable-rich-text'
 import { cn } from '@/lib/utils'
 
@@ -22,6 +27,7 @@ export function NoteEditor({
   onContentChange,
   className
 }: NoteEditorProps): React.JSX.Element {
+  const ignoredLegacyNormalization = useRef(false)
   const document = useDurableRichText(
     { type: 'note', id: note.id, field: 'content' },
     note.content
@@ -46,6 +52,15 @@ export function NoteEditor({
         fillHeight={fillHeight}
         onChange={(value) => {
           document.save(value)
+          if (
+            !ignoredLegacyNormalization.current &&
+            !isRichText(note.content) &&
+            richTextPlainText(value) === note.content
+          ) {
+            ignoredLegacyNormalization.current = true
+            return
+          }
+          ignoredLegacyNormalization.current = true
           onContentChange?.()
         }}
         onOpenInWindow={document.openInWindow}

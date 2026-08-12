@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowRight, Check, MessageSquarePlus, SkipForward, X } from 'lucide-react'
+import { ArrowRight, Check, ChevronRight, MessageSquarePlus, SkipForward, X } from 'lucide-react'
 import type {
   EditUpdateInput,
   ReviewQueueItemSnapshot,
@@ -27,8 +27,15 @@ import {
   reviewItemModel,
   type ReviewItemModel
 } from '@/features/review/review-presenters'
+import {
+  loadReviewPrimaryPanePercent,
+  REVIEW_PRIMARY_PANE_MAX_PERCENT,
+  REVIEW_PRIMARY_PANE_MIN_PERCENT,
+  saveReviewPrimaryPanePercent
+} from '@/features/review/review-split-preference'
 import { useReviewModel } from '@/features/review/use-review-model'
 import { SensitivityToggle } from '@/features/shared/sensitivity-toggle'
+import { WorkKindIcon } from '@/features/shared/work-kind-icon'
 import { DirectTodos } from '@/features/todos/direct-todos'
 import { UPDATE_LIST_STATE_OPTIONS } from '@/features/updates/updates-presenters'
 import { useCommandKeyShortcut } from '@/lib/use-command-key-shortcut'
@@ -173,7 +180,7 @@ function ReviewSupportingDetails({
 }: {
   model: ReviewItemModel
 }): React.JSX.Element | null {
-  if (!model.goal && !model.description && model.commitments.length === 0) return null
+  if (!model.goal && model.commitments.length === 0) return null
 
   return (
     <div className="space-y-7 border-t border-border/75 px-5 py-6 sm:px-7">
@@ -185,15 +192,6 @@ function ReviewSupportingDetails({
           <RichTextContent value={model.goal} ariaLabel="Focus goal" />
         </section>
       )}
-      {model.description && (
-        <section aria-labelledby="review-description-heading">
-          <h3 id="review-description-heading" className="mb-2 text-xs font-semibold text-muted-foreground uppercase">
-            Description
-          </h3>
-          <RichTextContent value={model.description} ariaLabel="Focus description" />
-        </section>
-      )}
-
       {model.commitments.length > 0 && (
         <section aria-labelledby="review-commitments-heading">
           <div className="mb-2 flex items-baseline justify-between gap-3">
@@ -273,6 +271,8 @@ export function ReviewWorkspace({
   onReviewChanged
 }: ReviewWorkspaceProps): React.JSX.Element {
   const review = useReviewModel({ onReviewChanged })
+  const [primaryPanePercent] = useState(() =>
+    loadReviewPrimaryPanePercent(window.localStorage))
   const visibleItems = review.overview?.items.filter((item) =>
     reviewItemIsVisible(item, hideSensitiveContent)) ?? []
   const remainingItems = visibleItems.filter(({ key }) => !review.dismissedKeys.has(key))
@@ -315,6 +315,11 @@ export function ReviewWorkspace({
             ) : current && currentModel ? (
               <VerticalSplitPane
                 separatorLabel="Resize review and note panes"
+                initialPrimaryPercent={primaryPanePercent}
+                minPrimaryPercent={REVIEW_PRIMARY_PANE_MIN_PERCENT}
+                maxPrimaryPercent={REVIEW_PRIMARY_PANE_MAX_PERCENT}
+                onPrimaryPercentChange={(value) =>
+                  saveReviewPrimaryPanePercent(window.localStorage, value)}
                 primary={(
                   <article
                     aria-label={`${currentModel.kindLabel} review: ${currentModel.title}`}
@@ -326,61 +331,88 @@ export function ReviewWorkspace({
                     aria-label="Review actions"
                     className="flex flex-wrap items-start justify-between gap-4 px-5 py-4 sm:px-7"
                   >
-                    <div className="min-w-52 flex-1">
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                        <p className="text-[0.6875rem] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
-                          {currentModel.contextLabel} · {currentModel.kindLabel}
-                        </p>
-                        <p className="text-[0.6875rem] font-medium text-muted-foreground" aria-live="polite">
-                          {remainingItems.length} remaining · {completed} reviewed
-                        </p>
-                      </div>
-                      <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
-                        <p className="min-w-0 text-base font-semibold tracking-[-0.015em]">
-                          <TaggedText value={currentModel.title} />
-                        </p>
-                        <LifecycleStatusLabel model={currentModel.status} />
-                        {currentModel.state && <StateLabel model={currentModel.state} />}
-                        {currentModel.subjectLabel && (
-                          <span className="rounded-md border border-primary/40 bg-primary/15 px-2 py-1 text-xs font-medium">
-                            Subject · {currentModel.subjectLabel}
-                          </span>
-                        )}
-                      </div>
-                      <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-[0.6875rem] text-muted-foreground">
-                        <div className="flex gap-1.5">
-                          <dt>{currentModel.kindLabel === 'Commitment' ? 'Last updated' : 'Last reviewed'}</dt>
-                          <dd className="font-medium text-foreground">{currentModel.lastReviewLabel}</dd>
+                    <div className="flex min-w-52 flex-1 items-start gap-3">
+                      <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-border/75 bg-background/70 shadow-xs">
+                        <WorkKindIcon kind={currentModel.kind} className="size-6" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                          <nav aria-label="Review context">
+                            <ol className="flex min-w-0 flex-wrap items-center gap-1 text-[0.6875rem] text-muted-foreground">
+                              {currentModel.contextPath.map((segment, index) => (
+                                <li key={`${segment}:${index}`} className="flex min-w-0 items-center gap-1">
+                                  {index > 0 && (
+                                    <ChevronRight className="size-3 shrink-0 opacity-60" aria-hidden="true" />
+                                  )}
+                                  <span className={index === currentModel.contextPath.length - 1
+                                    ? 'max-w-72 truncate font-semibold text-foreground'
+                                    : 'max-w-56 truncate'}>
+                                    <TaggedText value={segment} />
+                                  </span>
+                                </li>
+                              ))}
+                            </ol>
+                          </nav>
+                          <p className="text-[0.6875rem] font-medium text-muted-foreground" aria-live="polite">
+                            {remainingItems.length} remaining · {completed} reviewed
+                          </p>
                         </div>
-                        {currentModel.nextReviewLabel && (
-                          <div className="flex gap-1.5">
-                            <dt>
-                              {currentModel.kindLabel === 'Commitment'
-                                ? (currentModel.due ? 'Update due' : 'Next update')
-                                : (currentModel.due ? 'Review due' : 'Next review')}
-                            </dt>
-                            <dd className={currentModel.due
-                              ? 'font-medium text-destructive'
-                              : 'font-medium text-foreground'}>
-                              {currentModel.nextReviewLabel}
-                            </dd>
+                        <div className="mt-2 flex flex-wrap items-center gap-2.5">
+                          <h2 className="min-w-0 text-base font-semibold tracking-[-0.015em]">
+                            <TaggedText value={currentModel.title} />
+                          </h2>
+                          <LifecycleStatusLabel model={currentModel.status} />
+                          {currentModel.state && <StateLabel model={currentModel.state} />}
+                          {currentModel.subjectLabel && (
+                            <span className="rounded-md border border-primary/40 bg-primary/15 px-2 py-1 text-xs font-medium">
+                              Subject · {currentModel.subjectLabel}
+                            </span>
+                          )}
+                        </div>
+                        {currentModel.description && (
+                          <div className="mt-2 max-h-12 max-w-3xl overflow-hidden text-muted-foreground">
+                            <RichTextContent
+                              value={currentModel.description}
+                              ariaLabel="Focus description"
+                              className="line-clamp-2 text-xs leading-5"
+                            />
                           </div>
                         )}
-                        {currentModel.dueDate && (
+                        <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-[0.6875rem] text-muted-foreground">
                           <div className="flex gap-1.5">
-                            <dt>Due</dt>
-                            <dd className="font-medium text-foreground">{currentModel.dueDate}</dd>
+                            <dt>{currentModel.kindLabel === 'Commitment' ? 'Last updated' : 'Last reviewed'}</dt>
+                            <dd className="font-medium text-foreground">{currentModel.lastReviewLabel}</dd>
                           </div>
-                        )}
-                        {currentModel.cadenceDays && (
-                          <div className="flex gap-1.5">
-                            <dt>Cadence</dt>
-                            <dd className="font-medium text-foreground">
-                              Every {currentModel.cadenceDays} days
-                            </dd>
-                          </div>
-                        )}
-                      </dl>
+                          {currentModel.nextReviewLabel && (
+                            <div className="flex gap-1.5">
+                              <dt>
+                                {currentModel.kindLabel === 'Commitment'
+                                  ? (currentModel.due ? 'Update due' : 'Next update')
+                                  : (currentModel.due ? 'Review due' : 'Next review')}
+                              </dt>
+                              <dd className={currentModel.due
+                                ? 'font-medium text-destructive'
+                                : 'font-medium text-foreground'}>
+                                {currentModel.nextReviewLabel}
+                              </dd>
+                            </div>
+                          )}
+                          {currentModel.dueDate && (
+                            <div className="flex gap-1.5">
+                              <dt>Due</dt>
+                              <dd className="font-medium text-foreground">{currentModel.dueDate}</dd>
+                            </div>
+                          )}
+                          {currentModel.cadenceDays && (
+                            <div className="flex gap-1.5">
+                              <dt>Cadence</dt>
+                              <dd className="font-medium text-foreground">
+                                Every {currentModel.cadenceDays} days
+                              </dd>
+                            </div>
+                          )}
+                        </dl>
+                      </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <Button

@@ -529,11 +529,27 @@ test('reviews active work before cadence is due and refreshes typed pokes in the
     await expect(window.getByRole('article', {
       name: 'Thread review: Sprint execution'
     })).toBeVisible()
+    await expect(window.getByRole('img', { name: 'Thread type' })).toBeVisible()
+    await expect(window.getByRole('navigation', { name: 'Review context' })).toContainText(
+      'Project Atlas'
+    )
+    await expect(window.getByRole('navigation', { name: 'Review context' })).toContainText(
+      'Sprint execution'
+    )
     await expect(window.getByText('Subject · North region')).toBeVisible()
     const reviewDivider = window.getByRole('separator', {
       name: 'Resize review and note panes'
     })
     await expect(reviewDivider).toHaveAttribute('aria-orientation', 'horizontal')
+    await expect(reviewDivider).toHaveAttribute('aria-valuenow', '62')
+    await reviewDivider.focus()
+    await window.keyboard.press('ArrowDown')
+    await expect(reviewDivider).toHaveAttribute('aria-valuenow', '67')
+    await window.getByRole('button', { name: 'Todos', exact: true }).click()
+    await window.getByRole('button', { name: /Review/ }).click()
+    await expect(window.getByRole('separator', {
+      name: 'Resize review and note panes'
+    })).toHaveAttribute('aria-valuenow', '67')
     const reviewNote = window.getByRole('textbox', { name: 'Default note' })
     await reviewNote.fill('Regional review working notes')
     await expect(window.getByRole('article', {

@@ -32,9 +32,10 @@ export interface ReviewDefaultNoteModel {
 
 export interface ReviewItemModel {
   key: string
+  kind: 'focus' | 'thread' | 'commitment'
   kindLabel: 'Focus' | 'Thread' | 'Commitment'
   title: string
-  contextLabel: string
+  contextPath: readonly string[]
   subjectLabel: string | null
   status: LifecycleStatusOptionModel
   state: StateLabelModel | null
@@ -91,17 +92,18 @@ export function reviewItemModel(
 
   return {
     key: item.key,
+    kind: item.kind,
     kindLabel: item.kind === 'focus'
       ? 'Focus'
       : item.kind === 'thread'
         ? 'Thread'
         : 'Commitment',
     title: record.title,
-    contextLabel: item.kind === 'focus'
-      ? 'Portfolio'
-      : item.kind === 'thread'
-        ? item.focus.title
-        : `${item.focus.title} · ${item.thread?.title ?? 'Overall'}`,
+    contextPath: item.kind === 'focus'
+      ? ['Portfolio', item.focus.title]
+      : item.kind === 'thread' && item.thread
+        ? [item.focus.title, item.thread.title]
+        : [item.focus.title, item.thread?.title ?? 'Overall', record.title],
     subjectLabel: item.cell?.subject.name ?? null,
     status: workStatusLabel(record.status),
     state: item.state === null ? null : healthStateLabel(item.state),
