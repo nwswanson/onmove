@@ -19,6 +19,32 @@ if (typeof ResizeObserver === 'undefined') {
   })
 }
 
+// jsdom does not currently expose these event constructors. Lexical uses
+// instanceof checks while handling the default (non-intercepted) paste path.
+if (typeof window !== 'undefined' && typeof DragEvent === 'undefined') {
+  class TestDragEvent extends MouseEvent {}
+  Object.defineProperty(globalThis, 'DragEvent', {
+    value: TestDragEvent,
+    configurable: true
+  })
+  Object.defineProperty(window, 'DragEvent', {
+    value: TestDragEvent,
+    configurable: true
+  })
+}
+
+if (typeof window !== 'undefined' && typeof ClipboardEvent === 'undefined') {
+  class TestClipboardEvent extends Event {}
+  Object.defineProperty(globalThis, 'ClipboardEvent', {
+    value: TestClipboardEvent,
+    configurable: true
+  })
+  Object.defineProperty(window, 'ClipboardEvent', {
+    value: TestClipboardEvent,
+    configurable: true
+  })
+}
+
 if (typeof HTMLElement !== 'undefined' && !HTMLElement.prototype.scrollIntoView) {
   HTMLElement.prototype.scrollIntoView = () => undefined
 }

@@ -279,6 +279,63 @@ describe('RichTextEditor', () => {
     open.mockRestore()
   })
 
+  it('turns a pasted URL into a durable link without linking ordinary clipboard text', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    const rendered = render(
+      <RichTextEditor value="Reference: " ariaLabel="Notes" onChange={onChange} />
+    )
+
+    const editor = screen.getByRole('textbox', { name: 'Notes' })
+    await user.click(editor)
+    await user.paste('https://docs.example.com/guide?section=review#today')
+
+    const pastedLink = await waitFor(() => {
+      const link = editor.querySelector('a')
+      expect(link).toHaveAttribute(
+        'href',
+        'https://docs.example.com/guide?section=review#today'
+      )
+      return link
+    })
+    expect(pastedLink).toHaveTextContent('https://docs.example.com/guide?section=review#today')
+    expect(pastedLink).toHaveAttribute('target', '_blank')
+    expect(pastedLink).toHaveAttribute('rel', 'noopener noreferrer')
+
+    let serialized = ''
+    await waitFor(() => {
+      serialized = onChange.mock.calls.at(-1)?.[0] as string
+      expect(serialized).toContain('https://docs.example.com/guide?section=review#today')
+      expect(serialized).toContain('"type":"link"')
+    })
+
+    rendered.unmount()
+    const readOnly = render(<RichTextContent value={serialized} ariaLabel="Rendered paste" />)
+    expect(screen.getByRole('link', {
+      name: 'https://docs.example.com/guide?section=review#today'
+    })).toHaveAttribute('href', 'https://docs.example.com/guide?section=review#today')
+
+    readOnly.unmount()
+    render(<RichTextEditor value="" ariaLabel="Plain notes" onChange={vi.fn()} />)
+    const plainEditor = screen.getByRole('textbox', { name: 'Plain notes' })
+    await user.click(plainEditor)
+    await user.paste('ordinary clipboard text')
+    expect(plainEditor).toHaveTextContent('ordinary clipboard text')
+    expect(plainEditor.querySelector('a')).toBeNull()
+  })
+
+  it('pastes unsafe URL schemes as plain text instead of executable links', async () => {
+    const user = userEvent.setup()
+    render(<RichTextEditor value="" ariaLabel="Notes" onChange={vi.fn()} />)
+
+    const editor = screen.getByRole('textbox', { name: 'Notes' })
+    await user.click(editor)
+    await user.paste('javascript:alert(1)')
+
+    expect(editor).toHaveTextContent('javascript:alert(1)')
+    expect(editor.querySelector('a')).toBeNull()
+  })
+
   it('rejects links that could execute or open local content', async () => {
     const user = userEvent.setup()
     render(<RichTextEditor value="Unsafe" ariaLabel="Notes" onChange={vi.fn()} />)

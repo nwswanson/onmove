@@ -47,6 +47,7 @@ import {
   KEY_DOWN_COMMAND,
   KEY_TAB_COMMAND,
   OUTDENT_CONTENT_COMMAND,
+  PASTE_COMMAND,
   REDO_COMMAND,
   SELECTION_CHANGE_COMMAND,
   $setSelection,
@@ -54,6 +55,7 @@ import {
   TextNode,
   type EditorConfig,
   type EditorState,
+  type PasteCommandType,
   type RangeSelection,
   type TextFormatType
 } from 'lexical'
@@ -201,6 +203,27 @@ function validLinkUrl(value: string): boolean {
   return normalizeLinkUrl(value) !== null
 }
 
+function normalizedPastedUrl(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed || /\s/.test(trimmed)) return null
+  const looksLikeUrl = /^https?:\/\//i.test(trimmed) ||
+    /^www\./i.test(trimmed) ||
+    /^[^./\s]+(?:\.[^./\s]+)+(?:[/?#]|$)/i.test(trimmed)
+  if (!looksLikeUrl) return null
+  const normalized = normalizeLinkUrl(trimmed)
+  return normalized && /^https?:/i.test(normalized) ? normalized : null
+}
+
+function plainTextFromPaste(event: PasteCommandType): string | null {
+  if ('clipboardData' in event && event.clipboardData) {
+    return event.clipboardData.getData('text/plain')
+  }
+  if ('dataTransfer' in event && event.dataTransfer) {
+    return event.dataTransfer.getData('text/plain')
+  }
+  return null
+}
+
 function initialEditorState(value: string): InitialConfigType['editorState'] {
   const serialized = serializedRichTextEditorState(value)
   if (serialized) return serialized
@@ -293,6 +316,36 @@ function FormattingShortcutsPlugin(): null {
         },
         COMMAND_PRIORITY_HIGH
       ),
+    [editor]
+  )
+
+  return null
+}
+
+/** Turns a clipboard payload containing only one safe URL into a durable LinkNode. */
+function LinkPastePlugin(): null {
+  const [editor] = useLexicalComposerContext()
+
+  useEffect(
+    () => editor.registerCommand(
+      PASTE_COMMAND,
+      (event) => {
+        const pastedText = plainTextFromPaste(event)
+        if (pastedText === null) return false
+        const normalizedUrl = normalizedPastedUrl(pastedText)
+        if (!normalizedUrl) return false
+        const selection = $getSelection()
+        if (!$isRangeSelection(selection)) return false
+
+        event.preventDefault()
+        const link = $createLinkNode(normalizedUrl, LINK_ATTRIBUTES)
+        link.append($createTextNode(pastedText.trim()))
+        selection.insertNodes([link])
+        link.selectEnd()
+        return true
+      },
+      COMMAND_PRIORITY_HIGH
+    ),
     [editor]
   )
 
@@ -758,6 +811,7 @@ export function RichTextEditor({
           <ListPlugin />
           <CheckListPlugin />
           <LinkPlugin validateUrl={validLinkUrl} attributes={LINK_ATTRIBUTES} />
+          <LinkPastePlugin />
           <ClickableLinkPlugin newTab />
           <TextTagsPlugin />
           <FormattingShortcutsPlugin />
