@@ -30,6 +30,10 @@
   seed color alone.
 - Preserve the native macOS inset title bar and draggable regions. Interactive controls must remain
   outside draggable hit targets.
+- Preserve native macOS text behavior in every BrowserWindow, including detached rich-text windows.
+  Keep Electron spellchecking enabled and install the shared main-process text context menu for
+  editable controls and selected read-only text. The menu owns spelling replacements, Learn Spelling,
+  and standard native edit roles; renderer feature components must not implement private context menus.
 - Persist one last-write-wins main-workspace window size in SQLite. Every normal main window may
   replace it after resizing, but existing windows must never subscribe to or apply later writes;
   read and display-clamp the preference only while constructing the next main window. Detached

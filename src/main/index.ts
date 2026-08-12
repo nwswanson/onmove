@@ -6,6 +6,7 @@ import { registerAppIpc } from './ipc'
 import { createMenuTemplate } from './menu'
 import { resolveDatabasePath } from './paths'
 import { isAllowedExternalLink } from './external-links'
+import { installTextContextMenu } from './text-context-menu'
 import {
   IPC_EVENTS,
   type RichTextDocumentChange,
@@ -98,7 +99,7 @@ function createWindow(richTextTarget?: RichTextDocumentReference): BrowserWindow
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      spellcheck: false
+      spellcheck: true
     }
   })
 
@@ -117,6 +118,7 @@ function createWindow(richTextTarget?: RichTextDocumentReference): BrowserWindow
     }
     return { action: 'deny' }
   })
+  installTextContextMenu(window)
 
   if (process.env.ELECTRON_RENDERER_URL) {
     void window.loadURL(process.env.ELECTRON_RENDERER_URL)

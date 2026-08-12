@@ -43,6 +43,12 @@ test('opens and closes multiple main windows through the New Window menu', async
     ) ?? []
   }
 
+  async function allWindowsHaveSpellcheck(): Promise<boolean> {
+    return application?.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows().every((window) =>
+        window.webContents.session.isSpellCheckerEnabled())) ?? false
+  }
+
   try {
     const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
     application = await electron.launch({
@@ -53,6 +59,7 @@ test('opens and closes multiple main windows through the New Window menu', async
 
     const firstWindow = await application.firstWindow()
     await expect(firstWindow.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
+    expect(await allWindowsHaveSpellcheck()).toBe(true)
 
     await application.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0]?.setSize(1180, 700)
@@ -64,6 +71,7 @@ test('opens and closes multiple main windows through the New Window menu', async
     const secondWindow = application.windows().find((window) => window !== firstWindow)
     if (!secondWindow) throw new Error('New Window did not create a second main window')
     await expect(secondWindow.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
+    expect(await allWindowsHaveSpellcheck()).toBe(true)
     expect((await mainWindowSizes()).map(({ width, height }) => ({ width, height }))).toEqual([
       { width: 1180, height: 700 },
       { width: 1180, height: 700 }
@@ -104,6 +112,7 @@ test('opens and closes multiple main windows through the New Window menu', async
     })
     const restoredWindow = await application.firstWindow()
     await expect(restoredWindow.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
+    expect(await allWindowsHaveSpellcheck()).toBe(true)
     expect((await mainWindowSizes()).map(({ width, height }) => ({ width, height }))).toEqual([
       { width: 1100, height: 640 }
     ])
