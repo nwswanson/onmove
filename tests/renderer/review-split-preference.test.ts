@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  clearReviewPrimaryPanePreference,
   loadReviewPrimaryPanePercent,
+  reviewSplitPreferenceStorage,
   saveReviewPrimaryPanePercent
 } from '../../src/renderer/src/features/review/review-split-preference'
 
@@ -14,5 +16,20 @@ describe('review split preference', () => {
     const setItem = vi.fn()
     saveReviewPrimaryPanePercent({ setItem }, 12)
     expect(setItem).toHaveBeenCalledWith('onmove.review.primary-pane-percent', '30')
+  })
+
+  it('falls back safely when localStorage is missing or inaccessible', () => {
+    const missing = reviewSplitPreferenceStorage({})
+    clearReviewPrimaryPanePreference(missing)
+    saveReviewPrimaryPanePercent(missing, 67)
+    expect(loadReviewPrimaryPanePercent(missing)).toBe(67)
+
+    const inaccessible = reviewSplitPreferenceStorage({
+      get localStorage(): Storage {
+        throw new DOMException('Storage is disabled', 'SecurityError')
+      }
+    })
+    expect(inaccessible).toBe(missing)
+    expect(loadReviewPrimaryPanePercent(inaccessible)).toBe(67)
   })
 })

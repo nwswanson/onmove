@@ -24,6 +24,7 @@ import {
   isRichText,
   richTextPlainText
 } from '../../src/renderer/src/components/ui/rich-text-editor'
+import { clearReviewPrimaryPanePreference } from '../../src/renderer/src/features/review/review-split-preference'
 
 const initialState: AppState = {
   greeting: 'Hello, world.',
@@ -761,7 +762,7 @@ describe('App', () => {
   })
 
   it('keeps the Default note in a resizable lower pane and pokes without advancing', async () => {
-    window.localStorage.removeItem('onmove.review.primary-pane-percent')
+    clearReviewPrimaryPanePreference()
     const currentNote = note({ id: 47, parent: { type: 'focus', id: 7 } })
     const currentFocus = focus({
       id: 7,

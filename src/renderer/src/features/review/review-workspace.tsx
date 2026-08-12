@@ -31,6 +31,7 @@ import {
   loadReviewPrimaryPanePercent,
   REVIEW_PRIMARY_PANE_MAX_PERCENT,
   REVIEW_PRIMARY_PANE_MIN_PERCENT,
+  reviewSplitPreferenceStorage,
   saveReviewPrimaryPanePercent
 } from '@/features/review/review-split-preference'
 import { useReviewModel } from '@/features/review/use-review-model'
@@ -271,8 +272,9 @@ export function ReviewWorkspace({
   onReviewChanged
 }: ReviewWorkspaceProps): React.JSX.Element {
   const review = useReviewModel({ onReviewChanged })
+  const [splitPreferenceStorage] = useState(reviewSplitPreferenceStorage)
   const [primaryPanePercent] = useState(() =>
-    loadReviewPrimaryPanePercent(window.localStorage))
+    loadReviewPrimaryPanePercent(splitPreferenceStorage))
   const visibleItems = review.overview?.items.filter((item) =>
     reviewItemIsVisible(item, hideSensitiveContent)) ?? []
   const remainingItems = visibleItems.filter(({ key }) => !review.dismissedKeys.has(key))
@@ -319,7 +321,7 @@ export function ReviewWorkspace({
                 minPrimaryPercent={REVIEW_PRIMARY_PANE_MIN_PERCENT}
                 maxPrimaryPercent={REVIEW_PRIMARY_PANE_MAX_PERCENT}
                 onPrimaryPercentChange={(value) =>
-                  saveReviewPrimaryPanePercent(window.localStorage, value)}
+                  saveReviewPrimaryPanePercent(splitPreferenceStorage, value)}
                 primary={(
                   <article
                     aria-label={`${currentModel.kindLabel} review: ${currentModel.title}`}
