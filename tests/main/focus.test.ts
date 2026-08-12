@@ -51,6 +51,20 @@ describe('Focus models', () => {
     ])
   })
 
+  it('persists, edits, clears, and validates an optional due date', () => {
+    const focus = database!.domain.focuses.create({
+      title: 'Dated focus',
+      dueDate: '2026-09-15'
+    })
+
+    expect(focus.toSnapshot().dueDate).toBe('2026-09-15')
+    focus.update({ dueDate: '2026-10-01' })
+    expect(focus.toSnapshot().dueDate).toBe('2026-10-01')
+    focus.update({ dueDate: null })
+    expect(focus.toSnapshot().dueDate).toBeNull()
+    expect(() => focus.update({ dueDate: '2026-02-30' })).toThrow(ModelValidationError)
+  })
+
   it('edits details and records every directional status transition once', () => {
     const focus = database!.domain.focuses.create({ title: 'Original' })
 

@@ -53,6 +53,7 @@ interface ThreadRow {
   focus_id: number
   title: string
   status: string
+  due_on: string | null
   review_frequency_days: number
   needs_review: number
   sensitive: number
@@ -425,12 +426,13 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
     const threadId = this.database.transaction(() => {
       const result = this.database.run(
         `INSERT INTO threads (
-           focus_id, title, status, review_frequency_days, needs_review, sensitive, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           focus_id, title, status, due_on, review_frequency_days, needs_review, sensitive, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           input.focusId,
           normalizeTitle(input.title, 'thread'),
           normalizeStatus(input.status),
+          normalizeOptionalDate(input.dueDate, 'dueDate'),
           normalizePositiveDays(input.reviewFrequencyDays, 'reviewFrequencyDays'),
           normalizeNeedsReview(input.needsReview, 'needsReview') ? 1 : 0,
           normalizeSensitive(input.sensitive, 'sensitive') ? 1 : 0,
@@ -473,11 +475,14 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
     if (!current) throw new ModelNotFoundError('Thread', id)
     this.database.run(
       `UPDATE threads
-       SET title = ?, status = ?, review_frequency_days = ?, needs_review = ?, sensitive = ?, updated_at = ?
+       SET title = ?, status = ?, due_on = ?, review_frequency_days = ?, needs_review = ?, sensitive = ?, updated_at = ?
        WHERE id = ?`,
       [
         input.title === undefined ? current.title : normalizeTitle(input.title, 'thread'),
         input.status === undefined ? current.status : normalizeStatus(input.status),
+        input.dueDate === undefined
+          ? current.dueDate
+          : normalizeOptionalDate(input.dueDate, 'dueDate'),
         input.reviewFrequencyDays === undefined
           ? current.reviewFrequencyDays
           : normalizePositiveDays(input.reviewFrequencyDays, 'reviewFrequencyDays'),
@@ -821,6 +826,7 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
       title: row.title,
       health: calculateHealth([...directStates, ...commitmentStates]),
       status: row.status as ThreadStatus,
+      dueDate: row.due_on,
       reviewFrequencyDays: Number(row.review_frequency_days),
       lastReviewDate,
       nextReviewDate,
@@ -883,7 +889,7 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
   private findRow(id: number): ThreadRow | undefined {
     assertId(id, 'thread')
     return this.database.get<ThreadRow>(
-      `SELECT id, focus_id, title, status, review_frequency_days, needs_review, sensitive,
+      `SELECT id, focus_id, title, status, due_on, review_frequency_days, needs_review, sensitive,
               review_poked_on, created_at, updated_at
        FROM threads WHERE id = ?`,
       [id]

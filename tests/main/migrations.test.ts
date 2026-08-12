@@ -169,6 +169,34 @@ describe('database migrations', () => {
     migrated.close()
   })
 
+  it('adds nullable calendar-validated due dates to Focuses and Threads', () => {
+    const database = new AppDatabase(databasePath)
+    const focus = database.domain.focuses.create({
+      title: 'Dated focus',
+      dueDate: '2026-09-15'
+    })
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Dated thread',
+      reviewFrequencyDays: 7,
+      dueDate: '2026-09-10'
+    })
+    database.close()
+
+    const migrated = new DatabaseSync(databasePath)
+    expect(migrated.prepare('SELECT due_on FROM focuses WHERE id = ?').get(focus.id))
+      .toMatchObject({ due_on: '2026-09-15' })
+    expect(migrated.prepare('SELECT due_on FROM threads WHERE id = ?').get(thread.id))
+      .toMatchObject({ due_on: '2026-09-10' })
+    expect(() => migrated.prepare(
+      "UPDATE focuses SET due_on = '2026-02-30' WHERE id = ?"
+    ).run(focus.id)).toThrow()
+    expect(() => migrated.prepare(
+      "UPDATE threads SET due_on = '2026-02-30' WHERE id = ?"
+    ).run(thread.id)).toThrow()
+    migrated.close()
+  })
+
   it('backfills and enforces Todo completion timestamps', () => {
     const database = new AppDatabase(databasePath)
     const focus = database.domain.focuses.create({ title: 'Completion history' })

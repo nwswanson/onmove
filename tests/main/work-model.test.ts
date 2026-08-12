@@ -63,6 +63,23 @@ describe('Thread, Commitment, and Update models', () => {
     expect(database!.domain.threads.requireModel(thread.id).status).toBe('active')
   })
 
+  it('persists, edits, clears, and validates an optional Thread due date', () => {
+    const focus = database!.domain.focuses.create({ title: 'Project execution' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Sprint execution',
+      reviewFrequencyDays: 7,
+      dueDate: '2026-09-15'
+    })
+
+    expect(thread.snapshot().dueDate).toBe('2026-09-15')
+    thread.update({ dueDate: '2026-10-01' })
+    expect(thread.snapshot().dueDate).toBe('2026-10-01')
+    thread.update({ dueDate: null })
+    expect(thread.snapshot().dueDate).toBeNull()
+    expect(() => thread.update({ dueDate: '2026-02-30' })).toThrow(ModelValidationError)
+  })
+
   it('parents commitments to exactly one focus or thread and supports both commitment types', () => {
     const focus = database!.domain.focuses.create({ title: 'Project execution' })
     const thread = database!.domain.threads.create({

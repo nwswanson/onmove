@@ -2135,6 +2135,20 @@ const migrations: readonly Migration[] = [
         ) STRICT, WITHOUT ROWID;
       `)
     }
+  },
+  {
+    version: 22,
+    name: 'focus_and_thread_due_dates',
+    up(database) {
+      database.exec(`
+        ALTER TABLE focuses ADD COLUMN due_on TEXT CHECK (
+          due_on IS NULL OR (length(due_on) = 10 AND due_on = date(due_on))
+        );
+        ALTER TABLE threads ADD COLUMN due_on TEXT CHECK (
+          due_on IS NULL OR (length(due_on) = 10 AND due_on = date(due_on))
+        );
+      `)
+    }
   }
 ]
 

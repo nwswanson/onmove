@@ -545,6 +545,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     description: string | null
     goal: string
     status: string
+    dueDate: string | null
     needsReview: number
     sensitive: number
   } | undefined {
@@ -553,13 +554,14 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     })
     const row = database
       .prepare(
-        'SELECT title, description, goal, status, needs_review AS needsReview, sensitive FROM focuses ORDER BY id LIMIT 1'
+        'SELECT title, description, goal, status, due_on AS dueDate, needs_review AS needsReview, sensitive FROM focuses ORDER BY id LIMIT 1'
       )
       .get() as {
         title: string
         description: string | null
         goal: string
         status: string
+        dueDate: string | null
         needsReview: number
         sensitive: number
       } | undefined
@@ -587,19 +589,21 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     reviewFrequencyDays: number
     needsReview: number
     status: string
+    dueDate: string | null
   } | undefined {
     const database = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
       readOnly: true
     })
     const row = database
       .prepare(
-        'SELECT title, review_frequency_days AS reviewFrequencyDays, needs_review AS needsReview, status FROM threads ORDER BY id LIMIT 1'
+        'SELECT title, review_frequency_days AS reviewFrequencyDays, needs_review AS needsReview, status, due_on AS dueDate FROM threads ORDER BY id LIMIT 1'
       )
       .get() as {
         title: string
         reviewFrequencyDays: number
         needsReview: number
         status: string
+        dueDate: string | null
       } | undefined
     database.close()
     return row
@@ -872,6 +876,9 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await descriptionLinkEditor.getByRole('button', { name: 'Insert' }).click()
     await window.getByRole('button', { name: 'Create focus' }).click()
     await expect(window.getByRole('heading', { name: 'Persistent focus' })).toBeVisible()
+    const focusDueDate = '2026-09-10'
+    await window.getByLabel('Focus due date', { exact: true }).fill(focusDueDate)
+    await expect.poll(() => storedFocus()?.dueDate).toBe(focusDueDate)
     await expect(window.getByLabel('Focus last reviewed')).toContainText('Last reviewed · Never')
     await expect(window.getByRole('combobox', { name: 'Focus status' })).toHaveValue('active')
     await expect(window.getByLabel('Focus description').locator('em')).toContainText('Stored notes')
@@ -1071,6 +1078,12 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       window.getByRole('button', { name: 'Sprint execution', exact: true })
     ).toBeVisible()
     await window.getByRole('button', { name: 'Sprint execution', exact: true }).click()
+    const threadDueDate = '2026-09-12'
+    await window.getByLabel('Thread due date', { exact: true }).fill(threadDueDate)
+    await expect.poll(() => storedThread()?.dueDate).toBe(threadDueDate)
+    await expect(window.getByLabel(
+      `Due date ${threadDueDate} is after the parent Focus due date ${focusDueDate}.`
+    )).toHaveAttribute('title')
     await expect(window.getByLabel('Thread last reviewed')).toContainText('Last reviewed · Never')
     const threadStatus = window.getByRole('combobox', { name: 'Thread status' })
     await expect(threadStatus).toHaveValue('active')
@@ -1171,9 +1184,11 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     )
     await expect(window.getByRole('heading', { name: 'Keep sponsors aligned' })).toBeVisible()
     await expect(window.getByLabel('Commitment type')).toHaveCount(0)
-    await expect(window.getByLabel('Commitment due date')).toContainText(
-      `Due date · ${commitmentDueDate}`
-    )
+    await expect(window.getByLabel('Commitment due date', { exact: true }))
+      .toHaveValue(commitmentDueDate)
+    await expect(window.getByLabel(
+      `Due date ${commitmentDueDate} is after the parent Focus due date ${focusDueDate}.`
+    )).toHaveAttribute('title')
     const commitmentNavigation = window.getByRole('navigation', { name: 'Focus commitments' })
     await expect(commitmentNavigation.getByText('Active · Last updated · Never')).toBeVisible()
     await expect(window.getByLabel('Commitment last updated')).toContainText(
@@ -1345,6 +1360,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(window.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
     await window.getByRole('button', { name: 'Persistent focus, paused' }).click()
     await expect(window.getByRole('heading', { name: 'Persistent focus' })).toBeVisible()
+    await expect(window.getByLabel('Focus due date', { exact: true })).toHaveValue(focusDueDate)
     await window
       .getByRole('button', { name: 'Sprint execution, paused', exact: true })
       .click()
@@ -1537,6 +1553,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     expect(storedFocus()).toMatchObject({
       title: 'Persistent focus',
       status: 'paused',
+      dueDate: focusDueDate,
       needsReview: 0,
       sensitive: 1
     })
@@ -1549,7 +1566,8 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       title: 'Sprint execution',
       reviewFrequencyDays: 7,
       needsReview: 0,
-      status: 'paused'
+      status: 'paused',
+      dueDate: threadDueDate
     })
     expect(storedThreadCommitment()).toMatchObject({
       title: 'Improve ticket quality',
@@ -1583,6 +1601,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(window.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
     await window.getByRole('button', { name: 'Persistent focus, paused' }).click()
     await expect(window.getByRole('heading', { name: 'Persistent focus' })).toBeVisible()
+    await expect(window.getByLabel('Focus due date', { exact: true })).toHaveValue(focusDueDate)
     await expect(
       window.getByLabel('Focus description').getByRole('link', { name: 'Stored notes' })
     ).toHaveAttribute('href', 'https://notes.example.com/')
@@ -1633,6 +1652,10 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       .getByRole('button', { name: 'Sprint execution, paused', exact: true })
       .click()
     await expect(window.getByRole('heading', { name: 'Sprint execution' })).toBeVisible()
+    await expect(window.getByLabel('Thread due date', { exact: true })).toHaveValue(threadDueDate)
+    await expect(window.getByLabel(
+      `Due date ${threadDueDate} is after the parent Focus due date ${focusDueDate}.`
+    )).toHaveAttribute('title')
     await expect(window.getByRole('tab', { name: 'Work in Customer Operations' })).toBeVisible()
     await expect(
       window.getByRole('tab', { name: 'Work in Platform Team' })
@@ -1719,9 +1742,8 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await window.getByRole('button', { name: 'Open commitment Keep sponsors aligned' }).click()
     await expect(window.getByRole('combobox', { name: 'Commitment status' })).toHaveValue('done')
     await expect(window.getByLabel('Commitment type')).toHaveCount(0)
-    await expect(window.getByLabel('Commitment due date')).toContainText(
-      `Due date · ${commitmentDueDate}`
-    )
+    await expect(window.getByLabel('Commitment due date', { exact: true }))
+      .toHaveValue(commitmentDueDate)
     await expect(
       window.getByRole('checkbox', { name: /Mark commitment/ })
     ).toHaveCount(0)

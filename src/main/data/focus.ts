@@ -25,6 +25,7 @@ interface FocusRow {
   description: string | null
   goal: string
   status: string
+  due_on: string | null
   status_changed_at: string
   needs_review: number
   sensitive: number
@@ -112,6 +113,11 @@ function normalizeDate(value: string, field: string): string {
   return value
 }
 
+function normalizeOptionalDate(value: string | null | undefined, field: string): string | null {
+  if (value === null || value === undefined || value === '') return null
+  return normalizeDate(value, field)
+}
+
 function today(now = new Date()): string {
   const year = now.getFullYear()
   const month = String(now.getMonth() + 1).padStart(2, '0')
@@ -127,6 +133,7 @@ function focusFromRow(row: FocusRow, notes: FocusSnapshot['notes']): FocusRecord
     description: row.description,
     goal: row.goal,
     status: row.status as FocusStatus,
+    dueDate: row.due_on,
     statusChangedAt: row.status_changed_at,
     lastReviewDate: row.last_review_date,
     needsReview: Boolean(row.needs_review),
@@ -236,14 +243,15 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
     const now = timestamp()
     const result = this.database.run(
       `INSERT INTO focuses (
-         kind, title, description, goal, status, needs_review, sensitive, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         kind, title, description, goal, status, due_on, needs_review, sensitive, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         normalizeKind(input.kind),
         normalizeTitle(input.title),
         normalizeDescription(input.description),
         normalizeGoal(input.goal),
         normalizeStatus(input.status),
+        normalizeOptionalDate(input.dueDate, 'dueDate'),
         normalizeNeedsReview(input.needsReview) ? 1 : 0,
         normalizeSensitive(input.sensitive) ? 1 : 0,
         now,
@@ -266,7 +274,7 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
   private materializeOrNull(id: number, asOf: string): FocusRecord | null {
     assertId(id)
     const row = this.database.get<FocusRow>(
-      `SELECT id, kind, title, description, goal, status, status_changed_at, needs_review, sensitive,
+      `SELECT id, kind, title, description, goal, status, due_on, status_changed_at, needs_review, sensitive,
               created_at, updated_at,
               NULLIF(MAX(
                 COALESCE(CASE WHEN review_poked_on <= ? THEN review_poked_on END, ''),
@@ -284,7 +292,7 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
     const date = normalizeDate(asOf, 'asOf')
     return this.database
       .all<FocusRow>(
-        `SELECT id, kind, title, description, goal, status, status_changed_at, needs_review, sensitive,
+        `SELECT id, kind, title, description, goal, status, due_on, status_changed_at, needs_review, sensitive,
                 created_at, updated_at,
                 NULLIF(MAX(
                   COALESCE(CASE WHEN review_poked_on <= ? THEN review_poked_on END, ''),
@@ -304,7 +312,7 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
 
     this.database.run(
       `UPDATE focuses
-       SET title = ?, description = ?, goal = ?, status = ?, needs_review = ?, sensitive = ?, updated_at = ?
+       SET title = ?, description = ?, goal = ?, status = ?, due_on = ?, needs_review = ?, sensitive = ?, updated_at = ?
        WHERE id = ?`,
       [
         input.title === undefined ? current.title : normalizeTitle(input.title),
@@ -313,6 +321,9 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
           : normalizeDescription(input.description),
         input.goal === undefined ? current.goal : normalizeGoal(input.goal),
         input.status === undefined ? current.status : normalizeStatus(input.status),
+        input.dueDate === undefined
+          ? current.dueDate
+          : normalizeOptionalDate(input.dueDate, 'dueDate'),
         input.needsReview === undefined
           ? (current.needsReview ? 1 : 0)
           : (normalizeNeedsReview(input.needsReview) ? 1 : 0),

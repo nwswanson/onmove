@@ -10,7 +10,6 @@ import type {
 import {
   commitmentCollectionModel,
   commitmentContextSidebarItems,
-  commitmentDueDateLabel,
   commitmentDrawerAdapter,
   commitmentWorkingContextModel,
   dateOrNeverLabel,
@@ -36,6 +35,7 @@ const focus: FocusSnapshot = {
   description: 'Launch notes',
   goal: 'Ship safely',
   status: 'active',
+  dueDate: null,
   statusChangedAt: '2026-01-01T00:00:00.000Z',
   lastReviewDate: null,
   needsReview: true,
@@ -51,6 +51,7 @@ const thread: ThreadSnapshot = {
   title: 'Sprint execution',
   health: 'none',
   status: 'paused',
+  dueDate: null,
   reviewFrequencyDays: 7,
   lastReviewDate: null,
   nextReviewDate: '2026-01-08',
@@ -437,11 +438,6 @@ describe('Focus presentation adapters', () => {
     expect(workStatusLabel('paused')).toEqual(WORK_STATUS_OPTIONS[1])
     expect(workStatusLabel('done')).toEqual(WORK_STATUS_OPTIONS[2])
     expect(workStatusLabel('cancelled')).toEqual(WORK_STATUS_OPTIONS[3])
-  })
-
-  it('maps optional Commitment due dates into UI labels', () => {
-    expect(commitmentDueDateLabel(null)).toBe('No due date')
-    expect(commitmentDueDateLabel('2026-02-15')).toBe('2026-02-15')
   })
 
   it('maps ordered Commitments into the shared collection receiver contract', () => {

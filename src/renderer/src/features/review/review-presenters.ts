@@ -102,7 +102,7 @@ export function reviewItemModel(
     due: item.due,
     goal: item.kind === 'focus' && item.focus.goal ? item.focus.goal : null,
     description: item.kind === 'focus' ? item.focus.description : null,
-    dueDate: item.commitment?.dueDate ?? null,
+    dueDate: record.dueDate,
     cadenceDays: item.commitment?.cadenceDays ?? null,
     commitments: commitments.map((commitment) => ({
       id: String(commitment.id),

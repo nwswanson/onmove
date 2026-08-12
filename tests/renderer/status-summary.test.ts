@@ -56,6 +56,7 @@ function thread(id: number): ThreadSnapshot {
     title: `Thread ${id}`,
     health: 'none',
     status: 'active',
+    dueDate: null,
     reviewFrequencyDays: 7,
     lastReviewDate: null,
     nextReviewDate: '2026-01-08',

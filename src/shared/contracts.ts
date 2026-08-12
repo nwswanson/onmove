@@ -156,6 +156,7 @@ export interface FocusSnapshot {
   description: string | null
   goal: string
   status: FocusStatus
+  dueDate: string | null
   statusChangedAt: string
   lastReviewDate: string | null
   needsReview: boolean
@@ -179,6 +180,7 @@ export interface CreateFocusInput {
   description?: string | null
   goal?: string
   status?: FocusStatus
+  dueDate?: string | null
   needsReview?: boolean
   sensitive?: boolean
 }
@@ -188,6 +190,7 @@ export interface UpdateFocusInput {
   description?: string | null
   goal?: string
   status?: FocusStatus
+  dueDate?: string | null
   needsReview?: boolean
   sensitive?: boolean
 }
@@ -400,6 +403,7 @@ export interface ThreadSnapshot {
   title: string
   health: HealthState
   status: ThreadStatus
+  dueDate: string | null
   reviewFrequencyDays: number
   lastReviewDate: string | null
   nextReviewDate: string
@@ -415,6 +419,7 @@ export interface CreateThreadInput {
   focusId: number
   title: string
   status?: ThreadStatus
+  dueDate?: string | null
   reviewFrequencyDays: number
   needsReview?: boolean
   sensitive?: boolean
@@ -424,6 +429,7 @@ export interface CreateThreadInput {
 export interface UpdateThreadInput {
   title?: string
   status?: ThreadStatus
+  dueDate?: string | null
   reviewFrequencyDays?: number
   needsReview?: boolean
   sensitive?: boolean

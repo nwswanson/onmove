@@ -40,6 +40,7 @@ function focus(overrides: Partial<FocusSnapshot> = {}): FocusSnapshot {
     description: null,
     goal: '',
     status: 'active',
+    dueDate: null,
     statusChangedAt: '2026-01-01T00:00:00.000Z',
     lastReviewDate: null,
     needsReview: true,
@@ -58,6 +59,7 @@ function thread(overrides: Partial<ThreadSnapshot> = {}): ThreadSnapshot {
     title: 'Sprint execution',
     health: 'none',
     status: 'active',
+    dueDate: null,
     reviewFrequencyDays: 7,
     lastReviewDate: null,
     nextReviewDate: '2026-01-08',
@@ -1351,6 +1353,98 @@ describe('App', () => {
     )
   })
 
+  it('edits and clears hierarchical due dates while warning when children exceed parents', async () => {
+    let currentFocus = focus({ title: 'Project Atlas', dueDate: '2026-09-15' })
+    let currentThread = thread({ dueDate: '2026-09-20' })
+    let currentCommitment = commitment({
+      parent: { type: 'thread', id: currentThread.id },
+      dueDate: '2026-09-25',
+      type: 'action'
+    })
+    const updateFocus = vi.fn(async (_id: number, input: Parameters<DomainApi['updateFocus']>[1]) => {
+      currentFocus = focus({ ...currentFocus, ...input })
+      return currentFocus
+    })
+    const updateThread = vi.fn(async (_id: number, input: Parameters<DomainApi['updateThread']>[1]) => {
+      currentThread = thread({ ...currentThread, ...input })
+      return currentThread
+    })
+    const updateCommitment = vi.fn(async (
+      _id: number,
+      input: Parameters<DomainApi['updateCommitment']>[1]
+    ) => {
+      currentCommitment = commitment({ ...currentCommitment, ...input })
+      return currentCommitment
+    })
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([currentFocus]),
+      listThreads: vi.fn().mockResolvedValue([currentThread]),
+      listCommitments: vi.fn(async (parent) =>
+        parent.type === 'thread' ? [currentCommitment] : []
+      ),
+      updateFocus,
+      updateThread,
+      updateCommitment
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    const focusDueDate = screen.getByLabelText('Focus due date')
+    expect(focusDueDate).toHaveValue('2026-09-15')
+    await user.click(screen.getByRole('button', { name: 'Clear Focus due date' }))
+    await waitFor(() => {
+      expect(screen.getByLabelText('Focus due date')).toHaveValue('')
+      expect(screen.getByLabelText('Focus due date')).not.toBeDisabled()
+    })
+    expect(updateFocus).toHaveBeenCalledWith(currentFocus.id, { dueDate: null })
+    const clearedFocusDueDate = screen.getByLabelText('Focus due date')
+    fireEvent.change(clearedFocusDueDate, { target: { value: '2026-09-10' } })
+    await waitFor(() => expect(screen.getByLabelText('Focus due date')).toHaveValue('2026-09-10'))
+    expect(updateFocus).toHaveBeenLastCalledWith(currentFocus.id, { dueDate: '2026-09-10' })
+
+    await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
+    expect(screen.getByLabelText(
+      'Due date 2026-09-20 is after the parent Focus due date 2026-09-10.'
+    )).toHaveAttribute('title')
+    await user.click(screen.getByRole('button', { name: 'Clear Thread due date' }))
+    await waitFor(() => {
+      expect(screen.getByLabelText('Thread due date')).toHaveValue('')
+      expect(screen.getByLabelText('Thread due date')).not.toBeDisabled()
+    })
+    expect(updateThread).toHaveBeenCalledWith(currentThread.id, { dueDate: null })
+    fireEvent.change(screen.getByLabelText('Thread due date'), {
+      target: { value: '2026-09-12' }
+    })
+    await waitFor(() =>
+      expect(screen.getByLabelText('Thread due date')).toHaveValue('2026-09-12')
+    )
+    expect(updateThread).toHaveBeenLastCalledWith(currentThread.id, { dueDate: '2026-09-12' })
+
+    await user.click(screen.getByRole('button', {
+      name: 'Open commitment Keep sponsors aligned'
+    }))
+    expect(screen.getByLabelText(
+      'Due date 2026-09-25 is after the parent Thread due date 2026-09-12.'
+    )).toHaveAttribute('title')
+    await user.click(screen.getByRole('button', { name: 'Clear Commitment due date' }))
+    await waitFor(() => {
+      expect(screen.getByLabelText('Commitment due date')).toHaveValue('')
+      expect(screen.getByLabelText('Commitment due date')).not.toBeDisabled()
+    })
+    expect(updateCommitment).toHaveBeenCalledWith(currentCommitment.id, { dueDate: null })
+    fireEvent.change(screen.getByLabelText('Commitment due date'), {
+      target: { value: '2026-09-11' }
+    })
+    await waitFor(() =>
+      expect(screen.getByLabelText('Commitment due date')).toHaveValue('2026-09-11')
+    )
+    expect(updateCommitment).toHaveBeenLastCalledWith(currentCommitment.id, {
+      dueDate: '2026-09-11'
+    })
+    expect(screen.queryByLabelText(/is after the parent Thread/)).not.toBeInTheDocument()
+  })
+
   it('refines a Thread Scope with chips, Focus suggestions, and one-click inheritance', async () => {
     const current = focus({ title: 'Project Atlas' })
     const sprint = thread()
@@ -2630,9 +2724,7 @@ describe('App', () => {
       screen.queryByRole('checkbox', { name: /Mark commitment/ })
     ).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Commitment type')).not.toBeInTheDocument()
-    expect(screen.getByLabelText('Commitment due date')).toHaveTextContent(
-      'Due date · 2026-09-15'
-    )
+    expect(screen.getByLabelText('Commitment due date')).toHaveValue('2026-09-15')
   })
 
   it('groups and orders Commitment lists through the shared collection model', async () => {
@@ -2805,9 +2897,7 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'New thread' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Publish the launch boundary' })).toBeInTheDocument()
     expect(screen.queryByLabelText('Commitment type')).not.toBeInTheDocument()
-    expect(screen.getByLabelText('Commitment due date')).toHaveTextContent(
-      'Due date · 2026-09-15'
-    )
+    expect(screen.getByLabelText('Commitment due date')).toHaveValue('2026-09-15')
   })
 
   it('lists, edits, creates, and deletes visibly stateful Commitment updates', async () => {

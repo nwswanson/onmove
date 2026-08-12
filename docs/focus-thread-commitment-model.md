@@ -81,6 +81,7 @@ deliberately end.
 | `description` | Optional rich-text-compatible notes. |
 | `goal` | The desired condition, stored in the existing rich-text-compatible text field. |
 | `status` | `active`, `paused`, `done`, or `cancelled`. |
+| `dueDate` | Optional planning boundary. It does not constrain descendant dates. |
 | `statusChangedAt` | Timestamp of the materialized lifecycle status. |
 | `lastReviewDate` | Later of the explicit Focus review poke or newest direct Focus Update, considering evidence on or before the projection date. |
 | `needsReview` | Whether review workflows should include the Focus. Independent of status. |
@@ -227,6 +228,7 @@ A Thread is an independently meaningful dimension by which its Focus is judged.
 | `title` | Required dimension name. Duplicate titles are allowed. |
 | `health` | Derived `red`, `yellow`, `green`, or `none`. |
 | `status` | `active`, `paused`, `done`, or `cancelled`, with transition history. |
+| `dueDate` | Optional planning boundary. A date after the owning Focus is valid and receives an advisory UI warning. |
 | `reviewFrequencyDays` | Required positive whole-number review interval. |
 | `lastReviewDate` | Later of applicable aggregate/exact-cell pokes and direct-Update review evidence. |
 | `nextReviewDate` | Open or zero-Subject: aggregate deadline. Bounded with Subjects: earliest Subject-cell deadline. |
@@ -302,6 +304,11 @@ todo and does not block its parent from closing.
 | `needsUpdate` | Derived active/cadence condition. |
 | `sensitive` | Presentation classification. |
 | `createdAt`, `updatedAt` | Durable timestamps. |
+
+Due dates are deliberately non-constraining across the hierarchy. A Thread may extend beyond its
+Focus, and a Commitment may extend beyond its direct Focus or Thread parent. The selected entity's
+main screen compares only the direct parent and presents an accessible warning tooltip; persistence,
+reparenting, and import never clip or reject the child date for this reason.
 
 For an Open Commitment, state and cadence use the newest unscoped Update. For a bounded Commitment,
 `scopeMatrix(asOf)` returns one projection per currently effective Subject:

@@ -50,7 +50,6 @@ import { FocusScopeEditor } from '@/features/focus/focus-scope-ui'
 import {
   commitmentCollectionModel,
   commitmentContextSidebarItems,
-  commitmentDueDateLabel,
   commitmentDrawerAdapter,
   commitmentWorkingContextModel,
   dateOrNeverLabel,
@@ -64,6 +63,7 @@ import {
 import { useCommitmentWorkingContextModel } from '@/features/focus/use-commitment-working-context-model'
 import { useFocusWorkspaceModel } from '@/features/focus/use-focus-workspace-model'
 import { WorkStatusSelect } from '@/features/shared/work-status-select'
+import { WorkDueDateField } from '@/features/shared/work-due-date-field'
 import { visibleSensitiveRecords } from '@/features/shared/sensitivity'
 import { SensitivityToggle } from '@/features/shared/sensitivity-toggle'
 import { DirectTodos } from '@/features/todos/direct-todos'
@@ -1057,17 +1057,19 @@ export function FocusWorkspace({
     }
   }
 
-  async function updateFocusDetails(input: UpdateFocusInput): Promise<void> {
+  async function updateFocusDetails(input: UpdateFocusInput): Promise<boolean> {
     const key = `focus:${focus.id}`
     setWorkspaceStatusSavingKey(key)
     setWorkspaceStatusError(null)
     try {
       await onUpdateFocus(input)
+      return true
     } catch {
       setWorkspaceStatusError({
         key,
         message: 'The Focus could not be updated. Please try again.'
       })
+      return false
     } finally {
       setWorkspaceStatusSavingKey(null)
     }
@@ -1076,7 +1078,7 @@ export function FocusWorkspace({
   async function updateThreadDetails(
     threadId: number,
     input: UpdateThreadInput
-  ): Promise<void> {
+  ): Promise<boolean> {
     const key = `thread:${threadId}`
     setWorkspaceStatusSavingKey(key)
     setWorkspaceStatusError(null)
@@ -1085,11 +1087,13 @@ export function FocusWorkspace({
       if (contextDrawer.pinnedAdapter?.id === key) {
         contextDrawer.onPin(adapterForThread(updated))
       }
+      return true
     } catch {
       setWorkspaceStatusError({
         key,
         message: 'The Thread could not be updated. Please try again.'
       })
+      return false
     } finally {
       setWorkspaceStatusSavingKey(null)
     }
@@ -1098,7 +1102,7 @@ export function FocusWorkspace({
   async function updateCommitmentDetails(
     commitmentId: number,
     input: UpdateCommitmentInput
-  ): Promise<void> {
+  ): Promise<boolean> {
     setCommitmentStatusSavingId(commitmentId)
     setCommitmentStatusError(null)
     try {
@@ -1107,11 +1111,13 @@ export function FocusWorkspace({
       if (contextDrawer.pinnedAdapter?.id === `commitment:${commitmentId}`) {
         contextDrawer.onPin(adapterForCommitment(updated))
       }
+      return true
     } catch {
       setCommitmentStatusError({
         id: commitmentId,
         message: 'The commitment could not be updated. Please try again.'
       })
+      return false
     } finally {
       setCommitmentStatusSavingId(null)
     }
@@ -1194,10 +1200,21 @@ export function FocusWorkspace({
                       <TaggedText value={selectedCommitment.title} />
                     </h1>
                     <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                      <p aria-label="Commitment due date">
-                        <span className="font-medium text-foreground/80">Due date</span>
-                        {' · '}{commitmentDueDateLabel(selectedCommitment.dueDate)}
-                      </p>
+                      <WorkDueDateField
+                        entityLabel="Commitment"
+                        value={selectedCommitment.dueDate}
+                        parent={selectedCommitment.parent.type === 'focus'
+                          ? { label: 'Focus', dueDate: focus.dueDate }
+                          : {
+                              label: 'Thread',
+                              dueDate: model.threads.find(
+                                ({ id }) => id === selectedCommitment.parent.id
+                              )?.dueDate ?? null
+                            }}
+                        disabled={commitmentStatusSavingId === selectedCommitment.id}
+                        onValueChange={(dueDate) =>
+                          updateCommitmentDetails(selectedCommitment.id, { dueDate })}
+                      />
                       <p aria-label="Commitment last updated">
                         <span className="font-medium text-foreground/80">Last updated</span>
                         {' · '}{dateOrNeverLabel(selectedCommitment.lastUpdateDate)}
@@ -1309,13 +1326,20 @@ export function FocusWorkspace({
                 <h1 id="thread-heading" className="text-2xl font-semibold tracking-[-0.025em]">
                   <TaggedText value={displayedThread.title} />
                 </h1>
-                <p
-                  aria-label="Thread last reviewed"
-                  className="mt-2 text-xs text-muted-foreground"
-                >
-                  <span className="font-medium text-foreground/80">Last reviewed</span>
-                  {' · '}{dateOrNeverLabel(displayedThread.lastReviewDate)}
-                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+                  <WorkDueDateField
+                    entityLabel="Thread"
+                    value={displayedThread.dueDate}
+                    parent={{ label: 'Focus', dueDate: focus.dueDate }}
+                    disabled={workspaceStatusSavingKey === `thread:${displayedThread.id}`}
+                    onValueChange={(dueDate) =>
+                      updateThreadDetails(displayedThread.id, { dueDate })}
+                  />
+                  <p aria-label="Thread last reviewed">
+                    <span className="font-medium text-foreground/80">Last reviewed</span>
+                    {' · '}{dateOrNeverLabel(displayedThread.lastReviewDate)}
+                  </p>
+                </div>
               </div>
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                 <SensitivityToggle
@@ -1449,13 +1473,18 @@ export function FocusWorkspace({
                 <h1 id="focus-heading" className="truncate text-2xl font-semibold tracking-[-0.025em]">
                   <TaggedText value={focusTitle} />
                 </h1>
-                <p
-                  aria-label="Focus last reviewed"
-                  className="mt-1.5 text-xs text-muted-foreground"
-                >
-                  <span className="font-medium text-foreground/80">Last reviewed</span>
-                  {' · '}{dateOrNeverLabel(focus.lastReviewDate)}
-                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+                  <WorkDueDateField
+                    entityLabel="Focus"
+                    value={focus.dueDate}
+                    disabled={workspaceStatusSavingKey === `focus:${focus.id}`}
+                    onValueChange={(dueDate) => updateFocusDetails({ dueDate })}
+                  />
+                  <p aria-label="Focus last reviewed">
+                    <span className="font-medium text-foreground/80">Last reviewed</span>
+                    {' · '}{dateOrNeverLabel(focus.lastReviewDate)}
+                  </p>
+                </div>
                 {focus.description ? (
                   <RichTextContent
                     value={focus.description}

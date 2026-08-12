@@ -17,6 +17,7 @@ const focus: FocusSnapshot = {
   description: 'A measured rollout',
   goal: 'Ship safely',
   status: 'active',
+  dueDate: null,
   statusChangedAt: '2026-01-01T00:00:00.000Z',
   lastReviewDate: null,
   needsReview: true,
@@ -32,6 +33,7 @@ const thread: ThreadSnapshot = {
   title: 'Sprint execution',
   health: 'yellow',
   status: 'active',
+  dueDate: '2026-01-31',
   reviewFrequencyDays: 7,
   lastReviewDate: null,
   nextReviewDate: '2026-01-08',
@@ -91,6 +93,7 @@ describe('review presenters', () => {
       lastReviewLabel: 'Never',
       nextReviewLabel: '2026-01-08',
       due: true,
+      dueDate: '2026-01-31',
       state: { label: 'Yellow', tone: 'warning' },
       commitments: [{
         id: '3',

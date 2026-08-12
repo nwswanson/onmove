@@ -49,6 +49,7 @@ Focuses are top-level portfolio objects rather than hierarchy children. Their in
   description: string | null,
   goal: string,
   status: 'active' | 'paused' | 'cancelled' | 'done',
+  dueDate: string | null,
   lastReviewDate: string | null,
   needsReview: boolean
 }
@@ -64,6 +65,11 @@ remain durable and queryable but are omitted from navigation. `needsReview` is a
 flag independent of status. `lastReviewDate` is derived from the later of the newest effective
 Update directly on the Focus and its explicit `review_poked_on` date; descendant Thread and
 Commitment Updates do not advance it.
+
+Focuses, Threads, and Commitments each store an optional calendar due date. The hierarchy does not
+enforce chronological containment: a child may be due after its direct parent. Main entity screens
+surface that condition as an advisory warning so planning remains observable without clipping or
+rejecting valid dates.
 
 Focuses, Threads, and Commitments can be explicitly “poked” as reviewed without creating a
 synthetic Update. Open aggregates store their monotonic latest `review_poked_on` calendar date;

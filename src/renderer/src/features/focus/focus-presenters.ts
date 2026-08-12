@@ -48,10 +48,6 @@ import {
   workStatusLabel
 } from '@/features/shared/work-status'
 
-export function commitmentDueDateLabel(dueDate: string | null): string {
-  return dueDate ?? 'No due date'
-}
-
 function textValue(values: ContextDrawerValues, id: string): string {
   const value = values[id]
   return typeof value === 'string' ? value : ''

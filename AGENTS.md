@@ -238,6 +238,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
   boundary. Render the one-way completion checkbox only on due-dated Commitment list rows. Checking
   an active or paused due-dated Commitment sends `status: done` through the existing typed mutation
   so transition auditing remains intact; closed Commitments cannot be reopened through the checkbox.
+- Expose optional due dates for Focus, Thread, and Commitment through the shared feature-level
+  `WorkDueDateField` in every selected entity's main header. It must support setting and explicitly
+  clearing the date. Do not clip or reject a child date after its direct parent's date; show the
+  shared accessible warning icon and tooltip while preserving the entered value.
 - Render Focus, Thread, and Commitment Todos through the shared receiver-owned `TodoList`. The
   receiver owns inline creation, editable name/due date/done controls, overdue presentation, delete,
   and dnd-kit sortable ordering. Overdue means incomplete with a due date before the current local
@@ -375,6 +379,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
   `needsReview` separate from lifecycle status and from all derived review projections.
 - A Commitment must have exactly one Focus or Thread parent. An Update must have exactly one Focus,
   Thread, or Commitment parent. Preserve these SQLite constraints and cascades.
+- Persist nullable, calendar-validated due dates independently on Focus, Thread, and Commitment.
+  Parent dates are advisory planning boundaries, not database constraints: descendants may extend
+  beyond them and the renderer owns the direct-parent warning.
 - Treat Subject, Scope, and Scope application as distinct model concepts. Subjects are canonical and
   generic; Scopes are Focus-owned applicability expressions; editable applications belong to Focus
   and Thread. Persist Commitment application rows only as enforced derived projections:
