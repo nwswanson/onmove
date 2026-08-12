@@ -139,6 +139,7 @@ export function UpdateComposerProvider({
         open={target !== null}
         title="Add update"
         description={target ? `${target.label} · ${target.description}` : undefined}
+        contentClassName="max-w-3xl"
         onClose={cancel}
         footer={(
           <>
@@ -199,7 +200,8 @@ export function UpdateComposerProvider({
               placeholder="What changed?"
               value={observation}
               autoFocus
-              compact
+              fillHeight
+              className="h-[min(30rem,48vh)] min-h-64"
               onChange={setObservation}
               onBlur={setObservation}
             />

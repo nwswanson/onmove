@@ -393,9 +393,7 @@ export function App(): React.JSX.Element {
 
   return (
     <UpdateComposerProvider
-      enabled={application.enabled && (
-        application.selectedView === 'focus' || application.selectedView === 'review'
-      )}
+      enabled={application.enabled && application.selectedView !== 'settings'}
       focuses={application.navigableFocuses}
       hideSensitiveContent={application.sensitiveContentHidden}
       onCreated={async (target) => {

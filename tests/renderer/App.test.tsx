@@ -955,9 +955,14 @@ describe('App', () => {
     await user.click(within(chooser).getByRole('option', { name: /^Hold weekly check-ins/ }))
 
     let composer = await screen.findByRole('dialog', { name: 'Add update' })
+    expect(composer).toHaveClass('max-w-3xl')
     expect(composer).toHaveTextContent(
       'Hold weekly check-ins · People program › Team health › Customer Operations'
     )
+    expect(
+      within(composer).getByRole('textbox', { name: 'Update observation' })
+        .closest('[data-slot="rich-text-editor"]')
+    ).toHaveClass('min-h-64')
     expect(within(composer).queryByRole('button', { name: /Delete/ })).not.toBeInTheDocument()
     expect(within(composer).queryByRole('button', {
       name: 'Open Update observation in new window'
@@ -1004,33 +1009,58 @@ describe('App', () => {
     expect(getReviewOverview).toHaveBeenCalledTimes(2)
   })
 
-  it('leaves Cmd-P inert in the Todos and Tags workspaces', async () => {
+  it('opens Cmd-P from every primary workspace except Settings', async () => {
+    const currentFocus = focus({ id: 8, title: 'Global update target' })
     const createUpdate = vi.fn()
-    installApi({ createUpdate })
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([currentFocus]),
+      createUpdate
+    })
     const user = userEvent.setup()
     render(<App />)
 
+    async function expectUpdateCommand(): Promise<void> {
+      const shortcut = new KeyboardEvent('keydown', {
+        key: 'p',
+        metaKey: true,
+        bubbles: true,
+        cancelable: true
+      })
+      document.dispatchEvent(shortcut)
+      expect(shortcut.defaultPrevented).toBe(true)
+      const chooser = await screen.findByRole('dialog', { name: 'Choose update target' })
+      expect(await within(chooser).findByRole('option', {
+        name: /^Global update target/
+      })).toBeVisible()
+      await user.keyboard('{Escape}')
+      await waitFor(() => expect(screen.queryByRole('dialog', {
+        name: 'Choose update target'
+      })).not.toBeInTheDocument())
+    }
+
     await screen.findByRole('heading', { name: 'Todos' })
-    const todosShortcut = new KeyboardEvent('keydown', {
-      key: 'p',
-      metaKey: true,
-      bubbles: true,
-      cancelable: true
-    })
-    document.dispatchEvent(todosShortcut)
-    expect(todosShortcut.defaultPrevented).toBe(false)
+    await expectUpdateCommand()
 
     await user.click(screen.getByRole('button', { name: 'Tags' }))
     await screen.findByRole('heading', { name: 'Tags' })
-    const tagsShortcut = new KeyboardEvent('keydown', {
+    await expectUpdateCommand()
+
+    await user.click(screen.getByRole('button', { name: /Due/ }))
+    await screen.findByRole('heading', { name: 'Due' })
+    await expectUpdateCommand()
+
+    await user.click(screen.getByRole('button', { name: 'Settings' }))
+    await screen.findByRole('heading', { name: 'Settings' })
+    const settingsShortcut = new KeyboardEvent('keydown', {
       key: 'p',
       metaKey: true,
       bubbles: true,
       cancelable: true
     })
-    document.dispatchEvent(tagsShortcut)
+    document.dispatchEvent(settingsShortcut)
 
-    expect(tagsShortcut.defaultPrevented).toBe(false)
+    expect(settingsShortcut.defaultPrevented).toBe(false)
+    expect(screen.queryByRole('dialog', { name: 'Choose update target' })).not.toBeInTheDocument()
     expect(createUpdate).not.toHaveBeenCalled()
   })
 

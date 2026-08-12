@@ -1192,6 +1192,9 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(
       documentWindow.getByRole('heading', { name: 'Persistent focus — Default' })
     ).toBeVisible()
+    await documentWindow.keyboard.press('Meta+p')
+    await expect(documentWindow.getByRole('dialog', { name: 'Choose update target' }))
+      .toHaveCount(0)
     const detachedEditor = documentWindow.getByRole('textbox', { name: 'Document content' })
     await expect(detachedEditor).toContainText('A durable working note')
     const detachedEditorBounds = async (): Promise<{

@@ -9,6 +9,7 @@ interface DialogProps {
   open: boolean
   title: string
   description?: string
+  contentClassName?: string
   children: React.ReactNode
   footer?: React.ReactNode
   onClose: () => void
@@ -18,6 +19,7 @@ function Dialog({
   open,
   title,
   description,
+  contentClassName,
   children,
   footer,
   onClose
@@ -87,7 +89,10 @@ function Dialog({
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={description ? descriptionId : undefined}
-        className="w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card text-card-foreground shadow-2xl"
+        className={cn(
+          'w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card text-card-foreground shadow-2xl',
+          contentClassName
+        )}
       >
         <div className="flex items-start gap-3 border-b border-border/70 px-5 py-4">
           <div className="min-w-0 flex-1">
