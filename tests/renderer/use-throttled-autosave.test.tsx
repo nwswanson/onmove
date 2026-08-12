@@ -70,4 +70,20 @@ describe('useThrottledAutosave', () => {
     expect(onSave).toHaveBeenCalledTimes(2)
     expect(onSave).toHaveBeenLastCalledWith('latest draft')
   })
+
+  it('accepts an external persisted baseline without suppressing later reversions', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const { result } = renderHook(() =>
+      useThrottledAutosave({ initialValue: 'original', onSave })
+    )
+
+    act(() => result.current.acceptExternal('external revision'))
+    act(() => result.current.schedule('original'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(TEXT_AUTOSAVE_INTERVAL_MS)
+    })
+
+    expect(onSave).toHaveBeenCalledOnce()
+    expect(onSave).toHaveBeenCalledWith('original')
+  })
 })

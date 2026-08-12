@@ -3096,6 +3096,70 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Revised plan, paused' })).toHaveClass('opacity-55')
   })
 
+  it('keeps Focus and Thread title inputs focused across autosave refreshes', async () => {
+    let currentFocus = focus({ title: 'Project Atlas' })
+    let currentThread = thread({ title: 'Sprint execution' })
+    let revision = 1
+    const updateFocus = vi.fn(async (
+      _focusId: number,
+      input: Parameters<DomainApi['updateFocus']>[1]
+    ) => {
+      currentFocus = focus({
+        ...currentFocus,
+        ...input,
+        updatedAt: `2026-01-01T00:00:0${revision++}.000Z`
+      })
+      return currentFocus
+    })
+    const updateThread = vi.fn(async (
+      _threadId: number,
+      input: Parameters<DomainApi['updateThread']>[1]
+    ) => {
+      currentThread = thread({
+        ...currentThread,
+        ...input,
+        updatedAt: `2026-01-01T00:00:0${revision++}.000Z`
+      })
+      return currentThread
+    })
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([currentFocus]),
+      listThreads: vi.fn().mockResolvedValue([currentThread]),
+      updateFocus,
+      updateThread
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    await user.click(screen.getByRole('button', { name: 'Toggle context drawer' }))
+    const focusTitle = within(
+      screen.getByRole('complementary', { name: 'Focus context drawer' })
+    ).getByLabelText(/^Title/)
+    focusTitle.focus()
+    fireEvent.change(focusTitle, { target: { value: 'Project Atlas revised' } })
+    await waitFor(() => expect(updateFocus).toHaveBeenCalledOnce(), { timeout: 2_000 })
+    await screen.findByRole('heading', { name: 'Project Atlas revised' })
+    expect(screen.getByLabelText(/^Title/)).toBe(focusTitle)
+    expect(focusTitle).toHaveFocus()
+    fireEvent.change(focusTitle, { target: { value: 'Project Atlas revised again' } })
+    await waitFor(() => expect(updateFocus).toHaveBeenCalledTimes(2), { timeout: 2_000 })
+    expect(focusTitle).toHaveValue('Project Atlas revised again')
+    expect(focusTitle).toHaveFocus()
+
+    await user.click(screen.getByRole('button', { name: 'Sprint execution' }))
+    const threadTitle = within(
+      screen.getByRole('complementary', { name: 'Thread context drawer' })
+    ).getByLabelText(/^Title/)
+    threadTitle.focus()
+    fireEvent.change(threadTitle, { target: { value: 'Sprint execution revised' } })
+    await waitFor(() => expect(updateThread).toHaveBeenCalledOnce(), { timeout: 2_000 })
+    await screen.findByRole('button', { name: 'Sprint execution revised' })
+    expect(screen.getByLabelText(/^Title/)).toBe(threadTitle)
+    expect(threadTitle).toHaveValue('Sprint execution revised')
+    expect(threadTitle).toHaveFocus()
+  })
+
   it('edits Thread cadence and Thread and Commitment titles through typed drawer fields', async () => {
     const current = focus({ title: 'Project Atlas' })
     const sprint = thread({ title: 'Sprint execution', reviewFrequencyDays: 7 })

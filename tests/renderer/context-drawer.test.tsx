@@ -183,6 +183,65 @@ describe('ContextDrawerOutlet', () => {
     }
   })
 
+  it('keeps a focused autosave field mounted across same-adapter revisions', async () => {
+    vi.useFakeTimers()
+    const autosave = vi.fn().mockResolvedValue(undefined)
+    const makeAdapter = (revision: string, value: string): ContextDrawerAdapter => ({
+      id: 'focus:1',
+      revision,
+      invalidationKeys: ['focus:1'],
+      model: {
+        title: 'Focus',
+        ariaLabel: 'Focus drawer',
+        sections: [{
+          id: 'details',
+          fields: [{ kind: 'text', id: 'title', label: 'Title', value, required: true }]
+        }],
+        autosave: {
+          fieldIds: ['title'],
+          errorMessage: 'Could not autosave.',
+          onInvoke: autosave
+        }
+      }
+    })
+    const sharedProps = {
+      open: true,
+      pinnedAdapter: null,
+      width: 320,
+      minWidth: 280,
+      maxWidth: 384,
+      onWidthChange: vi.fn(),
+      onClose: vi.fn(),
+      onUnpin: vi.fn()
+    }
+
+    try {
+      const { rerender } = render(
+        <ContextDrawerOutlet adapter={makeAdapter('initial', 'Initial')} {...sharedProps} />
+      )
+      const title = screen.getByLabelText(/^Title/)
+      title.focus()
+      fireEvent.change(title, { target: { value: 'Revised' } })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(TEXT_AUTOSAVE_INTERVAL_MS)
+      })
+
+      expect(autosave).toHaveBeenCalledWith({ title: 'Revised' })
+      expect(title).toHaveFocus()
+      rerender(
+        <ContextDrawerOutlet adapter={makeAdapter('saved', 'Revised')} {...sharedProps} />
+      )
+
+      const refreshedTitle = screen.getByLabelText(/^Title/)
+      expect(refreshedTitle).toBe(title)
+      expect(refreshedTitle).toHaveFocus()
+      fireEvent.change(refreshedTitle, { target: { value: 'Revised continuously' } })
+      expect(refreshedTitle).toHaveValue('Revised continuously')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('owns positive whole-number validation for editable drawer fields', async () => {
     vi.useFakeTimers()
     const autosave = vi.fn().mockResolvedValue(undefined)

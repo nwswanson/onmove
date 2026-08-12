@@ -14,6 +14,7 @@ interface ThrottledAutosave<Value> {
   error: unknown | null
   schedule: (value: Value) => void
   updatePending: (value: Value) => void
+  acceptExternal: (value: Value) => void
   flush: (value?: Value) => Promise<void>
   cancelPending: () => void
 }
@@ -116,6 +117,21 @@ export function useThrottledAutosave<Value>({
     [schedule]
   )
 
+  /**
+   * Advances the persisted baseline after an external model refresh. Callers
+   * use this only when they have no newer local draft to preserve.
+   */
+  const acceptExternal = useCallback(
+    (value: Value) => {
+      lastSavedRef.current = value
+      if (pendingRef.current && isEqualRef.current(pendingRef.current.value, value)) {
+        pendingRef.current = null
+        clearTimer()
+      }
+    },
+    [clearTimer]
+  )
+
   const flush = useCallback(
     async (value?: Value): Promise<void> => {
       if (value !== undefined) {
@@ -147,5 +163,13 @@ export function useThrottledAutosave<Value>({
     }
   }, [clearTimer])
 
-  return { saving, error, schedule, updatePending, flush, cancelPending }
+  return {
+    saving,
+    error,
+    schedule,
+    updatePending,
+    acceptExternal,
+    flush,
+    cancelPending
+  }
 }

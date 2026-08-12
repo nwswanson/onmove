@@ -164,7 +164,7 @@ export interface ContextDrawerModel {
  */
 export interface ContextDrawerAdapter {
   id: string
-  /** Changes when the same entity needs a fresh receiver draft or presentation mode. */
+  /** Changes when the same entity has incoming values for the receiver to reconcile in place. */
   revision?: string
   /** Entity/ancestor keys whose deletion makes this representation invalid. */
   invalidationKeys: readonly string[]
@@ -591,11 +591,13 @@ function ContextDrawerTokenListField({
 
 function ContextDrawerInspector({
   adapterId,
+  adapterRevision,
   model,
   width,
   onClose
 }: {
   adapterId: string
+  adapterRevision?: string
   model: ContextDrawerModel
   width: number
   onClose: () => void
@@ -605,6 +607,10 @@ function ContextDrawerInspector({
     () => initialDrawerValues(model)
   )
   const valuesRef = useRef(values)
+  const modelValuesRef = useRef<Record<string, ContextDrawerValue>>(
+    initialDrawerValues(model)
+  )
+  const adapterRevisionRef = useRef(adapterRevision)
   const [pendingActionId, setPendingActionId] = useState<string | null>(null)
   const [confirmingAction, setConfirmingAction] = useState<ContextDrawerActionModel | null>(null)
   const [pendingFieldId, setPendingFieldId] = useState<string | null>(null)
@@ -619,6 +625,50 @@ function ContextDrawerInspector({
     isEqual: drawerValuesEqual,
     onSave: (nextValues) => model.autosave?.onInvoke(nextValues)
   })
+
+  useEffect(() => {
+    if (adapterRevisionRef.current === adapterRevision) return
+    adapterRevisionRef.current = adapterRevision
+
+    const previousModelValues = modelValuesRef.current
+    const incomingModelValues = initialDrawerValues(model)
+    modelValuesRef.current = incomingModelValues
+    const richTextIds = new Set(
+      model.sections.flatMap((section) =>
+        section.fields
+          .filter((field) => field.kind === 'rich-text')
+          .map((field) => field.id)
+      )
+    )
+    const autosaveIds = new Set(model.autosave?.fieldIds ?? [])
+    const changes: Record<string, ContextDrawerValue> = {}
+    let autosaveDraftIsPristine = true
+
+    for (const [fieldId, incomingValue] of Object.entries(incomingModelValues)) {
+      if (richTextIds.has(fieldId)) continue
+      const currentValue = valuesRef.current[fieldId]
+      const hadPreviousValue = Object.prototype.hasOwnProperty.call(
+        previousModelValues,
+        fieldId
+      )
+      const hasNewerLocalDraft = hadPreviousValue &&
+        currentValue !== previousModelValues[fieldId]
+      if (autosaveIds.has(fieldId) && hasNewerLocalDraft) {
+        autosaveDraftIsPristine = false
+      }
+      if (!hasNewerLocalDraft && currentValue !== incomingValue) {
+        changes[fieldId] = incomingValue
+      }
+    }
+
+    if (model.autosave && autosaveDraftIsPristine) {
+      autosave.acceptExternal(autosaveValues(model, incomingModelValues))
+    }
+    if (Object.keys(changes).length === 0) return
+    const nextValues = { ...valuesRef.current, ...changes }
+    valuesRef.current = nextValues
+    setValues(nextValues)
+  }, [adapterRevision, autosave, model])
 
   useEffect(() => {
     const changes: Record<string, ContextDrawerValue> = {}
@@ -1036,12 +1086,9 @@ function ContextDrawerOutlet({
         )}
         <div className="min-h-0 flex-1">
           <ContextDrawerInspector
-            key={
-              renderedAdapter
-                ? `${renderedAdapter.id}:${renderedAdapter.revision ?? 'current'}`
-                : 'context:empty'
-            }
+            key={renderedAdapter?.id ?? 'context:empty'}
             adapterId={renderedAdapter?.id ?? 'context-empty'}
+            adapterRevision={renderedAdapter?.revision}
             model={
               renderedAdapter?.model ?? {
                 title: 'Context',

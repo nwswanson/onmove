@@ -75,6 +75,9 @@
   persistent `ContextDrawerOutlet`. The application shell must not switch on domain entity types. Navigating
   must replace the active adapter without closing the drawer or resetting its width; use the shared
   empty state when a screen has no contextual settings.
+- Treat a drawer adapter `revision` as an in-place data reconciliation signal, never as a React
+  remount key. Preserve focused controls and newer local autosave drafts while applying untouched
+  incoming fields; only a change of adapter identity may replace the inspector form.
 - Use the drawer controller's generic adapter pin to inspect an item without changing the main view
   or contextual-sidebar selection. Reuse the selected item's normal adapter. Pins take precedence
   across navigation and drawer visibility changes until the shared follow-current-selection action
