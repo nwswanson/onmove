@@ -729,6 +729,8 @@ export type RichTextDocumentReference =
 export interface RichTextDocumentSnapshot {
   reference: RichTextDocumentReference
   title: string
+  /** Receiver-neutral hierarchy segments for a compact document breadcrumb. */
+  contextPath: string[]
   value: string
   revision: number
   updatedAt: string

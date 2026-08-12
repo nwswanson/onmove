@@ -1207,6 +1207,15 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(
       documentWindow.getByRole('heading', { name: 'Persistent focus — Default' })
     ).toBeVisible()
+    const documentContext = documentWindow.getByRole('navigation', {
+      name: 'Document context'
+    })
+    await expect(documentContext.getByText('Portfolio', { exact: true })).toBeVisible()
+    await expect(documentContext.getByText('Persistent focus', { exact: true })).toBeVisible()
+    await expect(documentContext.getByText('Default', { exact: true })).toBeVisible()
+    await expect(documentWindow.getByText('OnMove document', { exact: true })).toHaveCount(0)
+    await expect(documentWindow.getByText('Saved locally as you type', { exact: true }))
+      .toHaveCount(0)
     await documentWindow.keyboard.press('Meta+p')
     await expect(documentWindow.getByRole('dialog', { name: 'Choose update target' }))
       .toHaveCount(0)

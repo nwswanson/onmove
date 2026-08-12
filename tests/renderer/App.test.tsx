@@ -25,6 +25,7 @@ import {
   richTextPlainText
 } from '../../src/renderer/src/components/ui/rich-text-editor'
 import { clearReviewPrimaryPanePreference } from '../../src/renderer/src/features/review/review-split-preference'
+import { clearDueHidePausedPreference } from '../../src/renderer/src/features/due/due-filter-preference'
 
 const initialState: AppState = {
   greeting: 'Hello, world.',
@@ -351,6 +352,7 @@ function installApi(
       saveDocument: vi.fn((reference, value) => ({
         reference,
         title: 'Test document',
+        contextPath: ['Test document'],
         value,
         revision: 1,
         updatedAt: '2026-01-01T00:00:01.000Z'
@@ -368,7 +370,7 @@ function installApi(
 describe('App', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    window.localStorage.setItem('onmove.due.hide-paused', 'false')
+    clearDueHidePausedPreference()
   })
 
   it('shows the toolbar and sidebar while SQLite and focuses load', () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  clearDueHidePausedPreference,
   dueFilterPreferenceStorage,
   loadDueHidePaused,
   saveDueHidePaused
@@ -30,5 +31,22 @@ describe('Due filter preference', () => {
     })
     expect(inaccessible).toBe(missing)
     expect(loadDueHidePaused(inaccessible)).toBe(true)
+  })
+
+  it('guards every Storage method and exposes a portable reset for test isolation', () => {
+    const blocked = dueFilterPreferenceStorage({
+      localStorage: {
+        getItem: () => { throw new DOMException('Blocked', 'SecurityError') },
+        setItem: () => { throw new DOMException('Blocked', 'SecurityError') },
+        removeItem: () => { throw new DOMException('Blocked', 'SecurityError') }
+      } as unknown as Storage
+    })
+
+    clearDueHidePausedPreference(blocked)
+    expect(loadDueHidePaused(blocked)).toBe(false)
+    expect(() => saveDueHidePaused(blocked, true)).not.toThrow()
+    expect(loadDueHidePaused(blocked)).toBe(true)
+    clearDueHidePausedPreference(blocked)
+    expect(loadDueHidePaused(blocked)).toBe(false)
   })
 })

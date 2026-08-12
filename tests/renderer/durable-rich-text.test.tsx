@@ -11,12 +11,13 @@ import { useDurableRichText } from '../../src/renderer/src/features/rich-text/us
 import { RichTextDocumentWindow } from '../../src/renderer/src/features/rich-text/rich-text-document-window'
 
 describe('useDurableRichText', () => {
-  it('exposes a draggable title bar and a full-height editor chain in detached windows', () => {
+  it('exposes hierarchy context, a draggable title bar, and a full-height editor chain', async () => {
     const reference = { type: 'note', id: 7, field: 'content' } as const
     const richText = {
       getDocument: vi.fn().mockResolvedValue({
         reference,
         title: 'Project — Default',
+        contextPath: ['Project Atlas', 'Sprint execution', 'Default'],
         value: '',
         revision: 0,
         updatedAt: '2026-08-09T12:00:00.000Z'
@@ -32,6 +33,10 @@ describe('useDurableRichText', () => {
     })
 
     const { container } = render(<RichTextDocumentWindow reference={reference} />)
+    await waitFor(() => expect(container.querySelector('nav[aria-label="Document context"]'))
+      .toHaveTextContent('Project AtlasSprint executionDefault'))
+    expect(container).not.toHaveTextContent('OnMove document')
+    expect(container).not.toHaveTextContent('Saved locally as you type')
     expect(container.querySelector('[data-slot="rich-text-window-titlebar"]'))
       .toHaveClass('drag-region')
     expect(container.querySelector('[data-slot="rich-text-window-editor-region"]'))
@@ -55,6 +60,7 @@ describe('useDurableRichText', () => {
     const saveDocument = vi.fn((savedReference, value: string) => ({
       reference: savedReference,
       title: 'Project — Default',
+      contextPath: ['Project Atlas', 'Default'],
       value,
       revision: ++revision,
       updatedAt: `2026-08-09T12:00:0${revision}.000Z`
@@ -64,6 +70,7 @@ describe('useDurableRichText', () => {
       getDocument: vi.fn().mockResolvedValue({
         reference,
         title: 'Project — Default',
+        contextPath: ['Project Atlas', 'Default'],
         value: 'Initial',
         revision,
         updatedAt: '2026-08-09T12:00:01.000Z'
@@ -92,6 +99,7 @@ describe('useDurableRichText', () => {
       document: {
         reference,
         title: 'Project — Default',
+        contextPath: ['Project Atlas', 'Default'],
         value: 'Changed in another window',
         revision: 3,
         updatedAt: '2026-08-09T12:00:03.000Z'
@@ -109,6 +117,7 @@ describe('useDurableRichText', () => {
     let resolveLoad: ((value: {
       reference: typeof reference
       title: string
+      contextPath: string[]
       value: string
       revision: number
       updatedAt: string
@@ -116,6 +125,7 @@ describe('useDurableRichText', () => {
     const getDocument = vi.fn(() => new Promise<{
       reference: typeof reference
       title: string
+      contextPath: string[]
       value: string
       revision: number
       updatedAt: string
@@ -127,6 +137,7 @@ describe('useDurableRichText', () => {
       saveDocument: vi.fn((_reference, value: string) => ({
         reference,
         title: 'Focus — Goal',
+        contextPath: ['Portfolio', 'Focus', 'Goal'],
         value,
         revision: 2,
         updatedAt: '2026-08-09T12:00:02.000Z'
@@ -148,6 +159,7 @@ describe('useDurableRichText', () => {
       resolveLoad?.({
         reference,
         title: 'Focus — Goal',
+        contextPath: ['Portfolio', 'Focus', 'Goal'],
         value: 'Stale disk read',
         revision: 1,
         updatedAt: '2026-08-09T12:00:01.000Z'

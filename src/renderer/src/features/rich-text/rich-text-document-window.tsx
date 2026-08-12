@@ -1,6 +1,8 @@
 import { useEffect } from 'react'
+import { ChevronRight } from 'lucide-react'
 import type { RichTextDocumentReference } from '../../../../shared/contracts'
 import { RichTextEditor } from '@/components/ui/rich-text-editor'
+import { TaggedText } from '@/components/ui/tagged-text'
 import { useDurableRichText } from '@/features/rich-text/use-durable-rich-text'
 
 export function RichTextDocumentWindow({
@@ -22,11 +24,29 @@ export function RichTextDocumentWindow({
         className="drag-region absolute inset-x-0 top-0 h-10"
       />
       <header className="border-b border-border/70 px-6 py-4">
-        <p className="text-[0.6875rem] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
-          OnMove document
-        </p>
-        <h1 className="mt-1 text-lg font-semibold">{editor.title || 'Rich text editor'}</h1>
-        <p className="mt-1 text-xs text-muted-foreground">Saved locally as you type</p>
+        {editor.contextPath.length > 0 ? (
+          <nav aria-label="Document context">
+            <ol className="flex min-w-0 flex-wrap items-center gap-1 text-[0.6875rem] text-muted-foreground">
+              {editor.contextPath.map((segment, index) => (
+                <li key={`${segment}:${index}`} className="flex min-w-0 items-center gap-1">
+                  {index > 0 ? (
+                    <ChevronRight className="size-3 shrink-0 opacity-60" aria-hidden="true" />
+                  ) : null}
+                  <span className={index === editor.contextPath.length - 1
+                    ? 'max-w-72 truncate font-semibold text-foreground'
+                    : 'max-w-56 truncate'}>
+                    <TaggedText value={segment} />
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </nav>
+        ) : null}
+        <h1 className={editor.contextPath.length > 0
+          ? 'mt-2 text-lg font-semibold'
+          : 'text-lg font-semibold'}>
+          {editor.title || 'Rich text editor'}
+        </h1>
       </header>
       <div
         data-slot="rich-text-window-editor-region"

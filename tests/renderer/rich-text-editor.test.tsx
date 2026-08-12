@@ -166,6 +166,37 @@ describe('RichTextEditor', () => {
     })
   })
 
+  it('toggles durable quote blocks in editable and read-only content', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    const rendered = render(
+      <RichTextEditor value="A decision worth preserving" ariaLabel="Notes" onChange={onChange} />
+    )
+    const editor = screen.getByRole('textbox', { name: 'Notes' })
+    const quoteButton = screen.getByRole('button', { name: 'Quote block' })
+
+    await user.click(editor)
+    await user.keyboard('{Control>}a{/Control}')
+    await user.click(quoteButton)
+    expect(quoteButton).toHaveAttribute('aria-pressed', 'true')
+    expect(editor.querySelector('blockquote')).toHaveTextContent('A decision worth preserving')
+
+    let serialized = ''
+    await waitFor(() => {
+      serialized = onChange.mock.calls.at(-1)?.[0] as string
+      expect(serialized).toContain('"type":"quote"')
+    })
+
+    await user.click(quoteButton)
+    expect(editor.querySelector('blockquote')).toBeNull()
+    expect(quoteButton).toHaveAttribute('aria-pressed', 'false')
+
+    rendered.unmount()
+    render(<RichTextContent value={serialized} ariaLabel="Rendered quote" />)
+    expect(screen.getByLabelText('Rendered quote').querySelector('blockquote'))
+      .toHaveTextContent('A decision worth preserving')
+  })
+
   it('applies one color to every text node in a mixed selection while preserving formats', async () => {
     const onChange = vi.fn()
     const user = userEvent.setup()

@@ -291,6 +291,7 @@ describe('registerAppIpc', () => {
           get: vi.fn((reference) => ({
             reference,
             title: 'Launch — Goal',
+            contextPath: ['Portfolio', 'Launch', 'Goal'],
             value: 'Ship',
             revision: 1,
             updatedAt: '2026-08-09T12:00:00.000Z'
@@ -298,6 +299,7 @@ describe('registerAppIpc', () => {
           save: vi.fn((reference, value) => ({
             reference,
             title: 'Launch — Goal',
+            contextPath: ['Portfolio', 'Launch', 'Goal'],
             value,
             revision: 2,
             updatedAt: '2026-08-09T12:01:00.000Z'

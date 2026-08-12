@@ -114,7 +114,11 @@ describe('Note and durable rich-text models', () => {
       'Quality improved'
     )
 
-    expect(goal).toMatchObject({ title: 'Unified documents — Goal', revision: 1 })
+    expect(goal).toMatchObject({
+      title: 'Unified documents — Goal',
+      contextPath: ['Portfolio', 'Unified documents', 'Goal'],
+      revision: 1
+    })
     expect(description).toMatchObject({ value: 'Working notes', revision: 1 })
     expect(observation).toMatchObject({ value: 'Quality improved', revision: 1 })
     expect(database!.domain.focuses.requireModel(focus.id).toSnapshot()).toMatchObject({
@@ -124,6 +128,44 @@ describe('Note and durable rich-text models', () => {
     expect(database!.domain.updates.requireModel(update.id).toSnapshot()).toMatchObject({
       observation: 'Quality improved'
     })
+  })
+
+  it('materializes complete hierarchy breadcrumbs for popped Notes', () => {
+    const focus = database!.domain.focuses.create({ title: 'Project Atlas' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Sprint execution',
+      reviewFrequencyDays: 7
+    })
+    const threadedCommitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Improve ticket quality'
+    })
+    const overallCommitment = database!.domain.commitments.create({
+      parent: { type: 'focus', id: focus.id },
+      type: 'ongoing',
+      title: 'Keep sponsors aligned'
+    })
+
+    const notePath = (noteId: number): string[] => database!.domain.richTextDocuments.get({
+      type: 'note',
+      id: noteId,
+      field: 'content'
+    }).contextPath
+
+    expect(notePath(focus.toSnapshot().notes[0].id)).toEqual([
+      'Portfolio', 'Project Atlas', 'Default'
+    ])
+    expect(notePath(thread.snapshot().notes[0].id)).toEqual([
+      'Project Atlas', 'Sprint execution', 'Default'
+    ])
+    expect(notePath(threadedCommitment.snapshot().notes[0].id)).toEqual([
+      'Project Atlas', 'Sprint execution', 'Improve ticket quality', 'Default'
+    ])
+    expect(notePath(overallCommitment.snapshot().notes[0].id)).toEqual([
+      'Project Atlas', 'Overall', 'Keep sponsors aligned', 'Default'
+    ])
   })
 
   it('cascades Notes and their revision history with deleted parents', () => {

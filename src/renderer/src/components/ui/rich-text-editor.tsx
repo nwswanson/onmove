@@ -28,8 +28,10 @@ import { LexicalErrorBoundary } from '@lexical/react/LexicalErrorBoundary'
 import { useLexicalTextEntity } from '@lexical/react/useLexicalTextEntity'
 import {
   $getSelectionStyleValueForProperty,
-  $patchStyleText
+  $patchStyleText,
+  $setBlocksType
 } from '@lexical/selection'
+import { $createQuoteNode, $isQuoteNode, QuoteNode } from '@lexical/rich-text'
 import {
   $createParagraphNode,
   $createTextNode,
@@ -68,6 +70,7 @@ import {
   List,
   ListChecks,
   ListOrdered,
+  TextQuote,
   Redo2,
   Strikethrough,
   SquareArrowOutUpRight,
@@ -125,6 +128,7 @@ const theme: InitialConfigType['theme'] = {
   },
   link: 'cursor-pointer text-primary underline decoration-primary/70 underline-offset-2',
   paragraph: 'mb-1 last:mb-0',
+  quote: 'my-2 border-l-2 border-primary/55 pl-3 text-muted-foreground',
   text: {
     bold: 'font-semibold',
     highlight: 'onmove-rich-text-highlight',
@@ -362,6 +366,7 @@ function RichTextToolbar({ compact, onOpenInWindow }: RichTextToolbarProps): Rea
   const [underline, setUnderline] = useState(false)
   const [strikethrough, setStrikethrough] = useState(false)
   const [highlight, setHighlight] = useState(false)
+  const [quote, setQuote] = useState(false)
   const [listType, setListType] = useState<'bullet' | 'number' | 'check' | null>(null)
   const [color, setColor] = useState('default')
   const [canUndo, setCanUndo] = useState(false)
@@ -392,6 +397,7 @@ function RichTextToolbar({ compact, onOpenInWindow }: RichTextToolbarProps): Rea
     const anchorNode = selection.anchor.getNode()
     if ($isRootNode(anchorNode)) {
       setListType(null)
+      setQuote(false)
       setActiveLinkUrl(null)
       return
     }
@@ -402,6 +408,7 @@ function RichTextToolbar({ compact, onOpenInWindow }: RichTextToolbarProps): Rea
         ? nextListType
         : null
     )
+    setQuote($isQuoteNode(topLevel))
     const linkNode = $isLinkNode(anchorNode)
       ? anchorNode
       : $findMatchingParent(anchorNode, $isLinkNode)
@@ -509,6 +516,24 @@ function RichTextToolbar({ compact, onOpenInWindow }: RichTextToolbarProps): Rea
     editor.focus()
   }
 
+  function toggleQuote(): void {
+    editor.update(() => {
+      const selection = restoreRangeSelection()
+      if (!selection) return
+      const anchorNode = selection.anchor.getNode()
+      const topLevel = $isRootNode(anchorNode)
+        ? null
+        : anchorNode.getTopLevelElementOrThrow()
+      $setBlocksType(
+        selection,
+        () => topLevel && $isQuoteNode(topLevel)
+          ? $createParagraphNode()
+          : $createQuoteNode()
+      )
+    })
+    editor.focus()
+  }
+
   function toolbarButton(
     label: string,
     pressed: boolean | undefined,
@@ -589,6 +614,13 @@ function RichTextToolbar({ compact, onOpenInWindow }: RichTextToolbarProps): Rea
           false,
           () => editor.dispatchCommand(INSERT_CHECK_LIST_COMMAND, undefined),
           <ListChecks aria-hidden="true" />
+        )}
+        {toolbarButton(
+          'Quote block',
+          quote,
+          false,
+          toggleQuote,
+          <TextQuote aria-hidden="true" />
         )}
         <span className="mx-0.5 h-5 w-px bg-border" aria-hidden="true" />
         {toolbarButton(
@@ -784,7 +816,7 @@ function RichTextEditor({
   const config = useMemo<InitialConfigType>(
     () => ({
       namespace: 'OnMoveRichText',
-      nodes: [ListNode, ListItemNode, LinkNode, TagNode],
+      nodes: [ListNode, ListItemNode, LinkNode, QuoteNode, TagNode],
       theme,
       editorState: initialEditorState(value),
       onError(error) {
@@ -879,7 +911,7 @@ export function RichTextContent({
   const config = useMemo<InitialConfigType>(
     () => ({
       namespace: 'OnMoveRichTextReadOnly',
-      nodes: [ListNode, ListItemNode, LinkNode, TagNode],
+      nodes: [ListNode, ListItemNode, LinkNode, QuoteNode, TagNode],
       theme,
       editable: false,
       editorState: initialEditorState(value),

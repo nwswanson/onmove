@@ -13,6 +13,7 @@ export function richTextReferencesEqual(
 
 export interface DurableRichTextModel {
   title: string
+  contextPath: readonly string[]
   value: string
   revision: number
   saving: boolean
@@ -33,6 +34,7 @@ export function useDurableRichText(
   const [document, setDocument] = useState<RichTextDocumentSnapshot>({
     reference,
     title: '',
+    contextPath: [],
     value: initialValue,
     revision: 0,
     updatedAt: ''
@@ -89,6 +91,7 @@ export function useDurableRichText(
     : {
         reference: stableReference,
         title: '',
+        contextPath: [],
         value: initialValue,
         revision: 0,
         updatedAt: ''
@@ -96,6 +99,7 @@ export function useDurableRichText(
 
   return {
     title: activeDocument.title,
+    contextPath: activeDocument.contextPath,
     value: activeDocument.value,
     revision: activeDocument.revision,
     saving: false,

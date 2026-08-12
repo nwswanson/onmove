@@ -126,6 +126,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
 
 - Keep the renderer sandboxed. Access application data only through the typed `window.onmove` preload
   API.
+- Never access `window.localStorage` directly in renderer code or tests. Persist presentation-only
+  browser preferences through a feature-owned storage adapter that tolerates an absent or throwing
+  `localStorage` getter and throwing `getItem`, `setItem`, and `removeItem` methods. Tests must use
+  the adapter's reset helper for isolation instead of assuming jsdom exposes browser storage.
 - Keep `src/renderer/src/components/ui` domain-free: it must not import feature modules, shared
   domain contracts, main/preload modules, or access `window.onmove`.
 - Compose the window with `ApplicationShell` and each active screen with `WorkspaceShell`. Supply
