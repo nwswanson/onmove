@@ -72,7 +72,11 @@ const commitment: CommitmentSnapshot = {
   state: 'green',
   dueDate: null,
   cadenceDays: null,
+  reviewFrequencyDays: 7,
   lastReviewDate: '2026-01-07',
+  nextReviewDate: '2026-01-14',
+  needsReview: true,
+  reviewDue: false,
   lastUpdateDate: '2026-01-07',
   nextUpdateDate: null,
   needsUpdate: false,
@@ -164,6 +168,8 @@ describe('Focus presentation adapters', () => {
         subject: platformTeam,
         state: 'green',
         lastReviewDate: '2026-08-08',
+        nextReviewDate: '2026-08-15',
+        reviewDue: false,
         lastUpdateDate: '2026-08-08',
         nextUpdateDate: '2026-08-15',
         needsUpdate: true
@@ -636,6 +642,29 @@ describe('Focus presentation adapters', () => {
           value: '2026-01-07'
         },
         {
+          kind: 'number',
+          id: 'review-frequency',
+          label: 'Review every (days)',
+          value: '7',
+          required: true,
+          min: 1,
+          step: 1,
+          integer: true
+        },
+        {
+          kind: 'static',
+          id: 'last-reviewed',
+          label: 'Last reviewed',
+          value: '2026-01-07'
+        },
+        {
+          kind: 'checkbox',
+          id: 'needs-review',
+          label: 'Needs review',
+          value: true,
+          description: 'Include this Commitment in review workflows.'
+        },
+        {
           kind: 'checkbox',
           id: 'sensitive',
           label: 'Sensitive',
@@ -646,15 +675,33 @@ describe('Focus presentation adapters', () => {
     })
     await adapter.model.autosave?.onInvoke({
       title: 'Improve all ticket quality',
-      'due-date': '2026-02-15'
+      'due-date': '2026-02-15',
+      'review-frequency': '14'
+    })
+    const save = adapter.model.actions?.find((action) => action.id === 'save')
+    await save?.onInvoke({
+      title: 'Improve all ticket quality',
+      'due-date': '2026-02-15',
+      'review-frequency': '14',
+      'needs-review': false,
+      sensitive: false
     })
     const remove = adapter.model.actions?.find((action) => action.id === 'delete')
     await remove?.onInvoke({})
 
-    expect(onSave).toHaveBeenCalledWith({
+    expect(onSave).toHaveBeenNthCalledWith(1, {
       title: 'Improve all ticket quality',
       dueDate: '2026-02-15',
-      type: 'action'
+      type: 'action',
+      reviewFrequencyDays: 14
+    })
+    expect(onSave).toHaveBeenNthCalledWith(2, {
+      title: 'Improve all ticket quality',
+      dueDate: '2026-02-15',
+      type: 'action',
+      reviewFrequencyDays: 14,
+      needsReview: false,
+      sensitive: false
     })
     expect(remove?.confirmation?.confirmLabel).toBe('Delete commitment')
     expect(onDelete).toHaveBeenCalledOnce()

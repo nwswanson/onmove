@@ -90,7 +90,11 @@ The named `pokeReview` repository/model operations supply the local current date
 exact cell is currently effective, and do not let callers write derived snapshot fields. Temporal
 projections ignore pokes after their requested projection date. A Commitment exposes
 `lastReviewDate` separately from `lastUpdateDate`: poking it never changes state, cadence, or the
-meaning of its latest observation.
+meaning of its latest observation. Every Commitment owns a positive `reviewFrequencyDays` interval
+and a separate `needsReview` inclusion flag. These override its parent Thread for review scheduling:
+an excluded or long-interval Thread does not suppress a child Commitment whose own schedule is due.
+For bounded Commitments, `nextReviewDate` and `reviewDue` are calculated independently for every
+effective Scope/Subject cell and aggregated using the earliest deadline and any-due semantics.
 
 `FocusModel` supplies update, status, history, refresh, and deletion helpers. The renderer reaches
 these operations only through named IPC methods. Threads and Commitments use named list and create
@@ -209,7 +213,8 @@ Scope is applicability, not tagging or current attention. Current exception sets
 derived from cell state without pretending that healthy Subjects have left the Scope.
 
 Bounded Threads and Commitments both expose per-Subject matrix projections. Commitment cells own
-state and update cadence. Thread cells own state and review cadence. A bounded Thread is due when any
+state, update cadence, and Commitment-specific review cadence. Thread cells own state and Thread
+review cadence. A bounded Thread is due when any
 effective Subject cell is due; its next date is the earliest cell deadline, and its aggregate last
 review date starts with complete current-Scope coverage rather than merely the newest observation.
 A later aggregate Thread poke can advance that displayed date, but does not fabricate a review for

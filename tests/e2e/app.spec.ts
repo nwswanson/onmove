@@ -1071,13 +1071,18 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     type: string
     status: string
     dueDate: string | null
+    reviewFrequencyDays: number
+    needsReview: number
   } | undefined {
     const database = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
       readOnly: true
     })
     const row = database
       .prepare(
-        'SELECT title, focus_id AS focusId, commitment_type AS type, status, due_on AS dueDate FROM commitments WHERE focus_id IS NOT NULL ORDER BY id LIMIT 1'
+        `SELECT title, focus_id AS focusId, commitment_type AS type, status,
+                due_on AS dueDate, review_frequency_days AS reviewFrequencyDays,
+                needs_review AS needsReview
+         FROM commitments WHERE focus_id IS NOT NULL ORDER BY id LIMIT 1`
       )
       .get() as {
         title: string
@@ -1085,6 +1090,8 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
         type: string
         status: string
         dueDate: string | null
+        reviewFrequencyDays: number
+        needsReview: number
       } | undefined
     database.close()
     return row
@@ -1532,9 +1539,11 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(newCommitmentDialog.getByLabel('Type')).toHaveCount(0)
     const commitmentDueDate = '2026-09-15'
     await newCommitmentDialog.getByLabel(/Due date/).fill(commitmentDueDate)
+    await newCommitmentDialog.getByLabel('Review every (days)').fill('14')
     await window.getByRole('button', { name: 'Create commitment' }).click()
     await expect.poll(() => storedCommitment()?.type).toBe('action')
     await expect.poll(() => storedCommitment()?.dueDate).toBe(commitmentDueDate)
+    await expect.poll(() => storedCommitment()?.reviewFrequencyDays).toBe(14)
     const activeCommitmentSunflower = focusSidebarButton.getByRole('img', {
       name: 'Overall Green; active commitments: Keep sponsors aligned None'
     })
@@ -1568,7 +1577,11 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     })
     await expect(commitmentDrawer).toBeVisible()
     await expect(commitmentDrawer.getByText('Last updated')).toBeVisible()
-    await expect(commitmentDrawer.getByText('Never')).toBeVisible()
+    await expect(commitmentDrawer.getByText('Never')).toHaveCount(2)
+    await expect(commitmentDrawer.getByLabel('Needs review')).toBeChecked()
+    await commitmentDrawer.getByLabel('Needs review').click()
+    await commitmentDrawer.getByRole('button', { name: 'Save changes' }).click()
+    await expect.poll(() => storedCommitment()?.needsReview).toBe(0)
     await expect(commitmentDrawer.getByLabel('Due date')).toHaveValue(commitmentDueDate)
     const commitmentStatus = window.getByRole('combobox', { name: 'Commitment status' })
     await expect(commitmentStatus).toHaveValue('active')
@@ -1603,7 +1616,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(
       commitmentNavigation.getByText(`Paused · Last updated · ${newUpdateDate}`)
     ).toBeVisible()
-    await expect(commitmentDrawer.getByText(newUpdateDate)).toBeVisible()
+    await expect(commitmentDrawer.getByText(newUpdateDate)).toHaveCount(2)
     const updateObservation = window.getByLabel('Update observation')
     await expect(updateObservation).toBeVisible()
     await expect(updateObservation).toHaveText('')
@@ -1954,7 +1967,9 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     expect(storedScopedThreadUpdate()?.observation).toContain('Customer scope review')
     expect(storedCommitment()).toMatchObject({
       title: 'Keep sponsors aligned',
-      status: 'done'
+      status: 'done',
+      reviewFrequencyDays: 14,
+      needsReview: 0
     })
     expect(storedFocusUpdate()).toMatchObject({
       date: focusUpdateDate,

@@ -178,7 +178,7 @@ export class ReviewRepository {
     asOf: string
   ): void {
     for (const commitment of commitments) {
-      if (commitment.status !== 'active') continue
+      if (commitment.status !== 'active' || !commitment.needsReview) continue
       const cells = this.commitments.scopeMatrix(commitment.id, asOf)
       if (cells.length === 0) {
         appendIfEligible(
@@ -216,8 +216,8 @@ export class ReviewRepository {
       commitment,
       cell: scopeCell,
       lastReviewDate: cell ? cell.lastReviewDate : commitment.lastReviewDate,
-      nextReviewDate: cell ? cell.nextUpdateDate : commitment.nextUpdateDate,
-      due: cell ? cell.needsUpdate : commitment.needsUpdate,
+      nextReviewDate: cell ? cell.nextReviewDate : commitment.nextReviewDate,
+      due: cell ? cell.reviewDue : commitment.reviewDue,
       state: cell ? cell.state : commitment.state,
       updates: updatesForCell(updates, scopeCell),
       commitments: []

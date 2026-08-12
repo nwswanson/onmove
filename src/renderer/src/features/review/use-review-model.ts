@@ -41,6 +41,16 @@ function addDays(date: string, days: number): string {
   return result.toISOString().slice(0, 10)
 }
 
+function nextReviewDateAfterPoke(item: ReviewQueueItemSnapshot, asOf: string): string | null {
+  if (item.kind === 'thread' && item.thread) {
+    return addDays(asOf, item.thread.reviewFrequencyDays)
+  }
+  if (item.kind === 'commitment' && item.commitment) {
+    return addDays(asOf, item.commitment.reviewFrequencyDays)
+  }
+  return item.nextReviewDate
+}
+
 function updateMatchesReviewItem(
   update: UpdateSnapshot,
   item: ReviewQueueItemSnapshot
@@ -194,10 +204,8 @@ export function useReviewModel({ onReviewChanged }: ReviewModelOptions = {}): Re
               ? {
                   ...candidate,
                   lastReviewDate: current.asOf,
-                  due: candidate.kind === 'commitment' ? candidate.due : false,
-                  nextReviewDate: candidate.kind === 'thread' && candidate.thread
-                    ? addDays(current.asOf, candidate.thread.reviewFrequencyDays)
-                    : candidate.nextReviewDate
+                  due: false,
+                  nextReviewDate: nextReviewDateAfterPoke(candidate, current.asOf)
                 }
               : candidate)
           }
@@ -225,9 +233,8 @@ export function useReviewModel({ onReviewChanged }: ReviewModelOptions = {}): Re
               ? {
                   ...candidate,
                   lastReviewDate: current.asOf,
-                  nextReviewDate: candidate.kind === 'thread' && candidate.thread
-                    ? addDays(current.asOf, candidate.thread.reviewFrequencyDays)
-                    : candidate.nextReviewDate
+                  due: false,
+                  nextReviewDate: nextReviewDateAfterPoke(candidate, current.asOf)
                 }
               : candidate)
           }

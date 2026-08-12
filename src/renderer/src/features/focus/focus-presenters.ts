@@ -731,6 +731,29 @@ export function commitmentDrawerAdapter({
               value: dateOrNeverLabel(commitment.lastUpdateDate)
             },
             {
+              kind: 'number',
+              id: 'review-frequency',
+              label: 'Review every (days)',
+              value: String(commitment.reviewFrequencyDays),
+              required: true,
+              min: 1,
+              step: 1,
+              integer: true
+            },
+            {
+              kind: 'static',
+              id: 'last-reviewed',
+              label: 'Last reviewed',
+              value: dateOrNeverLabel(commitment.lastReviewDate)
+            },
+            {
+              kind: 'checkbox',
+              id: 'needs-review',
+              label: 'Needs review',
+              value: commitment.needsReview,
+              description: 'Include this Commitment in review workflows.'
+            },
+            {
               kind: 'checkbox',
               id: 'sensitive',
               label: 'Sensitive',
@@ -741,14 +764,15 @@ export function commitmentDrawerAdapter({
         }
       ],
       autosave: {
-        fieldIds: ['title', 'due-date'],
+        fieldIds: ['title', 'due-date', 'review-frequency'],
         errorMessage: 'The commitment details could not be saved. Please try again.',
         onInvoke: (values) => {
           const dueDate = textValue(values, 'due-date') || null
           return onSave({
             title: textValue(values, 'title'),
             dueDate,
-            type: legacyCommitmentTypeForDueDate(dueDate)
+            type: legacyCommitmentTypeForDueDate(dueDate),
+            reviewFrequencyDays: positiveDaysValue(values, 'review-frequency')
           })
         }
       },
@@ -781,6 +805,8 @@ export function commitmentDrawerAdapter({
               title: textValue(values, 'title'),
               dueDate,
               type: legacyCommitmentTypeForDueDate(dueDate),
+              reviewFrequencyDays: positiveDaysValue(values, 'review-frequency'),
+              needsReview: booleanValue(values, 'needs-review'),
               sensitive: booleanValue(values, 'sensitive')
             })
           }

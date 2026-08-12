@@ -416,7 +416,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
   Thread poke may advance the aggregate `lastReviewDate`, but must not fabricate cell evidence or
   satisfy cell deadlines. An exact Thread-cell poke is separate durable review evidence for only
   that cell. Commitment `lastReviewDate` uses its later applicable aggregate/cell poke or Update,
-  while state, `lastUpdateDate`, and cadence remain Update-only projections. Keep persisted
+  while state, `lastUpdateDate`, and update cadence remain Update-only projections. Persist a
+  positive `reviewFrequencyDays` and independent `needsReview` flag on every Commitment. A
+  Commitment's review schedule overrides its parent Thread's schedule and inclusion; bounded
+  Commitments derive independent review deadlines per effective Subject cell. Keep persisted
   `needsReview` separate from lifecycle status and from all derived review projections.
 - A Commitment must have exactly one Focus or Thread parent. An Update must have exactly one Focus,
   Thread, or Commitment parent. Preserve these SQLite constraints and cascades.

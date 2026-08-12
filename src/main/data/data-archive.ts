@@ -246,7 +246,9 @@ function normalizeRow(
   if (columnSet.has('title')) setFallback(row, 'title', table === 'notes' ? 'Default' : fallbackLabel)
   if (columnSet.has('name')) setFallback(row, 'name', fallbackLabel)
   if (table === 'scopes') setFallback(row, 'dimension', 'default')
-  if (table === 'threads') setFallback(row, 'review_frequency_days', 7)
+  if (table === 'threads' || table === 'commitments') {
+    setFallback(row, 'review_frequency_days', 7)
+  }
   if (table === 'commitments') setFallback(row, 'commitment_type', 'ongoing')
   if (table === 'todo_sort_placements') setFallback(row, 'sort_key', 0)
 

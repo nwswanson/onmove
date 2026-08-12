@@ -904,6 +904,48 @@ describe('Thread, Commitment, and Update models', () => {
     expect(thread.snapshot('2026-01-10').lastReviewDate).toBe('2026-01-02')
   })
 
+  it('projects a Commitment review schedule independently from update cadence', () => {
+    const focus = database!.domain.focuses.create({ title: 'Project execution' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Long-range planning',
+      reviewFrequencyDays: 30,
+      needsReview: false
+    }, new Date('2026-01-01T12:00:00.000Z'))
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Watch near-term risk',
+      cadenceDays: 14,
+      reviewFrequencyDays: 3
+    }, new Date('2026-01-01T12:00:00.000Z'))
+
+    commitment.pokeReview(new Date('2026-01-01T12:00:00.000Z'))
+    expect(commitment.snapshot('2026-01-03')).toMatchObject({
+      cadenceDays: 14,
+      reviewFrequencyDays: 3,
+      lastReviewDate: '2026-01-01',
+      nextReviewDate: '2026-01-04',
+      needsReview: true,
+      reviewDue: false,
+      nextUpdateDate: '2026-01-15',
+      needsUpdate: false
+    })
+    expect(commitment.snapshot('2026-01-04').reviewDue).toBe(true)
+
+    commitment.update({ reviewFrequencyDays: 10 })
+    expect(commitment.snapshot('2026-01-04')).toMatchObject({
+      reviewFrequencyDays: 10,
+      nextReviewDate: '2026-01-11',
+      reviewDue: false
+    })
+    commitment.update({ needsReview: false })
+    expect(commitment.snapshot('2026-01-12')).toMatchObject({
+      needsReview: false,
+      reviewDue: false
+    })
+  })
+
   it('pokes Thread and Commitment reviews without fabricating Update evidence', () => {
     const focus = database!.domain.focuses.create({ title: 'Project execution' })
     const thread = database!.domain.threads.create(
@@ -1077,6 +1119,22 @@ describe('Thread, Commitment, and Update models', () => {
         type: 'ongoing',
         title: 'Bad cadence',
         cadenceDays: -1
+      })
+    ).toThrow(ModelValidationError)
+    expect(() =>
+      database!.domain.commitments.create({
+        parent: { type: 'focus', id: focus.id },
+        type: 'ongoing',
+        title: 'Bad review frequency',
+        reviewFrequencyDays: 0
+      })
+    ).toThrow(ModelValidationError)
+    expect(() =>
+      database!.domain.commitments.create({
+        parent: { type: 'focus', id: focus.id },
+        type: 'ongoing',
+        title: 'Bad review flag',
+        needsReview: 'yes' as never
       })
     ).toThrow(ModelValidationError)
     expect(() =>

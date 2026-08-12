@@ -297,8 +297,12 @@ todo and does not block its parent from closing.
 | `status` | `active`, `paused`, `done`, or `cancelled`, with transition history. |
 | `dueDate` | Optional due date and the sole user-facing distinction between continuing and finite Commitments. |
 | `cadenceDays` | Optional positive whole-number interval between required Updates. |
+| `reviewFrequencyDays` | Required positive whole-number interval between reviews. This schedule is owned by the Commitment and does not inherit its parent Thread's interval. |
+| `needsReview` | Whether review workflows should include the Commitment. Independent of its parent and lifecycle status. |
 | `state` | Derived observed state. |
 | `lastReviewDate` | Later of the latest applicable direct Update and aggregate/exact-cell review poke. |
+| `nextReviewDate` | Derived Commitment review boundary. |
+| `reviewDue` | Derived from active status, `needsReview`, the review interval, and projection date. |
 | `lastUpdateDate` | Derived latest relevant recorded date. |
 | `nextUpdateDate` | Derived cadence boundary. |
 | `needsUpdate` | Derived active/cadence condition. |
@@ -320,6 +324,8 @@ For an Open Commitment, state and cadence use the newest unscoped Update. For a 
   subject,
   state,
   lastReviewDate,
+  nextReviewDate,
+  reviewDue,
   lastUpdateDate,
   nextUpdateDate,
   needsUpdate
@@ -330,6 +336,8 @@ The aggregate Commitment snapshot is derived from those cells:
 
 - `state` is the severity aggregation of cell states;
 - `lastReviewDate` includes exact-cell review pokes as well as Updates;
+- `nextReviewDate` is the earliest cell review deadline;
+- `reviewDue` is true when any current cell is due;
 - `lastUpdateDate` is the newest cell date;
 - `nextUpdateDate` is the earliest cell deadline; and
 - `needsUpdate` is true when any cell needs an Update.
@@ -447,14 +455,18 @@ entity cascades its transition history.
   Subject. Its aggregate due flag uses any due cell, its next date uses the earliest deadline, and
   its Update-derived last-review date is the all-current-Subjects coverage watermark. A later
   aggregate poke advances only the aggregate last-review date, not any Subject obligation.
-- `needsReview = false` excludes a Focus or Thread from due-review workflows without pausing it.
+- `needsReview = false` excludes a Focus, Thread, or Commitment from review workflows without
+  pausing it. Each entity's inclusion flag is independent: excluding a parent does not exclude an
+  otherwise eligible child Commitment.
 - A Thread review cell is due only when the Thread is active, included in review, and that cell's
   next review date is on or before the projection date.
 - Commitment cadence is per Scope/Subject cell when bounded and one stream when Open.
-- Commitment review uses the later Update date or explicit poke, independently of cadence.
+- Commitment review uses the later Update date or explicit poke and its own
+  `reviewFrequencyDays`, independently of both Update cadence and its parent Thread's review
+  schedule. Bounded Commitments schedule each effective Subject cell independently.
 - A Commitment needs an Update only when active and at least one applicable cadence deadline is due.
 - Review queues include never-reviewed active Threads and Commitments for an initial pass, then use
-  their frequency/cadence due state. Applicable Update or poke evidence dated today suppresses that
+  their respective review-frequency due state. Applicable Update or poke evidence dated today suppresses that
   exact target for the day. Enabled active Focuses follow the same-day suppression rule and return
   daily because they have no separate frequency.
 - Review exposes the target's direct Todos in the aggregate or exact Scope/Subject context. A

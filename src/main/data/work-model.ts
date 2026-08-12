@@ -71,6 +71,8 @@ interface CommitmentRow {
   status: string
   due_on: string | null
   cadence_days: number | null
+  review_frequency_days: number
+  needs_review: number
   sensitive: number
   review_poked_on: string | null
   created_at: string
@@ -1176,8 +1178,8 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
       const result = this.database.run(
         `INSERT INTO commitments (
            focus_id, thread_id, commitment_type, title, status, due_on,
-           cadence_days, sensitive, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           cadence_days, review_frequency_days, needs_review, sensitive, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           focusId,
           threadId,
@@ -1186,6 +1188,8 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
           normalizeStatus(input.status),
           normalizeOptionalDate(input.dueDate, 'dueDate'),
           normalizeOptionalDays(input.cadenceDays, 'cadenceDays'),
+          normalizePositiveDays(input.reviewFrequencyDays ?? 7, 'reviewFrequencyDays'),
+          normalizeNeedsReview(input.needsReview, 'needsReview') ? 1 : 0,
           normalizeSensitive(input.sensitive, 'sensitive') ? 1 : 0,
           createdAt,
           createdAt
@@ -1228,7 +1232,8 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
       : (dueDate === null ? 'ongoing' : 'action')
     this.database.run(
       `UPDATE commitments
-       SET commitment_type = ?, title = ?, status = ?, due_on = ?, cadence_days = ?, sensitive = ?, updated_at = ?
+       SET commitment_type = ?, title = ?, status = ?, due_on = ?, cadence_days = ?,
+           review_frequency_days = ?, needs_review = ?, sensitive = ?, updated_at = ?
       WHERE id = ?`,
       [
         legacyType,
@@ -1238,6 +1243,12 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
         input.cadenceDays === undefined
           ? current.cadenceDays
           : normalizeOptionalDays(input.cadenceDays, 'cadenceDays'),
+        input.reviewFrequencyDays === undefined
+          ? current.reviewFrequencyDays
+          : normalizePositiveDays(input.reviewFrequencyDays, 'reviewFrequencyDays'),
+        input.needsReview === undefined
+          ? (current.needsReview ? 1 : 0)
+          : (normalizeNeedsReview(input.needsReview, 'needsReview') ? 1 : 0),
         input.sensitive === undefined
           ? (current.sensitive ? 1 : 0)
           : (normalizeSensitive(input.sensitive, 'sensitive') ? 1 : 0),
@@ -1435,7 +1446,8 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
     const date = normalizeDate(asOf, 'asOf')
     const row = this.database.get<CommitmentRow>(
       `SELECT id, focus_id, thread_id, commitment_type, title, status,
-              due_on, cadence_days, sensitive, review_poked_on, created_at, updated_at
+              due_on, cadence_days, review_frequency_days, needs_review,
+              sensitive, review_poked_on, created_at, updated_at
        FROM commitments WHERE id = ?`,
       [id]
     )
@@ -1444,6 +1456,7 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
     if (application.effectiveScopeId === null) return []
     const scopeId = application.effectiveScopeId
     const cadenceDays = row.cadence_days === null ? null : Number(row.cadence_days)
+    const reviewFrequencyDays = Number(row.review_frequency_days)
     return this.scopes.effectiveSubjects(scopeId, date).map((subject) => {
       const latest = this.database.get<LatestUpdateRow>(
         `SELECT recorded_on, state FROM updates
@@ -1460,12 +1473,20 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
       const nextUpdateDate = cadenceDays === null
         ? null
         : addDays(lastUpdateDate ?? row.created_at.slice(0, 10), cadenceDays)
+      const lastReviewDate = latestDate(lastUpdateDate, poke?.reviewed_on ?? null)
+      const nextReviewDate = addDays(
+        lastReviewDate ?? row.created_at.slice(0, 10),
+        reviewFrequencyDays
+      )
       return {
         scopeId,
         subjectId: subject.id,
         subject,
         state: (latest?.state as HealthState | undefined) ?? 'none',
-        lastReviewDate: latestDate(lastUpdateDate, poke?.reviewed_on ?? null),
+        lastReviewDate,
+        nextReviewDate,
+        reviewDue:
+          Boolean(row.needs_review) && row.status === 'active' && nextReviewDate <= date,
         lastUpdateDate,
         nextUpdateDate,
         needsUpdate:
@@ -1478,7 +1499,8 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
     assertId(id, 'commitment')
     const row = this.database.get<CommitmentRow>(
       `SELECT id, focus_id, thread_id, commitment_type, title, status,
-              due_on, cadence_days, sensitive, review_poked_on, created_at, updated_at
+              due_on, cadence_days, review_frequency_days, needs_review,
+              sensitive, review_poked_on, created_at, updated_at
        FROM commitments WHERE id = ?`,
       [id]
     )
@@ -1515,6 +1537,25 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
               : next,
           null
         )
+    const lastReviewDate = latestDate(
+      row.review_poked_on,
+      application.effectiveScopeId === null
+        ? lastUpdateDate
+        : cells.reduce<string | null>(
+            (latestReview, cell) => latestDate(latestReview, cell.lastReviewDate),
+            null
+          )
+    )
+    const defaultNextReviewDate = addDays(
+      lastReviewDate ?? row.created_at.slice(0, 10),
+      Number(row.review_frequency_days)
+    )
+    const nextReviewDate = application.effectiveScopeId === null
+      ? defaultNextReviewDate
+      : cells.reduce(
+          (earliest, cell) => cell.nextReviewDate < earliest ? cell.nextReviewDate : earliest,
+          cells[0]?.nextReviewDate ?? defaultNextReviewDate
+        )
 
     return {
       id: Number(row.id),
@@ -1527,15 +1568,13 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
         : calculateHealth(cells.map((cell) => cell.state)),
       dueDate: row.due_on,
       cadenceDays,
-      lastReviewDate: latestDate(
-        row.review_poked_on,
-        application.effectiveScopeId === null
-          ? lastUpdateDate
-          : cells.reduce<string | null>(
-              (latestReview, cell) => latestDate(latestReview, cell.lastReviewDate),
-              null
-            )
-      ),
+      reviewFrequencyDays: Number(row.review_frequency_days),
+      lastReviewDate,
+      nextReviewDate,
+      needsReview: Boolean(row.needs_review),
+      reviewDue: application.effectiveScopeId === null
+        ? Boolean(row.needs_review) && row.status === 'active' && nextReviewDate <= asOf
+        : cells.some((cell) => cell.reviewDue),
       lastUpdateDate,
       nextUpdateDate,
       needsUpdate: application.effectiveScopeId === null

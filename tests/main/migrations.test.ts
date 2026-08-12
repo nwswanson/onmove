@@ -90,7 +90,7 @@ describe('database migrations', () => {
       DROP TRIGGER subjects_prepare_update_archive_context;
       DROP TABLE update_archive_context;
       DROP TABLE archived_updates;
-      DELETE FROM schema_migrations WHERE version >= 23;
+      DELETE FROM schema_migrations WHERE version IN (23, 24);
     `)
     previous.close()
 
@@ -136,6 +136,34 @@ describe('database migrations', () => {
         `UPDATE ${table} SET review_poked_on = '2026-02-30' WHERE id = 1`
       ).run()).toThrow()
     }
+    migrated.close()
+  })
+
+  it('backfills Commitment review schedules from legacy update cadence', () => {
+    const current = new AppDatabase(databasePath)
+    const focus = current.domain.focuses.create({ title: 'Legacy schedule' })
+    const commitment = current.domain.commitments.create({
+      parent: { type: 'focus', id: focus.id },
+      type: 'ongoing',
+      title: 'Carry the existing cadence forward',
+      cadenceDays: 14
+    })
+    current.close()
+
+    const previous = new DatabaseSync(databasePath)
+    previous.exec(`
+      ALTER TABLE commitments DROP COLUMN review_frequency_days;
+      ALTER TABLE commitments DROP COLUMN needs_review;
+      DELETE FROM schema_migrations WHERE version = 25;
+    `)
+    previous.close()
+
+    const migrated = new AppDatabase(databasePath)
+    expect(migrated.domain.commitments.find(commitment.id)).toMatchObject({
+      cadenceDays: 14,
+      reviewFrequencyDays: 14,
+      needsReview: true
+    })
     migrated.close()
   })
 

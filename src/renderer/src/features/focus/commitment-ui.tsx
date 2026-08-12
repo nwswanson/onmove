@@ -29,12 +29,18 @@ export function NewCommitmentDialog({
 }: NewCommitmentDialogProps): React.JSX.Element {
   const [title, setTitle] = useState('')
   const [dueDate, setDueDate] = useState('')
+  const [reviewFrequencyDays, setReviewFrequencyDays] = useState('7')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function submit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
-    if (title.trim().length === 0) return
+    const normalizedReviewFrequencyDays = Number(reviewFrequencyDays)
+    if (
+      title.trim().length === 0 ||
+      !Number.isInteger(normalizedReviewFrequencyDays) ||
+      normalizedReviewFrequencyDays <= 0
+    ) return
     setSaving(true)
     setError(null)
     try {
@@ -43,6 +49,7 @@ export function NewCommitmentDialog({
         parent,
         title,
         dueDate: normalizedDueDate,
+        reviewFrequencyDays: normalizedReviewFrequencyDays,
         type: legacyCommitmentTypeForDueDate(normalizedDueDate)
       })
       onClose()
@@ -96,6 +103,20 @@ export function NewCommitmentDialog({
             type="date"
             value={dueDate}
             onChange={(event) => setDueDate(event.target.value)}
+          />
+        </DialogField>
+        <DialogField>
+          <label htmlFor="new-commitment-review-frequency" className="text-xs font-medium">
+            Review every (days)
+          </label>
+          <Input
+            id="new-commitment-review-frequency"
+            type="number"
+            min={1}
+            step={1}
+            required
+            value={reviewFrequencyDays}
+            onChange={(event) => setReviewFrequencyDays(event.target.value)}
           />
         </DialogField>
         {error && <p role="alert" className="text-xs text-destructive">{error}</p>}

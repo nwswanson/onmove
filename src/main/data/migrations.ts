@@ -2495,6 +2495,31 @@ const migrations: readonly Migration[] = [
         END;
       `)
     }
+  },
+  {
+    version: 25,
+    name: 'commitment_review_schedule',
+    up(database) {
+      const commitmentColumns = database.all<{ name: string }>(
+        'PRAGMA table_info(commitments)'
+      )
+      if (commitmentColumns.length === 0) return
+      const hasCadenceDays = commitmentColumns.some(({ name }) => name === 'cadence_days')
+      database.exec(`
+        ALTER TABLE commitments
+        ADD COLUMN review_frequency_days INTEGER NOT NULL DEFAULT 7
+          CHECK (review_frequency_days > 0);
+        ALTER TABLE commitments
+        ADD COLUMN needs_review INTEGER NOT NULL DEFAULT 1
+          CHECK (needs_review IN (0, 1));
+      `)
+      if (hasCadenceDays) {
+        database.exec(`
+          UPDATE commitments
+          SET review_frequency_days = COALESCE(cadence_days, 7);
+        `)
+      }
+    }
   }
 ]
 

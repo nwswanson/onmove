@@ -75,7 +75,7 @@ describe('Review model', () => {
     })
     expect(overview.items.find(({ key }) => key === `commitment:${threaded.id}`)).toBeUndefined()
     expect(overview.items.find(({ key }) => key === `commitment:${unscheduled.id}`))
-      .toMatchObject({ nextReviewDate: null, due: false })
+      .toMatchObject({ nextReviewDate: expect.any(String), due: false })
   })
 
   it('keeps bounded Thread and Commitment review obligations independent per Subject', () => {
@@ -175,7 +175,34 @@ describe('Review model', () => {
     ]))
     expect(database!.domain.reviews.getOverview('2026-01-09').items
       .filter(({ kind }) => kind === 'commitment').map(({ cell }) => cell?.subject.name))
-      .toEqual(['Jamie'])
+      .toEqual([])
+  })
+
+  it('uses a Commitment review schedule independently of its parent and honors exclusion', () => {
+    const focus = database!.domain.focuses.create({
+      title: 'Independent delivery',
+      needsReview: false
+    })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Long-range planning',
+      reviewFrequencyDays: 30,
+      needsReview: false
+    }, new Date('2026-01-01T12:00:00.000Z'))
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'ongoing',
+      title: 'Watch the near-term risk',
+      reviewFrequencyDays: 3
+    }, new Date('2026-01-01T12:00:00.000Z'))
+
+    commitment.pokeReview(new Date('2026-01-01T12:00:00.000Z'))
+    expect(database!.domain.reviews.getOverview('2026-01-03').items).toEqual([])
+    expect(database!.domain.reviews.getOverview('2026-01-04').items.map(({ key }) => key))
+      .toEqual([`commitment:${commitment.id}`])
+
+    commitment.update({ needsReview: false })
+    expect(database!.domain.reviews.getOverview('2026-01-04').items).toEqual([])
   })
 
   it('does not queue a Focus that already has direct Update evidence today', () => {

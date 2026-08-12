@@ -60,7 +60,11 @@ function commitment(overrides: Partial<CommitmentSnapshot> = {}): CommitmentSnap
     state: 'none',
     dueDate: null,
     cadenceDays: null,
+    reviewFrequencyDays: 7,
     lastReviewDate: null,
+    nextReviewDate: '2026-08-08',
+    needsReview: true,
+    reviewDue: false,
     lastUpdateDate: null,
     nextUpdateDate: null,
     needsUpdate: false,
@@ -122,6 +126,8 @@ function snapshot(overrides: Partial<CommandPaletteSnapshot> = {}): CommandPalet
         subject: subject(),
         state: 'yellow',
         lastReviewDate: '2026-08-03',
+        nextReviewDate: '2026-08-10',
+        reviewDue: false,
         lastUpdateDate: '2026-08-03',
         nextUpdateDate: null,
         needsUpdate: false
@@ -131,6 +137,8 @@ function snapshot(overrides: Partial<CommandPaletteSnapshot> = {}): CommandPalet
         subject: subject({ id: 31, name: 'South region' }),
         state: 'green',
         lastReviewDate: null,
+        nextReviewDate: '2026-08-08',
+        reviewDue: false,
         lastUpdateDate: null,
         nextUpdateDate: null,
         needsUpdate: false
@@ -239,6 +247,8 @@ describe('command palette presenters', () => {
           subject: subject({ sensitive: true }),
           state: 'none',
           lastReviewDate: null,
+          nextReviewDate: '2026-08-08',
+          reviewDue: false,
           lastUpdateDate: null,
           nextUpdateDate: null,
           needsUpdate: false

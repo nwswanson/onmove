@@ -86,7 +86,11 @@ function commitment(overrides: Partial<CommitmentSnapshot> = {}): CommitmentSnap
     state: 'none',
     dueDate: null,
     cadenceDays: null,
+    reviewFrequencyDays: 7,
     lastReviewDate: null,
+    nextReviewDate: '2026-01-08',
+    needsReview: true,
+    reviewDue: false,
     lastUpdateDate: null,
     nextUpdateDate: null,
     needsUpdate: false,
@@ -709,6 +713,8 @@ describe('App', () => {
           subject: customerOperations,
           state: 'green' as const,
           lastReviewDate: '2026-08-10',
+          nextReviewDate: '2026-08-17',
+          reviewDue: false,
           lastUpdateDate: '2026-08-10',
           nextUpdateDate: null,
           needsUpdate: false
@@ -1096,6 +1102,8 @@ describe('App', () => {
           subject: subject(61, 'Customer Operations'),
           state: 'none' as const,
           lastReviewDate: null,
+          nextReviewDate: '2026-08-10',
+          reviewDue: true,
           lastUpdateDate: null,
           nextUpdateDate: '2026-08-10',
           needsUpdate: true
@@ -1403,6 +1411,8 @@ describe('App', () => {
           subject: customer,
           state: 'none' as const,
           lastReviewDate: null,
+          nextReviewDate: '2026-08-08',
+          reviewDue: false,
           lastUpdateDate: null,
           nextUpdateDate: null,
           needsUpdate: false
@@ -2311,6 +2321,8 @@ describe('App', () => {
           subject: customer,
           state: 'none' as const,
           lastReviewDate: null,
+          nextReviewDate: '2026-08-08',
+          reviewDue: false,
           lastUpdateDate: null,
           nextUpdateDate: null,
           needsUpdate: false
@@ -2843,7 +2855,8 @@ describe('App', () => {
       parent: { type: 'thread', id: sprint.id },
       type: 'ongoing',
       title: 'Keep refinement healthy',
-      dueDate: null
+      dueDate: null,
+      reviewFrequencyDays: 7
     })
     expect(
       await within(navigation).findByRole('button', { name: 'Keep refinement healthy' })
@@ -3402,7 +3415,8 @@ describe('App', () => {
       parent: { type: 'focus', id: 1 },
       type: 'action',
       title: 'Publish the launch boundary',
-      dueDate: '2026-09-15'
+      dueDate: '2026-09-15',
+      reviewFrequencyDays: 7
     })
     const navigation = await screen.findByRole('navigation', { name: 'Focus sections' })
     expect(
@@ -3657,7 +3671,8 @@ describe('App', () => {
     expect(within(commitmentDrawer).getByRole('heading', { name: 'Commitment' })).toBeInTheDocument()
     expect(within(commitmentDrawer).getByDisplayValue('Keep sponsors aligned')).toBeInTheDocument()
     expect(within(commitmentDrawer).getByText('Last updated')).toBeInTheDocument()
-    expect(within(commitmentDrawer).getByText('Never')).toBeInTheDocument()
+    expect(within(commitmentDrawer).getAllByText('Never')).toHaveLength(2)
+    expect(within(commitmentDrawer).getByLabelText('Needs review')).toBeChecked()
     expect(screen.getByLabelText('Commitment last updated')).toHaveTextContent(
       'Last updated · Never'
     )
@@ -3785,7 +3800,9 @@ describe('App', () => {
     const updateCommitment = vi.fn().mockResolvedValue(commitment({
       title: 'Keep sponsors closely aligned',
       type: 'action',
-      dueDate: '2026-09-15'
+      dueDate: '2026-09-15',
+      reviewFrequencyDays: 14,
+      needsReview: false
     }))
     installApi({
       listFocuses: vi.fn().mockResolvedValue([current]),
@@ -3833,12 +3850,20 @@ describe('App', () => {
     await user.clear(commitmentTitle)
     await user.type(commitmentTitle, 'Keep sponsors closely aligned')
     await user.type(within(drawer).getByLabelText('Due date'), '2026-09-15')
+    const commitmentFrequency = within(drawer).getByRole('spinbutton', {
+      name: /^Review every \(days\)/
+    })
+    await user.clear(commitmentFrequency)
+    await user.type(commitmentFrequency, '14')
+    await user.click(within(drawer).getByLabelText('Needs review'))
     await user.click(within(drawer).getByRole('button', { name: 'Save changes' }))
 
     expect(updateCommitment).toHaveBeenCalledWith(focusCommitment.id, {
       title: 'Keep sponsors closely aligned',
       dueDate: '2026-09-15',
       type: 'action',
+      reviewFrequencyDays: 14,
+      needsReview: false,
       sensitive: false
     })
     expect(await screen.findByRole('heading', { name: 'Keep sponsors closely aligned' }))

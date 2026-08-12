@@ -365,6 +365,8 @@ export interface CommitmentScopeCellSnapshot extends UpdateScopeCell {
   subject: SubjectSnapshot
   state: HealthState
   lastReviewDate: string | null
+  nextReviewDate: string
+  reviewDue: boolean
   lastUpdateDate: string | null
   nextUpdateDate: string | null
   needsUpdate: boolean
@@ -497,8 +499,12 @@ export interface CommitmentSnapshot {
   state: HealthState
   dueDate: string | null
   cadenceDays: number | null
+  reviewFrequencyDays: number
   /** Latest direct Update date or explicit review poke, whichever is later. */
   lastReviewDate: string | null
+  nextReviewDate: string
+  needsReview: boolean
+  reviewDue: boolean
   lastUpdateDate: string | null
   nextUpdateDate: string | null
   needsUpdate: boolean
@@ -516,6 +522,8 @@ export interface CreateCommitmentInput {
   status?: CommitmentStatus
   dueDate?: string | null
   cadenceDays?: number | null
+  reviewFrequencyDays?: number
+  needsReview?: boolean
   sensitive?: boolean
 }
 
@@ -526,6 +534,8 @@ export interface UpdateCommitmentInput {
   status?: CommitmentStatus
   dueDate?: string | null
   cadenceDays?: number | null
+  reviewFrequencyDays?: number
+  needsReview?: boolean
   sensitive?: boolean
 }
 
