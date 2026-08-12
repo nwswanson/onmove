@@ -13,6 +13,7 @@ import {
   type UpdateListStateOptionModel
 } from '@/features/updates/update-list-contract'
 import { useCommandKeyShortcut } from '@/lib/use-command-key-shortcut'
+import { useRevealElement } from '@/lib/use-reveal-element'
 import { useThrottledAutosave } from '@/lib/use-throttled-autosave'
 
 function updateDraftsEqual(left: UpdateListDraft, right: UpdateListDraft): boolean {
@@ -51,6 +52,7 @@ function UpdateEditorCard({
   const draftRef = useRef(initialDraft)
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const cardRef = useRevealElement<HTMLElement>(autoFocus)
   const autosave = useThrottledAutosave({
     initialValue: initialDraft,
     isEqual: updateDraftsEqual,
@@ -110,6 +112,7 @@ function UpdateEditorCard({
 
   return (
     <article
+      ref={cardRef}
       role="listitem"
       aria-label={`Update from ${draft.date}`}
       className="overflow-hidden rounded-xl border border-border/80 bg-card/55 shadow-xs"

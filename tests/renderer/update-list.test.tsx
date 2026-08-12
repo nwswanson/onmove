@@ -130,6 +130,7 @@ describe('UpdateList', () => {
 
   it('creates directly with Cmd-P and focuses the persisted observation editor', async () => {
     const onCreate = vi.fn().mockResolvedValue('42')
+    const scrollIntoView = vi.spyOn(HTMLElement.prototype, 'scrollIntoView')
     const { rerender } = render(
       <UpdateList
         ariaLabel="Shortcut updates"
@@ -187,7 +188,16 @@ describe('UpdateList', () => {
         onDelete={vi.fn()}
       />
     )
-    await waitFor(() => expect(screen.getByLabelText('Update observation')).toHaveFocus())
+    const observation = screen.getByLabelText('Update observation')
+    const card = screen.getByRole('listitem', { name: 'Update from 2026-08-11' })
+    await waitFor(() => expect(observation).toHaveFocus())
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: 'smooth',
+      block: 'nearest',
+      inline: 'nearest'
+    }))
+    expect(scrollIntoView.mock.instances).toContain(card)
+    scrollIntoView.mockRestore()
   })
 
   it('moves Cmd-P to the Subject picker when creation requires an exact cell', () => {

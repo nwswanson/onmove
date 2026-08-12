@@ -2,8 +2,27 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { _electron as electron, expect, test, type ElectronApplication } from '@playwright/test'
+import {
+  _electron as electron,
+  expect,
+  test,
+  type ElectronApplication,
+  type Locator
+} from '@playwright/test'
 import { AppDatabase } from '../../src/main/database'
+
+async function isFullyVisibleInMain(locator: Locator): Promise<boolean> {
+  return locator.evaluate((element) => {
+    const itemBounds = element.getBoundingClientRect()
+    const mainBounds = element.closest('main')?.getBoundingClientRect()
+    if (!mainBounds) return false
+    const tolerance = 1
+    return (
+      itemBounds.top >= mainBounds.top - tolerance &&
+      itemBounds.bottom <= mainBounds.bottom + tolerance
+    )
+  })
+}
 
 test('opens and closes multiple main windows through the New Window menu', async () => {
   const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-multi-window-e2e-'))
@@ -1155,6 +1174,9 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     const focusUpdateDate = storedFocusUpdate()!.date
     expect(storedFocusUpdate()?.observation).toBe('')
     await expect(focusUpdates.getByLabel('Update observation')).toBeFocused()
+    await expect.poll(() => isFullyVisibleInMain(
+      focusUpdates.getByRole('listitem', { name: `Update from ${focusUpdateDate}` })
+    )).toBe(true)
     await expect(window.getByRole('button', { name: 'Create update' })).toHaveCount(0)
     await focusUpdates.getByLabel('Update observation').fill('Overall review completed')
     const focusUpdateObservation = focusUpdates.getByLabel('Update observation')

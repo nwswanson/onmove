@@ -23,6 +23,11 @@ if (typeof HTMLElement !== 'undefined' && !HTMLElement.prototype.scrollIntoView)
   HTMLElement.prototype.scrollIntoView = () => undefined
 }
 
+if (typeof window !== 'undefined' && !window.requestAnimationFrame) {
+  window.requestAnimationFrame = (callback) => window.setTimeout(() => callback(performance.now()), 0)
+  window.cancelAnimationFrame = (handle) => window.clearTimeout(handle)
+}
+
 afterEach(() => {
   if (typeof document !== 'undefined') cleanup()
 })

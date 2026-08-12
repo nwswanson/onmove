@@ -30,6 +30,7 @@ import { SensitivityToggle } from '@/features/shared/sensitivity-toggle'
 import { DirectTodos } from '@/features/todos/direct-todos'
 import { UPDATE_LIST_STATE_OPTIONS } from '@/features/updates/updates-presenters'
 import { useCommandKeyShortcut } from '@/lib/use-command-key-shortcut'
+import { useRevealElement } from '@/lib/use-reveal-element'
 
 interface ReviewWorkspaceProps {
   contextDrawer: ContextDrawerControl
@@ -73,6 +74,7 @@ function ReviewUpdateEditor({
 }): React.JSX.Element {
   const [saving, setSaving] = useState(false)
   const state = UPDATE_LIST_STATE_OPTIONS.find(({ value }) => value === update.state)
+  const editorRef = useRevealElement<HTMLElement>()
 
   async function edit(input: EditUpdateInput): Promise<void> {
     setSaving(true)
@@ -87,6 +89,7 @@ function ReviewUpdateEditor({
 
   return (
     <section
+      ref={editorRef}
       aria-labelledby="review-update-heading"
       className="border-t border-primary/35 bg-primary/7 px-5 py-5 sm:px-7"
     >

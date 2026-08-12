@@ -730,6 +730,7 @@ describe('App', () => {
   })
 
   it('starts an autosaved Update in the exact review Subject cell before advancing', async () => {
+    const scrollIntoView = vi.spyOn(HTMLElement.prototype, 'scrollIntoView')
     const currentFocus = focus({ id: 5, title: 'People program' })
     const currentThread = thread({ id: 15, focusId: 5, title: 'Team health', reviewDue: true })
     const currentCommitment = commitment({
@@ -792,6 +793,9 @@ describe('App', () => {
 
     const observation = await screen.findByRole('textbox', { name: 'Review Update observation' })
     expect(observation).toHaveFocus()
+    const reviewEditor = screen.getByRole('heading', { name: 'Add review evidence' }).closest('section')
+    expect(reviewEditor).not.toBeNull()
+    await waitFor(() => expect(scrollIntoView.mock.instances).toContain(reviewEditor))
     await user.keyboard('Customer sentiment improved')
     await waitFor(() => expect(api.richText.saveDocument).toHaveBeenCalled())
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
@@ -801,6 +805,7 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: 'You’re caught up' })).toBeVisible()
     expect(screen.queryByText('Hold weekly check-ins')).not.toBeInTheDocument()
     expect(getReviewOverview).toHaveBeenCalledTimes(2)
+    scrollIntoView.mockRestore()
   })
 
   it('leaves Cmd-P inert in the Todos and Tags workspaces', async () => {
