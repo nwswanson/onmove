@@ -1,9 +1,15 @@
+import { useState } from 'react'
 import {
   ContextDrawerOutlet,
   type ContextDrawerControl
 } from '@/components/ui/context-drawer'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
 import type { FocusWorkspaceDestinationTarget } from '@/features/application/application-navigation'
+import {
+  dueFilterPreferenceStorage,
+  loadDueHidePaused,
+  saveDueHidePaused
+} from '@/features/due/due-filter-preference'
 import { dueWorkGroups } from '@/features/due/due-presenters'
 import { DueWorkTable } from '@/features/due/due-work-table'
 import { useDueModel } from '@/features/due/use-due-model'
@@ -22,8 +28,10 @@ export function DueWorkspace({
   onWorkChanged
 }: DueWorkspaceProps): React.JSX.Element {
   const model = useDueModel({ onWorkChanged })
+  const [preferenceStorage] = useState(dueFilterPreferenceStorage)
+  const [hidePaused, setHidePaused] = useState(() => loadDueHidePaused(preferenceStorage))
   const groups = model.overview
-    ? dueWorkGroups(model.overview, hideSensitiveContent)
+    ? dueWorkGroups(model.overview, { hideSensitiveContent, hidePaused })
     : []
   const rows = groups.flatMap(({ rows: groupRows }) => groupRows)
 
@@ -41,11 +49,26 @@ export function DueWorkspace({
                   Explicit deadlines across Focuses, Threads, and Commitments.
                 </p>
               </div>
-              {!model.loading && model.overview && (
-                <p className="text-xs font-medium text-muted-foreground" aria-live="polite">
-                  {rows.length === 1 ? '1 dated item' : `${rows.length} dated items`}
-                </p>
-              )}
+              <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
+                <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-foreground">
+                  <input
+                    type="checkbox"
+                    className="size-4 accent-primary"
+                    checked={hidePaused}
+                    onChange={(event) => {
+                      const next = event.currentTarget.checked
+                      setHidePaused(next)
+                      saveDueHidePaused(preferenceStorage, next)
+                    }}
+                  />
+                  Hide paused
+                </label>
+                {!model.loading && model.overview && (
+                  <p className="text-xs font-medium text-muted-foreground" aria-live="polite">
+                    {rows.length === 1 ? '1 dated item' : `${rows.length} dated items`}
+                  </p>
+                )}
+              </div>
             </div>
 
             {model.loading ? (

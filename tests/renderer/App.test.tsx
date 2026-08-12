@@ -368,6 +368,7 @@ function installApi(
 describe('App', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    window.localStorage.setItem('onmove.due.hide-paused', 'false')
   })
 
   it('shows the toolbar and sidebar while SQLite and focuses load', () => {
@@ -444,7 +445,7 @@ describe('App', () => {
     const currentFocus = focus({
       id: 5,
       title: 'Project Atlas',
-      status: 'done',
+      status: 'active',
       dueDate: '2026-08-10'
     })
     let currentThread = thread({
@@ -525,9 +526,9 @@ describe('App', () => {
     await user.click(await screen.findByRole('button', { name: 'Due' }))
     expect(screen.getByRole('button', { name: 'Due' })).toHaveAttribute('aria-current', 'page')
     const table = await screen.findByRole('table', { name: 'Due work' })
-    expect(within(table).getByText('Overdue')).toBeVisible()
-    expect(within(table).getByText('Due today')).toBeVisible()
-    expect(within(table).getByText('Upcoming')).toBeVisible()
+    expect(within(table).getByText('Past due')).toBeVisible()
+    expect(within(table).getByText('Today')).toBeVisible()
+    expect(within(table).getByText('This week')).toBeVisible()
     expect(within(table).getByLabelText(
       'Due date 2026-08-12 is after the parent Thread due date 2026-08-09.'
     )).toBeVisible()
@@ -546,11 +547,21 @@ describe('App', () => {
       status: 'paused'
     }))
 
-    await user.click(within(table).getByRole('link', {
+    await user.click(screen.getByLabelText('Hide paused'))
+    await waitFor(() => expect(within(table).queryByText('Improve ticket quality'))
+      .not.toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: 'Tags' }))
+    await user.click(screen.getByRole('button', { name: 'Due' }))
+    expect(screen.getByLabelText('Hide paused')).toBeChecked()
+    expect(screen.queryByText('Improve ticket quality')).not.toBeInTheDocument()
+    await user.click(screen.getByLabelText('Hide paused'))
+
+    await user.click(within(await screen.findByRole('table', { name: 'Due work' })).getByRole('link', {
       name: 'Open Commitment Improve ticket quality in Project Atlas › Sprint execution'
     }))
     expect(await screen.findByRole('heading', { name: 'Improve ticket quality' })).toBeVisible()
-    expect(screen.queryByRole('button', { name: 'Project Atlas' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Project Atlas' }))
+      .toHaveAttribute('aria-current', 'page')
   })
 
   it('opens the command palette with Cmd-K and deep-links Commitments and Tags', async () => {

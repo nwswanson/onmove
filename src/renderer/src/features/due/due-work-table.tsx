@@ -33,9 +33,9 @@ export function DueWorkTable({
     return (
       <div className="mt-8 rounded-lg border border-dashed border-border px-5 py-10 text-center">
         <CalendarClock className="mx-auto size-5 text-muted-foreground" aria-hidden="true" />
-        <p className="mt-3 text-sm font-medium">Nothing has a due date.</p>
+        <p className="mt-3 text-sm font-medium">No due work to show.</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          Due-dated Focuses, Threads, and Commitments will appear here.
+          Add a due date or adjust the page filters.
         </p>
       </div>
     )
@@ -57,10 +57,10 @@ export function DueWorkTable({
             <TableRow key={`group:${group.id}`} className="bg-muted/30 hover:bg-muted/30">
               <TableCell colSpan={4} className="px-3 py-2">
                 <div className="flex items-center gap-2">
-                  {group.id === 'overdue' && (
+                  {group.id === 'past-due' && (
                     <AlertTriangle className="size-3.5 text-destructive" aria-hidden="true" />
                   )}
-                  <span className={group.id === 'overdue'
+                  <span className={group.id === 'past-due'
                     ? 'text-xs font-semibold text-destructive'
                     : 'text-xs font-semibold text-foreground'}>
                     {group.label}

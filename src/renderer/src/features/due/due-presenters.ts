@@ -6,7 +6,12 @@ import type {
 import type { FocusWorkspaceDestinationTarget } from '@/features/application/application-navigation'
 import type { ParentDueDateModel } from '@/features/shared/work-due-date'
 
-export type DueUrgency = 'overdue' | 'today' | 'upcoming'
+export type DueUrgency = 'past-due' | 'today' | 'this-week' | 'this-month' | 'upcoming'
+
+export interface DueWorkFilters {
+  hideSensitiveContent: boolean
+  hidePaused: boolean
+}
 
 export interface DueWorkRowModel {
   id: string
@@ -29,9 +34,12 @@ export interface DueWorkGroupModel {
 
 function recordIsVisible(
   item: DueWorkItemSnapshot,
-  hideSensitiveContent: boolean
+  filters: DueWorkFilters
 ): boolean {
-  if (!hideSensitiveContent) return true
+  const record = item.commitment ?? item.thread ?? item.focus
+  if (record.status === 'done' || record.status === 'cancelled') return false
+  if (filters.hidePaused && record.status === 'paused') return false
+  if (!filters.hideSensitiveContent) return true
   return !(
     item.focus.sensitive ||
     item.thread?.sensitive ||
@@ -39,9 +47,27 @@ function recordIsVisible(
   )
 }
 
+function isoDate(date: Date): string {
+  return date.toISOString().slice(0, 10)
+}
+
+function calendarBoundaries(asOf: string): { weekEnd: string; monthEnd: string } {
+  const [year, month, day] = asOf.split('-').map(Number)
+  const current = new Date(Date.UTC(year, month - 1, day))
+  const weekEnd = new Date(current)
+  weekEnd.setUTCDate(current.getUTCDate() + (6 - current.getUTCDay()))
+  return {
+    weekEnd: isoDate(weekEnd),
+    monthEnd: isoDate(new Date(Date.UTC(year, month, 0)))
+  }
+}
+
 function urgencyFor(dueDate: string, asOf: string): DueUrgency {
-  if (dueDate < asOf) return 'overdue'
+  if (dueDate < asOf) return 'past-due'
   if (dueDate === asOf) return 'today'
+  const { weekEnd, monthEnd } = calendarBoundaries(asOf)
+  if (dueDate <= weekEnd) return 'this-week'
+  if (dueDate <= monthEnd) return 'this-month'
   return 'upcoming'
 }
 
@@ -79,18 +105,20 @@ function rowFor(item: DueWorkItemSnapshot, asOf: string): DueWorkRowModel {
 }
 
 const GROUPS = [
-  { id: 'overdue', label: 'Overdue' },
-  { id: 'today', label: 'Due today' },
+  { id: 'past-due', label: 'Past due' },
+  { id: 'today', label: 'Today' },
+  { id: 'this-week', label: 'This week' },
+  { id: 'this-month', label: 'This month' },
   { id: 'upcoming', label: 'Upcoming' }
 ] as const
 
 /** Translates the aggregate deadline model into urgency sections owned by the table. */
 export function dueWorkGroups(
   overview: DueOverviewSnapshot,
-  hideSensitiveContent: boolean
+  filters: DueWorkFilters
 ): DueWorkGroupModel[] {
   const rows = overview.items
-    .filter((item) => recordIsVisible(item, hideSensitiveContent))
+    .filter((item) => recordIsVisible(item, filters))
     .map((item) => rowFor(item, overview.asOf))
     .sort((left, right) => {
       const byDate = left.dueDate.localeCompare(right.dueDate)

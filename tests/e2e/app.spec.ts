@@ -391,10 +391,25 @@ test('operates every explicit hierarchy deadline from the global Due worklist', 
     await expect(window.getByRole('button', { name: 'Project Atlas' }))
       .toHaveAttribute('aria-current', 'page')
 
+    await window.getByRole('button', { name: 'Due', exact: true }).click()
+    await window.getByLabel('Hide paused').check()
+    await expect(window.getByRole('table', { name: 'Due work' }).getByText(
+      'Improve ticket quality',
+      { exact: true }
+    )).toHaveCount(0)
+    await expect(window.getByText('1 dated item')).toBeVisible()
+
     await application.close()
     application = await launch()
     window = await application.firstWindow()
     await window.getByRole('button', { name: 'Due', exact: true }).click()
+    await expect(window.getByLabel('Hide paused')).toBeChecked()
+    await expect(window.getByRole('table', { name: 'Due work' }).getByText(
+      'Improve ticket quality',
+      { exact: true }
+    )).toHaveCount(0)
+    await expect(window.getByText('1 dated item')).toBeVisible()
+    await window.getByLabel('Hide paused').uncheck()
     await expect(window.getByRole('table', { name: 'Due work' }).getByText(
       'Improve ticket quality',
       { exact: true }
