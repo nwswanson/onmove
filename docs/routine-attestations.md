@@ -26,12 +26,12 @@ commitments
   exactly one Focus or Thread parent
         │
         └── routine_definitions (1:1)
-              cadence_days
-              anchor_on
               schedule_effective_on
               optional Focus-owned scope_id
               needs_attestation
               current_template_version
+                    │
+                    ├── routine_schedule_weekdays (0:5, Monday–Friday)
                     │
                     ├── routine_template_versions (1:n, immutable)
                     │       └── routine_template_items (1:n, immutable)
@@ -56,13 +56,16 @@ preserving recorded completion while making every later edit cell-specific.
 
 Migration 29 adds an optional rich-text note to every cell item. Migration 30 establishes explicit
 cell finalization and freezes the complete item state—including its note—after finalization.
+Migration 31 replaces interval recurrence with zero to five `routine_schedule_weekdays` rows.
+Legacy `cadence_days` and `anchor_on` fields remain on the definition only for older archive
+compatibility and no longer drive new Run generation. Existing Routines migrate to their legacy
+anchor weekday; weekend anchors become Monday.
 
 Routine creation validates all of the following in one transaction:
 
 - parent id exists and is either a Focus or Thread;
 - name is nonblank;
-- cadence is a positive whole number of days;
-- anchor is a real `YYYY-MM-DD` calendar date;
+- schedule is a unique, normalized subset of Monday through Friday (and may be empty);
 - checklist is nonempty and includes at least one required inspection; and
 - optional Scope exists and belongs to the Routine parent's Focus.
 
@@ -126,14 +129,22 @@ cannot refresh another Subject or the aggregate Routine.
 
 ## Anchored recurrence
 
-Dates are generated from `anchor_on + n × cadence_days`; completing a Run never becomes a new
-anchor. If a user finishes a January 1 weekly Run on January 4, the next date remains January 8.
-If the app was not open at a scheduled boundary, the next Routine read safely materializes missed
-occurrences from the applicable historical template version.
+The schedule is any subset of Monday through Friday. Each selected weekday creates its own immutable
+Run; Monday, Wednesday, and Friday therefore produce three separately completable occurrences per
+week. Completing a Run never becomes a new anchor. If the app was not open at a scheduled boundary,
+the next Routine read safely materializes missed occurrences from the applicable historical
+template version. The oldest unfinished occurrence is projected as the current check-in, so a
+backlog advances deterministically one Run at a time.
 
-Changing cadence or anchor affects future generation only. `schedule_effective_on` records the date
-from which the new schedule applies, so changing the schedule cannot synthesize a different set of
-historical Runs. Already materialized Runs always win on a date collision.
+Changing weekday selections affects future generation only. `schedule_effective_on` records the
+date from which the new selection applies, so changing the schedule cannot synthesize a different
+set of historical Runs. Already materialized Runs always win on a date collision. An empty schedule
+materializes nothing and reports no next review date.
+
+`needs_attestation` remains the user's stored queue-inclusion preference. The public
+`needsAttestation` projection is computed as that preference combined with a nonempty weekday
+schedule. Clearing every weekday therefore removes the Routine from sidebars and execution queues
+without overwriting the preference; choosing a weekday later restores inclusion automatically.
 
 ## Derived status
 
@@ -141,14 +152,14 @@ Status is calculated, never stored or selected:
 
 | Color | Projection |
 | --- | --- |
-| Green / Current | No scheduled date has passed incomplete, or the latest required Run is fully complete. |
-| Yellow / Overdue | The current scheduled Run is incomplete after its scheduled date, but fewer than two complete intervals have elapsed since the last fully completed scheduled Run (or the anchor when none exists). |
-| Red / Lapsed | No full completion has occurred for two complete cadence intervals. |
+| Green / Current | No scheduled date has passed incomplete, the current required Run is complete, or effective attestation is disabled. |
+| Yellow / Overdue | The oldest unfinished Run has passed its scheduled date, but fewer than two selected schedule boundaries have elapsed since the last fully completed Run (or the first unfinished Run when none exists). |
+| Red / Lapsed | No full completion has occurred across two complete selected weekday intervals. |
 
-Completing an overdue Run returns the Routine to green when it is still the latest required Run.
-Its actual completion date and `completedLate` projection remain in history. If another anchored Run
-has already become due, that newer Run correctly remains overdue; late completion never silently
-skips it or moves the recurrence.
+Completing an overdue Run returns the Routine to green only when no other scheduled Run is already
+unfinished. Its actual completion date and `completedLate` projection remain in history. If another
+anchored Run has already become due, the oldest remaining occurrence becomes current and correctly
+remains overdue; late completion never silently skips it or moves the recurrence.
 
 Occurrence progress sums required resolutions across its cells. Each queue item displays its own
 Subject-cell progress. Previous Runs retain scheduled date, completion date, late marker, template
@@ -185,15 +196,15 @@ feed the same execution queue.
 The top-level contextual sidebar mirrors that ownership. Every Overall or Thread node presents
 `Add commitment` followed by `Add Routine`, then its current Commitments and direct Routines.
 Routine rows carry a checklist icon and derived status and cannot be dragged as Commitments.
-Selecting one preserves the top-level hierarchy and renders check-in history in the main canvas.
-That history includes the current and previous immutable Runs, per-Subject progress, scheduled and
-completion dates, lateness, template versions, resolutions, and item notes. The current cell uses
+Selecting one preserves the top-level hierarchy and renders the current check-in above check-in
+history in the main canvas. History includes prior completed immutable Runs, per-Subject progress,
+scheduled and completion dates, lateness, template versions, resolutions, and item notes. The current cell uses
 the same live checklist receiver as the global Routines workspace, including resolution controls,
-autosaving notes, and explicit finalization. Finalized cells render their notes as read-only cards.
+autosaving notes, and explicit finalization. Finalized cells render their notes as read-only blocks.
 An explicit `Edit` button replaces history with the embedded definition editor in the same main
 canvas; it never opens an Edit Routine dialog.
 
-The embedded editor owns the name, cadence, schedule anchor, optional parent Scope,
+The embedded editor owns the name, Monday–Friday schedule, optional parent Scope,
 `needsAttestation`, sensitivity, and checklist versioning. Clearing `needsAttestation` removes the
 Routine's cells from the queue without deleting immutable history. Editing the checklist appends a
 future template version and never binds editable controls to a Run's copied inspection text.

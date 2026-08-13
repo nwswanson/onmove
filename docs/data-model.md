@@ -210,8 +210,8 @@ owned by tracking Commitments. The former due-derived `action`/`ongoing` value r
 `legacy_due_type` import compatibility data.
 
 Routine definitions reuse the base Commitment's exclusive Focus-or-Thread ownership, title,
-sensitivity, parent-transition history, and cascade boundary. Dedicated tables own their positive
-cadence, schedule anchor, optional same-Focus Scope, immutable template versions, scheduled Review
+sensitivity, parent-transition history, and cascade boundary. Dedicated tables own their selected
+Monday–Friday schedule, optional same-Focus Scope, immutable template versions, scheduled Review
 Runs, snapshotted checklist items, per-Subject attestation cells, and legacy recorded issues. Migration 28
 adds `needs_attestation` and independently completable cells: one cell per effective Subject at the
 scheduled boundary, or one unscoped cell. Routine status has no writable lifecycle selector: it is
@@ -220,6 +220,11 @@ are in [`routine-attestations.md`](routine-attestations.md).
 Migration 29 gives every cell item an optional rich-text evidence note. Migration 30 makes Subject
 cell completion an explicit finalize operation: required resolutions must be complete first, and
 finalization freezes the resolutions, attestation timestamps, and notes together.
+Migration 31 replaces interval recurrence with `routine_schedule_weekdays`. Any subset of Monday
+through Friday is valid, including none. Effective queue inclusion is the persisted
+`needs_attestation` preference combined with a nonempty weekday schedule; an empty schedule creates
+no Runs without erasing that preference. The earlier `cadence_days` and `anchor_on` fields remain
+only for tolerant import of older archives.
 
 ## Subjects, Scopes, and exact Update cells
 

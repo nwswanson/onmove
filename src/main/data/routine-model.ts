@@ -1,6 +1,7 @@
 import {
   ROUTINE_ISSUE_FOLLOW_UP_TYPES,
   ROUTINE_RUN_ITEM_RESOLUTIONS,
+  ROUTINE_WEEKDAYS,
   type AttestRoutineRunItemInput,
   type CommitmentParent,
   type CreateRoutineInput,
@@ -13,6 +14,7 @@ import {
   type RoutineStatus,
   type RoutineTemplateItemInput,
   type RoutineTemplateSnapshot,
+  type RoutineWeekday,
   type UpdateRoutineInput
 } from '../../shared/contracts'
 import { BaseModel, BaseRepository, ModelNotFoundError, ModelValidationError } from './model'
@@ -39,6 +41,10 @@ interface TemplateVersionRow {
   id: number
   version: number
   effective_at: string
+}
+
+interface ScheduleWeekdayRow {
+  weekday: number
 }
 
 interface TemplateItemRow {
@@ -115,13 +121,6 @@ function normalizeText(value: string, label: string): string {
   return value.trim()
 }
 
-function normalizeDays(value: number, label: string): number {
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new ModelValidationError(`${label} must be a positive whole number of days`)
-  }
-  return value
-}
-
 function normalizeDate(value: string, label: string): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     throw new ModelValidationError(`${label} must use YYYY-MM-DD`)
@@ -131,6 +130,28 @@ function normalizeDate(value: string, label: string): string {
     throw new ModelValidationError(`${label} must be a real calendar date`)
   }
   return value
+}
+
+const WEEKDAY_NUMBER = new Map<RoutineWeekday, number>(
+  ROUTINE_WEEKDAYS.map((weekday, index) => [weekday, index + 1])
+)
+
+function normalizeWeekdays(value: readonly RoutineWeekday[]): RoutineWeekday[] {
+  if (!Array.isArray(value)) {
+    throw new ModelValidationError('Routine schedule weekdays must be an array')
+  }
+  const unique = new Set<RoutineWeekday>()
+  for (const weekday of value) {
+    if (!ROUTINE_WEEKDAYS.includes(weekday)) {
+      throw new ModelValidationError(`unsupported Routine weekday: ${String(weekday)}`)
+    }
+    unique.add(weekday)
+  }
+  return ROUTINE_WEEKDAYS.filter((weekday) => unique.has(weekday))
+}
+
+function weekdayNumber(value: string): number {
+  return new Date(`${value}T00:00:00.000Z`).getUTCDay()
 }
 
 function localDate(now = new Date()): string {
@@ -228,8 +249,8 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
     const [focusId, threadId] = parentColumns(input.parent)
     this.assertParent(input.parent)
     const name = normalizeText(input.name, 'Routine name')
-    const cadenceDays = normalizeDays(input.cadenceDays, 'Routine cadence')
-    const anchorDate = normalizeDate(input.anchorDate ?? localDate(now), 'Routine anchor date')
+    const scheduleWeekdays = normalizeWeekdays(input.scheduleWeekdays)
+    const scheduleEffectiveDate = localDate(now)
     const scopeId = input.scopeId ?? null
     this.assertScope(scopeId, input.parent)
     const checklist = normalizeChecklist(input.checklist)
@@ -258,15 +279,16 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
          ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
         [
           routineId,
-          cadenceDays,
-          anchorDate,
-          anchorDate,
+          7,
+          scheduleEffectiveDate,
+          scheduleEffectiveDate,
           scopeId,
           input.needsAttestation === false ? 0 : 1,
           createdAt,
           createdAt
         ]
       )
+      this.replaceScheduleWeekdays(routineId, scheduleWeekdays)
       this.insertTemplate(routineId, 1, checklist, createdAt)
       return routineId
     })
@@ -303,12 +325,9 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
     const name = input.name === undefined
       ? current.name
       : normalizeText(input.name, 'Routine name')
-    const cadenceDays = input.cadenceDays === undefined
-      ? current.cadenceDays
-      : normalizeDays(input.cadenceDays, 'Routine cadence')
-    const anchorDate = input.anchorDate === undefined
-      ? current.anchorDate
-      : normalizeDate(input.anchorDate, 'Routine anchor date')
+    const scheduleWeekdays = input.scheduleWeekdays === undefined
+      ? current.scheduleWeekdays
+      : normalizeWeekdays(input.scheduleWeekdays)
     const scopeId = input.scopeId === undefined ? row.scope_id : input.scopeId
     this.assertScope(scopeId, parent)
     if (input.sensitive !== undefined && typeof input.sensitive !== 'boolean') {
@@ -319,7 +338,7 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
     }
     const checklist = input.checklist === undefined ? null : normalizeChecklist(input.checklist)
     const changedAt = timestamp(now)
-    const scheduleChanged = cadenceDays !== current.cadenceDays || anchorDate !== current.anchorDate
+    const scheduleChanged = scheduleWeekdays.join(',') !== current.scheduleWeekdays.join(',')
 
     this.database.transaction(() => {
       this.database.run(
@@ -330,20 +349,19 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
       const nextVersion = checklist === null ? row.current_template_version : row.current_template_version + 1
       this.database.run(
         `UPDATE routine_definitions
-         SET cadence_days = ?, anchor_on = ?, schedule_effective_on = ?, scope_id = ?,
+         SET schedule_effective_on = ?, scope_id = ?,
              current_template_version = ?, needs_attestation = ?, updated_at = ?
          WHERE commitment_id = ?`,
         [
-          cadenceDays,
-          anchorDate,
           scheduleChanged ? localDate(now) : row.schedule_effective_on,
           scopeId,
           nextVersion,
-          (input.needsAttestation ?? current.needsAttestation) ? 1 : 0,
+          (input.needsAttestation ?? current.attestationRequested) ? 1 : 0,
           changedAt,
           id
         ]
       )
+      if (scheduleChanged) this.replaceScheduleWeekdays(id, scheduleWeekdays)
       if (checklist !== null) this.insertTemplate(id, nextVersion, checklist, changedAt)
     })
     return this.materialize(id, localDate(now))
@@ -499,8 +517,12 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
        ORDER BY scheduled_on DESC, id DESC`,
       [id]
     ).map((run) => this.runSnapshot(run))
-    const currentRun = runs[0] ?? null
+    const currentRun = [...runs].reverse().find(({ completionDate }) => completionDate === null) ??
+      runs[0] ?? null
     const latestCompleted = runs.find(({ completionDate }) => completionDate !== null) ?? null
+    const scheduleWeekdays = this.scheduleWeekdays(id)
+    const attestationRequested = Boolean(row.needs_attestation)
+    const needsAttestation = attestationRequested && scheduleWeekdays.length > 0
     const status = this.deriveStatus(row, currentRun, latestCompleted, asOf)
     const nextReviewDate = currentRun?.completionDate === null
       ? currentRun.scheduledDate
@@ -512,9 +534,9 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
       type: 'routine',
       name: row.title,
       sensitive: Boolean(row.sensitive),
-      needsAttestation: Boolean(row.needs_attestation),
-      cadenceDays: Number(row.cadence_days),
-      anchorDate: row.anchor_on,
+      attestationRequested,
+      needsAttestation,
+      scheduleWeekdays,
       scope: this.currentScope(row.scope_id, asOf),
       status,
       nextReviewDate,
@@ -523,7 +545,8 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
         currentRun?.completionDate === null ? daysBetween(currentRun.scheduledDate, asOf) : 0,
       template,
       currentRun,
-      previousRuns: currentRun === null ? runs : runs.filter(({ id: runId }) => runId !== currentRun.id),
+      previousRuns: runs.filter(({ id: runId, completionDate }) =>
+        completionDate !== null && runId !== currentRun?.id),
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }
@@ -592,18 +615,38 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
     })
   }
 
-  private ensureScheduledRuns(row: RoutineRow, asOf: string): void {
-    let scheduled = row.anchor_on
-    let iterations = 0
-    while (scheduled < row.schedule_effective_on) {
-      scheduled = addDays(scheduled, Number(row.cadence_days))
-      if (++iterations > 10_000) {
-        throw new ModelValidationError('Routine schedule exceeds the supported history')
-      }
+  private scheduleWeekdays(routineId: number): RoutineWeekday[] {
+    const selected = new Set(this.database.all<ScheduleWeekdayRow>(
+      `SELECT weekday FROM routine_schedule_weekdays
+       WHERE routine_id = ? ORDER BY weekday`,
+      [routineId]
+    ).map(({ weekday }) => Number(weekday)))
+    return ROUTINE_WEEKDAYS.filter((weekday) => selected.has(WEEKDAY_NUMBER.get(weekday) as number))
+  }
+
+  private replaceScheduleWeekdays(
+    routineId: number,
+    scheduleWeekdays: readonly RoutineWeekday[]
+  ): void {
+    this.database.run('DELETE FROM routine_schedule_weekdays WHERE routine_id = ?', [routineId])
+    for (const weekday of scheduleWeekdays) {
+      this.database.run(
+        'INSERT INTO routine_schedule_weekdays (routine_id, weekday) VALUES (?, ?)',
+        [routineId, WEEKDAY_NUMBER.get(weekday) as number]
+      )
     }
+  }
+
+  private ensureScheduledRuns(row: RoutineRow, asOf: string): void {
+    const weekdays = new Set(
+      this.scheduleWeekdays(Number(row.id)).map((weekday) => WEEKDAY_NUMBER.get(weekday) as number)
+    )
+    if (weekdays.size === 0) return
+    let scheduled = row.schedule_effective_on
+    let iterations = 0
     while (scheduled <= asOf) {
-      this.ensureRun(row, scheduled)
-      scheduled = addDays(scheduled, Number(row.cadence_days))
+      if (weekdays.has(weekdayNumber(scheduled))) this.ensureRun(row, scheduled)
+      scheduled = addDays(scheduled, 1)
       if (++iterations > 10_000) {
         throw new ModelValidationError('Routine schedule exceeds the supported history')
       }
@@ -637,7 +680,7 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
         [
           row.id,
           scheduledDate,
-          addDays(scheduledDate, Number(row.cadence_days)),
+          this.nextScheduleAfter(row, scheduledDate) as string,
           templateVersion.id,
           templateVersion.version,
           scope?.id ?? null,
@@ -781,23 +824,32 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
     latestCompleted: RoutineReviewRunSnapshot | null,
     asOf: string
   ): RoutineStatus {
-    if (!row.needs_attestation) return 'green'
+    if (!row.needs_attestation || this.scheduleWeekdays(Number(row.id)).length === 0) return 'green'
     if (currentRun === null || currentRun.completionDate !== null) return 'green'
-    const lapsedBaseline = latestCompleted?.scheduledDate ?? row.anchor_on
-    if (asOf >= addDays(lapsedBaseline, Number(row.cadence_days) * 2)) return 'red'
+    const lapsedBaseline = latestCompleted?.scheduledDate ?? currentRun.scheduledDate
+    const firstMissedBoundary = this.nextScheduleAfter(row, lapsedBaseline)
+    const lapsedBoundary = firstMissedBoundary === null
+      ? null
+      : this.nextScheduleAfter(row, firstMissedBoundary)
+    if (lapsedBoundary !== null && asOf >= lapsedBoundary) return 'red'
     return currentRun.scheduledDate < asOf ? 'yellow' : 'green'
   }
 
-  private nextScheduledDate(row: RoutineRow, asOf: string): string {
-    let next = row.anchor_on
-    let iterations = 0
-    while (next <= asOf || next < row.schedule_effective_on) {
-      next = addDays(next, Number(row.cadence_days))
-      if (++iterations > 10_000) {
-        throw new ModelValidationError('Routine schedule exceeds the supported history')
-      }
+  private nextScheduledDate(row: RoutineRow, asOf: string): string | null {
+    return this.nextScheduleAfter(row, asOf)
+  }
+
+  private nextScheduleAfter(row: RoutineRow, date: string): string | null {
+    const weekdays = new Set(
+      this.scheduleWeekdays(Number(row.id)).map((weekday) => WEEKDAY_NUMBER.get(weekday) as number)
+    )
+    if (weekdays.size === 0) return null
+    let next = addDays(date, 1)
+    for (let offset = 0; offset < 7; offset += 1) {
+      if (next >= row.schedule_effective_on && weekdays.has(weekdayNumber(next))) return next
+      next = addDays(next, 1)
     }
-    return next
+    throw new ModelValidationError('Routine weekday schedule could not resolve its next occurrence')
   }
 
   private assertParent(parent: CommitmentParent): void {

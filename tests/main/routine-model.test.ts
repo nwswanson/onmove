@@ -28,8 +28,7 @@ describe('Routine Commitment model', () => {
     const routine = database!.domain.routines.create({
       parent: { type: 'focus', id: focus.id },
       name: 'Weekly delivery inspection',
-      cadenceDays: 7,
-      anchorDate: '2026-01-01',
+      scheduleWeekdays: ['thursday'],
       checklist: [
         { inspection: 'Verify delivery risks are represented in the weekly update.' },
         { inspection: 'Confirm scope changes received approval.' }
@@ -143,6 +142,65 @@ describe('Routine Commitment model', () => {
     expect(finalized.status).toBe('yellow')
   })
 
+  it('creates anchored weekday Runs and advances the oldest unfinished occurrence first', () => {
+    const { routine } = createRoutine({
+      scheduleWeekdays: ['monday', 'wednesday', 'friday'],
+      checklist: [{ inspection: 'Verify the scheduled evidence was inspected.' }]
+    })
+
+    const projected = routine.snapshot('2026-01-09')
+    expect(projected).toMatchObject({
+      scheduleWeekdays: ['monday', 'wednesday', 'friday'],
+      attestationRequested: true,
+      needsAttestation: true,
+      currentRun: { scheduledDate: '2026-01-02' },
+      nextScheduledDate: '2026-01-12'
+    })
+    const raw = new DatabaseSync(path)
+    expect(raw.prepare(
+      `SELECT scheduled_on, review_window_ends_on
+       FROM routine_review_runs WHERE routine_id = ? ORDER BY scheduled_on`
+    ).all(routine.id)).toEqual([
+      { scheduled_on: '2026-01-02', review_window_ends_on: '2026-01-05' },
+      { scheduled_on: '2026-01-05', review_window_ends_on: '2026-01-07' },
+      { scheduled_on: '2026-01-07', review_window_ends_on: '2026-01-09' },
+      { scheduled_on: '2026-01-09', review_window_ends_on: '2026-01-12' }
+    ])
+    raw.close()
+  })
+
+  it('derives queue inclusion from both the stored preference and a nonempty schedule', () => {
+    const { routine } = createRoutine({ scheduleWeekdays: [] })
+    expect(routine.snapshot('2026-01-08')).toMatchObject({
+      scheduleWeekdays: [],
+      attestationRequested: true,
+      needsAttestation: false,
+      status: 'green',
+      nextReviewDate: null,
+      nextScheduledDate: null,
+      currentRun: null
+    })
+
+    const scheduled = database!.domain.routines.update(routine.id, {
+      scheduleWeekdays: ['thursday']
+    }, new Date('2026-01-08T09:00:00.000Z'))
+    expect(scheduled).toMatchObject({
+      attestationRequested: true,
+      needsAttestation: true,
+      currentRun: { scheduledDate: '2026-01-08' }
+    })
+
+    const excluded = database!.domain.routines.update(routine.id, {
+      needsAttestation: false
+    }, new Date('2026-01-08T10:00:00.000Z'))
+    expect(excluded).toMatchObject({
+      attestationRequested: false,
+      needsAttestation: false,
+      scheduleWeekdays: ['thursday'],
+      status: 'green'
+    })
+  })
+
   it('autosaves draft rich-text notes and freezes them only through explicit finalization', () => {
     const { routine } = createRoutine({
       checklist: [{ inspection: 'Verify the evidence was reviewed.' }]
@@ -199,6 +257,17 @@ describe('Routine Commitment model', () => {
   it('versions templates and never rewrites an already materialized Run checklist', () => {
     const { routine } = createRoutine()
     const original = routine.snapshot('2026-01-01').currentRun!
+    for (const item of original.items) {
+      database!.domain.routines.attestCellItem(
+        item.id,
+        { resolution: 'attested' },
+        new Date('2026-01-01T12:30:00.000Z')
+      )
+    }
+    database!.domain.routines.finalizeCell(
+      original.cells[0].id,
+      new Date('2026-01-01T13:00:00.000Z')
+    )
 
     database!.domain.routines.update(routine.id, {
       checklist: [{ inspection: 'Verify the replacement inspection was performed.' }]
@@ -246,8 +315,7 @@ describe('Routine Commitment model', () => {
     const routine = database!.domain.routines.create({
       parent: { type: 'focus', id: focus.id },
       name: 'Regional inspection',
-      cadenceDays: 7,
-      anchorDate: '2026-01-01',
+      scheduleWeekdays: ['thursday'],
       scopeId: focusScope.scopeId,
       checklist: [{ inspection: 'Confirm the regional plan was inspected.' }]
     }, new Date('2026-01-01T12:00:00.000Z'))
@@ -321,14 +389,14 @@ describe('Routine Commitment model', () => {
     expect(() => database!.domain.routines.create({
       parent: { type: 'focus', id: focus.id },
       name: 'Invalid scope',
-      cadenceDays: 7,
+      scheduleWeekdays: ['thursday'],
       scopeId: otherScope.scopeId,
       checklist: [{ inspection: 'Verify ownership.' }]
     })).toThrow(/Scope must belong/)
     expect(() => database!.domain.routines.create({
       parent: { type: 'focus', id: focus.id },
       name: 'Empty',
-      cadenceDays: 7,
+      scheduleWeekdays: ['thursday'],
       checklist: []
     })).toThrow(ModelValidationError)
     expect(() => database!.domain.commitments.create({
@@ -351,7 +419,7 @@ describe('Routine Commitment model', () => {
     const threadRoutine = database!.domain.routines.create({
       parent: { type: 'thread', id: thread.id },
       name: 'Sprint inspection',
-      cadenceDays: 7,
+      scheduleWeekdays: ['thursday'],
       checklist: [{ inspection: 'Confirm sprint readiness was inspected.' }]
     })
 
@@ -377,8 +445,7 @@ describe('Routine Commitment model', () => {
     const routine = database!.domain.routines.create({
       parent: { type: 'thread', id: thread.id },
       name: 'Regional inspection',
-      cadenceDays: 7,
-      anchorDate: '2026-01-01',
+      scheduleWeekdays: ['thursday'],
       scopeId: sourceScope.scopeId,
       checklist: [{ inspection: 'Verify regional delivery evidence.' }]
     }, new Date('2026-01-01T10:00:00.000Z'))

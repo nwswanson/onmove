@@ -244,8 +244,7 @@ describe('database migrations', () => {
     const routine = database.domain.routines.create({
       parent: { type: 'focus', id: focus.id },
       name: 'Evidence review',
-      cadenceDays: 7,
-      anchorDate: '2026-08-13',
+      scheduleWeekdays: ['thursday'],
       checklist: [{ inspection: 'Verify evidence.' }]
     }, new Date('2026-08-13T10:00:00.000Z'))
     const item = routine.snapshot('2026-08-13').currentRun!.items[0]
@@ -269,6 +268,34 @@ describe('database migrations', () => {
       "UPDATE routine_review_cell_attestations SET resolution = 'pending', attested_at = NULL WHERE id = ?"
     ).run(item.id)).toThrow(/Finalized.*immutable/)
     raw.close()
+  })
+
+  it('migrates legacy Routine anchors to constrained weekday schedules', () => {
+    const database = new AppDatabase(databasePath)
+    const focus = database.domain.focuses.create({ title: 'Legacy Routine schedule' })
+    const routine = database.domain.routines.create({
+      parent: { type: 'focus', id: focus.id },
+      name: 'Weekend inspection',
+      scheduleWeekdays: ['friday'],
+      checklist: [{ inspection: 'Verify evidence.' }]
+    }, new Date('2026-08-14T10:00:00.000Z'))
+    database.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      DELETE FROM schema_migrations WHERE version = 31;
+      DROP TABLE routine_schedule_weekdays;
+      UPDATE routine_definitions SET anchor_on = '2026-08-16';
+    `)
+    legacy.close()
+
+    const migrated = new AppDatabase(databasePath)
+    expect(migrated.domain.routines.materialize(routine.id, '2026-08-17')).toMatchObject({
+      scheduleWeekdays: ['monday'],
+      attestationRequested: true,
+      needsAttestation: true
+    })
+    migrated.close()
   })
 
   it('stores calendar-validated scoped review pokes with aggregate cascades', () => {

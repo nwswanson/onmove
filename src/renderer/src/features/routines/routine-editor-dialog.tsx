@@ -5,20 +5,14 @@ import type {
   CreateRoutineInput,
   RoutineSnapshot,
   RoutineTemplateItemInput,
+  RoutineWeekday,
   UpdateRoutineInput
 } from '../../../../shared/contracts'
+import { ROUTINE_WEEKDAYS } from '../../../../shared/contracts'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { TaggedText } from '@/components/ui/tagged-text'
-
-function localDate(): string {
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
 
 export interface RoutineEditorParent {
   parent: CommitmentParent
@@ -33,6 +27,11 @@ interface FormItem {
 }
 
 let formItemKey = 0
+
+function defaultScheduleWeekdays(): RoutineWeekday[] {
+  const day = new Date().getDay()
+  return day >= 1 && day <= 5 ? [ROUTINE_WEEKDAYS[day - 1]] : ['friday']
+}
 
 function initialItems(routine?: RoutineSnapshot): FormItem[] {
   return (routine?.template.items ?? [
@@ -61,16 +60,18 @@ export function RoutineEditor({
   onSave: (input: CreateRoutineInput | UpdateRoutineInput) => Promise<boolean>
 }): React.JSX.Element {
   const [name, setName] = useState(routine?.name ?? '')
-  const [cadenceDays, setCadenceDays] = useState(String(routine?.cadenceDays ?? 7))
-  const [anchorDate, setAnchorDate] = useState(routine?.anchorDate ?? localDate())
+  const [scheduleWeekdays, setScheduleWeekdays] = useState<RoutineWeekday[]>(
+    routine?.scheduleWeekdays ?? defaultScheduleWeekdays()
+  )
   const [useScope, setUseScope] = useState(routine?.scope !== null && routine?.scope !== undefined)
   const [sensitive, setSensitive] = useState(routine?.sensitive ?? false)
-  const [needsAttestation, setNeedsAttestation] = useState(routine?.needsAttestation ?? true)
+  const [needsAttestation, setNeedsAttestation] = useState(
+    routine?.attestationRequested ?? true
+  )
   const [items, setItems] = useState<FormItem[]>(() => initialItems(routine))
   const [error, setError] = useState<string | null>(null)
   const fieldSuffix = routine ? `edit-${routine.id}` : 'new'
-  const valid = name.trim().length > 0 && Number(cadenceDays) > 0 &&
-    anchorDate.length === 10 && items.some(
+  const valid = name.trim().length > 0 && items.some(
       ({ inspection, required }) => inspection.trim().length > 0 && required
     )
 
@@ -81,8 +82,7 @@ export function RoutineEditor({
       .map(({ inspection, required }) => ({ inspection, required }))
     const common = {
       name,
-      cadenceDays: Number(cadenceDays),
-      anchorDate,
+      scheduleWeekdays,
       scopeId: useScope ? parent.scope?.id ?? null : null,
       sensitive,
       needsAttestation,
@@ -96,8 +96,8 @@ export function RoutineEditor({
 
   const fields = (
     <>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2 sm:col-span-2">
+      <div className="space-y-4">
+        <div className="space-y-2">
           <label className="text-xs font-medium" htmlFor={`routine-name-${fieldSuffix}`}>
             Routine name
           </label>
@@ -108,33 +108,41 @@ export function RoutineEditor({
             onChange={(event) => setName(event.target.value)}
           />
         </div>
-        <div className="space-y-2">
-          <label className="text-xs font-medium" htmlFor={`routine-cadence-${fieldSuffix}`}>
-            Check every
-          </label>
-          <div className="flex items-center gap-2">
-            <Input
-              id={`routine-cadence-${fieldSuffix}`}
-              type="number"
-              min={1}
-              step={1}
-              value={cadenceDays}
-              onChange={(event) => setCadenceDays(event.target.value)}
-            />
-            <span className="text-xs text-muted-foreground">days</span>
+        <fieldset className="space-y-2">
+          <legend className="text-xs font-medium">Check every</legend>
+          <div className="inline-flex rounded-lg bg-muted/55 p-1" aria-label="Routine weekdays">
+            {ROUTINE_WEEKDAYS.map((weekday) => {
+              const selected = scheduleWeekdays.includes(weekday)
+              const shortLabel = weekday.slice(0, 2).replace(/^./, (letter) => letter.toUpperCase())
+              return (
+                <label
+                  key={weekday}
+                  className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium capitalize ${
+                    selected ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    aria-label={weekday}
+                    className="size-3.5 accent-primary"
+                    checked={selected}
+                    onChange={(event) => setScheduleWeekdays((current) =>
+                      event.target.checked
+                        ? ROUTINE_WEEKDAYS.filter((candidate) =>
+                            candidate === weekday || current.includes(candidate))
+                        : current.filter((candidate) => candidate !== weekday))}
+                  />
+                  {shortLabel}
+                </label>
+              )
+            })}
           </div>
-        </div>
-        <div className="space-y-2">
-          <label className="text-xs font-medium" htmlFor={`routine-anchor-${fieldSuffix}`}>
-            Schedule anchor
-          </label>
-          <Input
-            id={`routine-anchor-${fieldSuffix}`}
-            type="date"
-            value={anchorDate}
-            onChange={(event) => setAnchorDate(event.target.value)}
-          />
-        </div>
+          <p className="text-xs text-muted-foreground">
+            {scheduleWeekdays.length === 0
+              ? 'No schedule. This Routine will not appear in the attestation queue.'
+              : 'Each selected weekday creates an independently completable Run.'}
+          </p>
+        </fieldset>
       </div>
 
       <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
@@ -163,6 +171,9 @@ export function RoutineEditor({
           />
           Needs attestation
         </label>
+        {needsAttestation && scheduleWeekdays.length === 0 && (
+          <span className="text-xs text-muted-foreground">Inactive until a weekday is selected</span>
+        )}
       </div>
 
       <div>

@@ -3060,6 +3060,37 @@ const migrations: readonly Migration[] = [
         END;
       `)
     }
+  },
+  {
+    version: 31,
+    name: 'routine_weekday_schedules',
+    up(database) {
+      const exists = database.get<{ found: number }>(
+        "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = 'routine_definitions'"
+      )
+      if (!exists) return
+      const definitions = database.all<{ commitment_id: number; anchor_on: string }>(
+        'SELECT commitment_id, anchor_on FROM routine_definitions'
+      )
+      database.exec(`
+        CREATE TABLE routine_schedule_weekdays (
+          routine_id INTEGER NOT NULL
+            REFERENCES routine_definitions(commitment_id) ON DELETE CASCADE,
+          weekday INTEGER NOT NULL CHECK (weekday BETWEEN 1 AND 5),
+          PRIMARY KEY (routine_id, weekday)
+        ) STRICT;
+      `)
+      for (const definition of definitions) {
+        const day = new Date(`${definition.anchor_on}T00:00:00.000Z`).getUTCDay()
+        // Legacy weekend anchors become Monday; every legacy interval otherwise
+        // becomes its anchor weekday. Existing Runs preserve the old schedule.
+        const weekday = day === 0 || day === 6 ? 1 : day
+        database.run(
+          'INSERT INTO routine_schedule_weekdays (routine_id, weekday) VALUES (?, ?)',
+          [definition.commitment_id, weekday]
+        )
+      }
+    }
   }
 ]
 

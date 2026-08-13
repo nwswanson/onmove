@@ -26,6 +26,7 @@ export const DATA_ARCHIVE_TABLES = [
   'thread_scope_applications',
   'commitment_scope_applications',
   'routine_definitions',
+  'routine_schedule_weekdays',
   'routine_template_versions',
   'routine_template_items',
   'routine_review_runs',
@@ -98,7 +99,8 @@ const BOOLEAN_COLUMNS = new Set([
   'needs_review',
   'done',
   'shared_across_subjects',
-  'required'
+  'required',
+  'needs_attestation'
 ])
 const INTEGER_COLUMNS = new Set([
   'id',
@@ -137,7 +139,8 @@ const INTEGER_COLUMNS = new Set([
   'current_template_version',
   'template_version',
   'version',
-  'position'
+  'position',
+  'weekday'
 ])
 const TIMESTAMP_COLUMNS = new Set(['created_at', 'updated_at', 'changed_at', 'deleted_at'])
 const OPTIONAL_TIMESTAMP_COLUMNS = new Set(['completed_at'])
@@ -597,9 +600,28 @@ function cleanSemanticViolations(database: SqliteAdapter): number {
   return statements.reduce((count, sql) => count + database.run(sql).changes, 0)
 }
 
-function repairRequiredRecords(database: SqliteAdapter, now: Date): number {
+function repairRequiredRecords(
+  database: SqliteAdapter,
+  now: Date,
+  repairLegacyRoutineSchedules: boolean
+): number {
   const timestamp = now.toISOString()
   let repaired = 0
+  if (repairLegacyRoutineSchedules) {
+    repaired += database.run(
+      `INSERT OR IGNORE INTO routine_schedule_weekdays (routine_id, weekday)
+       SELECT commitment_id,
+              CASE CAST(strftime('%w', anchor_on) AS INTEGER)
+                WHEN 0 THEN 1 WHEN 6 THEN 1
+                ELSE CAST(strftime('%w', anchor_on) AS INTEGER)
+              END
+       FROM routine_definitions definition
+       WHERE NOT EXISTS (
+         SELECT 1 FROM routine_schedule_weekdays schedule
+         WHERE schedule.routine_id = definition.commitment_id
+       )`
+    ).changes
+  }
   repaired += database.run(
     `UPDATE todos
      SET completed_at = COALESCE(completed_at, updated_at, created_at, ?)
@@ -936,7 +958,11 @@ export class DataArchiveRepository {
 
       repairedRows += repairRoutineAttestationCells(this.database)
       restoreTriggers(this.database, triggers)
-      repairedRows += repairRequiredRecords(this.database, now)
+      repairedRows += repairRequiredRecords(
+        this.database,
+        now,
+        !knownRows.has('routine_schedule_weekdays')
+      )
       const remainingViolations = this.database.all<ForeignKeyViolation>('PRAGMA foreign_key_check')
       if (remainingViolations.length > 0) {
         throw new Error('The imported data still contains invalid relationships.')

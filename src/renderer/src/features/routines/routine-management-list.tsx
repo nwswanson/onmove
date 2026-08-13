@@ -5,7 +5,7 @@ import { TaggedText } from '@/components/ui/tagged-text'
 export interface RoutineManagementItemModel {
   id: number
   name: string
-  cadenceLabel: string
+  scheduleLabel: string
   scopeLabel: string
   detailLabels: readonly string[]
   stateLabel: StateLabelModel
@@ -46,7 +46,7 @@ export function RoutineManagementList({
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-medium"><TaggedText value={item.name} /></span>
                 <span className="mt-0.5 flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                  <span>{item.cadenceLabel}</span>
+                  <span>{item.scheduleLabel}</span>
                   <span>{item.scopeLabel}</span>
                   {item.detailLabels.map((label) => <span key={label}>{label}</span>)}
                 </span>

@@ -5,6 +5,20 @@ import type { RoutineHistoryModel } from '@/features/routines/routine-history'
 import type { RoutineManagementListModel } from '@/features/routines/routine-management-list'
 import type { RoutineCellChecklistModel } from '@/features/routines/routine-cell-checklist'
 
+const WEEKDAY_LABELS = {
+  monday: 'Mon',
+  tuesday: 'Tue',
+  wednesday: 'Wed',
+  thursday: 'Thu',
+  friday: 'Fri'
+} as const
+
+export function routineScheduleLabel(routine: RoutineSnapshot): string {
+  if (routine.scheduleWeekdays.length === 0) return 'No schedule'
+  if (routine.scheduleWeekdays.length === 5) return 'Monday–Friday'
+  return routine.scheduleWeekdays.map((weekday) => WEEKDAY_LABELS[weekday]).join(', ')
+}
+
 export function routineCellChecklistModel(
   cell: NonNullable<RoutineSnapshot['currentRun']>['cells'][number]
 ): RoutineCellChecklistModel {
@@ -31,39 +45,44 @@ function statusModel(status: RoutineSnapshot['status']): StateLabelModel {
 }
 
 export function routineHistoryModel(routine: RoutineSnapshot): RoutineHistoryModel {
-  const checkIns = [routine.currentRun, ...routine.previousRuns]
-    .filter((run): run is NonNullable<RoutineSnapshot['currentRun']> => run !== null)
+  const projectRun = (run: NonNullable<RoutineSnapshot['currentRun']>) => ({
+    id: String(run.id),
+    scheduledLabel: `Scheduled ${run.scheduledDate}`,
+    completionLabel: run.completionDate
+      ? `Completed ${run.completionDate}`
+      : 'Incomplete',
+    progressLabel: `${run.progress.complete} of ${run.progress.required} attested`,
+    templateLabel: `Template v${run.templateVersion}`,
+    late: run.completedLate,
+    cells: run.cells.map((cell) => ({
+      id: String(cell.id),
+      subjectLabel: cell.subject?.name ?? 'No scope',
+      progressLabel: `${cell.progress.complete} of ${cell.progress.required} attested`,
+      completionLabel: cell.completionDate
+        ? `Completed ${cell.completionDate}${cell.completedLate ? ' · late' : ''}`
+        : 'Incomplete',
+      checklist: routineCellChecklistModel(cell)
+    }))
+  })
+  const checkIns = routine.previousRuns
     .filter((run, index, runs) => runs.findIndex(({ id }) => id === run.id) === index)
     .sort((left, right) => right.scheduledDate.localeCompare(left.scheduledDate))
 
   return {
     name: routine.name,
     stateLabel: statusModel(routine.status),
-    cadenceLabel: `Every ${routine.cadenceDays} days`,
+    scheduleLabel: routineScheduleLabel(routine),
     scopeLabel: routine.scope?.name ?? 'No scope',
-    nextReviewLabel: `Next review ${routine.nextReviewDate}`,
+    nextReviewLabel: routine.nextReviewDate
+      ? `Next review ${routine.nextReviewDate}`
+      : 'No review scheduled',
     needsAttestationLabel: routine.needsAttestation
       ? 'Included in Routines'
-      : 'Excluded from Routines',
-    checkIns: checkIns.map((run) => ({
-      id: String(run.id),
-      scheduledLabel: `Scheduled ${run.scheduledDate}`,
-      completionLabel: run.completionDate
-        ? `Completed ${run.completionDate}`
-        : 'Incomplete',
-      progressLabel: `${run.progress.complete} of ${run.progress.required} attested`,
-      templateLabel: `Template v${run.templateVersion}`,
-      late: run.completedLate,
-      cells: run.cells.map((cell) => ({
-        id: String(cell.id),
-        subjectLabel: cell.subject?.name ?? 'No scope',
-        progressLabel: `${cell.progress.complete} of ${cell.progress.required} attested`,
-        completionLabel: cell.completionDate
-          ? `Completed ${cell.completionDate}${cell.completedLate ? ' · late' : ''}`
-          : 'Incomplete',
-        checklist: routineCellChecklistModel(cell)
-      }))
-    }))
+      : routine.attestationRequested
+        ? 'No schedule'
+        : 'Excluded from Routines',
+    currentCheckIn: routine.currentRun ? projectRun(routine.currentRun) : null,
+    checkIns: checkIns.map(projectRun)
   }
 }
 
@@ -74,7 +93,7 @@ export function routineManagementListModel(
     items: routines.map((routine) => ({
       id: routine.id,
       name: routine.name,
-      cadenceLabel: `Every ${routine.cadenceDays} days`,
+      scheduleLabel: routineScheduleLabel(routine),
       scopeLabel: routine.scope?.name ?? 'No scope',
       detailLabels: [
         ...(!routine.needsAttestation ? ['Not in queue'] : []),
@@ -100,7 +119,8 @@ export function routineDrawerAdapter({
     id: `routine:${routine.id}`,
     revision: [
       routine.name,
-      routine.cadenceDays,
+      routine.scheduleWeekdays.join(','),
+      routine.attestationRequested,
       routine.needsAttestation,
       routine.sensitive,
       routine.scope?.id ?? 'open',
@@ -119,9 +139,9 @@ export function routineDrawerAdapter({
             { kind: 'static', id: 'name', label: 'Name', value: routine.name },
             {
               kind: 'static',
-              id: 'cadence-days',
-              label: 'Check every (days)',
-              value: String(routine.cadenceDays)
+              id: 'schedule',
+              label: 'Check every',
+              value: routineScheduleLabel(routine)
             },
             { kind: 'static', id: 'parent', label: 'Parent', value: parentLabel },
             {
@@ -134,7 +154,11 @@ export function routineDrawerAdapter({
               kind: 'static',
               id: 'needs-attestation',
               label: 'Needs attestation',
-              value: routine.needsAttestation ? 'Included' : 'Excluded'
+              value: routine.needsAttestation
+                ? 'Included'
+                : routine.attestationRequested
+                  ? 'No schedule'
+                  : 'Excluded'
             },
             {
               kind: 'static',

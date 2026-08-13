@@ -108,6 +108,10 @@ function queueEntries(
       }
     }
     if (routine.currentRun === null || routine.currentRun.completionDate !== null) {
+      const nextScheduledDate = routine.currentRun === null
+        ? routine.nextReviewDate
+        : routine.nextScheduledDate
+      if (nextScheduledDate === null) continue
       const upcomingSubjects = routine.scope?.subjects.length
         ? routine.scope.subjects
         : [null]
@@ -119,9 +123,7 @@ function queueEntries(
           run: null,
           cell: null,
           subject,
-          scheduledDate: routine.currentRun === null
-            ? routine.nextReviewDate
-            : routine.nextScheduledDate,
+          scheduledDate: nextScheduledDate,
           parent
         })
       }

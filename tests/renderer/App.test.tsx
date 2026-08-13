@@ -203,9 +203,9 @@ function routine(overrides: Partial<RoutineSnapshot> = {}): RoutineSnapshot {
     type: 'routine',
     name: 'Weekly delivery inspection',
     sensitive: false,
+    attestationRequested: true,
     needsAttestation: true,
-    cadenceDays: 7,
-    anchorDate: '2026-08-10',
+    scheduleWeekdays: ['monday'],
     scope: null,
     status: 'yellow',
     nextReviewDate: '2026-08-10',
@@ -651,9 +651,14 @@ describe('App', () => {
       return liveRoutine
     })
     const updateRoutine = vi.fn().mockImplementation(async (_id, input) => {
+      const scheduleWeekdays = input.scheduleWeekdays ?? liveRoutine.scheduleWeekdays
+      const attestationRequested = input.needsAttestation ?? liveRoutine.attestationRequested
       liveRoutine = {
         ...liveRoutine,
         name: input.name ?? liveRoutine.name,
+        scheduleWeekdays,
+        attestationRequested,
+        needsAttestation: attestationRequested && scheduleWeekdays.length > 0,
         template: {
         version: 2,
         effectiveAt: '2026-08-12T12:00:00.000Z',
@@ -687,6 +692,9 @@ describe('App', () => {
     }))
     expect(screen.getByRole('heading', { name: 'Weekly delivery inspection' })).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Check-in history' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Current check-in' }).compareDocumentPosition(
+      screen.getByRole('heading', { name: 'Check-in history' })
+    ) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     const historyNote = screen.getByLabelText(
       'Optional note for Verify delivery risks were represented.'
     )
@@ -717,9 +725,12 @@ describe('App', () => {
     const name = within(main).getByLabelText('Routine name')
     await user.clear(name)
     await user.type(name, 'Weekly evidence inspection')
+    expect(within(main).getByRole('checkbox', { name: 'monday' })).toBeChecked()
+    await user.click(within(main).getByRole('checkbox', { name: 'wednesday' }))
     await user.click(within(main).getByRole('button', { name: 'Save Routine' }))
     expect(updateRoutine).toHaveBeenCalledWith(301, expect.objectContaining({
       name: 'Weekly evidence inspection',
+      scheduleWeekdays: ['monday', 'wednesday'],
       checklist: [
         expect.objectContaining({ inspection: 'Verify delivery risks were represented.' }),
         expect.objectContaining({ inspection: 'Confirm scope changes received approval.' })

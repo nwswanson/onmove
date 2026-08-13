@@ -29,11 +29,55 @@ export interface RoutineCheckInModel {
 export interface RoutineHistoryModel {
   name: string
   stateLabel: StateLabelModel
-  cadenceLabel: string
+  scheduleLabel: string
   scopeLabel: string
   nextReviewLabel: string
   needsAttestationLabel: string
+  currentCheckIn: RoutineCheckInModel | null
   checkIns: readonly RoutineCheckInModel[]
+}
+
+function RoutineCheckInContents({
+  checkIn,
+  onMutateItem,
+  onFinalizeCell
+}: {
+  checkIn: RoutineCheckInModel
+  onMutateItem: (itemId: number, input: RoutineCellItemMutation) => unknown | Promise<unknown>
+  onFinalizeCell: (cellId: number) => unknown | Promise<unknown>
+}): React.JSX.Element {
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-sm">
+        <span className="font-semibold">{checkIn.scheduledLabel}</span>
+        <span className="text-xs text-muted-foreground">{checkIn.completionLabel}</span>
+        {checkIn.late && (
+          <span className="inline-flex items-center gap-1 text-xs font-medium text-destructive">
+            <AlertTriangle className="size-3.5" aria-hidden="true" /> Late
+          </span>
+        )}
+        <span className="ml-auto text-xs tabular-nums text-muted-foreground">
+          {checkIn.progressLabel} · {checkIn.templateLabel}
+        </span>
+      </div>
+      <div className="divide-y divide-border/60 border-t border-border/70">
+        {checkIn.cells.map((cell) => (
+          <section key={cell.id} className="py-4">
+            <header className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+              <h3 className="font-semibold">{cell.subjectLabel}</h3>
+              <span className="text-muted-foreground">{cell.completionLabel}</span>
+              <span className="ml-auto tabular-nums text-muted-foreground">{cell.progressLabel}</span>
+            </header>
+            <RoutineCellChecklist
+              cell={cell.checklist}
+              onMutateItem={onMutateItem}
+              onFinalize={onFinalizeCell}
+            />
+          </section>
+        ))}
+      </div>
+    </>
+  )
 }
 
 export function RoutineHistory({
@@ -68,7 +112,7 @@ export function RoutineHistory({
               <StateLabel model={model.stateLabel} />
             </div>
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-              <span>{model.cadenceLabel}</span>
+              <span>{model.scheduleLabel}</span>
               <span>{model.scopeLabel}</span>
               <span>{model.nextReviewLabel}</span>
               <span>{model.needsAttestationLabel}</span>
@@ -79,10 +123,27 @@ export function RoutineHistory({
       </div>
 
       <div className="mt-6">
+        <h2 className="mb-2 text-sm font-semibold">Current check-in</h2>
+        {model.currentCheckIn ? (
+          <div className="border-y border-border/70">
+            <RoutineCheckInContents
+              checkIn={model.currentCheckIn}
+              onMutateItem={onMutateItem}
+              onFinalizeCell={onFinalizeCell}
+            />
+          </div>
+        ) : (
+          <p className="border-y border-border/70 py-5 text-sm text-muted-foreground">
+            No check-in is currently scheduled.
+          </p>
+        )}
+      </div>
+
+      <div className="mt-8">
         <h2 className="mb-2 text-sm font-semibold">Check-in history</h2>
         {model.checkIns.length === 0 ? (
           <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-            No check-ins yet.
+            No previous check-ins.
           </div>
         ) : (
           <div className="divide-y divide-border/70 border-y border-border/70">
@@ -106,21 +167,12 @@ export function RoutineHistory({
                     </span>
                   </div>
                 </summary>
-                <div className="divide-y divide-border/60 border-t border-border/70">
-                  {checkIn.cells.map((cell) => (
-                    <section key={cell.id} className="py-4">
-                      <header className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                        <h3 className="font-semibold">{cell.subjectLabel}</h3>
-                        <span className="text-muted-foreground">{cell.completionLabel}</span>
-                        <span className="ml-auto tabular-nums text-muted-foreground">{cell.progressLabel}</span>
-                      </header>
-                      <RoutineCellChecklist
-                        cell={cell.checklist}
-                        onMutateItem={onMutateItem}
-                        onFinalize={onFinalizeCell}
-                      />
-                    </section>
-                  ))}
+                <div className="border-t border-border/70 px-4">
+                  <RoutineCheckInContents
+                    checkIn={checkIn}
+                    onMutateItem={onMutateItem}
+                    onFinalizeCell={onFinalizeCell}
+                  />
                 </div>
               </details>
             ))}

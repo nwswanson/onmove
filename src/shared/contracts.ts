@@ -586,6 +586,14 @@ export interface MoveCommitmentInput {
 
 export const ROUTINE_STATUSES = ['green', 'yellow', 'red'] as const
 export type RoutineStatus = (typeof ROUTINE_STATUSES)[number]
+export const ROUTINE_WEEKDAYS = [
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday'
+] as const
+export type RoutineWeekday = (typeof ROUTINE_WEEKDAYS)[number]
 
 export const ROUTINE_RUN_ITEM_RESOLUTIONS = [
   'pending',
@@ -676,14 +684,16 @@ export interface RoutineSnapshot {
   type: 'routine'
   name: string
   sensitive: boolean
+  /** Stored queue-inclusion preference before schedule availability is applied. */
+  attestationRequested: boolean
+  /** Derived as attestationRequested && scheduleWeekdays.length > 0. */
   needsAttestation: boolean
-  cadenceDays: number
-  anchorDate: string
+  scheduleWeekdays: RoutineWeekday[]
   scope: RoutineScopeSnapshot | null
   status: RoutineStatus
-  nextReviewDate: string
+  nextReviewDate: string | null
   /** Next anchored occurrence after the projection date, even while an older Run is incomplete. */
-  nextScheduledDate: string
+  nextScheduledDate: string | null
   overdueDays: number
   template: RoutineTemplateSnapshot
   currentRun: RoutineReviewRunSnapshot | null
@@ -700,8 +710,7 @@ export interface RoutineTemplateItemInput {
 export interface CreateRoutineInput {
   parent: CommitmentParent
   name: string
-  cadenceDays: number
-  anchorDate?: string
+  scheduleWeekdays: RoutineWeekday[]
   scopeId?: number | null
   sensitive?: boolean
   needsAttestation?: boolean
@@ -710,8 +719,7 @@ export interface CreateRoutineInput {
 
 export interface UpdateRoutineInput {
   name?: string
-  cadenceDays?: number
-  anchorDate?: string
+  scheduleWeekdays?: RoutineWeekday[]
   scopeId?: number | null
   sensitive?: boolean
   needsAttestation?: boolean

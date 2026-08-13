@@ -42,21 +42,20 @@ describe('DataArchiveRepository', () => {
     const routine = source.domain.routines.create({
       parent: { type: 'thread', id: thread.id },
       name: 'Inspect delivery evidence',
-      cadenceDays: 7,
-      anchorDate: '2026-08-09',
+      scheduleWeekdays: ['monday'],
       checklist: [
         { inspection: 'Verify delivery risks were represented.' },
         { inspection: 'Confirm scope changes received approval.' }
       ]
-    }, new Date('2026-08-09T08:00:00.000Z'))
-    const routineRun = routine.snapshot('2026-08-09').currentRun!
+    }, new Date('2026-08-10T08:00:00.000Z'))
+    const routineRun = routine.snapshot('2026-08-10').currentRun!
     source.domain.routines.attestCellItem(routineRun.items[0].id, {
       resolution: 'attested',
       note: 'Reviewed the approval packet.',
       issueFound: true,
       issueDescription: 'Approval evidence was incomplete',
       issueFollowUpType: 'commitment'
-    }, new Date('2026-08-09T09:00:00.000Z'))
+    }, new Date('2026-08-10T09:00:00.000Z'))
     source.domain.focuses.requireModel(focus.id)
       .pokeReview(new Date('2026-08-07T12:00:00.000Z'))
     source.domain.threads.requireModel(thread.id)
@@ -159,24 +158,23 @@ describe('DataArchiveRepository', () => {
     const routine = source.domain.routines.create({
       parent: { type: 'focus', id: focus.id },
       name: 'Inspect older evidence',
-      cadenceDays: 7,
-      anchorDate: '2026-08-09',
+      scheduleWeekdays: ['monday'],
       checklist: [{ inspection: 'Verify the evidence was inspected.' }]
-    }, new Date('2026-08-09T08:00:00.000Z'))
-    const run = routine.snapshot('2026-08-09').currentRun!
-    const archive = source.dataArchive.export('1.0.0', new Date('2026-08-09T09:00:00.000Z'))
+    }, new Date('2026-08-10T08:00:00.000Z'))
+    const run = routine.snapshot('2026-08-10').currentRun!
+    const archive = source.dataArchive.export('1.0.0', new Date('2026-08-10T09:00:00.000Z'))
 
     archive.schemaVersion = 27
     archive.tables.routine_review_run_items[0].resolution = 'attested'
-    archive.tables.routine_review_run_items[0].attested_at = '2026-08-09T09:00:00.000Z'
-    archive.tables.routine_review_runs[0].completed_at = '2026-08-09T09:00:00.000Z'
+    archive.tables.routine_review_run_items[0].attested_at = '2026-08-10T09:00:00.000Z'
+    archive.tables.routine_review_runs[0].completed_at = '2026-08-10T09:00:00.000Z'
     archive.tables.routine_run_issues.push({
       id: 1,
       run_item_id: run.items[0].runItemId,
       description: 'Older issue evidence',
       follow_up_type: 'update',
-      created_at: '2026-08-09T09:00:00.000Z',
-      updated_at: '2026-08-09T09:00:00.000Z'
+      created_at: '2026-08-10T09:00:00.000Z',
+      updated_at: '2026-08-10T09:00:00.000Z'
     })
     const tables = archive.tables as unknown as Record<string, unknown>
     delete tables.routine_review_cells
@@ -184,13 +182,13 @@ describe('DataArchiveRepository', () => {
     delete tables.routine_review_cell_issues
 
     const target = createDatabase('archive-routine-v27-target')
-    const summary = target.dataArchive.import(archive, new Date('2026-08-09T10:00:00.000Z'))
-    const imported = target.domain.routines.list('2026-08-09')[0]
+    const summary = target.dataArchive.import(archive, new Date('2026-08-10T10:00:00.000Z'))
+    const imported = target.domain.routines.list('2026-08-10')[0]
 
     expect(summary.issues).toEqual([])
     expect(summary.repairedRows).toBeGreaterThan(0)
     expect(imported.currentRun).toMatchObject({
-      completionDate: '2026-08-09',
+      completionDate: '2026-08-10',
       progress: { complete: 1, required: 1 },
       cells: [{
         subject: null,

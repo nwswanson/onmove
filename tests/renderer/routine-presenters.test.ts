@@ -67,9 +67,9 @@ function routine(): RoutineSnapshot {
     type: 'routine',
     name: 'Weekly evidence inspection',
     sensitive: false,
+    attestationRequested: true,
     needsAttestation: true,
-    cadenceDays: 7,
-    anchorDate: '2026-08-03',
+    scheduleWeekdays: ['monday'],
     scope: null,
     status: 'yellow',
     nextReviewDate: '2026-08-10',
@@ -123,20 +123,20 @@ describe('Routine presentation adapters', () => {
     expect(model).toMatchObject({
       name: 'Weekly evidence inspection',
       stateLabel: { label: 'Overdue', tone: 'warning' },
-      cadenceLabel: 'Every 7 days',
+      scheduleLabel: 'Mon',
       scopeLabel: 'No scope',
       nextReviewLabel: 'Next review 2026-08-10',
       needsAttestationLabel: 'Included in Routines'
     })
-    expect(model.checkIns.map(({ id }) => id)).toEqual(['2', '1'])
-    expect(model.checkIns[0]).toMatchObject({
+    expect(model.currentCheckIn).toMatchObject({
       scheduledLabel: 'Scheduled 2026-08-10',
       completionLabel: 'Incomplete',
       progressLabel: '0 of 1 attested',
       templateLabel: 'Template v2',
       late: false
     })
-    expect(model.checkIns[1]).toMatchObject({
+    expect(model.checkIns.map(({ id }) => id)).toEqual(['1'])
+    expect(model.checkIns[0]).toMatchObject({
       scheduledLabel: 'Scheduled 2026-08-03',
       completionLabel: 'Completed 2026-08-05',
       late: true,
@@ -152,5 +152,37 @@ describe('Routine presentation adapters', () => {
         })
       })]
     })
+  })
+
+  it('presents an empty schedule as excluded without erasing the stored preference', () => {
+    const unscheduled = {
+      ...routine(),
+      scheduleWeekdays: [],
+      needsAttestation: false,
+      nextReviewDate: null,
+      nextScheduledDate: null,
+      currentRun: null,
+      previousRuns: []
+    } satisfies RoutineSnapshot
+
+    expect(routineHistoryModel(unscheduled)).toMatchObject({
+      scheduleLabel: 'No schedule',
+      nextReviewLabel: 'No review scheduled',
+      needsAttestationLabel: 'No schedule',
+      currentCheckIn: null,
+      checkIns: []
+    })
+    expect(routineDrawerAdapter({
+      routine: unscheduled,
+      parentLabel: 'Sprint execution',
+      ancestorKeys: ['focus:1', 'thread:21']
+    }).model.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        fields: expect.arrayContaining([
+          expect.objectContaining({ label: 'Check every', value: 'No schedule' }),
+          expect.objectContaining({ label: 'Needs attestation', value: 'No schedule' })
+        ])
+      })
+    ]))
   })
 })

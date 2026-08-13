@@ -275,11 +275,15 @@ foreground colors and do not rely on color alone to communicate selection or sta
   one horizontal `Check` / `Ignore` radio group beneath it; do not split those resolutions into
   unrelated checkbox and button controls. Keep Run history visually flat: use simple separators for
   Subject cells and inspection rows instead of nesting a card around every level.
+- Render the Routine's current actionable check-in above the `Check-in history` section on its
+  owning Focus/Thread screen. History contains prior completed Runs; when several weekday
+  occurrences are unfinished, expose the oldest one as current and advance to the next only after
+  explicit finalization.
 - Create and manage Routines only from the owning Focus Overall or Thread screen. Put `Add Routine`
   beside `Add commitment`, render the parent's Routine definitions directly beneath its Commitment
   collection, and open the Routine's history when a Routine row is selected. Keep the creation form
   in the shared `Add Routine` dialog because no record exists yet, but render edits to its future
-  template, queue inclusion, sensitivity, cadence, and Scope as an embedded main-screen editor; do
+  template, queue inclusion, sensitivity, weekday schedule, and Scope as an embedded main-screen editor; do
   not open an Edit Routine dialog. Expose permanent deletion through the Routine's standard context
   drawer action with confirmation and shared invalidation behavior. Never mix Focus-owned and
   Thread-owned definitions in a parent screen. Do not put definition creation or mutation in the
@@ -470,13 +474,19 @@ foreground colors and do not rely on color alone to communicate selection or sta
   tracking compatibility storage; migration 27's constrained `behavior_type` is canonical. Keep the
   due-derived `action`/`ongoing` compatibility value isolated in `legacy_due_type`; never expose it
   as the Commitment's type or use it to branch application behavior.
-- Keep Routine recurrence anchored to `anchor_on`; late completion never moves future dates. Every
+- Store Routine recurrence as an arbitrary subset of Monday through Friday. Each selected weekday
+  creates an anchored occurrence, and late completion never moves future dates. An empty schedule
+  creates no Runs. Derive effective `needsAttestation` as the stored queue-inclusion preference AND
+  a nonempty weekday schedule; never overwrite the stored preference merely because the schedule is
+  temporarily empty. Every
   materialized Run stores its template version, inspection text/order/required flags, review window,
   and Scope/Subject-name snapshot. Materialize one independently editable attestation cell per
   effective Subject, or one unscoped cell when no Subject applies. Run snapshot fields and finalized
   cells/Runs are immutable. Only explicit finalization after full resolution of every required item
   refreshes the practice; optional item-note evidence never changes Routine color. Keep
-  `needsAttestation` as a queue-inclusion flag independent of status. Legacy issue rows remain
+  the stored attestation preference independent of status. Legacy `cadence_days` and `anchor_on`
+  columns remain import compatibility storage after migration 31 and must not drive recurrence.
+  Legacy issue rows remain
   importable/readable compatibility data but have no creation or editing UI.
 - Persist nullable, calendar-validated due dates independently on Focus, Thread, and Commitment.
   Parent dates are advisory planning boundaries, not database constraints: descendants may extend
