@@ -1,7 +1,9 @@
 import { createContext, useContext } from 'react'
+import type { UpdateCommandTarget } from '@/features/updates/update-command-presenters'
 
 export interface UpdateComposerControl {
   open: () => void
+  openFor: (target: UpdateCommandTarget) => void
 }
 
 export const UpdateComposerContext = createContext<UpdateComposerControl | null>(null)

@@ -64,9 +64,8 @@ export function UpdateComposerProvider({
 
   useCommandKeyShortcut('p', open, enabled)
 
-  function selectTarget(targetId: string): void {
-    const selected = targets.get(targetId)
-    if (!selected) return
+  function openFor(selected: UpdateCommandTarget): void {
+    if (!enabled) return
     setChooserOpen(false)
     setTarget(selected)
     setDate(today())
@@ -74,6 +73,11 @@ export function UpdateComposerProvider({
     setSensitive(false)
     setObservation('')
     setError(null)
+  }
+
+  function selectTarget(targetId: string): void {
+    const selected = targets.get(targetId)
+    if (selected) openFor(selected)
   }
 
   function cancel(): void {
@@ -119,7 +123,7 @@ export function UpdateComposerProvider({
   const selectedState = UPDATE_LIST_STATE_OPTIONS.find((option) => option.value === state)
 
   return (
-    <UpdateComposerContext.Provider value={{ open }}>
+    <UpdateComposerContext.Provider value={{ open, openFor }}>
       {children}
       <CommandMenu
         open={chooserOpen}

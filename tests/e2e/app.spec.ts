@@ -709,7 +709,7 @@ test('reviews active work before cadence is due and refreshes typed pokes in the
     ), await todoSection.elementHandle())).toBe(true)
 
     await window.keyboard.press('Meta+p')
-    let chooser = window.getByRole('dialog', { name: 'Choose update target' })
+    const chooser = window.getByRole('dialog', { name: 'Choose update target' })
     await chooser.getByRole('option', { name: /^Improve ticket quality/ }).click()
     let composer = window.getByRole('dialog', { name: 'Add update' })
     await expect(composer).toContainText('North region')
@@ -722,10 +722,11 @@ test('reviews active work before cadence is due and refreshes typed pokes in the
     await expect(window.getByRole('button', { name: 'Update' })).toBeEnabled()
     expect(updatesSection).toBeTruthy()
 
-    await window.keyboard.press('Meta+p')
-    chooser = window.getByRole('dialog', { name: 'Choose update target' })
-    await chooser.getByRole('option', { name: /^Improve ticket quality/ }).click()
+    await window.getByRole('button', { name: 'Update' }).click()
+    await expect(window.getByRole('dialog', { name: 'Choose update target' })).toBeHidden()
     composer = window.getByRole('dialog', { name: 'Add update' })
+    await expect(composer).toContainText('Improve ticket quality')
+    await expect(composer).toContainText('North region')
     const observation = composer.getByRole('textbox', { name: 'Update observation' })
     await observation.fill('Ticket examples are now included')
     await composer.getByRole('button', { name: 'Add update' }).click()

@@ -32,6 +32,7 @@ import { useReviewModel } from '@/features/review/use-review-model'
 import { WorkKindIcon } from '@/features/shared/work-kind-icon'
 import { DirectTodos } from '@/features/todos/direct-todos'
 import { useUpdateComposer } from '@/features/updates/update-composer-context'
+import { reviewUpdateCommandTarget } from '@/features/updates/update-command-presenters'
 
 interface ReviewWorkspaceProps {
   contextDrawer: ContextDrawerControl
@@ -314,9 +315,8 @@ export function ReviewWorkspace({
                       <Button
                         type="button"
                         disabled={pending}
-                        onClick={updateComposer.open}
-                        aria-keyshortcuts="Meta+P"
-                        title="Add update (⌘P)"
+                        onClick={() => updateComposer.openFor(reviewUpdateCommandTarget(current))}
+                        title="Add an Update to this review item"
                       >
                         <MessageSquarePlus aria-hidden="true" />
                         Update

@@ -2,6 +2,7 @@ import type {
   CommitmentSnapshot,
   CommitmentWorkingContextSnapshot,
   FocusSnapshot,
+  ReviewQueueItemSnapshot,
   ThreadScopeSnapshot,
   ThreadSnapshot,
   UpdateParent,
@@ -30,6 +31,75 @@ export interface UpdateCommandGraph {
   commitments: readonly CommitmentSnapshot[]
   threadScopes: ReadonlyMap<number, ThreadScopeSnapshot>
   commitmentContexts: ReadonlyMap<number, CommitmentWorkingContextSnapshot>
+}
+
+/**
+ * The Review workspace already owns one exact review target. Convert that
+ * target directly into the composer contract so its Update action never asks
+ * the user to choose unrelated work again.
+ */
+export function reviewUpdateCommandTarget(
+  reviewItem: ReviewQueueItemSnapshot
+): UpdateCommandTarget {
+  const scope = reviewItem.cell
+    ? { scopeId: reviewItem.cell.scopeId, subjectId: reviewItem.cell.subjectId }
+    : null
+  const subjectPath = reviewItem.cell ? ` › ${reviewItem.cell.subject.name}` : ''
+
+  if (reviewItem.kind === 'focus') {
+    return {
+      id: `focus:${reviewItem.focus.id}`,
+      kind: 'focus',
+      focusId: reviewItem.focus.id,
+      parent: { type: 'focus', id: reviewItem.focus.id },
+      scope: null,
+      label: reviewItem.focus.title,
+      description: 'Focus › Overall',
+      keywords: ['focus', 'overall', reviewItem.focus.title]
+    }
+  }
+
+  if (reviewItem.kind === 'thread') {
+    if (!reviewItem.thread) throw new Error('A Thread review target requires a Thread')
+    return {
+      id: reviewItem.cell
+        ? `thread:${reviewItem.thread.id}:scope:${reviewItem.cell.scopeId}:subject:${reviewItem.cell.subjectId}`
+        : `thread:${reviewItem.thread.id}`,
+      kind: 'thread',
+      focusId: reviewItem.focus.id,
+      parent: { type: 'thread', id: reviewItem.thread.id },
+      scope,
+      label: reviewItem.thread.title,
+      description: reviewItem.cell
+        ? `${reviewItem.focus.title}${subjectPath}`
+        : `${reviewItem.focus.title} › Thread-wide`,
+      keywords: [
+        'thread', reviewItem.focus.title, reviewItem.thread.title,
+        ...(reviewItem.cell ? ['subject', reviewItem.cell.subject.name] : ['thread-wide'])
+      ]
+    }
+  }
+
+  if (!reviewItem.commitment) {
+    throw new Error('A Commitment review target requires a Commitment')
+  }
+  const parentPath = `${reviewItem.focus.title} › ${reviewItem.thread?.title ?? 'Overall'}`
+  return {
+    id: reviewItem.cell
+      ? `commitment:${reviewItem.commitment.id}:scope:${reviewItem.cell.scopeId}:subject:${reviewItem.cell.subjectId}`
+      : `commitment:${reviewItem.commitment.id}`,
+    kind: 'commitment',
+    focusId: reviewItem.focus.id,
+    parent: { type: 'commitment', id: reviewItem.commitment.id },
+    scope,
+    label: reviewItem.commitment.title,
+    description: `${parentPath}${subjectPath}`,
+    keywords: [
+      'commitment', reviewItem.focus.title, reviewItem.thread?.title ?? 'overall',
+      reviewItem.commitment.title,
+      ...(reviewItem.cell ? ['subject', reviewItem.cell.subject.name] : [])
+    ]
+  }
 }
 
 export interface UpdateCommandItemModel extends CommandMenuItemModel {

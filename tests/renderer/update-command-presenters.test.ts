@@ -3,11 +3,13 @@ import type {
   CommitmentSnapshot,
   CommitmentWorkingContextSnapshot,
   FocusSnapshot,
+  ReviewQueueItemSnapshot,
   SubjectSnapshot,
   ThreadScopeSnapshot,
   ThreadSnapshot
 } from '../../src/shared/contracts'
 import {
+  reviewUpdateCommandTarget,
   updateCommandGroups,
   type UpdateCommandGraph
 } from '../../src/renderer/src/features/updates/update-command-presenters'
@@ -140,6 +142,41 @@ function graph(overrides: Partial<UpdateCommandGraph> = {}): UpdateCommandGraph 
 }
 
 describe('update command presenters', () => {
+  it('maps the active review item directly to its exact composer target', () => {
+    const currentFocus = focus()
+    const currentThread = thread()
+    const currentCommitment = commitment()
+    const currentSubject = subject(61, 'Customer Operations')
+    const reviewItem: ReviewQueueItemSnapshot = {
+      key: 'commitment:20:scope:50:subject:61',
+      kind: 'commitment',
+      focus: currentFocus,
+      thread: currentThread,
+      commitment: currentCommitment,
+      cell: { scopeId: 50, subjectId: 61, subject: currentSubject },
+      lastReviewDate: null,
+      nextReviewDate: '2026-08-08',
+      due: true,
+      state: 'none',
+      updates: [],
+      commitments: []
+    }
+
+    expect(reviewUpdateCommandTarget(reviewItem)).toEqual({
+      id: 'commitment:20:scope:50:subject:61',
+      kind: 'commitment',
+      focusId: 1,
+      parent: { type: 'commitment', id: 20 },
+      scope: { scopeId: 50, subjectId: 61 },
+      label: 'Improve ticket quality',
+      description: 'Project Atlas › Sprint execution › Customer Operations',
+      keywords: [
+        'commitment', 'Project Atlas', 'Sprint execution', 'Improve ticket quality',
+        'subject', 'Customer Operations'
+      ]
+    })
+  })
+
   it('expands bounded Threads and Commitments into exact Subject-cell targets', () => {
     const currentFocus = focus()
     const currentThread = thread()

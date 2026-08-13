@@ -1150,11 +1150,11 @@ describe('App', () => {
     })).toBeVisible()
 
     await user.click(screen.getByRole('button', { name: 'Update' }))
-    const reopenedChooser = await screen.findByRole('dialog', { name: 'Choose update target' })
-    await user.click(within(reopenedChooser).getByRole('option', {
-      name: /^Hold weekly check-ins/
-    }))
+    expect(screen.queryByRole('dialog', { name: 'Choose update target' })).not.toBeInTheDocument()
     composer = await screen.findByRole('dialog', { name: 'Add update' })
+    expect(composer).toHaveTextContent(
+      'Hold weekly check-ins · People program › Team health › Customer Operations'
+    )
     fireEvent.change(within(composer).getByLabelText('Date'), {
       target: { value: '2026-08-11' }
     })
