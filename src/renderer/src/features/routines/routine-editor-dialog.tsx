@@ -49,21 +49,25 @@ export function RoutineEditorDialog({
   routine,
   saving,
   onClose,
-  onSave
+  onSave,
+  onDelete
 }: {
   parent: RoutineEditorParent
   routine?: RoutineSnapshot
   saving: boolean
   onClose: () => void
   onSave: (input: CreateRoutineInput | UpdateRoutineInput) => Promise<boolean>
+  onDelete?: () => Promise<boolean>
 }): React.JSX.Element {
   const [name, setName] = useState(routine?.name ?? '')
   const [cadenceDays, setCadenceDays] = useState(String(routine?.cadenceDays ?? 7))
   const [anchorDate, setAnchorDate] = useState(routine?.anchorDate ?? localDate())
   const [useScope, setUseScope] = useState(routine?.scope !== null && routine?.scope !== undefined)
   const [sensitive, setSensitive] = useState(routine?.sensitive ?? false)
+  const [needsAttestation, setNeedsAttestation] = useState(routine?.needsAttestation ?? true)
   const [items, setItems] = useState<FormItem[]>(() => initialItems(routine))
   const [error, setError] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const valid = name.trim().length > 0 && Number(cadenceDays) > 0 &&
     anchorDate.length === 10 && items.some(
       ({ inspection, required }) => inspection.trim().length > 0 && required
@@ -80,6 +84,7 @@ export function RoutineEditorDialog({
       anchorDate,
       scopeId: useScope ? parent.scope?.id ?? null : null,
       sensitive,
+      needsAttestation,
       checklist
     }
     setError(null)
@@ -89,17 +94,29 @@ export function RoutineEditorDialog({
   }
 
   return (
-    <Dialog
+    <>
+      <Dialog
       open
-      title={routine ? 'Edit Routine template' : 'Add Routine'}
+      title={routine ? 'Edit Routine' : 'Add Routine'}
       description={`${parent.label} · Each scheduled Run preserves this checklist as an immutable snapshot.`}
       contentClassName="max-w-2xl"
       onClose={onClose}
       footer={
         <>
+          {routine && onDelete && (
+            <Button
+              type="button"
+              variant="destructive"
+              className="mr-auto"
+              disabled={saving}
+              onClick={() => setConfirmDelete(true)}
+            >
+              Delete Routine
+            </Button>
+          )}
           <Button type="button" variant="ghost" disabled={saving} onClick={onClose}>Cancel</Button>
           <Button type="button" disabled={!valid || saving} onClick={() => void save()}>
-            {routine ? 'Save future template' : 'Add Routine'}
+            {routine ? 'Save Routine' : 'Add Routine'}
           </Button>
         </>
       }
@@ -143,6 +160,14 @@ export function RoutineEditorDialog({
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={sensitive} onChange={(event) => setSensitive(event.target.checked)} />
             Sensitive
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={needsAttestation}
+              onChange={(event) => setNeedsAttestation(event.target.checked)}
+            />
+            Needs attestation
           </label>
         </div>
 
@@ -208,6 +233,38 @@ export function RoutineEditorDialog({
         </div>
         {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
       </div>
-    </Dialog>
+      </Dialog>
+      <Dialog
+        open={confirmDelete}
+        title="Delete Routine?"
+        description={`“${routine?.name ?? ''}” and every immutable Run will be permanently deleted.`}
+        onClose={() => !saving && setConfirmDelete(false)}
+        footer={
+          <>
+            <Button type="button" variant="ghost" disabled={saving} onClick={() => setConfirmDelete(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={saving}
+              onClick={() => void (async () => {
+                if (!onDelete) return
+                setError(null)
+                if (await onDelete()) onClose()
+                else {
+                  setConfirmDelete(false)
+                  setError('The Routine could not be deleted.')
+                }
+              })()}
+            >
+              Delete Routine
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-muted-foreground">This action cannot be undone.</p>
+      </Dialog>
+    </>
   )
 }

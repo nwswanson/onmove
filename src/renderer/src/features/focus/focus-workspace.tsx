@@ -6,6 +6,7 @@ import type {
   CreateCommitmentInput,
   CreateThreadInput,
   FocusSnapshot,
+  RoutineSnapshot,
   SubjectSnapshot,
   ThreadSnapshot,
   ThreadMovePlanSnapshot,
@@ -13,6 +14,7 @@ import type {
   ThreadSubjectCellSnapshot,
   UpdateCommitmentInput,
   UpdateFocusInput,
+  UpdateRoutineInput,
   UpdateThreadInput
 } from '../../../../shared/contracts'
 import { Button } from '@/components/ui/button'
@@ -73,6 +75,8 @@ import {
   RoutineEditorDialog,
   type RoutineEditorParent
 } from '@/features/routines/routine-editor-dialog'
+import { RoutineManagementList } from '@/features/routines/routine-management-list'
+import { routineManagementListModel } from '@/features/routines/routine-presenters'
 
 const CONTEXTUAL_SIDEBAR_MIN = 220
 const CONTEXTUAL_SIDEBAR_MAX = 320
@@ -217,7 +221,10 @@ export function FocusWorkspace({
   const [newThreadOpen, setNewThreadOpen] = useState(false)
   const [newCommitmentParent, setNewCommitmentParent] =
     useState<CommitmentParent | null>(null)
-  const [newRoutineParent, setNewRoutineParent] = useState<CommitmentParent | null>(null)
+  const [routineEditor, setRoutineEditor] = useState<{
+    parent: CommitmentParent
+    routine?: RoutineSnapshot
+  } | null>(null)
   const [routineSaving, setRoutineSaving] = useState(false)
   const [contextualSidebarWidth, setContextualSidebarWidth] = useState(252)
   const [commitmentStatusSavingId, setCommitmentStatusSavingId] = useState<number | null>(null)
@@ -714,21 +721,21 @@ export function FocusWorkspace({
       : undefined
   )
   const focusTitle = focus.title
-  const routineEditorParent: RoutineEditorParent | null = newRoutineParent
-    ? newRoutineParent.type === 'focus'
+  const routineEditorParent: RoutineEditorParent | null = routineEditor
+    ? routineEditor.parent.type === 'focus'
       ? {
-          parent: newRoutineParent,
+          parent: routineEditor.parent,
           label: focus.title,
           scope: model.focusScope?.scopeId
             ? { id: model.focusScope.scopeId, name: 'Focus scope' }
             : null
         }
       : (() => {
-          const thread = model.threads.find(({ id }) => id === newRoutineParent.id)
-          const scope = model.threadScopes[newRoutineParent.id]
+          const thread = model.threads.find(({ id }) => id === routineEditor.parent.id)
+          const scope = model.threadScopes[routineEditor.parent.id]
           return thread
             ? {
-                parent: newRoutineParent,
+                parent: routineEditor.parent,
                 label: `${focus.title} / ${thread.title}`,
                 scope: scope?.scopeId
                   ? {
@@ -1450,7 +1457,9 @@ export function FocusWorkspace({
                         setNewCommitmentParent({ type: 'thread', id: displayedThread.id })
                       }
                       onCreateRoutine={selectedSubject ? undefined : () =>
-                        setNewRoutineParent({ type: 'thread', id: displayedThread.id })
+                        setRoutineEditor({
+                          parent: { type: 'thread', id: displayedThread.id }
+                        })
                       }
                       onOpenCollection={selectedSubject ? undefined : () =>
                         drillIntoCommitments({ type: 'thread', id: displayedThread.id })
@@ -1471,6 +1480,25 @@ export function FocusWorkspace({
                         void updateCommitmentDetails(commitmentId, { status: 'done' })
                       }
                     />
+                    {!selectedSubject && (
+                      <RoutineManagementList
+                        idPrefix={`thread-${displayedThread.id}`}
+                        model={routineManagementListModel(
+                          visibleSensitiveRecords(
+                            model.routinesFor({ type: 'thread', id: displayedThread.id }),
+                            hideSensitiveContent,
+                            focus.sensitive || displayedThread.sensitive
+                          )
+                        )}
+                        onEdit={(routineId) => {
+                          const routine = model.routinesFor({
+                            type: 'thread',
+                            id: displayedThread.id
+                          }).find(({ id }) => id === routineId)
+                          if (routine) setRoutineEditor({ parent: routine.parent, routine })
+                        }}
+                      />
+                    )}
                     <DirectTodos
                       key={`thread-todos:${displayedThread.id}:${subjectCell?.subjectId ?? 'all'}`}
                       context={subjectCell
@@ -1599,7 +1627,7 @@ export function FocusWorkspace({
                 setNewCommitmentParent({ type: 'focus', id: focus.id })
               }
               onCreateRoutine={() =>
-                setNewRoutineParent({ type: 'focus', id: focus.id })
+                setRoutineEditor({ parent: { type: 'focus', id: focus.id } })
               }
               onOpenCollection={() =>
                 drillIntoCommitments({ type: 'focus', id: focus.id })
@@ -1616,6 +1644,24 @@ export function FocusWorkspace({
               onComplete={(commitmentId) =>
                 void updateCommitmentDetails(commitmentId, { status: 'done' })
               }
+            />
+
+            <RoutineManagementList
+              idPrefix={`focus-${focus.id}`}
+              model={routineManagementListModel(
+                visibleSensitiveRecords(
+                  model.routinesFor({ type: 'focus', id: focus.id }),
+                  hideSensitiveContent,
+                  focus.sensitive
+                )
+              )}
+              onEdit={(routineId) => {
+                const routine = model.routinesFor({
+                  type: 'focus',
+                  id: focus.id
+                }).find(({ id }) => id === routineId)
+                if (routine) setRoutineEditor({ parent: routine.parent, routine })
+              }}
             />
 
             <DirectTodos context={{ type: 'focus', id: focus.id }} />
@@ -1686,16 +1732,24 @@ export function FocusWorkspace({
           onCreate={createCommitment}
         />
       )}
-      {routineEditorParent && (
+      {routineEditor && routineEditorParent && (
         <RoutineEditorDialog
           parent={routineEditorParent}
+          routine={routineEditor.routine}
           saving={routineSaving}
-          onClose={() => setNewRoutineParent(null)}
+          onClose={() => setRoutineEditor(null)}
           onSave={async (input) => {
-            if (!('parent' in input)) return false
             setRoutineSaving(true)
             try {
-              await model.createRoutine(input)
+              if (routineEditor.routine) {
+                await model.updateRoutine(
+                  routineEditor.routine.id,
+                  input as UpdateRoutineInput
+                )
+              } else {
+                if (!('parent' in input)) return false
+                await model.createRoutine(input)
+              }
               return true
             } catch {
               return false
@@ -1703,6 +1757,22 @@ export function FocusWorkspace({
               setRoutineSaving(false)
             }
           }}
+          onDelete={routineEditor.routine ? async () => {
+            setRoutineSaving(true)
+            try {
+              const routineId = routineEditor.routine?.id
+              if (routineId === undefined) return false
+              const deleted = await model.deleteRoutine(routineId)
+              if (deleted) {
+                contextDrawer.onInvalidate([`routine:${routineId}`])
+              }
+              return deleted
+            } catch {
+              return false
+            } finally {
+              setRoutineSaving(false)
+            }
+          } : undefined}
         />
       )}
       {pendingThreadMove && (

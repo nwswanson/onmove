@@ -166,19 +166,23 @@ issue data is never redacted or destroyed by a visibility preference.
 
 ## UI ownership
 
-Routine creation belongs to a Focus or Thread workspace beside `Add commitment`; the global queue
-cannot create a Routine because parent and Scope are deliberate creation context. The top-level
-Routines workspace uses the shared contextual sidebar. It flattens the actionable projection to one
-row per `Routine × Subject` (or one unscoped row), groups rows into Past due, Today, This week, and
-Upcoming, and presents one immutable checklist at a time. Upcoming rows preview the template that
-will be snapshotted when that anchored occurrence becomes due.
+Routine creation and definition management belong to a Focus or Thread workspace. `Add Routine`
+sits beside `Add commitment`, while an owned-definition list immediately below the Commitment
+collection shows only the Routines belonging to that exact parent. Selecting a row opens the shared
+definition modal. This keeps Focus Overall Routines distinct from Thread Routines even though both
+feed the same execution queue.
 
-The generic context drawer receives a data-only Routine adapter. It owns editing for name, cadence,
-`needsAttestation`, sensitivity, template-editor launch, and deletion. Clearing `needsAttestation`
-removes the Routine's cells from the queue without deleting immutable history. The shared
-`StateLabel` receiver owns color/label markup. The feature model owns persistence and replaces
-snapshots after every cell attestation.
+The definition modal owns the name, cadence, schedule anchor, optional parent Scope,
+`needsAttestation`, sensitivity, checklist versioning, and deletion. Clearing `needsAttestation`
+removes the Routine's cells from the queue without deleting immutable history. Editing the checklist
+appends a future template version and never binds editable controls to a Run's copied inspection
+text.
 
-The editor changes the Routine definition and appends a future template version; it never binds
-editable controls to a Run's copied inspection text. Completed Run controls are disabled. There is
-no generic lifecycle selector and no recurring Todo UI.
+The top-level Routines workspace is execution-only. It uses the shared contextual sidebar, flattens
+the actionable projection to one row per `Routine × Subject` (or one unscoped row), groups rows into
+Past due, Today, This week, and Upcoming, and presents one immutable checklist at a time. Upcoming
+rows preview the template that will be snapshotted when that anchored occurrence becomes due. Its
+generic context drawer receives a data-only, read-only Routine adapter so definition mutations stay
+with the owning parent. The shared `StateLabel` receiver owns color/label markup, while the feature
+model replaces snapshots after every cell attestation. Completed Run controls are disabled. There
+is no generic lifecycle selector and no recurring Todo UI.

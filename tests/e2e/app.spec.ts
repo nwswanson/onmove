@@ -105,10 +105,21 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
     await editor.getByLabel('Routine name').fill('Weekly delivery inspection')
     await editor.getByRole('button', { name: 'Add Routine' }).click()
 
+    await window.getByRole('button', {
+      name: 'Edit Routine Weekly delivery inspection'
+    }).click()
+    const edit = window.getByRole('dialog', { name: 'Edit Routine' })
+    await edit.getByRole('button', { name: 'Add inspection' }).click()
+    await edit.getByRole('textbox', { name: 'Inspection 3' })
+      .fill('Verify the retrospective was reviewed.')
+    await edit.getByRole('button', { name: 'Save Routine' }).click()
+
     await window.getByRole('button', { name: 'Routines', exact: true }).click()
     await expect(window.getByRole('heading', { name: 'Weekly delivery inspection' })).toBeVisible()
 
     await expect(window.getByText('0 of 2 attested')).toBeVisible()
+    await expect(window.getByText('Template v1')).toBeVisible()
+    await expect(window.getByText('Verify the retrospective was reviewed.')).toHaveCount(0)
     await expect(window.getByRole('main').getByText('Current', { exact: true })).toBeVisible()
 
     await window.getByRole('checkbox', {
@@ -126,20 +137,15 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
     await secondInspection.getByRole('checkbox', {
       name: 'Attest: Confirm scope changes received approval.'
     }).click()
-    await expect(window.getByText('0 of 2 attested')).toBeVisible()
+    await expect(window.getByText('0 of 3 attested')).toBeVisible()
 
     await window.getByRole('button', { name: 'Toggle context drawer' }).click()
     const drawer = window.getByRole('complementary', {
       name: 'Weekly delivery inspection Routine context drawer'
     })
-    await expect(drawer.getByRole('checkbox', { name: 'Needs attestation' })).toBeChecked()
-    await drawer.getByRole('button', { name: 'Edit future checklist' }).click()
-    const edit = window.getByRole('dialog', { name: 'Edit Routine template' })
-    await edit.getByRole('button', { name: 'Add inspection' }).click()
-    await edit.getByRole('textbox', { name: 'Inspection 3' })
-      .fill('Verify the retrospective was reviewed.')
-    await edit.getByRole('button', { name: 'Save future template' }).click()
-    await expect(window.getByText('Template v1')).toBeVisible()
+    await expect(drawer.getByText('Included')).toBeVisible()
+    await expect(drawer.getByRole('button', { name: 'Edit future checklist' })).toHaveCount(0)
+    await expect(window.getByText('Template v2')).toBeVisible()
     await expect(window.getByText('Verify the retrospective was reviewed.')).toBeVisible()
 
     const stored = new DatabaseSync(databasePath, { readOnly: true })

@@ -258,15 +258,19 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - A Routine has no lifecycle status selector and never generates Todos. Render its derived Current,
   Overdue, or Lapsed state through the shared semantic state-label receiver. Current Run checklist
   text is read-only; template edits create a future version instead of mutating materialized Runs.
-- Create Routines only from the owning Focus Overall or Thread screen, beside `Add commitment`.
-  Do not put creation in the global Routines destination. A scoped scheduled occurrence snapshots
+- Create and manage Routines only from the owning Focus Overall or Thread screen. Put `Add Routine`
+  beside `Add commitment`, render the parent's Routine definitions directly beneath its Commitment
+  collection, and open the shared definition modal when a Routine row is selected. The modal owns
+  future-template edits, queue inclusion, sensitivity, cadence, Scope selection, and deletion.
+  Never mix Focus-owned and Thread-owned definitions in a parent screen. Do not put definition
+  creation or mutation in the global Routines destination. A scoped scheduled occurrence snapshots
   one independently completable attestation cell per effective Subject; never collapse multiple
   Subjects into a shared checklist resolution.
 - Build the global Routines destination with the shared contextual sidebar. Flatten it to one row
   per actionable `Routine × Subject` (or one unscoped Routine), grouped as Past due, Today, This
-  week, and Upcoming. Selecting a row renders only that cell's checklist. Describe Routine
-  inspectors with `ContextDrawerAdapter`; include name, cadence, `needsAttestation`, sensitivity,
-  future template editing, and deletion without composing a domain-specific drawer shell.
+  week, and Upcoming. Selecting a row renders only that cell's checklist. Keep this destination an
+  execution surface: its `ContextDrawerAdapter` may describe definition metadata, but it must not
+  create, edit, or delete Routine definitions.
 - Treat due-date presence as the only user-facing Commitment mode. Do not expose an independent
   `ongoing` / `action` selector or label. The generic Commitment type remains `tracking` regardless
   of due date; mirror undated/due-dated compatibility values only inside the private

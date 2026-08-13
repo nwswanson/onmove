@@ -509,7 +509,59 @@ describe('App', () => {
     expect(screen.queryByText('Overview')).not.toBeInTheDocument()
   })
 
-  it('attests immutable Routine Runs and versions template edits from the Routines view', async () => {
+  it('manages only the Routines owned by the active Focus or Thread context', async () => {
+    const currentFocus = focus({ id: 1, title: 'Project Atlas' })
+    const currentThread = thread({ id: 21, focusId: 1, title: 'Sprint execution' })
+    const overallRoutine = routine({
+      id: 302,
+      parent: { type: 'focus', id: 1 },
+      name: 'Portfolio evidence inspection'
+    })
+    const threadRoutine = routine()
+    const deleteRoutine = vi.fn().mockResolvedValue(true)
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([currentFocus]),
+      listThreads: vi.fn().mockResolvedValue([currentThread]),
+      listRoutines: vi.fn().mockResolvedValue([overallRoutine, threadRoutine]),
+      deleteRoutine
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    expect(await screen.findByRole('button', {
+      name: 'Edit Routine Portfolio evidence inspection'
+    })).toBeVisible()
+    expect(screen.queryByRole('button', {
+      name: 'Edit Routine Weekly delivery inspection'
+    })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', {
+      name: 'Edit Routine Portfolio evidence inspection'
+    }))
+    const editor = screen.getByRole('dialog', { name: 'Edit Routine' })
+    await user.click(within(editor).getByRole('button', { name: 'Delete Routine' }))
+    const confirmation = screen.getByRole('dialog', { name: 'Delete Routine?' })
+    await user.click(within(confirmation).getByRole('button', {
+      name: 'Delete Routine'
+    }))
+    expect(deleteRoutine).toHaveBeenCalledWith(302)
+    expect(screen.queryByRole('button', {
+      name: 'Edit Routine Portfolio evidence inspection'
+    })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Sprint execution' }))
+    expect(await screen.findByRole('button', {
+      name: 'Edit Routine Weekly delivery inspection'
+    })).toBeVisible()
+    expect(screen.queryByRole('button', {
+      name: 'Edit Routine Portfolio evidence inspection'
+    })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Add Routine' }))
+    expect(screen.getByRole('dialog', { name: 'Add Routine' })).toBeVisible()
+  })
+
+  it('manages Routine templates from their parent and attests immutable Runs in Routines', async () => {
     const currentFocus = focus({ id: 1, title: 'Project Atlas' })
     const currentThread = thread({ id: 21, focusId: 1, title: 'Sprint execution' })
     const currentRoutine = routine()
@@ -557,6 +609,25 @@ describe('App', () => {
     await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
     expect(screen.getByRole('button', { name: 'Add Routine' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Add commitment' })).toBeVisible()
+    await user.click(screen.getByRole('button', {
+      name: 'Edit Routine Weekly delivery inspection'
+    }))
+    const dialog = screen.getByRole('dialog', { name: 'Edit Routine' })
+    const name = within(dialog).getByLabelText('Routine name')
+    await user.clear(name)
+    await user.type(name, 'Weekly evidence inspection')
+    await user.click(within(dialog).getByRole('button', { name: 'Save Routine' }))
+    expect(updateRoutine).toHaveBeenCalledWith(301, expect.objectContaining({
+      name: 'Weekly evidence inspection',
+      checklist: [
+        expect.objectContaining({ inspection: 'Verify delivery risks were represented.' }),
+        expect.objectContaining({ inspection: 'Confirm scope changes received approval.' })
+      ]
+    }))
+    expect(await screen.findByRole('button', {
+      name: 'Edit Routine Weekly evidence inspection'
+    })).toBeVisible()
+
     await user.click(await screen.findByRole('button', { name: 'Routines' }))
     expect(screen.queryByRole('button', { name: 'New Routine' })).not.toBeInTheDocument()
     expect(screen.getByText('Past due')).toBeVisible()
@@ -577,20 +648,10 @@ describe('App', () => {
     const drawer = screen.getByRole('complementary', {
       name: 'Weekly delivery inspection Routine context drawer'
     })
-    expect(within(drawer).getByRole('checkbox', { name: 'Needs attestation' })).toBeChecked()
-    await user.click(within(drawer).getByRole('button', { name: 'Edit future checklist' }))
-    const dialog = screen.getByRole('dialog', { name: 'Edit Routine template' })
-    const name = within(dialog).getByLabelText('Routine name')
-    await user.clear(name)
-    await user.type(name, 'Weekly evidence inspection')
-    await user.click(within(dialog).getByRole('button', { name: 'Save future template' }))
-    expect(updateRoutine).toHaveBeenCalledWith(301, expect.objectContaining({
-      name: 'Weekly evidence inspection',
-      checklist: [
-        expect.objectContaining({ inspection: 'Verify delivery risks were represented.' }),
-        expect.objectContaining({ inspection: 'Confirm scope changes received approval.' })
-      ]
-    }))
+    expect(within(drawer).getByText('Included')).toBeVisible()
+    expect(within(drawer).queryByRole('button', { name: 'Edit future checklist' }))
+      .not.toBeInTheDocument()
+    expect(within(drawer).queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
   })
 
   it('lists scoped Routines as independent Subject cells in the contextual queue', async () => {

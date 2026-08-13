@@ -4,8 +4,7 @@ import type {
   CommitmentParent,
   FocusSnapshot,
   RoutineSnapshot,
-  ThreadSnapshot,
-  UpdateRoutineInput
+  ThreadSnapshot
 } from '../../../../shared/contracts'
 
 export interface RoutineParentOption {
@@ -24,8 +23,6 @@ export interface RoutinesModel {
   loading: boolean
   saving: boolean
   error: string | null
-  update: (id: number, input: UpdateRoutineInput) => Promise<RoutineSnapshot | null>
-  remove: (id: number) => Promise<boolean>
   attest: (attestationId: number, input: AttestRoutineRunItemInput) => Promise<RoutineSnapshot | null>
   parentFor: (routine: RoutineSnapshot) => RoutineParentOption | null
 }
@@ -116,36 +113,6 @@ export function useRoutinesModel(): RoutinesModel {
       .sort((left, right) => left.name.localeCompare(right.name) || left.id - right.id))
   }
 
-  async function update(id: number, input: UpdateRoutineInput): Promise<RoutineSnapshot | null> {
-    setSaving(true)
-    setError(null)
-    try {
-      const updated = await window.onmove.domain.updateRoutine(id, input)
-      replace(updated)
-      return updated
-    } catch {
-      setError('The Routine could not be updated.')
-      return null
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function remove(id: number): Promise<boolean> {
-    setSaving(true)
-    setError(null)
-    try {
-      const removed = await window.onmove.domain.deleteRoutine(id)
-      if (removed) setRoutines((current) => current.filter((routine) => routine.id !== id))
-      return removed
-    } catch {
-      setError('The Routine could not be deleted.')
-      return false
-    } finally {
-      setSaving(false)
-    }
-  }
-
   async function attest(
     attestationId: number,
     input: AttestRoutineRunItemInput
@@ -170,8 +137,6 @@ export function useRoutinesModel(): RoutinesModel {
     loading,
     saving,
     error,
-    update,
-    remove,
     attest,
     parentFor
   }

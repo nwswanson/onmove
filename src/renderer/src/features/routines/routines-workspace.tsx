@@ -5,8 +5,7 @@ import type {
   RoutineReviewCellSnapshot,
   RoutineReviewRunSnapshot,
   RoutineRunItemSnapshot,
-  RoutineSnapshot,
-  UpdateRoutineInput
+  RoutineSnapshot
 } from '../../../../shared/contracts'
 import { Button } from '@/components/ui/button'
 import {
@@ -25,10 +24,6 @@ import { Input } from '@/components/ui/input'
 import { StateLabel, type StateLabelModel } from '@/components/ui/state-label'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
 import type { FocusWorkspaceDestinationTarget } from '@/features/application/application-navigation'
-import {
-  RoutineEditorDialog,
-  type RoutineEditorParent
-} from '@/features/routines/routine-editor-dialog'
 import { routineDrawerAdapter } from '@/features/routines/routine-presenters'
 import {
   useRoutinesModel,
@@ -308,7 +303,6 @@ export function RoutinesWorkspace({
 }: RoutinesWorkspaceProps): React.JSX.Element {
   const model = useRoutinesModel()
   const [sidebarWidth, setSidebarWidth] = useState(268)
-  const [editor, setEditor] = useState<RoutineSnapshot | null>(null)
   const [level] = useState(() => new ContextualSidebarLevel({
     id: 'routine-attestations',
     title: 'Routines',
@@ -331,11 +325,6 @@ export function RoutinesWorkspace({
     navigation.refresh()
   }, [level, navigation, sidebarItems])
 
-  function parentEditorOption(routine: RoutineSnapshot): RoutineEditorParent | null {
-    const parent = model.parentFor(routine)
-    return parent ? { parent: parent.parent, label: parent.label, scope: parent.scope } : null
-  }
-
   function adapterFor(routine: RoutineSnapshot): ContextDrawerAdapter {
     const parent = model.parentFor(routine)
     return routineDrawerAdapter({
@@ -343,19 +332,7 @@ export function RoutinesWorkspace({
       parentLabel: parent?.label ?? 'Parent unavailable',
       ancestorKeys: parent
         ? [`focus:${parent.focusId}`, ...(parent.thread ? [`thread:${parent.thread.id}`] : [])]
-        : [],
-      onSave: async (input) => {
-        const updated = await model.update(routine.id, input)
-        if (!updated) throw new Error('Routine update failed')
-        if (contextDrawer.pinnedAdapter?.id === `routine:${routine.id}`) {
-          contextDrawer.onPin(adapterFor(updated))
-        }
-      },
-      onEditTemplate: () => setEditor(routine),
-      onDelete: async () => {
-        if (!await model.remove(routine.id)) throw new Error('Routine deletion failed')
-        contextDrawer.onInvalidate([`routine:${routine.id}`])
-      }
+        : []
     })
   }
 
@@ -499,19 +476,6 @@ export function RoutinesWorkspace({
         }
       />
 
-      {editor && parentEditorOption(editor) && (
-        <RoutineEditorDialog
-          parent={parentEditorOption(editor) as RoutineEditorParent}
-          routine={editor}
-          saving={model.saving}
-          onClose={() => setEditor(null)}
-          onSave={async (input) => {
-            const updated = await model.update(editor.id, input as UpdateRoutineInput)
-            if (updated) setEditor(null)
-            return updated !== null
-          }}
-        />
-      )}
     </>
   )
 }

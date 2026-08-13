@@ -1,32 +1,40 @@
-import type { RoutineSnapshot, UpdateRoutineInput } from '../../../../shared/contracts'
-import type {
-  ContextDrawerAdapter,
-  ContextDrawerValues
-} from '@/components/ui/context-drawer'
+import type { RoutineSnapshot } from '../../../../shared/contracts'
+import type { ContextDrawerAdapter } from '@/components/ui/context-drawer'
+import type { StateLabelModel } from '@/components/ui/state-label'
+import type { RoutineManagementListModel } from '@/features/routines/routine-management-list'
 
-function text(values: ContextDrawerValues, id: string): string {
-  const value = values[id]
-  return typeof value === 'string' ? value : ''
+function statusModel(status: RoutineSnapshot['status']): StateLabelModel {
+  if (status === 'green') return { label: 'Current', tone: 'success' }
+  if (status === 'yellow') return { label: 'Overdue', tone: 'warning' }
+  return { label: 'Lapsed', tone: 'danger' }
 }
 
-function bool(values: ContextDrawerValues, id: string): boolean {
-  return values[id] === true
+export function routineManagementListModel(
+  routines: readonly RoutineSnapshot[]
+): RoutineManagementListModel {
+  return {
+    items: routines.map((routine) => ({
+      id: routine.id,
+      name: routine.name,
+      cadenceLabel: `Every ${routine.cadenceDays} days`,
+      scopeLabel: routine.scope?.name ?? 'No scope',
+      detailLabels: [
+        ...(!routine.needsAttestation ? ['Not in queue'] : []),
+        ...(routine.sensitive ? ['Sensitive'] : [])
+      ],
+      stateLabel: statusModel(routine.status)
+    }))
+  }
 }
 
 export function routineDrawerAdapter({
   routine,
   parentLabel,
-  ancestorKeys,
-  onSave,
-  onEditTemplate,
-  onDelete
+  ancestorKeys
 }: {
   routine: RoutineSnapshot
   parentLabel: string
   ancestorKeys: readonly string[]
-  onSave: (input: UpdateRoutineInput) => Promise<void>
-  onEditTemplate: () => void
-  onDelete: () => Promise<void>
 }): ContextDrawerAdapter {
   return {
     id: `routine:${routine.id}`,
@@ -48,16 +56,12 @@ export function routineDrawerAdapter({
         {
           id: 'routine',
           fields: [
-            { kind: 'text', id: 'name', label: 'Name', value: routine.name, required: true },
+            { kind: 'static', id: 'name', label: 'Name', value: routine.name },
             {
-              kind: 'number',
+              kind: 'static',
               id: 'cadence-days',
               label: 'Check every (days)',
-              value: String(routine.cadenceDays),
-              required: true,
-              min: 1,
-              step: 1,
-              integer: true
+              value: String(routine.cadenceDays)
             },
             { kind: 'static', id: 'parent', label: 'Parent', value: parentLabel },
             {
@@ -67,65 +71,19 @@ export function routineDrawerAdapter({
               value: routine.scope?.name ?? 'No scope'
             },
             {
-              kind: 'checkbox',
+              kind: 'static',
               id: 'needs-attestation',
               label: 'Needs attestation',
-              value: routine.needsAttestation,
-              description: 'Include this Routine’s Subject cells in the Routines queue.'
+              value: routine.needsAttestation ? 'Included' : 'Excluded'
             },
             {
-              kind: 'checkbox',
+              kind: 'static',
               id: 'sensitive',
               label: 'Sensitive',
-              value: routine.sensitive,
-              description: 'Hide this Routine from lists when sensitive content is hidden.'
+              value: routine.sensitive ? 'Yes' : 'No'
             }
           ],
-          note: 'Scope membership is snapshotted per scheduled Run. Each Subject has an independent attestation cell.'
-        }
-      ],
-      autosave: {
-        fieldIds: ['name'],
-        errorMessage: 'The Routine name could not be saved.',
-        onInvoke: (values) => onSave({ name: text(values, 'name') })
-      },
-      actions: [
-        {
-          id: 'edit-template',
-          label: 'Edit future checklist',
-          variant: 'outline',
-          align: 'start',
-          errorMessage: 'The checklist editor could not be opened.',
-          onInvoke: onEditTemplate
-        },
-        {
-          id: 'delete',
-          label: 'Delete',
-          pendingLabel: 'Deleting…',
-          variant: 'destructive',
-          align: 'start',
-          confirmation: {
-            title: 'Delete Routine?',
-            description: `“${routine.name}” and every immutable Run will be permanently deleted.`,
-            body: 'This action cannot be undone.',
-            confirmLabel: 'Delete Routine'
-          },
-          errorMessage: 'The Routine could not be deleted.',
-          onInvoke: onDelete
-        },
-        {
-          id: 'save',
-          label: 'Save changes',
-          pendingLabel: 'Saving…',
-          requiresValidFields: true,
-          includesAutosaveFields: true,
-          errorMessage: 'The Routine could not be updated.',
-          onInvoke: (values) => onSave({
-            name: text(values, 'name'),
-            cadenceDays: Number(text(values, 'cadence-days')),
-            needsAttestation: bool(values, 'needs-attestation'),
-            sensitive: bool(values, 'sensitive')
-          })
+          note: 'Manage this Routine from its Focus or Thread. This workspace is reserved for completing immutable attestations.'
         }
       ]
     }
