@@ -114,7 +114,9 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
     await expect(window.getByRole('heading', { name: 'Check-in history' })).toBeVisible()
     await expect(window.getByText(/^Scheduled \d{4}-\d{2}-\d{2}$/)).toBeVisible()
     await window.getByRole('button', { name: 'Edit', exact: true }).click()
-    const edit = window.getByRole('dialog', { name: 'Edit Routine' })
+    await expect(window.getByRole('dialog', { name: 'Edit Routine' })).toHaveCount(0)
+    const edit = window.getByRole('main')
+    await expect(edit.getByText('Changes apply only to future Runs.', { exact: false })).toBeVisible()
     await edit.getByRole('button', { name: 'Add inspection' }).click()
     await edit.getByRole('textbox', { name: 'Inspection 3' })
       .fill('Verify the retrospective was reviewed.')
@@ -209,6 +211,31 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
     })).toBeVisible()
     await expect(reloaded.getByText('0 of 3 attested')).toBeVisible()
     await expect(reloaded.getByText('Template v2')).toBeVisible()
+
+    await reloaded.getByRole('button', { name: 'Routine portfolio', exact: true }).click()
+    await reloaded.getByRole('button', { name: 'Sprint execution', exact: true }).click()
+    const reloadedSidebar = reloaded.getByLabel('Contextual sidebar')
+    await reloadedSidebar.getByRole('button', {
+      name: 'Open Sprint execution Routine Weekly delivery inspection'
+    }).click()
+    await reloaded.getByRole('button', { name: 'Toggle context drawer' }).click()
+    const reloadedDrawer = reloaded.getByRole('complementary', {
+      name: 'Weekly delivery inspection Routine context drawer'
+    })
+    await reloadedDrawer.getByRole('button', { name: 'Delete' }).click()
+    const deleteConfirmation = reloaded.getByRole('dialog', { name: 'Delete Routine?' })
+    await deleteConfirmation.getByRole('button', { name: 'Delete Routine' }).click()
+    await expect(reloadedSidebar.getByRole('button', {
+      name: 'Open Sprint execution Routine Weekly delivery inspection'
+    })).toHaveCount(0)
+
+    const afterDelete = new DatabaseSync(databasePath, { readOnly: true })
+    try {
+      expect(afterDelete.prepare('SELECT count(*) AS count FROM routine_definitions').get())
+        .toMatchObject({ count: 0 })
+    } finally {
+      afterDelete.close()
+    }
   } finally {
     await application?.close().catch(() => undefined)
     rmSync(userDataDirectory, { recursive: true, force: true })

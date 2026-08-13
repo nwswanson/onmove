@@ -277,12 +277,15 @@ foreground colors and do not rely on color alone to communicate selection or sta
   Subject cells and inspection rows instead of nesting a card around every level.
 - Create and manage Routines only from the owning Focus Overall or Thread screen. Put `Add Routine`
   beside `Add commitment`, render the parent's Routine definitions directly beneath its Commitment
-  collection, and open the shared definition modal when a Routine row is selected. The modal owns
-  future-template edits, queue inclusion, sensitivity, cadence, Scope selection, and deletion.
-  Never mix Focus-owned and Thread-owned definitions in a parent screen. Do not put definition
-  creation or mutation in the global Routines destination. A scoped scheduled occurrence snapshots
-  one independently completable attestation cell per effective Subject; never collapse multiple
-  Subjects into a shared checklist resolution.
+  collection, and open the Routine's history when a Routine row is selected. Keep the creation form
+  in the shared `Add Routine` dialog because no record exists yet, but render edits to its future
+  template, queue inclusion, sensitivity, cadence, and Scope as an embedded main-screen editor; do
+  not open an Edit Routine dialog. Expose permanent deletion through the Routine's standard context
+  drawer action with confirmation and shared invalidation behavior. Never mix Focus-owned and
+  Thread-owned definitions in a parent screen. Do not put definition creation or mutation in the
+  global Routines destination. A scoped scheduled occurrence snapshots one independently
+  completable attestation cell per effective Subject; never collapse multiple Subjects into a
+  shared checklist resolution.
 - Build the global Routines destination with the shared contextual sidebar. Flatten it to one row
   per actionable `Routine × Subject` (or one unscoped Routine), grouped as Past due, Today, This
   week, and Upcoming. Selecting a row renders only that cell's checklist. Keep this destination an

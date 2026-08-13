@@ -177,8 +177,9 @@ note or legacy issue data is never redacted or destroyed by a visibility prefere
 
 Routine creation and definition management belong to a Focus or Thread workspace. `Add Routine`
 sits beside `Add commitment`, while an owned-definition list immediately below the Commitment
-collection shows only the Routines belonging to that exact parent. Selecting a row opens the shared
-definition modal. This keeps Focus Overall Routines distinct from Thread Routines even though both
+collection shows only the Routines belonging to that exact parent. `Add Routine` opens a creation
+dialog because no durable record exists yet. Selecting an existing row opens its check-in history
+in the main canvas. This keeps Focus Overall Routines distinct from Thread Routines even though both
 feed the same execution queue.
 
 The top-level contextual sidebar mirrors that ownership. Every Overall or Thread node presents
@@ -189,14 +190,15 @@ That history includes the current and previous immutable Runs, per-Subject progr
 completion dates, lateness, template versions, resolutions, and item notes. The current cell uses
 the same live checklist receiver as the global Routines workspace, including resolution controls,
 autosaving notes, and explicit finalization. Finalized cells render their notes as read-only cards.
-An explicit `Edit` button opens the definition modal; selecting the Routine itself never edits its
-definition.
+An explicit `Edit` button replaces history with the embedded definition editor in the same main
+canvas; it never opens an Edit Routine dialog.
 
-The definition modal owns the name, cadence, schedule anchor, optional parent Scope,
-`needsAttestation`, sensitivity, checklist versioning, and deletion. Clearing `needsAttestation`
-removes the Routine's cells from the queue without deleting immutable history. Editing the checklist
-appends a future template version and never binds editable controls to a Run's copied inspection
-text.
+The embedded editor owns the name, cadence, schedule anchor, optional parent Scope,
+`needsAttestation`, sensitivity, and checklist versioning. Clearing `needsAttestation` removes the
+Routine's cells from the queue without deleting immutable history. Editing the checklist appends a
+future template version and never binds editable controls to a Run's copied inspection text.
+Permanent deletion is a confirmed destructive action in the Routine's context drawer; successful
+deletion invalidates a pinned Routine and returns the main selection to its owning Focus or Thread.
 
 The top-level Routines workspace is execution-only. It uses the shared contextual sidebar, flattens
 the actionable projection to one row per `Routine × Subject` (or one unscoped row), groups rows into

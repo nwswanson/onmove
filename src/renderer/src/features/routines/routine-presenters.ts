@@ -88,11 +88,13 @@ export function routineManagementListModel(
 export function routineDrawerAdapter({
   routine,
   parentLabel,
-  ancestorKeys
+  ancestorKeys,
+  onDelete
 }: {
   routine: RoutineSnapshot
   parentLabel: string
   ancestorKeys: readonly string[]
+  onDelete?: () => void | Promise<void>
 }): ContextDrawerAdapter {
   return {
     id: `routine:${routine.id}`,
@@ -141,9 +143,26 @@ export function routineDrawerAdapter({
               value: routine.sensitive ? 'Yes' : 'No'
             }
           ],
-          note: 'Manage this Routine from its Focus or Thread. This workspace is reserved for completing immutable attestations.'
+          note: 'Edit this Routine in its Focus or Thread main screen. The global Routines workspace is reserved for completing immutable attestations.'
         }
-      ]
+      ],
+      actions: onDelete ? [
+        {
+          id: 'delete',
+          label: 'Delete',
+          pendingLabel: 'Deleting…',
+          variant: 'destructive',
+          align: 'start',
+          confirmation: {
+            title: 'Delete Routine?',
+            description: `“${routine.name}” and every immutable Run will be permanently deleted.`,
+            body: 'This action cannot be undone.',
+            confirmLabel: 'Delete Routine'
+          },
+          errorMessage: 'The Routine could not be deleted. Please try again.',
+          onInvoke: onDelete
+        }
+      ] : undefined
     }
   }
 }

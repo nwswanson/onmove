@@ -3,7 +3,10 @@ import type {
   RoutineReviewRunSnapshot,
   RoutineSnapshot
 } from '../../src/shared/contracts'
-import { routineHistoryModel } from '../../src/renderer/src/features/routines/routine-presenters'
+import {
+  routineDrawerAdapter,
+  routineHistoryModel
+} from '../../src/renderer/src/features/routines/routine-presenters'
 
 function run({
   id,
@@ -90,6 +93,30 @@ function routine(): RoutineSnapshot {
 }
 
 describe('Routine presentation adapters', () => {
+  it('exposes deletion only when the owning Focus or Thread supplies the mutation', () => {
+    const onDelete = () => undefined
+    const executionOnly = routineDrawerAdapter({
+      routine: routine(),
+      parentLabel: 'Sprint execution',
+      ancestorKeys: ['focus:1', 'thread:21']
+    })
+    const managed = routineDrawerAdapter({
+      routine: routine(),
+      parentLabel: 'Sprint execution',
+      ancestorKeys: ['focus:1', 'thread:21'],
+      onDelete
+    })
+
+    expect(executionOnly.model.actions).toBeUndefined()
+    expect(managed.model.actions).toEqual([
+      expect.objectContaining({
+        id: 'delete',
+        variant: 'destructive',
+        onInvoke: onDelete
+      })
+    ])
+  })
+
   it('projects current and previous immutable check-ins with editable evidence notes', () => {
     const model = routineHistoryModel(routine())
 

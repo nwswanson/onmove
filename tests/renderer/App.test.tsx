@@ -557,9 +557,11 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Check-in history' })).toBeVisible()
     expect(screen.getByText('Scheduled 2026-08-10')).toBeVisible()
     expect(screen.queryByRole('dialog', { name: 'Edit Routine' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Edit' }))
-    const editor = screen.getByRole('dialog', { name: 'Edit Routine' })
-    await user.click(within(editor).getByRole('button', { name: 'Delete Routine' }))
+    await user.click(screen.getByRole('button', { name: 'Toggle context drawer' }))
+    const drawer = screen.getByRole('complementary', {
+      name: 'Portfolio evidence inspection Routine context drawer'
+    })
+    await user.click(within(drawer).getByRole('button', { name: 'Delete' }))
     const confirmation = screen.getByRole('dialog', { name: 'Delete Routine?' })
     await user.click(within(confirmation).getByRole('button', {
       name: 'Delete Routine'
@@ -708,11 +710,14 @@ describe('App', () => {
     }))
     expect(await screen.findByText('1 of 2 attested')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Edit' }))
-    const dialog = screen.getByRole('dialog', { name: 'Edit Routine' })
-    const name = within(dialog).getByLabelText('Routine name')
+    expect(screen.queryByRole('dialog', { name: 'Edit Routine' })).not.toBeInTheDocument()
+    const main = screen.getByRole('main')
+    expect(within(main).getByText('Changes apply only to future Runs.', { exact: false }))
+      .toBeVisible()
+    const name = within(main).getByLabelText('Routine name')
     await user.clear(name)
     await user.type(name, 'Weekly evidence inspection')
-    await user.click(within(dialog).getByRole('button', { name: 'Save Routine' }))
+    await user.click(within(main).getByRole('button', { name: 'Save Routine' }))
     expect(updateRoutine).toHaveBeenCalledWith(301, expect.objectContaining({
       name: 'Weekly evidence inspection',
       checklist: [
@@ -783,7 +788,7 @@ describe('App', () => {
     expect(within(drawer).getByText('Included')).toBeVisible()
     expect(within(drawer).queryByRole('button', { name: 'Edit future checklist' }))
       .not.toBeInTheDocument()
-    expect(within(drawer).queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
+    expect(within(drawer).getByRole('button', { name: 'Delete' })).toBeVisible()
   })
 
   it('lists scoped Routines as independent Subject cells in the contextual queue', async () => {
