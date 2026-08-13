@@ -3,6 +3,7 @@ import type {
   CommitmentSnapshot,
   FocusScopeSnapshot,
   FocusSnapshot,
+  RoutineSnapshot,
   SubjectSnapshot,
   ThreadScopeSnapshot,
   ThreadSnapshot
@@ -380,13 +381,20 @@ describe('Focus presentation adapters', () => {
 
     expect(items[0]?.childCollection).toEqual({
       id: 'commitments',
-      label: 'Commitments',
-      emptyState: 'No commitments',
-      action: {
-        id: 'add',
-        label: 'Add commitment',
-        ariaLabel: 'Add commitment to Overall'
-      },
+      label: 'Commitments and Routines',
+      emptyState: 'No commitments or Routines',
+      actions: [
+        {
+          id: 'add-commitment',
+          label: 'Add commitment',
+          ariaLabel: 'Add commitment to Overall'
+        },
+        {
+          id: 'add-routine',
+          label: 'Add Routine',
+          ariaLabel: 'Add Routine to Overall'
+        }
+      ],
       items: [
         {
           id: '20',
@@ -399,13 +407,20 @@ describe('Focus presentation adapters', () => {
     })
     expect(items[1]?.childCollection).toEqual({
       id: 'commitments',
-      label: 'Commitments',
-      emptyState: 'No commitments',
-      action: {
-        id: 'add',
-        label: 'Add commitment',
-        ariaLabel: 'Add commitment to Sprint execution'
-      },
+      label: 'Commitments and Routines',
+      emptyState: 'No commitments or Routines',
+      actions: [
+        {
+          id: 'add-commitment',
+          label: 'Add commitment',
+          ariaLabel: 'Add commitment to Sprint execution'
+        },
+        {
+          id: 'add-routine',
+          label: 'Add Routine',
+          ariaLabel: 'Add Routine to Sprint execution'
+        }
+      ],
       items: [
         {
           id: '21',
@@ -431,6 +446,36 @@ describe('Focus presentation adapters', () => {
     expect(healthStateLabel('yellow')).toEqual({ label: 'Yellow', tone: 'warning' })
     expect(healthStateLabel('green')).toEqual({ label: 'Green', tone: 'success' })
     expect(healthStateLabel('none')).toEqual({ label: 'None', tone: 'neutral' })
+  })
+
+  it('projects owned Routines as non-draggable contextual selections after Commitments', () => {
+    const routine = {
+      id: 31,
+      parent: { type: 'thread', id: thread.id },
+      name: 'Weekly evidence inspection',
+      status: 'yellow',
+      needsAttestation: true
+    } as RoutineSnapshot
+    const items = focusContextSidebarItems(
+      [{ ...thread, status: 'active' }],
+      {},
+      false,
+      { 'thread:10': [commitment] },
+      { 'thread:10': [routine] }
+    )
+
+    expect(items[1]?.childCollection?.items).toEqual([
+      expect.objectContaining({ id: '20', label: 'Improve ticket quality' }),
+      {
+        id: 'routine:31',
+        label: 'Weekly evidence inspection',
+        ariaLabel: 'Open Sprint execution Routine Weekly evidence inspection',
+        icon: 'checklist',
+        state: { label: 'Overdue', tone: 'warning' },
+        tone: 'default',
+        movable: false
+      }
+    ])
   })
 
   it('maps every shared work lifecycle status into the UI label contract', () => {

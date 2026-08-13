@@ -100,14 +100,20 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
 
     await window.getByRole('button', { name: 'Routine portfolio', exact: true }).click()
     await window.getByRole('button', { name: 'Sprint execution', exact: true }).click()
-    await window.getByRole('button', { name: 'Add Routine' }).click()
+    const contextualSidebar = window.getByLabel('Contextual sidebar')
+    await contextualSidebar.getByRole('button', {
+      name: 'Add Routine to Sprint execution'
+    }).click()
     const editor = window.getByRole('dialog', { name: 'Add Routine' })
     await editor.getByLabel('Routine name').fill('Weekly delivery inspection')
     await editor.getByRole('button', { name: 'Add Routine' }).click()
 
-    await window.getByRole('button', {
-      name: 'Edit Routine Weekly delivery inspection'
+    await contextualSidebar.getByRole('button', {
+      name: 'Open Sprint execution Routine Weekly delivery inspection'
     }).click()
+    await expect(window.getByRole('heading', { name: 'Check-in history' })).toBeVisible()
+    await expect(window.getByText(/^Scheduled \d{4}-\d{2}-\d{2}$/)).toBeVisible()
+    await window.getByRole('button', { name: 'Edit', exact: true }).click()
     const edit = window.getByRole('dialog', { name: 'Edit Routine' })
     await edit.getByRole('button', { name: 'Add inspection' }).click()
     await edit.getByRole('textbox', { name: 'Inspection 3' })

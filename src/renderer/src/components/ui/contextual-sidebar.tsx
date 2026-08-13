@@ -1,6 +1,6 @@
 import { useSyncExternalStore, type ComponentProps, type ReactNode } from 'react'
 import { useDraggable, useDroppable } from '@dnd-kit/core'
-import { ChevronLeft, ChevronRight, Layers3, PauseCircle, Plus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Layers3, ListChecks, PauseCircle, Plus } from 'lucide-react'
 import {
   Sidebar,
   SidebarContent,
@@ -35,9 +35,12 @@ export interface ContextualSidebarChildItemModel {
   id: string
   label: string
   ariaLabel?: string
+  icon?: 'checklist'
   state?: StateLabelModel
   tone?: 'default' | 'muted'
   disabled?: boolean
+  movable?: boolean
+  activation?: 'selection' | 'action'
 }
 
 export interface ContextualSidebarChildCollectionActionModel {
@@ -53,6 +56,7 @@ export interface ContextualSidebarChildCollectionModel {
   emptyState?: string
   items: readonly ContextualSidebarChildItemModel[]
   action?: ContextualSidebarChildCollectionActionModel
+  actions?: readonly ContextualSidebarChildCollectionActionModel[]
 }
 
 /**
@@ -329,8 +333,11 @@ export class ContextualSidebarLevel extends ContextualSidebarLevelBase {
         `Contextual sidebar item "${parentItemId}" does not contain collection "${collectionId}".`
       )
     }
-    const action = collection.action
-    if (!action || action.id !== actionId) {
+    const action = [
+      ...(collection.action ? [collection.action] : []),
+      ...(collection.actions ?? [])
+    ].find(({ id }) => id === actionId)
+    if (!action) {
       throw new Error(
         `Contextual sidebar collection "${collectionId}" does not contain action "${actionId}".`
       )
@@ -346,7 +353,7 @@ export class ContextualSidebarLevel extends ContextualSidebarLevelBase {
     childItemId: string
   ): boolean {
     const child = this.getChildItem(parentItemId, collectionId, childItemId)
-    if (!this.onChildMove || !child || child.disabled) return false
+    if (!this.onChildMove || !child || child.disabled || child.movable === false) return false
     return this.getItemIds().some((targetParentItemId) => {
       const targetCollection = this.getItem(targetParentItemId)?.childCollection
       return targetCollection && this.canMoveChild({
@@ -370,6 +377,7 @@ export class ContextualSidebarLevel extends ContextualSidebarLevelBase {
     if (
       !child ||
       child.disabled ||
+      child.movable === false ||
       !target ||
       target.disabled ||
       target.childCollection?.id !== move.targetCollectionId ||
@@ -446,13 +454,18 @@ export class ContextualSidebarLevel extends ContextualSidebarLevelBase {
             `Contextual sidebar level "${this.id}" contains item "${id}" with an invalid child collection.`
           )
         }
-        if (
-          collection.action &&
-          (!collection.action.id.trim() || !collection.action.label.trim())
-        ) {
-          throw new Error(
-            `Contextual sidebar item "${id}" contains an invalid child collection action.`
-          )
+        const actions = [
+          ...(collection.action ? [collection.action] : []),
+          ...(collection.actions ?? [])
+        ]
+        const actionIds = new Set<string>()
+        for (const action of actions) {
+          if (!action.id.trim() || !action.label.trim() || actionIds.has(action.id)) {
+            throw new Error(
+              `Contextual sidebar item "${id}" contains an invalid child collection action.`
+            )
+          }
+          actionIds.add(action.id)
         }
         const childIds = new Set<string>()
         for (const child of collection.items) {
@@ -870,10 +883,13 @@ function ContextualSidebarDraggableChild({
           child.tone === 'muted' && 'text-muted-foreground opacity-55',
           isDragging && 'opacity-35'
         )}
-        onClick={() =>
-          navigation.selectChild(parentItemId, collection.id, child.id)
-        }
+        onClick={() => child.activation === 'action'
+          ? level.notifyChildSelection(parentItemId, collection.id, child.id)
+          : navigation.selectChild(parentItemId, collection.id, child.id)}
       >
+        {child.icon === 'checklist' && (
+          <ListChecks className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+        )}
         {child.state && <StateDot model={child.state} />}
         <span className="min-w-0 flex-1 truncate"><TaggedText value={child.label} /></span>
       </button>
@@ -1054,6 +1070,12 @@ function ContextualSidebarContent({
                   const item = level.getItem(itemId)
                   if (!item) return null
                   const childCollection = item.childCollection
+                  const childCollectionActions = childCollection
+                    ? [
+                        ...(childCollection.action ? [childCollection.action] : []),
+                        ...(childCollection.actions ?? [])
+                      ]
+                    : []
                   const selectedChildBelongsToItem =
                     selectedChild?.parentItemId === itemId
                   return (
@@ -1076,29 +1098,29 @@ function ContextualSidebarContent({
                           className="ml-4 border-l border-sidebar-border/80 pl-2"
                           data-child-collection-id={childCollection.id}
                         >
-                          {childCollection.action && (
+                          {childCollectionActions.map((action) => (
                             <button
+                              key={action.id}
                               type="button"
                               className="flex min-h-7 w-full items-center gap-1 rounded-md px-2 text-left text-[0.6875rem] font-semibold text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring/55 disabled:pointer-events-none disabled:opacity-50"
                               aria-label={
-                                childCollection.action.ariaLabel ??
-                                childCollection.action.label
+                                action.ariaLabel ?? action.label
                               }
-                              disabled={childCollection.action.disabled}
+                              disabled={action.disabled}
                               onClick={() =>
                                 level.notifyChildCollectionAction(
                                   itemId,
                                   childCollection.id,
-                                  childCollection.action!.id
+                                  action.id
                                 )
                               }
                             >
                               <Plus className="size-3.5" aria-hidden="true" />
                               <span className="truncate">
-                                {childCollection.action.label}
+                                {action.label}
                               </span>
                             </button>
-                          )}
+                          ))}
                           <ul
                             role="list"
                             aria-label={`${item.label} ${childCollection.label}`}

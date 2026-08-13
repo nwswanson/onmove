@@ -5,6 +5,7 @@ import type {
   FocusScopeSnapshot,
   FocusStatus,
   HealthState,
+  RoutineSnapshot,
   ThreadSnapshot,
   ThreadScopeSnapshot,
   ThreadSubjectCellSnapshot,
@@ -208,26 +209,53 @@ export type CommitmentsByContextItemId = Readonly<
   Record<string, readonly CommitmentSnapshot[] | undefined>
 >
 
-function commitmentChildCollection(
+export type RoutinesByContextItemId = Readonly<
+  Record<string, readonly RoutineSnapshot[] | undefined>
+>
+
+function contextWorkChildCollection(
   ownerLabel: string,
-  commitments: readonly CommitmentSnapshot[]
+  commitments: readonly CommitmentSnapshot[],
+  routines: readonly RoutineSnapshot[]
 ): ContextualSidebarChildCollectionModel {
   return {
     id: 'commitments',
-    label: 'Commitments',
-    emptyState: 'No commitments',
-    action: {
-      id: 'add',
-      label: 'Add commitment',
-      ariaLabel: `Add commitment to ${ownerLabel}`
-    },
-    items: buildCommitmentListModel(commitments).current.map((commitment) => ({
-      id: String(commitment.id),
-      label: commitment.title,
-      ariaLabel: `Open ${ownerLabel} commitment ${commitment.title}`,
-      state: healthStateLabel(commitment.state),
-      tone: commitment.status === 'active' ? 'default' : 'muted'
-    }))
+    label: 'Commitments and Routines',
+    emptyState: 'No commitments or Routines',
+    actions: [
+      {
+        id: 'add-commitment',
+        label: 'Add commitment',
+        ariaLabel: `Add commitment to ${ownerLabel}`
+      },
+      {
+        id: 'add-routine',
+        label: 'Add Routine',
+        ariaLabel: `Add Routine to ${ownerLabel}`
+      }
+    ],
+    items: [
+      ...buildCommitmentListModel(commitments).current.map((commitment) => ({
+        id: String(commitment.id),
+        label: commitment.title,
+        ariaLabel: `Open ${ownerLabel} commitment ${commitment.title}`,
+        state: healthStateLabel(commitment.state),
+        tone: commitment.status === 'active' ? ('default' as const) : ('muted' as const)
+      })),
+      ...routines.map((routine) => ({
+        id: `routine:${routine.id}`,
+        label: routine.name,
+        ariaLabel: `Open ${ownerLabel} Routine ${routine.name}`,
+        icon: 'checklist' as const,
+        state: routine.status === 'green'
+          ? { label: 'Current', tone: 'success' as const }
+          : routine.status === 'yellow'
+            ? { label: 'Overdue', tone: 'warning' as const }
+            : { label: 'Lapsed', tone: 'danger' as const },
+        tone: routine.needsAttestation ? ('default' as const) : ('muted' as const),
+        movable: false
+      }))
+    ]
   }
 }
 
@@ -235,18 +263,20 @@ export function focusContextSidebarItems(
   threads: readonly ThreadSnapshot[],
   summaries: StatusSummariesById = {},
   hideSensitiveContent = false,
-  commitmentsByItemId?: CommitmentsByContextItemId
+  commitmentsByItemId?: CommitmentsByContextItemId,
+  routinesByItemId?: RoutinesByContextItemId
 ): ContextualSidebarItemModel[] {
   return [
     {
       id: 'overall',
       label: 'Overall',
       icon: 'overview',
-      ...(commitmentsByItemId
+      ...(commitmentsByItemId || routinesByItemId
         ? {
-            childCollection: commitmentChildCollection(
+            childCollection: contextWorkChildCollection(
               'Overall',
-              commitmentsByItemId.overall ?? []
+              commitmentsByItemId?.overall ?? [],
+              routinesByItemId?.overall ?? []
             )
           }
         : {}),
@@ -269,11 +299,12 @@ export function focusContextSidebarItems(
         ariaLabel: `${label}${paused ? ', paused' : ''}`,
         icon: paused ? ('paused' as const) : ('sunflower' as const),
         ...(paused ? {} : { sunflower }),
-        ...(commitmentsByItemId
+        ...(commitmentsByItemId || routinesByItemId
           ? {
-              childCollection: commitmentChildCollection(
+              childCollection: contextWorkChildCollection(
                 label,
-                commitmentsByItemId[threadSidebarItemId(thread.id)] ?? []
+                commitmentsByItemId?.[threadSidebarItemId(thread.id)] ?? [],
+                routinesByItemId?.[threadSidebarItemId(thread.id)] ?? []
               )
             }
           : {}),

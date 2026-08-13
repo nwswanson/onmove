@@ -172,6 +172,14 @@ collection shows only the Routines belonging to that exact parent. Selecting a r
 definition modal. This keeps Focus Overall Routines distinct from Thread Routines even though both
 feed the same execution queue.
 
+The top-level contextual sidebar mirrors that ownership. Every Overall or Thread node presents
+`Add commitment` followed by `Add Routine`, then its current Commitments and direct Routines.
+Routine rows carry a checklist icon and derived status and cannot be dragged as Commitments.
+Selecting one preserves the top-level hierarchy and renders a read-only check-in history in the
+main canvas. That history includes the current and previous immutable Runs, per-Subject progress,
+scheduled and completion dates, lateness, template versions, attestations, and recorded issues. An
+explicit `Edit` button opens the definition modal; selecting the Routine itself never edits it.
+
 The definition modal owns the name, cadence, schedule anchor, optional parent Scope,
 `needsAttestation`, sensitivity, checklist versioning, and deletion. Clearing `needsAttestation`
 removes the Routine's cells from the queue without deleting immutable history. Editing the checklist

@@ -172,17 +172,32 @@ describe('ContextualSidebarNavigation', () => {
           childCollection: {
             id: 'commitments',
             label: 'Commitments',
-            action: {
-              id: 'add',
-              label: 'Add commitment',
-              ariaLabel: 'Add commitment to Overall'
-            },
+            actions: [
+              {
+                id: 'add-commitment',
+                label: 'Add commitment',
+                ariaLabel: 'Add commitment to Overall'
+              },
+              {
+                id: 'add-routine',
+                label: 'Add Routine',
+                ariaLabel: 'Add Routine to Overall'
+              }
+            ],
             items: [
               {
                 id: 'quality',
                 label: 'Improve ticket quality',
                 ariaLabel: 'Open commitment Improve ticket quality',
                 state: { label: 'Red', tone: 'danger' }
+              },
+              {
+                id: 'routine:7',
+                label: 'Weekly evidence inspection',
+                ariaLabel: 'Edit Routine Weekly evidence inspection',
+                icon: 'checklist',
+                movable: false,
+                activation: 'action'
               }
             ]
           }
@@ -229,13 +244,32 @@ describe('ContextualSidebarNavigation', () => {
       'quality'
     )
 
+    await user.click(screen.getByRole('button', {
+      name: 'Edit Routine Weekly evidence inspection'
+    }))
+    expect(onSelectChild).toHaveBeenLastCalledWith(
+      'overall',
+      'commitments',
+      'routine:7'
+    )
+    expect(navigation.getSnapshot().selectedChild?.childItemId).toBe('quality')
+    expect(screen.getByRole('button', {
+      name: 'Edit Routine Weekly evidence inspection'
+    })).not.toHaveAttribute('aria-roledescription')
+
     await user.click(
       screen.getByRole('button', { name: 'Add commitment to Overall' })
     )
     expect(onChildCollectionAction).toHaveBeenCalledWith(
       'overall',
       'commitments',
-      'add'
+      'add-commitment'
+    )
+    await user.click(screen.getByRole('button', { name: 'Add Routine to Overall' }))
+    expect(onChildCollectionAction).toHaveBeenLastCalledWith(
+      'overall',
+      'commitments',
+      'add-routine'
     )
     expect(navigation.getSnapshot().level).toBe(root)
   })

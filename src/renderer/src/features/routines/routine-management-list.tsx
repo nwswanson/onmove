@@ -18,11 +18,11 @@ export interface RoutineManagementListModel {
 export function RoutineManagementList({
   idPrefix,
   model,
-  onEdit
+  onOpen
 }: {
   idPrefix: string
   model: RoutineManagementListModel
-  onEdit: (routineId: number) => void
+  onOpen: (routineId: number) => void
 }): React.JSX.Element {
   return (
     <section className="mt-5" aria-labelledby={`${idPrefix}-routines-heading`}>
@@ -38,9 +38,9 @@ export function RoutineManagementList({
           <div key={item.id} role="listitem" className="border-b border-border/65 last:border-b-0">
             <button
               type="button"
-              aria-label={`Edit Routine ${item.name}`}
+              aria-label={`Open Routine ${item.name}`}
               className="flex min-h-11 w-full items-center gap-3 px-3 text-left text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/55"
-              onClick={() => onEdit(item.id)}
+              onClick={() => onOpen(item.id)}
             >
               <ListChecks className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               <span className="min-w-0 flex-1">

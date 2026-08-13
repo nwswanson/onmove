@@ -75,8 +75,13 @@ import {
   RoutineEditorDialog,
   type RoutineEditorParent
 } from '@/features/routines/routine-editor-dialog'
+import { RoutineHistory } from '@/features/routines/routine-history'
 import { RoutineManagementList } from '@/features/routines/routine-management-list'
-import { routineManagementListModel } from '@/features/routines/routine-presenters'
+import {
+  routineDrawerAdapter,
+  routineHistoryModel,
+  routineManagementListModel
+} from '@/features/routines/routine-presenters'
 
 const CONTEXTUAL_SIDEBAR_MIN = 220
 const CONTEXTUAL_SIDEBAR_MAX = 320
@@ -281,13 +286,21 @@ export function FocusWorkspace({
         id: `focus:${focus.id}`,
         title: 'Focus',
         ariaLabel: 'Focus sections',
-        items: focusContextSidebarItems([], {}, false, { overall: [] }),
+        items: focusContextSidebarItems(
+          [],
+          {},
+          false,
+          { overall: [] },
+          { overall: [] }
+        ),
         onSelect: () => setStandaloneCommitmentRoute(null),
         onSelectChild: () => setStandaloneCommitmentRoute(null),
         onChildCollectionAction: (parentItemId, collectionId, actionId) => {
-          if (collectionId !== 'commitments' || actionId !== 'add') return
+          if (collectionId !== 'commitments') return
           const parent = commitmentParentForContextItem(parentItemId, focus.id)
-          if (parent) setNewCommitmentParent(parent)
+          if (!parent) return
+          if (actionId === 'add-commitment') setNewCommitmentParent(parent)
+          if (actionId === 'add-routine') setRoutineEditor({ parent })
         },
         canMoveChild: ({ sourceCollectionId, targetCollectionId }) =>
           sourceCollectionId === 'commitments' && targetCollectionId === 'commitments',
@@ -373,6 +386,38 @@ export function FocusWorkspace({
       )
     }),
     [visibleFocusCommitments, visibleThreadCommitments, visibleThreadRecords]
+  )
+  const routinesByContextItemId = useMemo<
+    Readonly<Record<string, readonly RoutineSnapshot[]>>
+  >(
+    () => ({
+      overall: visibleSensitiveRecords(
+        model.routines.filter((routine) =>
+          routine.parent.type === 'focus' && routine.parent.id === focus.id
+        ),
+        hideSensitiveContent,
+        focus.sensitive
+      ),
+      ...Object.fromEntries(
+        visibleThreadRecords.map((thread) => [
+          threadSidebarItemId(thread.id),
+          visibleSensitiveRecords(
+            model.routines.filter((routine) =>
+              routine.parent.type === 'thread' && routine.parent.id === thread.id
+            ),
+            hideSensitiveContent,
+            focus.sensitive || thread.sensitive
+          )
+        ])
+      )
+    }),
+    [
+      focus.id,
+      focus.sensitive,
+      hideSensitiveContent,
+      model.routines,
+      visibleThreadRecords
+    ]
   )
 
   function parentIsSensitive(parent: CommitmentParent): boolean {
@@ -481,7 +526,8 @@ export function FocusWorkspace({
       visibleThreadRecords,
       model.threadStatusSummaries,
       hideSensitiveContent,
-      nextByContext
+      nextByContext,
+      routinesByContextItemId
     ))
     navigation.refresh()
     navigation.selectChild(targetItemId, 'commitments', String(moved.id))
@@ -561,7 +607,8 @@ export function FocusWorkspace({
         visibleThreadRecords,
         model.threadStatusSummaries,
         hideSensitiveContent,
-        commitmentsByContextItemId
+        commitmentsByContextItemId,
+        routinesByContextItemId
       )
     )
     focusCommitmentsLevel.setItems(
@@ -585,6 +632,7 @@ export function FocusWorkspace({
     model.threads,
     model.threadStatusSummaries,
     commitmentsByContextItemId,
+    routinesByContextItemId,
     visibleFocusCommitments,
     visibleThreadCommitments,
     visibleThreadRecords,
@@ -673,12 +721,30 @@ export function FocusWorkspace({
     navigationSnapshot.level as ContextualSidebarLevel
   )
   const childCommitmentParent =
-    navigationSnapshot.level === focusLevel && navigationSnapshot.selectedChild
+    navigationSnapshot.level === focusLevel &&
+    navigationSnapshot.selectedChild &&
+    !navigationSnapshot.selectedChild.childItemId.startsWith('routine:')
       ? commitmentParentForContextItem(
           navigationSnapshot.selectedChild.parentItemId,
           focus.id
         )
       : null
+  const childRoutineParent =
+    navigationSnapshot.level === focusLevel &&
+    navigationSnapshot.selectedChild?.childItemId.startsWith('routine:')
+      ? commitmentParentForContextItem(
+          navigationSnapshot.selectedChild.parentItemId,
+          focus.id
+        )
+      : null
+  const selectedRoutineId = childRoutineParent && navigationSnapshot.selectedChild
+    ? Number(navigationSnapshot.selectedChild.childItemId.slice('routine:'.length))
+    : null
+  const selectedRoutine = childRoutineParent && selectedRoutineId !== null
+    ? (routinesByContextItemId[
+        contextItemIdForCommitmentParent(childRoutineParent)
+      ] ?? []).find(({ id }) => id === selectedRoutineId)
+    : undefined
   const activeCommitmentParent = standaloneCommitmentRoute?.parent ??
     childCommitmentParent ??
     levelCommitmentParent
@@ -1041,19 +1107,30 @@ export function FocusWorkspace({
     }
   }, [contextDrawer, focus.id, model.commitments, model.threadCommitments, model.threads])
 
-  const contextDrawerAdapter: ContextDrawerAdapter | null = selectedCommitment
-    ? adapterForCommitment(selectedCommitment)
-    : activeCommitmentParent
-      ? null
-      : selectedThread
-        ? adapterForThread(selectedThread)
-        : focusDrawerAdapter({
-            focus,
-            onSave: onUpdateFocus,
-            onDescriptionChange: model.saveDescription,
-            onOpenDescription: model.openDescriptionInWindow,
-            onDelete: onDeleteFocus
-          })
+  const contextDrawerAdapter: ContextDrawerAdapter | null = selectedRoutine
+    ? routineDrawerAdapter({
+        routine: selectedRoutine,
+        parentLabel: commitmentParentLabel(selectedRoutine.parent),
+        ancestorKeys: [
+          `focus:${focus.id}`,
+          ...(selectedRoutine.parent.type === 'thread'
+            ? [`thread:${selectedRoutine.parent.id}`]
+            : [])
+        ]
+      })
+    : selectedCommitment
+      ? adapterForCommitment(selectedCommitment)
+      : activeCommitmentParent
+        ? null
+        : selectedThread
+          ? adapterForThread(selectedThread)
+          : focusDrawerAdapter({
+              focus,
+              onSave: onUpdateFocus,
+              onDescriptionChange: model.saveDescription,
+              onOpenDescription: model.openDescriptionInWindow,
+              onDelete: onDeleteFocus
+            })
 
   async function createThread(input: CreateThreadInput): Promise<void> {
     await model.createThread(input)
@@ -1081,7 +1158,8 @@ export function FocusWorkspace({
         {
           ...commitmentsByContextItemId,
           [contextItemIdForCommitmentParent(created.parent)]: nextCommitments
-        }
+        },
+        routinesByContextItemId
       )
     )
     if (navigation.getSnapshot().level === level) {
@@ -1217,6 +1295,15 @@ export function FocusWorkspace({
     setStandaloneCommitmentRoute({ parent, commitmentId })
   }
 
+  function openRoutine(parent: CommitmentParent, routineId: number): void {
+    navigation.reset()
+    navigation.selectChild(
+      contextItemIdForCommitmentParent(parent),
+      'commitments',
+      `routine:${routineId}`
+    )
+  }
+
   function pinCommitment(parent: CommitmentParent, commitmentId: number): void {
     const commitment = visibleCommitmentsFor(parent).find(
       (candidate) => candidate.id === commitmentId
@@ -1226,7 +1313,15 @@ export function FocusWorkspace({
 
   const main = (
     <main className="min-w-0 flex-1 overflow-auto bg-background">
-        {activeCommitmentParent && !commitmentRouteHidden ? (
+        {selectedRoutine ? (
+          <RoutineHistory
+            model={routineHistoryModel(selectedRoutine)}
+            onEdit={() => setRoutineEditor({
+              parent: selectedRoutine.parent,
+              routine: selectedRoutine
+            })}
+          />
+        ) : activeCommitmentParent && !commitmentRouteHidden ? (
           <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="commitment-heading">
             {selectedCommitment ? (
               <>
@@ -1490,12 +1585,12 @@ export function FocusWorkspace({
                             focus.sensitive || displayedThread.sensitive
                           )
                         )}
-                        onEdit={(routineId) => {
+                        onOpen={(routineId) => {
                           const routine = model.routinesFor({
                             type: 'thread',
                             id: displayedThread.id
                           }).find(({ id }) => id === routineId)
-                          if (routine) setRoutineEditor({ parent: routine.parent, routine })
+                          if (routine) openRoutine(routine.parent, routine.id)
                         }}
                       />
                     )}
@@ -1655,12 +1750,12 @@ export function FocusWorkspace({
                   focus.sensitive
                 )
               )}
-              onEdit={(routineId) => {
+              onOpen={(routineId) => {
                 const routine = model.routinesFor({
                   type: 'focus',
                   id: focus.id
                 }).find(({ id }) => id === routineId)
-                if (routine) setRoutineEditor({ parent: routine.parent, routine })
+                if (routine) openRoutine(routine.parent, routine.id)
               }}
             />
 

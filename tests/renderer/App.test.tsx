@@ -529,16 +529,28 @@ describe('App', () => {
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    const contextualSidebar = screen.getByLabelText('Contextual sidebar')
+    expect(within(contextualSidebar).getByRole('button', {
+      name: 'Add Routine to Overall'
+    })).toBeVisible()
+    expect(within(contextualSidebar).getByRole('button', {
+      name: 'Open Overall Routine Portfolio evidence inspection'
+    })).toBeVisible()
     expect(await screen.findByRole('button', {
-      name: 'Edit Routine Portfolio evidence inspection'
+      name: 'Open Routine Portfolio evidence inspection'
     })).toBeVisible()
     expect(screen.queryByRole('button', {
-      name: 'Edit Routine Weekly delivery inspection'
+      name: 'Open Routine Weekly delivery inspection'
     })).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', {
-      name: 'Edit Routine Portfolio evidence inspection'
+    await user.click(within(contextualSidebar).getByRole('button', {
+      name: 'Open Overall Routine Portfolio evidence inspection'
     }))
+    expect(screen.getByRole('heading', { name: 'Portfolio evidence inspection' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Check-in history' })).toBeVisible()
+    expect(screen.getByText('Scheduled 2026-08-10')).toBeVisible()
+    expect(screen.queryByRole('dialog', { name: 'Edit Routine' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Edit' }))
     const editor = screen.getByRole('dialog', { name: 'Edit Routine' })
     await user.click(within(editor).getByRole('button', { name: 'Delete Routine' }))
     const confirmation = screen.getByRole('dialog', { name: 'Delete Routine?' })
@@ -547,17 +559,25 @@ describe('App', () => {
     }))
     expect(deleteRoutine).toHaveBeenCalledWith(302)
     expect(screen.queryByRole('button', {
-      name: 'Edit Routine Portfolio evidence inspection'
+      name: 'Open Routine Portfolio evidence inspection'
     })).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Sprint execution' }))
+    expect(within(contextualSidebar).getByRole('button', {
+      name: 'Add Routine to Sprint execution'
+    })).toBeVisible()
+    expect(within(contextualSidebar).getByRole('button', {
+      name: 'Open Sprint execution Routine Weekly delivery inspection'
+    })).toBeVisible()
     expect(await screen.findByRole('button', {
-      name: 'Edit Routine Weekly delivery inspection'
+      name: 'Open Routine Weekly delivery inspection'
     })).toBeVisible()
     expect(screen.queryByRole('button', {
-      name: 'Edit Routine Portfolio evidence inspection'
+      name: 'Open Routine Portfolio evidence inspection'
     })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Add Routine' }))
+    await user.click(within(contextualSidebar).getByRole('button', {
+      name: 'Add Routine to Sprint execution'
+    }))
     expect(screen.getByRole('dialog', { name: 'Add Routine' })).toBeVisible()
   })
 
@@ -610,8 +630,11 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Add Routine' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Add commitment' })).toBeVisible()
     await user.click(screen.getByRole('button', {
-      name: 'Edit Routine Weekly delivery inspection'
+      name: 'Open Routine Weekly delivery inspection'
     }))
+    expect(screen.getByRole('heading', { name: 'Weekly delivery inspection' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Check-in history' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Edit' }))
     const dialog = screen.getByRole('dialog', { name: 'Edit Routine' })
     const name = within(dialog).getByLabelText('Routine name')
     await user.clear(name)
@@ -624,8 +647,11 @@ describe('App', () => {
         expect.objectContaining({ inspection: 'Confirm scope changes received approval.' })
       ]
     }))
-    expect(await screen.findByRole('button', {
-      name: 'Edit Routine Weekly evidence inspection'
+    expect(await screen.findByRole('heading', {
+      name: 'Weekly evidence inspection'
+    })).toBeVisible()
+    expect(within(screen.getByLabelText('Contextual sidebar')).getByRole('button', {
+      name: 'Open Sprint execution Routine Weekly evidence inspection'
     })).toBeVisible()
 
     await user.click(await screen.findByRole('button', { name: 'Routines' }))
@@ -3872,7 +3898,7 @@ describe('App', () => {
       sensitive: false
     })
     const overallCommitments = screen.getByRole('list', {
-      name: 'Overall Commitments'
+      name: 'Overall Commitments and Routines'
     })
     expect(
       await within(overallCommitments).findByRole('img', { name: 'Red state' })

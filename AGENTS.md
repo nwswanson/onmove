@@ -62,9 +62,14 @@
 - At the top level, render each Focus Overall or Thread item's direct Commitments as a nested tree.
   Nested Commitment rows use the receiver-owned semantic state dot, never a Sunflower. Selecting a
   nested Commitment changes the main route while preserving the top-level sidebar. Give every tree
-  scope a generic child-collection action that presents `Add commitment`; it opens creation for that
-  scope and never enters the filtered Commitment level. Do not render a Commitments drilldown in the
-  contextual tree.
+  scope ordered generic child-collection actions for `Add commitment` followed by `Add Routine`.
+  Render its direct Routine definitions after its direct Commitments with a checklist icon and
+  derived status dot. Routine rows are non-draggable selections that preserve the top-level
+  contextual sidebar and open a read-only main view of current and previous immutable check-ins,
+  including Subject cells, completion timing, template versions, attestations, and recorded issues.
+  Put an explicit `Edit` button in that history view; only it opens the parent-owned definition
+  modal. Creation opens for that exact scope and never enters a filtered level. Do not render a
+  Commitments drilldown in the contextual tree.
 - Treat top-level nested Commitment rows as generic dnd-kit draggable children and Overall/Thread
   rows as stationary Commitment drop targets through the contextual sidebar's receiver-owned
   child-move contract. Top-level Thread rows are also draggable to Focus rows in the primary
