@@ -216,6 +216,20 @@ describe('registerAppIpc', () => {
             snapshot: () => ({ id: 36, type: 'routine', name: 'Inspect scope' })
           })),
           update: vi.fn(() => ({ id: 35, type: 'routine', name: 'Inspect delivery weekly' })),
+          planMove: vi.fn(() => ({
+            routineId: 35,
+            from: { type: 'focus', id: 12 },
+            to: { type: 'thread', id: 21 },
+            scopeId: 51,
+            ownedRecords: { templateVersions: 2, reviewRuns: 3, reviewCells: 4 },
+            requiresConfirmation: false
+          })),
+          move: vi.fn(() => ({
+            id: 35,
+            type: 'routine',
+            name: 'Inspect delivery',
+            parent: { type: 'thread', id: 21 }
+          })),
           attestCellItem: vi.fn(() => ({
             id: 35,
             type: 'routine',
@@ -518,6 +532,20 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.updateRoutine)?.(undefined, 35, {
       name: 'Inspect delivery weekly'
     })).toMatchObject({ name: 'Inspect delivery weekly' })
+    expect(await handlers.get(IPC_CHANNELS.planRoutineMove)?.(
+      undefined,
+      35,
+      { type: 'thread', id: 21 }
+    )).toMatchObject({
+      routineId: 35,
+      from: { type: 'focus', id: 12 },
+      to: { type: 'thread', id: 21 },
+      requiresConfirmation: false
+    })
+    expect(await handlers.get(IPC_CHANNELS.moveRoutine)?.(undefined, 35, {
+      parent: { type: 'thread', id: 21 },
+      plannedFrom: { type: 'focus', id: 12 }
+    })).toMatchObject({ id: 35, parent: { type: 'thread', id: 21 } })
     expect(await handlers.get(IPC_CHANNELS.attestRoutineCellItem)?.(undefined, 91, {
       resolution: 'attested'
     })).toMatchObject({ currentRun: { progress: { complete: 1, required: 2 } } })

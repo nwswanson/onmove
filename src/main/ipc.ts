@@ -15,6 +15,7 @@ import {
   type CreateUpdateInput,
   type EditUpdateInput,
   type MoveCommitmentInput,
+  type MoveRoutineInput,
   type MoveThreadInput,
   type FocusStatus,
   type SetItemStatusInput,
@@ -229,6 +230,14 @@ export function registerAppIpc(
   )
   ipcMain.handle(IPC_CHANNELS.updateRoutine, (_event, id: number, input: UpdateRoutineInput) =>
     routineMutation(() => database.domain.routines.update(id, input))
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.planRoutineMove,
+    (_event, id: number, parent: CommitmentParent) =>
+      database.domain.routines.planMove(id, parent)
+  )
+  ipcMain.handle(IPC_CHANNELS.moveRoutine, (_event, id: number, input: MoveRoutineInput) =>
+    routineMutation(() => database.domain.routines.move(id, input))
   )
   ipcMain.handle(IPC_CHANNELS.deleteRoutine, (_event, id: number) =>
     routineMutation(() => database.domain.routines.delete(id))

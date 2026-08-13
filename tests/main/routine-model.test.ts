@@ -429,6 +429,96 @@ describe('Routine Commitment model', () => {
     expect(database!.domain.routines.find(routine.id)).toBeNull()
   })
 
+  it('moves a Routine between sibling Threads without rewriting its Scope or attestation history', () => {
+    const focus = database!.domain.focuses.create({ title: 'Move inspections' })
+    const scoped = database!.domain.focusScopes.addSubject(
+      focus.id,
+      { name: 'North region' },
+      new Date('2026-01-01T08:00:00.000Z')
+    )
+    const source = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Source Thread',
+      reviewFrequencyDays: 7
+    })
+    const target = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Target Thread',
+      reviewFrequencyDays: 7
+    })
+    const routine = database!.domain.routines.create({
+      parent: { type: 'thread', id: source.id },
+      name: 'Portable inspection',
+      scheduleWeekdays: ['thursday'],
+      scopeId: scoped.scopeId,
+      checklist: [{ inspection: 'Verify the regional evidence was inspected.' }]
+    }, new Date('2026-01-01T10:00:00.000Z'))
+    const original = routine.snapshot('2026-01-01')
+    database!.domain.routines.attestCellItem(original.currentRun!.items[0].id, {
+      resolution: 'attested',
+      note: 'The durable attestation note remains attached.'
+    }, new Date('2026-01-01T11:00:00.000Z'))
+    database!.domain.routines.update(routine.id, {
+      checklist: [{ inspection: 'Verify the revised evidence was inspected.' }]
+    }, new Date('2026-01-02T09:00:00.000Z'))
+
+    const plan = database!.domain.routines.planMove(
+      routine.id,
+      { type: 'thread', id: target.id }
+    )
+    expect(plan).toMatchObject({
+      from: { type: 'thread', id: source.id },
+      to: { type: 'thread', id: target.id },
+      scopeId: scoped.scopeId,
+      ownedRecords: { templateVersions: 2, reviewRuns: 1, reviewCells: 1 },
+      requiresConfirmation: false
+    })
+
+    const moved = database!.domain.routines.move(routine.id, {
+      parent: plan.to,
+      plannedFrom: plan.from
+    }, new Date('2026-01-02T10:00:00.000Z'))
+    expect(moved).toMatchObject({
+      parent: { type: 'thread', id: target.id },
+      scheduleWeekdays: ['thursday'],
+      scope: { id: scoped.scopeId, subjects: [{ name: 'North region' }] },
+      template: { version: 2 }
+    })
+    expect(moved.currentRun!.items[0]).toMatchObject({
+      inspection: 'Verify the regional evidence was inspected.',
+      resolution: 'attested',
+      note: 'The durable attestation note remains attached.'
+    })
+    expect(database!.domain.threads.delete(source.id)).toBe(true)
+    expect(database!.domain.routines.find(routine.id)?.parent).toEqual({
+      type: 'thread',
+      id: target.id
+    })
+
+    const raw = new DatabaseSync(path)
+    expect(raw.prepare(
+      'SELECT count(*) AS count FROM commitment_parent_transitions WHERE commitment_id = ?'
+    ).get(routine.id)).toEqual({ count: 2 })
+    raw.close()
+
+    expect(() => database!.domain.routines.move(routine.id, {
+      parent: { type: 'focus', id: focus.id },
+      plannedFrom: { type: 'thread', id: source.id }
+    }, new Date('2026-01-02T11:00:00.000Z'))).toThrow(/stale/)
+    const otherFocus = database!.domain.focuses.create({ title: 'Other Focus' })
+    const otherThread = database!.domain.threads.create({
+      focusId: otherFocus.id,
+      title: 'Other Thread',
+      reviewFrequencyDays: 7
+    })
+    expect(() => database!.domain.routines.planMove(
+      routine.id,
+      { type: 'thread', id: otherThread.id }
+    )).toThrow(/cannot move outside its Focus/)
+    expect(database!.domain.threads.delete(target.id)).toBe(true)
+    expect(database!.domain.routines.find(routine.id)).toBeNull()
+  })
+
   it('moves a Thread Routine Scope while preserving historical Run attribution', () => {
     const sourceFocus = database!.domain.focuses.create({ title: 'Source focus' })
     const targetFocus = database!.domain.focuses.create({ title: 'Target focus' })

@@ -448,7 +448,7 @@ describe('Focus presentation adapters', () => {
     expect(healthStateLabel('none')).toEqual({ label: 'None', tone: 'neutral' })
   })
 
-  it('projects owned Routines as non-draggable contextual selections after Commitments', () => {
+  it('projects owned Routines as draggable contextual selections after Commitments', () => {
     const routine = {
       id: 31,
       parent: { type: 'thread', id: thread.id },
@@ -473,7 +473,7 @@ describe('Focus presentation adapters', () => {
         icon: 'checklist',
         state: { label: 'Overdue', tone: 'warning' },
         tone: 'default',
-        movable: false
+        movable: true
       }
     ])
   })

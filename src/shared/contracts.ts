@@ -49,6 +49,8 @@ export const IPC_CHANNELS = {
   listRoutines: 'domain:list-routines',
   createRoutine: 'domain:create-routine',
   updateRoutine: 'domain:update-routine',
+  planRoutineMove: 'domain:plan-routine-move',
+  moveRoutine: 'domain:move-routine',
   deleteRoutine: 'domain:delete-routine',
   attestRoutineCellItem: 'domain:attest-routine-cell-item',
   finalizeRoutineCell: 'domain:finalize-routine-cell',
@@ -727,6 +729,32 @@ export interface UpdateRoutineInput {
   checklist?: RoutineTemplateItemInput[]
 }
 
+export interface RoutineMoveOwnedRecordsSnapshot {
+  templateVersions: number
+  reviewRuns: number
+  reviewCells: number
+}
+
+/**
+ * Read-only preview of a same-Focus Routine move. A Routine's optional Scope
+ * is Focus-owned, so moving between Overall and sibling Threads preserves it
+ * exactly and never rewrites immutable Run snapshots.
+ */
+export interface RoutineMovePlanSnapshot {
+  routineId: number
+  from: CommitmentParent
+  to: CommitmentParent
+  scopeId: number | null
+  ownedRecords: RoutineMoveOwnedRecordsSnapshot
+  requiresConfirmation: false
+}
+
+export interface MoveRoutineInput {
+  parent: CommitmentParent
+  /** Guards a delayed drop from moving a Routine whose owner changed. */
+  plannedFrom: CommitmentParent
+}
+
 export interface AttestRoutineRunItemInput {
   resolution: RoutineRunItemResolution
   /** Versioned rich-text envelope or legacy plain text. */
@@ -1159,6 +1187,11 @@ export interface DomainApi {
   listRoutines: () => Promise<RoutineSnapshot[]>
   createRoutine: (input: CreateRoutineInput) => Promise<RoutineSnapshot>
   updateRoutine: (id: number, input: UpdateRoutineInput) => Promise<RoutineSnapshot>
+  planRoutineMove: (
+    id: number,
+    parent: CommitmentParent
+  ) => Promise<RoutineMovePlanSnapshot>
+  moveRoutine: (id: number, input: MoveRoutineInput) => Promise<RoutineSnapshot>
   deleteRoutine: (id: number) => Promise<boolean>
   attestRoutineCellItem: (
     attestationId: number,

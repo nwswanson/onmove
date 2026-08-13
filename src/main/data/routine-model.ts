@@ -5,7 +5,9 @@ import {
   type AttestRoutineRunItemInput,
   type CommitmentParent,
   type CreateRoutineInput,
+  type MoveRoutineInput,
   type RoutineIssueFollowUpType,
+  type RoutineMovePlanSnapshot,
   type RoutineReviewRunSnapshot,
   type RoutineRunItemResolution,
   type RoutineRunItemSnapshot,
@@ -227,6 +229,16 @@ export class RoutineModel extends BaseModel<RoutineSnapshot> {
     this.assertPersisted()
     return this.replace(this.repository.update(this.id, input, now))
   }
+
+  movePlan(parent: CommitmentParent): RoutineMovePlanSnapshot {
+    this.assertPersisted()
+    return this.repository.planMove(this.id, parent)
+  }
+
+  moveTo(input: MoveRoutineInput, now = new Date()): this {
+    this.assertPersisted()
+    return this.replace(this.repository.move(this.id, input, now))
+  }
 }
 
 /**
@@ -364,6 +376,66 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
       if (scheduleChanged) this.replaceScheduleWeekdays(id, scheduleWeekdays)
       if (checklist !== null) this.insertTemplate(id, nextVersion, checklist, changedAt)
     })
+    return this.materialize(id, localDate(now))
+  }
+
+  /**
+   * Plans an ownership-only move. Routine Scope definitions are Focus-owned,
+   * so sibling Threads and Overall can share the existing live Scope without
+   * rewriting it. Run snapshots remain immutable and retain historical labels.
+  */
+  planMove(id: number, parent: CommitmentParent): RoutineMovePlanSnapshot {
+    const row = this.requireRow(id)
+    const currentParent = parentFromRow(row)
+    this.assertParent(parent)
+    if (this.focusIdForParent(currentParent) !== this.focusIdForParent(parent)) {
+      throw new ModelValidationError('a Routine cannot move outside its Focus')
+    }
+    return {
+      routineId: id,
+      from: currentParent,
+      to: { ...parent },
+      scopeId: row.scope_id,
+      ownedRecords: {
+        templateVersions: Number(this.database.get<{ count: number }>(
+          'SELECT count(*) AS count FROM routine_template_versions WHERE routine_id = ?',
+          [id]
+        )?.count ?? 0),
+        reviewRuns: Number(this.database.get<{ count: number }>(
+          'SELECT count(*) AS count FROM routine_review_runs WHERE routine_id = ?',
+          [id]
+        )?.count ?? 0),
+        reviewCells: Number(this.database.get<{ count: number }>(
+          `SELECT count(*) AS count
+           FROM routine_review_cells cell
+           JOIN routine_review_runs run ON run.id = cell.run_id
+           WHERE run.routine_id = ?`,
+          [id]
+        )?.count ?? 0)
+      },
+      requiresConfirmation: false
+    }
+  }
+
+  move(id: number, input: MoveRoutineInput, now = new Date()): RoutineSnapshot {
+    const plan = this.planMove(id, input.parent)
+    if (
+      plan.from.type !== input.plannedFrom.type ||
+      plan.from.id !== input.plannedFrom.id
+    ) {
+      throw new ModelValidationError('Routine move plan is stale because its parent changed')
+    }
+    if (plan.from.type === plan.to.type && plan.from.id === plan.to.id) {
+      return this.materialize(id, localDate(now))
+    }
+    const [focusId, threadId] = parentColumns(plan.to)
+    const result = this.database.run(
+      `UPDATE commitments
+       SET focus_id = ?, thread_id = ?, updated_at = ?
+       WHERE id = ? AND behavior_type = 'routine'`,
+      [focusId, threadId, timestamp(now), id]
+    )
+    if (result.changes === 0) throw new ModelNotFoundError('Routine', id)
     return this.materialize(id, localDate(now))
   }
 
@@ -860,6 +932,16 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
     )) {
       throw new ModelNotFoundError(parent.type === 'focus' ? 'Focus' : 'Thread', parent.id)
     }
+  }
+
+  private focusIdForParent(parent: CommitmentParent): number {
+    if (parent.type === 'focus') return parent.id
+    const row = this.database.get<{ focus_id: number }>(
+      'SELECT focus_id FROM threads WHERE id = ?',
+      [parent.id]
+    )
+    if (!row) throw new ModelNotFoundError('Thread', parent.id)
+    return Number(row.focus_id)
   }
 
   private assertScope(scopeId: number | null | undefined, parent: CommitmentParent): void {

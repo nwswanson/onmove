@@ -253,7 +253,7 @@ function contextWorkChildCollection(
             ? { label: 'Overdue', tone: 'warning' as const }
             : { label: 'Lapsed', tone: 'danger' as const },
         tone: routine.needsAttestation ? ('default' as const) : ('muted' as const),
-        movable: false
+        movable: true
       }))
     ]
   }

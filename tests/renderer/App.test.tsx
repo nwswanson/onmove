@@ -378,6 +378,15 @@ function installApi(
     listRoutines: vi.fn().mockResolvedValue([]),
     createRoutine: vi.fn(),
     updateRoutine: vi.fn(),
+    planRoutineMove: vi.fn(async (id, parent) => ({
+      routineId: id,
+      from: parent,
+      to: parent,
+      scopeId: null,
+      ownedRecords: { templateVersions: 1, reviewRuns: 0, reviewCells: 0 },
+      requiresConfirmation: false as const
+    })),
+    moveRoutine: vi.fn(),
     deleteRoutine: vi.fn(),
     attestRoutineCellItem: vi.fn(),
     finalizeRoutineCell: vi.fn(),

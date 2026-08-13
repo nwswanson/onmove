@@ -94,6 +94,9 @@ const api: OnMoveApi = {
     listRoutines: () => ipcRenderer.invoke(IPC_CHANNELS.listRoutines),
     createRoutine: (input) => ipcRenderer.invoke(IPC_CHANNELS.createRoutine, input),
     updateRoutine: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateRoutine, id, input),
+    planRoutineMove: (id, parent) =>
+      ipcRenderer.invoke(IPC_CHANNELS.planRoutineMove, id, parent),
+    moveRoutine: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.moveRoutine, id, input),
     deleteRoutine: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteRoutine, id),
     attestRoutineCellItem: (attestationId, input) =>
       ipcRenderer.invoke(IPC_CHANNELS.attestRoutineCellItem, attestationId, input),

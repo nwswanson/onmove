@@ -176,6 +176,13 @@ Moving a Thread to another Focus includes Routine Scope references in the existi
 Scope graph. The move clones referenced Scopes into the destination Focus and remaps only the live
 Routine definition. Historical Run Scope snapshots are not rewritten.
 
+A direct Routine move is deliberately narrower: it is allowed only between Overall and Threads in
+the same Focus. The guarded move planner rejects cross-Focus destinations and stale source parents.
+The operation changes only the Routine-backed Commitment's parent columns, so the live optional
+Focus-owned Scope, weekday schedule, every template version, the current Run, completed Run history,
+Subject cells, resolutions, and evidence notes remain attached without copying or reinterpretation.
+The existing immutable parent-transition log records the ownership change.
+
 Portable export/import includes every Routine table in dependency order. Import accepts named raw
 fields, supplies conservative defaults for missing future/older fields, normalizes enum and boolean
 values, and relies on the same SQLite constraints before committing replacement data.
@@ -195,7 +202,9 @@ feed the same execution queue.
 
 The top-level contextual sidebar mirrors that ownership. Every Overall or Thread node presents
 `Add commitment` followed by `Add Routine`, then its current Commitments and direct Routines.
-Routine rows carry a checklist icon and derived status and cannot be dragged as Commitments.
+Routine rows carry a checklist icon and derived status and use the same receiver-owned drag affordance
+as Commitments. Dropping one on Overall or a sibling Thread moves the complete Routine aggregate and
+keeps it selected at its destination; no confirmation is needed because no Scope or history is changed.
 Selecting one preserves the top-level hierarchy and renders the current check-in above check-in
 history in the main canvas. History includes prior completed immutable Runs, per-Subject progress,
 scheduled and completion dates, lateness, template versions, resolutions, and item notes. The current cell uses

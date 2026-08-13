@@ -9,9 +9,11 @@ import type {
   CreateThreadInput,
   FocusSnapshot,
   FocusScopeSnapshot,
-  RoutineSnapshot,
   MoveCommitmentInput,
+  MoveRoutineInput,
   MoveThreadInput,
+  RoutineMovePlanSnapshot,
+  RoutineSnapshot,
   ThreadSnapshot,
   ThreadMovePlanSnapshot,
   ThreadScopeSnapshot,
@@ -78,6 +80,11 @@ export interface FocusWorkspaceModel {
   createCommitment: (input: CreateCommitmentInput) => Promise<CommitmentSnapshot>
   createRoutine: (input: CreateRoutineInput) => Promise<RoutineSnapshot>
   updateRoutine: (id: number, input: UpdateRoutineInput) => Promise<RoutineSnapshot>
+  planRoutineMove: (
+    id: number,
+    parent: CommitmentParent
+  ) => Promise<RoutineMovePlanSnapshot>
+  moveRoutine: (id: number, input: MoveRoutineInput) => Promise<RoutineSnapshot>
   updateRoutineRunItem: (
     attestationId: number,
     input: AttestRoutineRunItemInput
@@ -511,6 +518,24 @@ export function useFocusWorkspaceModel({
     return updated
   }
 
+  function planRoutineMove(
+    id: number,
+    parent: CommitmentParent
+  ): Promise<RoutineMovePlanSnapshot> {
+    return window.onmove.domain.planRoutineMove(id, parent)
+  }
+
+  async function moveRoutine(
+    id: number,
+    input: MoveRoutineInput
+  ): Promise<RoutineSnapshot> {
+    const moved = await window.onmove.domain.moveRoutine(id, input)
+    setRoutines((current) => current
+      .map((routine) => routine.id === moved.id ? moved : routine)
+      .sort((left, right) => left.name.localeCompare(right.name) || left.id - right.id))
+    return moved
+  }
+
   async function updateRoutineRunItem(
     attestationId: number,
     input: AttestRoutineRunItemInput
@@ -699,6 +724,8 @@ export function useFocusWorkspaceModel({
     createCommitment,
     createRoutine,
     updateRoutine,
+    planRoutineMove,
+    moveRoutine,
     updateRoutineRunItem,
     finalizeRoutineCell,
     deleteRoutine,

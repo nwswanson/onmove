@@ -248,6 +248,7 @@ export function FocusWorkspace({
   } | null>(null)
   const [commitmentMoveSaving, setCommitmentMoveSaving] = useState(false)
   const [commitmentMoveError, setCommitmentMoveError] = useState<string | null>(null)
+  const [routineMoveError, setRoutineMoveError] = useState<string | null>(null)
   const [standaloneCommitmentRoute, setStandaloneCommitmentRoute] = useState<{
     parent: CommitmentParent
     commitmentId: number
@@ -262,7 +263,7 @@ export function FocusWorkspace({
   const threadMoveRequest = useRef<(move: ContextualSidebarItemMove) => void>(
     () => undefined
   )
-  const commitmentMoveRequest = useRef<(move: ContextualSidebarChildMove) => void>(
+  const childMoveRequest = useRef<(move: ContextualSidebarChildMove) => void>(
     () => undefined
   )
   const commitmentMoveExecution = useRef<(
@@ -303,7 +304,7 @@ export function FocusWorkspace({
         },
         canMoveChild: ({ sourceCollectionId, targetCollectionId }) =>
           sourceCollectionId === 'commitments' && targetCollectionId === 'commitments',
-        onMoveChild: (move) => commitmentMoveRequest.current(move),
+        onMoveChild: (move) => childMoveRequest.current(move),
         itemMoveTargetType: 'focus',
         canMoveItem: ({ itemId, targetId }) =>
           itemId.startsWith('thread:') && Number(targetId) !== focus.id,
@@ -467,6 +468,37 @@ export function FocusWorkspace({
     }
   }
 
+  async function requestRoutineMove(move: ContextualSidebarChildMove): Promise<void> {
+    const target = commitmentParentForContextItem(move.targetParentItemId, focus.id)
+    if (
+      !target ||
+      move.sourceCollectionId !== 'commitments' ||
+      !move.childItemId.startsWith('routine:')
+    ) return
+    const routineId = Number(move.childItemId.slice('routine:'.length))
+    const routine = model.routines.find(({ id }) => id === routineId)
+    if (!routine) return
+    setRoutineMoveError(null)
+    try {
+      const plan = await model.planRoutineMove(routineId, target)
+      const moved = await model.moveRoutine(routineId, {
+        parent: plan.to,
+        plannedFrom: plan.from
+      })
+      updateSidebarForMovedRoutine(moved)
+    } catch {
+      setRoutineMoveError('The Routine could not be moved.')
+    }
+  }
+
+  function requestChildMove(move: ContextualSidebarChildMove): void {
+    if (move.childItemId.startsWith('routine:')) {
+      void requestRoutineMove(move)
+      return
+    }
+    void requestCommitmentMove(move)
+  }
+
   async function requestThreadMove(move: ContextualSidebarItemMove): Promise<void> {
     if (!move.itemId.startsWith('thread:') || move.targetType !== 'focus') return
     const threadId = Number(move.itemId.slice('thread:'.length))
@@ -532,6 +564,26 @@ export function FocusWorkspace({
     navigation.selectChild(targetItemId, 'commitments', String(moved.id))
   }
 
+  function updateSidebarForMovedRoutine(moved: RoutineSnapshot): void {
+    const nextByContext = Object.fromEntries(
+      Object.entries(routinesByContextItemId).map(([itemId, routines]) => [
+        itemId,
+        (routines ?? []).filter(({ id }) => id !== moved.id)
+      ])
+    ) as Record<string, RoutineSnapshot[]>
+    const targetItemId = contextItemIdForCommitmentParent(moved.parent)
+    nextByContext[targetItemId] = [...(nextByContext[targetItemId] ?? []), moved]
+    focusLevel.setItems(focusContextSidebarItems(
+      visibleThreadRecords,
+      model.threadStatusSummaries,
+      hideSensitiveContent,
+      commitmentsByContextItemId,
+      nextByContext
+    ))
+    navigation.refresh()
+    navigation.selectChild(targetItemId, 'commitments', `routine:${moved.id}`)
+  }
+
   async function executeCommitmentMove(
     plan: CommitmentMovePlanSnapshot,
     confirmedScopeSubjectIds: readonly number[] = []
@@ -562,7 +614,7 @@ export function FocusWorkspace({
   }
 
   useEffect(() => {
-    commitmentMoveRequest.current = (move) => void requestCommitmentMove(move)
+    childMoveRequest.current = requestChildMove
     commitmentMoveExecution.current = executeCommitmentMove
     threadMoveRequest.current = (move) => void requestThreadMove(move)
   })
@@ -1987,6 +2039,14 @@ export function FocusWorkspace({
           className="fixed right-5 bottom-5 z-50 rounded-lg border border-destructive/40 bg-card px-3 py-2 text-xs text-destructive shadow-lg"
         >
           {commitmentMoveError}
+        </p>
+      )}
+      {routineMoveError && (
+        <p
+          role="alert"
+          className="fixed right-5 bottom-5 z-50 rounded-lg border border-destructive/40 bg-card px-3 py-2 text-xs text-destructive shadow-lg"
+        >
+          {routineMoveError}
         </p>
       )}
       {threadMoveError && !pendingThreadMove && (

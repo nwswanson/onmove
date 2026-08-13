@@ -242,6 +242,145 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
   }
 })
 
+test('drags a Routine between Threads without rewriting its attestation aggregate', async () => {
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-routine-move-e2e-'))
+  const databasePath = join(userDataDirectory, 'onmove.sqlite3')
+  const scheduledAt = new Date()
+  scheduledAt.setHours(12, 0, 0, 0)
+  scheduledAt.setDate(scheduledAt.getDate() - ((scheduledAt.getDay() - 5 + 7) % 7))
+  const seeded = new AppDatabase(databasePath)
+  const focus = seeded.domain.focuses.create({ title: 'Routine move portfolio' })
+  const scope = seeded.domain.focusScopes.addSubject(
+    focus.id,
+    { name: 'North region' },
+    new Date(scheduledAt.getTime() - 60_000)
+  )
+  const source = seeded.domain.threads.create({
+    focusId: focus.id,
+    title: 'Source Thread',
+    reviewFrequencyDays: 7
+  })
+  seeded.domain.threads.create({
+    focusId: focus.id,
+    title: 'Target Thread',
+    reviewFrequencyDays: 7
+  })
+  const routine = seeded.domain.routines.create({
+    parent: { type: 'thread', id: source.id },
+    name: 'Portable audit',
+    scheduleWeekdays: ['friday'],
+    scopeId: scope.scopeId,
+    checklist: [{ inspection: 'Verify regional evidence was inspected.' }]
+  }, scheduledAt)
+  const originalRun = routine.snapshot(localDate(scheduledAt)).currentRun!
+  seeded.domain.routines.attestCellItem(originalRun.items[0].id, {
+    resolution: 'attested',
+    note: 'Durable audit evidence'
+  }, new Date(scheduledAt.getTime() + 60_000))
+  seeded.domain.routines.update(routine.id, {
+    checklist: [{ inspection: 'Verify revised regional evidence was inspected.' }]
+  }, new Date(scheduledAt.getTime() + 120_000))
+  seeded.close()
+  let application: ElectronApplication | undefined
+
+  function storedRoutine(): {
+    parentTitle: string
+    scopeId: number | null
+    templateVersions: number
+    reviewRuns: number
+    note: string
+    parentTransitions: number
+  } | null {
+    const stored = new DatabaseSync(databasePath, { readOnly: true })
+    try {
+      const row = stored.prepare(
+        `SELECT thread.title AS parent_title, definition.scope_id,
+                (SELECT count(*) FROM routine_template_versions version
+                 WHERE version.routine_id = commitment.id) AS template_versions,
+                (SELECT count(*) FROM routine_review_runs run
+                 WHERE run.routine_id = commitment.id) AS review_runs,
+                (SELECT attestation.note
+                 FROM routine_review_cell_attestations attestation
+                 JOIN routine_review_cells cell ON cell.id = attestation.cell_id
+                 JOIN routine_review_runs run ON run.id = cell.run_id
+                 WHERE run.routine_id = commitment.id AND attestation.note <> ''
+                 ORDER BY attestation.id LIMIT 1) AS note,
+                (SELECT count(*) FROM commitment_parent_transitions transition
+                 WHERE transition.commitment_id = commitment.id) AS parent_transitions
+         FROM commitments commitment
+         JOIN threads thread ON thread.id = commitment.thread_id
+         JOIN routine_definitions definition ON definition.commitment_id = commitment.id
+         WHERE commitment.id = ?`
+      ).get(routine.id) as {
+        parent_title: string
+        scope_id: number | null
+        template_versions: number
+        review_runs: number
+        note: string
+        parent_transitions: number
+      } | undefined
+      return row ? {
+        parentTitle: row.parent_title,
+        scopeId: row.scope_id,
+        templateVersions: Number(row.template_versions),
+        reviewRuns: Number(row.review_runs),
+        note: row.note,
+        parentTransitions: Number(row.parent_transitions)
+      } : null
+    } finally {
+      stored.close()
+    }
+  }
+
+  try {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    const window = await application.firstWindow()
+    await window.getByRole('button', { name: 'Routine move portfolio', exact: true }).click()
+    const routineRow = window.getByRole('button', {
+      name: 'Open Source Thread Routine Portable audit'
+    })
+    const targetRow = window.getByRole('button', { name: 'Target Thread', exact: true })
+    await expect(routineRow).toHaveAttribute('aria-roledescription', 'draggable')
+    const routineBounds = await routineRow.boundingBox()
+    const targetBounds = await targetRow.boundingBox()
+    if (!routineBounds || !targetBounds) throw new Error('Routine move targets need layout')
+    await window.mouse.move(
+      routineBounds.x + routineBounds.width / 2,
+      routineBounds.y + routineBounds.height / 2
+    )
+    await window.mouse.down()
+    await window.mouse.move(
+      targetBounds.x + targetBounds.width / 2,
+      targetBounds.y + targetBounds.height / 2,
+      { steps: 12 }
+    )
+    await expect(targetRow.locator('..')).toHaveAttribute('data-drop-target', 'active')
+    await window.mouse.up()
+
+    await expect(window.getByRole('list', { name: 'Target Thread Commitments and Routines' }))
+      .toContainText('Portable audit')
+    await expect(window.getByRole('list', { name: 'Source Thread Commitments and Routines' }))
+      .not.toContainText('Portable audit')
+    await expect(window.getByRole('heading', { name: 'Portable audit' })).toBeVisible()
+    await expect.poll(storedRoutine).toEqual({
+      parentTitle: 'Target Thread',
+      scopeId: scope.scopeId,
+      templateVersions: 2,
+      reviewRuns: 1,
+      note: 'Durable audit evidence',
+      parentTransitions: 2
+    })
+  } finally {
+    await application?.close().catch(() => undefined)
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
 test('opens and closes multiple main windows through the New Window menu', async () => {
   const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-multi-window-e2e-'))
   const databasePath = join(userDataDirectory, 'onmove.sqlite3')

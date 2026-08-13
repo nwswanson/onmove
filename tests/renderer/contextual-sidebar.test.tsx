@@ -286,7 +286,10 @@ describe('ContextualSidebarNavigation', () => {
           childCollection: {
             id: 'commitments',
             label: 'Commitments',
-            items: [{ id: 'quality', label: 'Improve ticket quality' }]
+            items: [
+              { id: 'quality', label: 'Improve ticket quality' },
+              { id: 'routine:7', label: 'Weekly evidence inspection', icon: 'checklist' }
+            ]
           }
         },
         {
@@ -305,6 +308,8 @@ describe('ContextualSidebarNavigation', () => {
 
     expect(screen.getByRole('button', { name: 'Improve ticket quality' }))
       .toHaveAttribute('aria-roledescription', 'draggable')
+    expect(screen.getByRole('button', { name: 'Weekly evidence inspection' }))
+      .toHaveAttribute('aria-roledescription', 'draggable')
     expect(screen.getByRole('button', { name: 'Sprint execution' }))
       .not.toHaveAttribute('aria-roledescription')
 
@@ -318,6 +323,10 @@ describe('ContextualSidebarNavigation', () => {
     expect(root.canMoveChild(move)).toBe(true)
     root.notifyChildMove(move)
     expect(onMoveChild).toHaveBeenCalledWith(move)
+    const routineMove = { ...move, childItemId: 'routine:7' }
+    expect(root.canMoveChild(routineMove)).toBe(true)
+    root.notifyChildMove(routineMove)
+    expect(onMoveChild).toHaveBeenLastCalledWith(routineMove)
     expect(root.canMoveChild({ ...move, targetParentItemId: 'overall' })).toBe(false)
   })
 
