@@ -97,9 +97,17 @@ describe('Routine Commitment model', () => {
       issue: { description: 'Risk entry was stale', followUpType: 'update' }
     })
 
-    const complete = database!.domain.routines.attestCellItem(secondItem.id, {
+    const ready = database!.domain.routines.attestCellItem(secondItem.id, {
       resolution: 'not_applicable'
     }, new Date('2026-01-02T13:00:00.000Z'))
+    expect(ready).toMatchObject({
+      status: 'yellow',
+      currentRun: { completionDate: null, progress: { complete: 2, required: 2 } }
+    })
+    const complete = database!.domain.routines.finalizeCell(
+      ready.currentRun!.cells[0].id,
+      new Date('2026-01-02T13:05:00.000Z')
+    )
     expect(complete).toMatchObject({
       status: 'green',
       nextReviewDate: '2026-01-08',
@@ -114,23 +122,28 @@ describe('Routine Commitment model', () => {
       checklist: [{ inspection: 'Verify the weekly report was inspected.' }]
     })
     const first = routine.snapshot('2026-01-01').currentRun!
-    const late = database!.domain.routines.attestCellItem(first.items[0].id, {
+    database!.domain.routines.attestCellItem(first.items[0].id, {
       resolution: 'attested'
     }, new Date('2026-01-09T12:00:00.000Z'))
+    database!.domain.routines.finalizeCell(
+      first.cells[0].id,
+      new Date('2026-01-09T12:00:00.000Z')
+    )
 
-    const preserved = late.previousRuns.find(({ id }) => id === first.id)
+    const finalized = routine.snapshot('2026-01-09')
+    const preserved = finalized.previousRuns.find(({ id }) => id === first.id)
     expect(preserved).toMatchObject({
       scheduledDate: '2026-01-01',
       reviewWindowEndsDate: '2026-01-08',
       completionDate: '2026-01-09',
       completedLate: true
     })
-    expect(late.currentRun).toMatchObject({ scheduledDate: '2026-01-08', completionDate: null })
-    expect(late.nextReviewDate).toBe('2026-01-08')
-    expect(late.status).toBe('yellow')
+    expect(finalized.currentRun).toMatchObject({ scheduledDate: '2026-01-08', completionDate: null })
+    expect(finalized.nextReviewDate).toBe('2026-01-08')
+    expect(finalized.status).toBe('yellow')
   })
 
-  it('autosaves optional rich-text notes without making completed resolutions mutable', () => {
+  it('autosaves draft rich-text notes and freezes them only through explicit finalization', () => {
     const { routine } = createRoutine({
       checklist: [{ inspection: 'Verify the evidence was reviewed.' }]
     })
@@ -146,11 +159,12 @@ describe('Routine Commitment model', () => {
       attestedAt: null
     })
 
-    const completed = database!.domain.routines.attestCellItem(item.id, {
+    const ready = database!.domain.routines.attestCellItem(item.id, {
       resolution: 'attested'
     }, new Date('2026-01-01T12:30:00.000Z'))
-    const recordedAt = completed.currentRun!.items[0].attestedAt
-    expect(completed.currentRun!.items[0].note).toBe(firstNote)
+    const recordedAt = ready.currentRun!.items[0].attestedAt
+    expect(ready.currentRun).toMatchObject({ completionDate: null })
+    expect(ready.currentRun!.items[0].note).toBe(firstNote)
 
     const revised = database!.domain.routines.attestCellItem(item.id, {
       resolution: 'attested',
@@ -161,10 +175,25 @@ describe('Routine Commitment model', () => {
       attestedAt: recordedAt,
       note: 'Clarified after completion.'
     })
+    const finalized = database!.domain.routines.finalizeCell(
+      revised.currentRun!.cells[0].id,
+      new Date('2026-01-02T12:05:00.000Z')
+    )
+    expect(finalized.currentRun).toMatchObject({ completionDate: '2026-01-02' })
     expect(() => database!.domain.routines.attestCellItem(item.id, {
-      resolution: 'pending',
-      note: 'Resolution change should fail.'
-    })).toThrow(/resolutions cannot be changed/)
+      resolution: 'attested',
+      note: 'Finalized notes should fail.'
+    })).toThrow(/Finalized.*cannot be changed/)
+  })
+
+  it('rejects finalization until every required inspection is resolved', () => {
+    const { routine } = createRoutine()
+    const run = routine.snapshot('2026-01-01').currentRun!
+    expect(() => database!.domain.routines.finalizeCell(run.cells[0].id))
+      .toThrow(/Every required Routine inspection/)
+    database!.domain.routines.attestCellItem(run.items[0].id, { resolution: 'attested' })
+    expect(() => database!.domain.routines.finalizeCell(run.cells[0].id))
+      .toThrow(/Every required Routine inspection/)
   })
 
   it('versions templates and never rewrites an already materialized Run checklist', () => {
@@ -240,8 +269,18 @@ describe('Routine Commitment model', () => {
       progress: { complete: 1, required: 2 }
     })
     expect(firstSubjectComplete.currentRun!.cells).toEqual(expect.arrayContaining([
-      expect.objectContaining({ subject: expect.objectContaining({ name: 'Europe' }), completionDate: '2026-01-02' }),
+      expect.objectContaining({ subject: expect.objectContaining({ name: 'Europe' }), completionDate: null }),
       expect.objectContaining({ subject: expect.objectContaining({ name: 'North America' }), completionDate: null })
+    ]))
+    const finalizedSubject = database!.domain.routines.finalizeCell(
+      run.cells[0].id,
+      new Date('2026-01-02T10:05:00.000Z')
+    )
+    expect(finalizedSubject.currentRun!.cells).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        subject: expect.objectContaining({ name: 'Europe' }),
+        completionDate: '2026-01-02'
+      })
     ]))
 
     database!.domain.focusScopes.removeSubject(

@@ -20,6 +20,11 @@ const api: OnMoveApi = {
     ipcRenderer.on(IPC_EVENTS.navigationBadgesInvalidated, handler)
     return () => ipcRenderer.removeListener(IPC_EVENTS.navigationBadgesInvalidated, handler)
   },
+  onRoutinesChanged: (listener) => {
+    const handler = (): void => listener()
+    ipcRenderer.on(IPC_EVENTS.routinesChanged, handler)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.routinesChanged, handler)
+  },
   recordGreeting: () => ipcRenderer.invoke(IPC_CHANNELS.recordGreeting),
   showDataFolder: () => ipcRenderer.invoke(IPC_CHANNELS.showDataFolder),
   backups: {
@@ -92,6 +97,8 @@ const api: OnMoveApi = {
     deleteRoutine: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteRoutine, id),
     attestRoutineCellItem: (attestationId, input) =>
       ipcRenderer.invoke(IPC_CHANNELS.attestRoutineCellItem, attestationId, input),
+    finalizeRoutineCell: (cellId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.finalizeRoutineCell, cellId),
     listUpdates: (parent) => ipcRenderer.invoke(IPC_CHANNELS.listUpdates, parent),
     createUpdate: (input) => ipcRenderer.invoke(IPC_CHANNELS.createUpdate, input),
     updateUpdate: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateUpdate, id, input),

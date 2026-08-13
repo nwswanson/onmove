@@ -24,6 +24,7 @@ export interface RoutinesModel {
   saving: boolean
   error: string | null
   attest: (attestationId: number, input: AttestRoutineRunItemInput) => Promise<RoutineSnapshot | null>
+  finalize: (cellId: number) => Promise<RoutineSnapshot | null>
   parentFor: (routine: RoutineSnapshot) => RoutineParentOption | null
 }
 
@@ -98,6 +99,10 @@ export function useRoutinesModel(): RoutinesModel {
     }
   }, [])
 
+  useEffect(() => window.onmove.onRoutinesChanged(() => {
+    void window.onmove.domain.listRoutines().then(setRoutines).catch(() => undefined)
+  }), [])
+
   const parentMap = useMemo(
     () => new Map(parents.map((parent) => [parent.key, parent])),
     [parents]
@@ -131,6 +136,21 @@ export function useRoutinesModel(): RoutinesModel {
     }
   }
 
+  async function finalize(cellId: number): Promise<RoutineSnapshot | null> {
+    setSaving(true)
+    setError(null)
+    try {
+      const updated = await window.onmove.domain.finalizeRoutineCell(cellId)
+      replace(updated)
+      return updated
+    } catch {
+      setError('The check-in could not be finalized.')
+      return null
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return {
     routines,
     parents,
@@ -138,6 +158,7 @@ export function useRoutinesModel(): RoutinesModel {
     saving,
     error,
     attest,
+    finalize,
     parentFor
   }
 }

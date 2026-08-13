@@ -1,25 +1,19 @@
-import { AlertTriangle, Check, ListChecks, Minus } from 'lucide-react'
+import { AlertTriangle, ListChecks } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StateLabel, type StateLabelModel } from '@/components/ui/state-label'
 import { TaggedText } from '@/components/ui/tagged-text'
-import { RoutineItemNote } from '@/features/routines/routine-item-note'
-
-export interface RoutineHistoryItemModel {
-  id: number
-  inspection: string
-  resolutionLabel: string
-  resolutionTone: 'success' | 'neutral'
-  attestedLabel: string | null
-  note: string
-  resolution: 'pending' | 'attested' | 'not_applicable'
-}
+import {
+  RoutineCellChecklist,
+  type RoutineCellChecklistModel,
+  type RoutineCellItemMutation
+} from '@/features/routines/routine-cell-checklist'
 
 export interface RoutineHistoryCellModel {
   id: string
   subjectLabel: string
   progressLabel: string
   completionLabel: string
-  items: readonly RoutineHistoryItemModel[]
+  checklist: RoutineCellChecklistModel
 }
 
 export interface RoutineCheckInModel {
@@ -45,15 +39,13 @@ export interface RoutineHistoryModel {
 export function RoutineHistory({
   model,
   onEdit,
-  onSaveItemNote
+  onMutateItem,
+  onFinalizeCell
 }: {
   model: RoutineHistoryModel
   onEdit: () => void
-  onSaveItemNote: (
-    itemId: number,
-    resolution: RoutineHistoryItemModel['resolution'],
-    note: string
-  ) => unknown | Promise<unknown>
+  onMutateItem: (itemId: number, input: RoutineCellItemMutation) => unknown | Promise<unknown>
+  onFinalizeCell: (cellId: number) => unknown | Promise<unknown>
 }): React.JSX.Element {
   return (
     <section
@@ -122,32 +114,13 @@ export function RoutineHistory({
                         <span className="text-muted-foreground">{cell.completionLabel}</span>
                         <span className="ml-auto tabular-nums text-muted-foreground">{cell.progressLabel}</span>
                       </header>
-                      <ul className="divide-y divide-border/65" aria-label={`${cell.subjectLabel} attestations`}>
-                        {cell.items.map((item) => (
-                          <li key={item.id} className="px-3 py-2.5">
-                            <div className="flex items-start gap-2.5 text-sm">
-                              {item.resolutionTone === 'success' ? (
-                                <Check className="mt-0.5 size-4 shrink-0 text-success" aria-hidden="true" />
-                              ) : (
-                                <Minus className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                              )}
-                              <span className="min-w-0 flex-1"><TaggedText value={item.inspection} /></span>
-                              <span className="shrink-0 text-xs text-muted-foreground">
-                                {item.resolutionLabel}
-                              </span>
-                            </div>
-                            {item.attestedLabel && (
-                              <p className="mt-1 pl-6 text-xs text-muted-foreground">{item.attestedLabel}</p>
-                            )}
-                            <RoutineItemNote
-                              itemId={item.id}
-                              value={item.note}
-                              inspection={item.inspection}
-                              onSave={(note) => onSaveItemNote(item.id, item.resolution, note)}
-                            />
-                          </li>
-                        ))}
-                      </ul>
+                      <div className="p-3">
+                        <RoutineCellChecklist
+                          cell={cell.checklist}
+                          onMutateItem={onMutateItem}
+                          onFinalize={onFinalizeCell}
+                        />
+                      </div>
                     </section>
                   ))}
                 </div>

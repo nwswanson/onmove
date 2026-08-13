@@ -116,10 +116,13 @@ describe('Routine presentation adapters', () => {
       cells: [expect.objectContaining({
         subjectLabel: 'Europe',
         completionLabel: 'Completed 2026-08-05 · late',
-        items: [expect.objectContaining({
-          resolutionLabel: 'Attested',
-          note: 'Reviewed the approval evidence.'
-        })]
+        checklist: expect.objectContaining({
+          completionDate: '2026-08-05',
+          items: [expect.objectContaining({
+            resolution: 'attested',
+            note: 'Reviewed the approval evidence.'
+          })]
+        })
       })]
     })
   })

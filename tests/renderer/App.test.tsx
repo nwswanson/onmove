@@ -380,6 +380,7 @@ function installApi(
     updateRoutine: vi.fn(),
     deleteRoutine: vi.fn(),
     attestRoutineCellItem: vi.fn(),
+    finalizeRoutineCell: vi.fn(),
     listUpdates: vi.fn().mockResolvedValue([]),
     createUpdate: vi.fn(),
     updateUpdate: vi.fn(),
@@ -413,6 +414,7 @@ function installApi(
       dueThrough: '2026-08-17',
       todos: { total: 0, nonSensitive: 0 },
       review: { total: 0, nonSensitive: 0 },
+      routines: { total: 0, nonSensitive: 0 },
       due: { total: 0, nonSensitive: 0 }
     }),
     getReviewOverview: vi.fn().mockResolvedValue({
@@ -430,6 +432,7 @@ function installApi(
     getSensitiveContentHidden: vi.fn().mockResolvedValue(false),
     onSensitiveContentVisibilityChanged: vi.fn(() => () => undefined),
     onNavigationBadgesInvalidated: vi.fn(() => () => undefined),
+    onRoutinesChanged: vi.fn(() => () => undefined),
     recordGreeting: vi.fn().mockResolvedValue(initialState),
     showDataFolder: vi.fn().mockResolvedValue(undefined),
     backups: {
@@ -588,42 +591,68 @@ describe('App', () => {
   it('manages Routine templates from their parent and attests immutable Runs in Routines', async () => {
     const currentFocus = focus({ id: 1, title: 'Project Atlas' })
     const currentThread = thread({ id: 21, focusId: 1, title: 'Sprint execution' })
-    const currentRoutine = routine()
-    const attested = routine({
-      currentRun: {
-        ...currentRoutine.currentRun!,
-        progress: { complete: 1, required: 2 },
-        items: currentRoutine.currentRun!.items.map((item, index) => index === 0
-          ? { ...item, resolution: 'attested', attestedAt: '2026-08-12T12:00:00.000Z' }
-          : item),
-        cells: currentRoutine.currentRun!.cells.map((cell) => ({
-          ...cell,
-          progress: { complete: 1, required: 2 },
-          items: cell.items.map((item, index) => index === 0
-            ? { ...item, resolution: 'attested', attestedAt: '2026-08-12T12:00:00.000Z' }
-            : item)
-        }))
-      }
-    })
+    let liveRoutine = routine()
     const attestRoutineCellItem = vi.fn().mockImplementation(async (itemId, input) => {
-      if (input.note === undefined) return attested
-      const updateRun = (run: NonNullable<RoutineSnapshot['currentRun']>) => ({
-        ...run,
-        items: run.items.map((item) => item.id === itemId
-          ? { ...item, note: input.note }
-          : item),
-        cells: run.cells.map((cell) => ({
+      const currentRun = liveRoutine.currentRun!
+      const cells = currentRun.cells.map((cell) => {
+        const items = cell.items.map((item) => item.id === itemId
+          ? {
+              ...item,
+              resolution: input.resolution,
+              note: input.note ?? item.note,
+              attestedAt: input.resolution === 'pending'
+                ? null
+                : '2026-08-12T12:00:00.000Z'
+            }
+          : item)
+        return {
           ...cell,
-          items: cell.items.map((item) => item.id === itemId
-            ? { ...item, note: input.note }
-            : item)
-        }))
+          progress: {
+            complete: items.filter(({ required, resolution }) =>
+              required && resolution !== 'pending').length,
+            required: items.filter(({ required }) => required).length
+          },
+          items
+        }
       })
-      return routine({ currentRun: updateRun(currentRoutine.currentRun!) })
+      const items = cells[0].items
+      liveRoutine = {
+        ...liveRoutine,
+        currentRun: {
+          ...currentRun,
+          progress: cells.reduce((total, cell) => ({
+            complete: total.complete + cell.progress.complete,
+            required: total.required + cell.progress.required
+          }), { complete: 0, required: 0 }),
+          items,
+          cells
+        }
+      }
+      return liveRoutine
     })
-    const updateRoutine = vi.fn().mockImplementation(async (_id, input) => routine({
-      name: input.name ?? currentRoutine.name,
-      template: {
+    const finalizeRoutineCell = vi.fn().mockImplementation(async (cellId) => {
+      const currentRun = liveRoutine.currentRun!
+      const cells = currentRun.cells.map((cell) => cell.id === cellId
+        ? { ...cell, completionDate: '2026-08-12' }
+        : cell)
+      liveRoutine = {
+        ...liveRoutine,
+        status: 'green',
+        currentRun: {
+          ...currentRun,
+          completionDate: cells.every(({ completionDate }) => completionDate !== null)
+            ? '2026-08-12'
+            : null,
+          cells
+        }
+      }
+      return liveRoutine
+    })
+    const updateRoutine = vi.fn().mockImplementation(async (_id, input) => {
+      liveRoutine = {
+        ...liveRoutine,
+        name: input.name ?? liveRoutine.name,
+        template: {
         version: 2,
         effectiveAt: '2026-08-12T12:00:00.000Z',
         items: input.checklist.map((item: { inspection: string; required?: boolean }, index: number) => ({
@@ -632,13 +661,16 @@ describe('App', () => {
           inspection: item.inspection,
           required: item.required ?? true
         }))
+        }
       }
-    }))
+      return liveRoutine
+    })
     installApi({
       listFocuses: vi.fn().mockResolvedValue([currentFocus]),
       listThreads: vi.fn().mockResolvedValue([currentThread]),
-      listRoutines: vi.fn().mockResolvedValue([currentRoutine]),
+      listRoutines: vi.fn().mockImplementation(async () => [liveRoutine]),
       attestRoutineCellItem,
+      finalizeRoutineCell,
       updateRoutine
     })
     const user = userEvent.setup()
@@ -665,6 +697,11 @@ describe('App', () => {
       resolution: 'pending',
       note: expect.stringContaining('Evidence checked in parent context.')
     }), { timeout: 2_000 })
+    expect(screen.getByRole('button', { name: 'Finalize check-in' })).toBeDisabled()
+    await user.click(screen.getByRole('checkbox', {
+      name: 'Attest: Verify delivery risks were represented.'
+    }))
+    expect(await screen.findByText('1 of 2 attested')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Edit' }))
     const dialog = screen.getByRole('dialog', { name: 'Edit Routine' })
     const name = within(dialog).getByLabelText('Routine name')
@@ -688,9 +725,10 @@ describe('App', () => {
     await user.click(await screen.findByRole('button', { name: 'Routines' }))
     expect(screen.queryByRole('button', { name: 'New Routine' })).not.toBeInTheDocument()
     expect(screen.getByText('Past due')).toBeVisible()
-    expect(screen.getByRole('heading', { name: 'Weekly delivery inspection' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Weekly evidence inspection' })).toBeVisible()
     expect(within(screen.getByRole('main')).getByText('Overdue')).toBeVisible()
-    expect(screen.getByText('0 of 2 attested')).toBeVisible()
+    expect(screen.getByText('1 editable routine')).toBeVisible()
+    expect(screen.getByText('1 of 2 attested')).toBeVisible()
     expect(screen.getByRole('button', { name: /Project Atlas \/ Sprint execution/ })).toBeVisible()
     expect(screen.queryByText('Issue found')).not.toBeInTheDocument()
     expect(within(screen.getByRole('main')).queryByRole('button', {
@@ -708,16 +746,33 @@ describe('App', () => {
     }), { timeout: 2_000 })
 
     await user.click(screen.getByRole('checkbox', {
-      name: 'Attest: Verify delivery risks were represented.'
+      name: 'Attest: Confirm scope changes received approval.'
     }))
-    expect(attestRoutineCellItem).toHaveBeenCalledWith(601, expect.objectContaining({
+    expect(attestRoutineCellItem).toHaveBeenCalledWith(602, expect.objectContaining({
       resolution: 'attested'
     }))
-    expect(await screen.findByText('1 of 2 attested')).toBeVisible()
+    expect(await screen.findByText('2 of 2 attested')).toBeVisible()
+    const finalize = screen.getByRole('button', { name: 'Finalize check-in' })
+    expect(finalize).toBeEnabled()
+    await user.click(finalize)
+    expect(finalizeRoutineCell).toHaveBeenCalledWith(551)
+    expect(await screen.findByText('0 editable routines')).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: 'Project Atlas' }))
+    await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
+    await user.click(screen.getByRole('button', {
+      name: 'Open Routine Weekly evidence inspection'
+    }))
+    expect(screen.queryByLabelText(
+      'Optional note for Confirm scope changes received approval.'
+    )).not.toBeInTheDocument()
+    expect(screen.getByLabelText(
+      'Recorded note for Confirm scope changes received approval.'
+    )).toHaveTextContent('Approval evidence reviewed.')
 
     await user.click(screen.getByRole('button', { name: 'Toggle context drawer' }))
     const drawer = screen.getByRole('complementary', {
-      name: 'Weekly delivery inspection Routine context drawer'
+      name: 'Weekly evidence inspection Routine context drawer'
     })
     expect(within(drawer).getByText('Included')).toBeVisible()
     expect(within(drawer).queryByRole('button', { name: 'Edit future checklist' }))
@@ -889,6 +944,7 @@ describe('App', () => {
         dueThrough: '2026-08-17',
         todos: { total: 2, nonSensitive: 2 },
         review: { total: 4, nonSensitive: 4 },
+        routines: { total: 2, nonSensitive: 2 },
         due: { total: 3, nonSensitive: 3 }
       })
       .mockResolvedValue({
@@ -896,6 +952,7 @@ describe('App', () => {
         dueThrough: '2026-08-17',
         todos: { total: 2, nonSensitive: 2 },
         review: { total: 3, nonSensitive: 3 },
+        routines: { total: 1, nonSensitive: 1 },
         due: { total: 3, nonSensitive: 3 }
       })
     installApi(
@@ -915,6 +972,8 @@ describe('App', () => {
     expect(within(todos).getByText('2')).toBeVisible()
     expect(within(screen.getByRole('button', { name: 'Review, 4 remaining' }))
       .getByText('4')).toBeVisible()
+    expect(within(screen.getByRole('button', { name: 'Routines, 2 editable routines' }))
+      .getByText('2')).toBeVisible()
     expect(within(screen.getByRole('button', {
       name: 'Due, 3 overdue or due within seven days'
     })).getByText('3')).toBeVisible()
@@ -923,6 +982,7 @@ describe('App', () => {
     act(() => invalidateBadges?.())
     await waitFor(() => expect(screen.getByRole('button', { name: 'Review, 3 remaining' }))
       .toBeVisible())
+    expect(screen.getByRole('button', { name: 'Routines, 1 editable routine' })).toBeVisible()
     expect(getNavigationBadgeOverview).toHaveBeenCalledTimes(2)
   })
 

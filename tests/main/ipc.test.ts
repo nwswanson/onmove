@@ -221,6 +221,11 @@ describe('registerAppIpc', () => {
             type: 'routine',
             currentRun: { progress: { complete: 1, required: 2 } }
           })),
+          finalizeCell: vi.fn(() => ({
+            id: 35,
+            type: 'routine',
+            currentRun: { completionDate: '2026-08-13' }
+          })),
           delete: vi.fn(() => true)
         },
         updates: {
@@ -307,6 +312,7 @@ describe('registerAppIpc', () => {
             dueThrough: '2026-08-17',
             todos: { total: 2, nonSensitive: 1 },
             review: { total: 3, nonSensitive: 2 },
+            routines: { total: 2, nonSensitive: 1 },
             due: { total: 4, nonSensitive: 3 }
           }))
         },
@@ -515,6 +521,8 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.attestRoutineCellItem)?.(undefined, 91, {
       resolution: 'attested'
     })).toMatchObject({ currentRun: { progress: { complete: 1, required: 2 } } })
+    expect(await handlers.get(IPC_CHANNELS.finalizeRoutineCell)?.(undefined, 81))
+      .toMatchObject({ currentRun: { completionDate: '2026-08-13' } })
     expect(await handlers.get(IPC_CHANNELS.deleteRoutine)?.(undefined, 35)).toBe(true)
     expect(await handlers.get(IPC_CHANNELS.listUpdates)?.(undefined, {
       type: 'commitment',
@@ -591,6 +599,7 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.getNavigationBadgeOverview)?.()).toMatchObject({
       todos: { total: 2, nonSensitive: 1 },
       review: { total: 3, nonSensitive: 2 },
+      routines: { total: 2, nonSensitive: 1 },
       due: { total: 4, nonSensitive: 3 }
     })
     expect(invalidateNavigationBadges).toHaveBeenCalled()

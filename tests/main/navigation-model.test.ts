@@ -80,6 +80,20 @@ describe('Navigation badge model', () => {
       name: 'Sensitive overdue Todo',
       dueDate: '2026-08-01'
     })
+    database!.domain.routines.create({
+      parent: { type: 'focus', id: reviewed.id },
+      name: 'Review delivery evidence',
+      cadenceDays: 7,
+      anchorDate: '2026-08-12',
+      checklist: [{ inspection: 'Verify delivery evidence.' }]
+    }, new Date('2026-08-12T09:00:00.000Z'))
+    database!.domain.routines.create({
+      parent: { type: 'focus', id: sensitive.id },
+      name: 'Review sensitive evidence',
+      cadenceDays: 7,
+      anchorDate: '2026-08-12',
+      checklist: [{ inspection: 'Verify sensitive evidence.' }]
+    }, new Date('2026-08-12T09:00:00.000Z'))
 
     expect(database!.domain.navigation.getBadgeOverview(
       new Date('2026-08-12T12:00:00.000Z')
@@ -88,6 +102,7 @@ describe('Navigation badge model', () => {
       dueThrough: '2026-08-19',
       todos: { total: 3, nonSensitive: 2 },
       review: { total: 2, nonSensitive: 1 },
+      routines: { total: 2, nonSensitive: 1 },
       due: { total: 4, nonSensitive: 3 }
     })
 

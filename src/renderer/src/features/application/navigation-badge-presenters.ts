@@ -3,6 +3,7 @@ import type { NavigationBadgeOverviewSnapshot } from '../../../../shared/contrac
 export interface NavigationBadgeCounts {
   todos: number
   review: number
+  routines: number
   due: number
 }
 
@@ -15,6 +16,7 @@ export function navigationBadgeCounts(
   return {
     todos: overview.todos[field],
     review: overview.review[field],
+    routines: overview.routines[field],
     due: overview.due[field]
   }
 }

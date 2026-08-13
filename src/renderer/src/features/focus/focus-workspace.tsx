@@ -1320,8 +1320,11 @@ export function FocusWorkspace({
               parent: selectedRoutine.parent,
               routine: selectedRoutine
             })}
-            onSaveItemNote={async (itemId, resolution, note) => {
-              await model.updateRoutineRunItem(itemId, { resolution, note })
+            onMutateItem={async (itemId, input) => {
+              await model.updateRoutineRunItem(itemId, input)
+            }}
+            onFinalizeCell={async (cellId) => {
+              await model.finalizeRoutineCell(cellId)
             }}
           />
         ) : activeCommitmentParent && !commitmentRouteHidden ? (

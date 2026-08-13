@@ -9,6 +9,11 @@ import type { SqliteAdapter } from './sqlite-adapter'
 import { TodoRepository } from './todo-model'
 import { ReviewRepository } from './review-model'
 import { DueRepository } from './due-model'
+import { RoutineRepository } from './routine-model'
+
+interface SensitiveRow {
+  sensitive: number
+}
 
 function today(now = new Date()): string {
   const year = now.getFullYear()
@@ -60,11 +65,30 @@ export class NavigationRepository {
   private readonly todos: TodoRepository
   private readonly reviews: ReviewRepository
   private readonly due: DueRepository
+  private readonly routines: RoutineRepository
 
-  constructor(database: SqliteAdapter) {
+  constructor(private readonly database: SqliteAdapter) {
     this.todos = new TodoRepository(database)
     this.reviews = new ReviewRepository(database)
     this.due = new DueRepository(database)
+    this.routines = new RoutineRepository(database)
+  }
+
+  private routineIsSensitive(routineId: number): boolean {
+    return Boolean(this.database.get<SensitiveRow>(
+      `SELECT (
+         commitment.sensitive = 1 OR
+         coalesce(focus.sensitive, 0) = 1 OR
+         coalesce(thread.sensitive, 0) = 1 OR
+         coalesce(thread_focus.sensitive, 0) = 1
+       ) AS sensitive
+       FROM commitments commitment
+       LEFT JOIN focuses focus ON focus.id = commitment.focus_id
+       LEFT JOIN threads thread ON thread.id = commitment.thread_id
+       LEFT JOIN focuses thread_focus ON thread_focus.id = thread.focus_id
+       WHERE commitment.id = ? AND commitment.behavior_type = 'routine'`,
+      [routineId]
+    )?.sensitive)
   }
 
   getBadgeOverview(now = new Date()): NavigationBadgeOverviewSnapshot {
@@ -77,12 +101,19 @@ export class NavigationRepository {
       const status = (item.commitment ?? item.thread ?? item.focus).status
       return status !== 'done' && status !== 'cancelled' && item.dueDate <= dueThrough
     })
+    const routineItems = this.routines.list(asOf).filter((routine) =>
+      routine.needsAttestation &&
+      routine.currentRun !== null &&
+      routine.currentRun.completionDate === null &&
+      routine.currentRun.cells.some((cell) => cell.completionDate === null)
+    )
 
     return {
       asOf,
       dueThrough,
       todos: counts(todoItems, todoIsSensitive),
       review: counts(reviewItems, reviewIsSensitive),
+      routines: counts(routineItems, (routine) => this.routineIsSensitive(routine.id)),
       due: counts(dueItems, dueIsSensitive)
     }
   }

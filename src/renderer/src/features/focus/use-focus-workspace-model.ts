@@ -82,6 +82,7 @@ export interface FocusWorkspaceModel {
     attestationId: number,
     input: AttestRoutineRunItemInput
   ) => Promise<RoutineSnapshot>
+  finalizeRoutineCell: (cellId: number) => Promise<RoutineSnapshot>
   deleteRoutine: (id: number) => Promise<boolean>
   updateCommitment: (id: number, input: UpdateCommitmentInput) => Promise<CommitmentSnapshot>
   planCommitmentMove: (
@@ -254,6 +255,20 @@ export function useFocusWorkspaceModel({
       active = false
     }
   }, [focus.id])
+
+  useEffect(() => window.onmove.onRoutinesChanged(() => {
+    void Promise.all([
+      window.onmove.domain.listRoutines(),
+      window.onmove.domain.listThreads(focus.id)
+    ]).then(([nextRoutines, nextThreads]) => {
+      const threadIds = new Set(nextThreads.map(({ id }) => id))
+      setRoutines(nextRoutines.filter((routine) =>
+        routine.parent.type === 'focus'
+          ? routine.parent.id === focus.id
+          : threadIds.has(routine.parent.id)
+      ))
+    }).catch(() => undefined)
+  }), [focus.id])
 
   useEffect(() => subscribeToUpdateCreated(({ focusId }) => {
     if (focusId !== focus.id) return
@@ -507,6 +522,14 @@ export function useFocusWorkspaceModel({
     return updated
   }
 
+  async function finalizeRoutineCell(cellId: number): Promise<RoutineSnapshot> {
+    const updated = await window.onmove.domain.finalizeRoutineCell(cellId)
+    setRoutines((current) => current.map((routine) =>
+      routine.id === updated.id ? updated : routine
+    ))
+    return updated
+  }
+
   async function deleteRoutine(id: number): Promise<boolean> {
     const deleted = await window.onmove.domain.deleteRoutine(id)
     if (deleted) setRoutines((current) => current.filter((routine) => routine.id !== id))
@@ -677,6 +700,7 @@ export function useFocusWorkspaceModel({
     createRoutine,
     updateRoutine,
     updateRoutineRunItem,
+    finalizeRoutineCell,
     deleteRoutine,
     updateCommitment,
     planCommitmentMove,

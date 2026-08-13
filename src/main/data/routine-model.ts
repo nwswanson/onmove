@@ -96,6 +96,12 @@ interface RunOwnerRow {
   note: string
 }
 
+interface CellOwnerRow {
+  routine_id: number
+  run_id: number
+  completed_at: string | null
+}
+
 function assertId(id: number, label: string): void {
   if (!Number.isSafeInteger(id) || id <= 0) {
     throw new ModelValidationError(`${label} id must be a positive integer`)
@@ -372,11 +378,8 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
       [attestationId]
     )
     if (!owner) throw new ModelNotFoundError('Routine Run cell attestation', attestationId)
-    if (owner.completed_at !== null && input.resolution !== owner.resolution) {
-      throw new ModelValidationError('Completed Routine Run Subject cell resolutions cannot be changed')
-    }
-    if (owner.completed_at !== null && issueMutation) {
-      throw new ModelValidationError('Completed Routine Run Subject cell issues cannot be changed')
+    if (owner.completed_at !== null) {
+      throw new ModelValidationError('Finalized Routine Run Subject cells cannot be changed')
     }
     if (issueMutation && input.issueFound !== true && followUpType !== 'none') {
       throw new ModelValidationError('Routine issue follow-up requires Issue found')
@@ -391,19 +394,12 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
         : owner.attested_at
 
     this.database.transaction(() => {
-      if (owner.completed_at !== null) {
-        this.database.run(
-          'UPDATE routine_review_cell_attestations SET note = ? WHERE id = ?',
-          [note, attestationId]
-        )
-      } else {
-        this.database.run(
-          `UPDATE routine_review_cell_attestations
-           SET resolution = ?, attested_at = ?, note = ?
-           WHERE id = ?`,
-          [input.resolution, attestedAt, note, attestationId]
-        )
-      }
+      this.database.run(
+        `UPDATE routine_review_cell_attestations
+         SET resolution = ?, attested_at = ?, note = ?
+         WHERE id = ?`,
+        [input.resolution, attestedAt, note, attestationId]
+      )
       if (issueMutation && input.issueFound === true) {
         this.database.run(
           `INSERT INTO routine_review_cell_issues (
@@ -421,20 +417,47 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
           [attestationId]
         )
       }
-      const pendingRequired = Number(this.database.get<CountRow>(
-        `SELECT count(*) AS count
-         FROM routine_review_cell_attestations attestation
-         JOIN routine_review_run_items item ON item.id = attestation.run_item_id
-         WHERE attestation.cell_id = ?
-           AND item.required = 1 AND attestation.resolution = 'pending'`,
-        [owner.cell_id]
-      )?.count ?? 0)
-      if (pendingRequired === 0) {
-        this.database.run(
-          'UPDATE routine_review_cells SET completed_at = ? WHERE id = ? AND completed_at IS NULL',
-          [changedAt, owner.cell_id]
-        )
-      }
+      this.database.run(
+        `UPDATE commitments SET updated_at = ?
+         WHERE id = ? AND behavior_type = 'routine'`,
+        [changedAt, Number(owner.routine_id)]
+      )
+    })
+    return this.materialize(Number(owner.routine_id), localDate(now))
+  }
+
+  finalizeCell(cellId: number, now = new Date()): RoutineSnapshot {
+    assertId(cellId, 'Routine Run Subject cell')
+    const owner = this.database.get<CellOwnerRow>(
+      `SELECT run.routine_id, run.id AS run_id, cell.completed_at
+       FROM routine_review_cells cell
+       JOIN routine_review_runs run ON run.id = cell.run_id
+       WHERE cell.id = ?`,
+      [cellId]
+    )
+    if (!owner) throw new ModelNotFoundError('Routine Run Subject cell', cellId)
+    if (owner.completed_at !== null) {
+      return this.materialize(Number(owner.routine_id), localDate(now))
+    }
+    const pendingRequired = Number(this.database.get<CountRow>(
+      `SELECT count(*) AS count
+       FROM routine_review_cell_attestations attestation
+       JOIN routine_review_run_items item ON item.id = attestation.run_item_id
+       WHERE attestation.cell_id = ?
+         AND item.required = 1 AND attestation.resolution = 'pending'`,
+      [cellId]
+    )?.count ?? 0)
+    if (pendingRequired > 0) {
+      throw new ModelValidationError(
+        'Every required Routine inspection must be attested or not applicable before finalizing'
+      )
+    }
+    const changedAt = timestamp(now)
+    this.database.transaction(() => {
+      this.database.run(
+        'UPDATE routine_review_cells SET completed_at = ? WHERE id = ? AND completed_at IS NULL',
+        [changedAt, cellId]
+      )
       const incompleteCells = Number(this.database.get<CountRow>(
         `SELECT count(*) AS count FROM routine_review_cells
          WHERE run_id = ? AND completed_at IS NULL`,

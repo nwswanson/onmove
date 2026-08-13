@@ -238,7 +238,7 @@ describe('database migrations', () => {
     raw.close()
   })
 
-  it('adds mutable Routine evidence notes without weakening completed resolution snapshots', () => {
+  it('freezes Routine item notes and resolutions after explicit finalization', () => {
     const database = new AppDatabase(databasePath)
     const focus = database.domain.focuses.create({ title: 'Routine notes' })
     const routine = database.domain.routines.create({
@@ -252,6 +252,10 @@ describe('database migrations', () => {
     database.domain.routines.attestCellItem(item.id, {
       resolution: 'attested'
     }, new Date('2026-08-13T11:00:00.000Z'))
+    database.domain.routines.finalizeCell(
+      routine.snapshot('2026-08-13').currentRun!.cells[0].id,
+      new Date('2026-08-13T11:05:00.000Z')
+    )
     database.close()
 
     const raw = new DatabaseSync(databasePath)
@@ -260,10 +264,10 @@ describe('database migrations', () => {
     ).get(item.id)).toMatchObject({ note: '' })
     expect(() => raw.prepare(
       'UPDATE routine_review_cell_attestations SET note = ? WHERE id = ?'
-    ).run('Editable evidence', item.id)).not.toThrow()
+    ).run('Immutable evidence', item.id)).toThrow(/Finalized.*immutable/)
     expect(() => raw.prepare(
       "UPDATE routine_review_cell_attestations SET resolution = 'pending', attested_at = NULL WHERE id = ?"
-    ).run(item.id)).toThrow(/resolutions are immutable/)
+    ).run(item.id)).toThrow(/Finalized.*immutable/)
     raw.close()
   })
 

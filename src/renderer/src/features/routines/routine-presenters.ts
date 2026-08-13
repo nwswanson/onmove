@@ -3,6 +3,26 @@ import type { ContextDrawerAdapter } from '@/components/ui/context-drawer'
 import type { StateLabelModel } from '@/components/ui/state-label'
 import type { RoutineHistoryModel } from '@/features/routines/routine-history'
 import type { RoutineManagementListModel } from '@/features/routines/routine-management-list'
+import type { RoutineCellChecklistModel } from '@/features/routines/routine-cell-checklist'
+
+export function routineCellChecklistModel(
+  cell: NonNullable<RoutineSnapshot['currentRun']>['cells'][number]
+): RoutineCellChecklistModel {
+  return {
+    id: cell.id,
+    subjectLabel: cell.subject?.name ?? 'No scope',
+    completionDate: cell.completionDate,
+    progress: cell.progress,
+    items: cell.items.map((item) => ({
+      id: item.id,
+      inspection: item.inspection,
+      required: item.required,
+      resolution: item.resolution,
+      attestedAt: item.attestedAt,
+      note: item.note ?? ''
+    }))
+  }
+}
 
 function statusModel(status: RoutineSnapshot['status']): StateLabelModel {
   if (status === 'green') return { label: 'Current', tone: 'success' }
@@ -41,19 +61,7 @@ export function routineHistoryModel(routine: RoutineSnapshot): RoutineHistoryMod
         completionLabel: cell.completionDate
           ? `Completed ${cell.completionDate}${cell.completedLate ? ' · late' : ''}`
           : 'Incomplete',
-        items: cell.items.map((item) => ({
-          id: item.id,
-          inspection: item.inspection,
-          resolutionLabel: item.resolution === 'attested'
-            ? 'Attested'
-            : item.resolution === 'not_applicable'
-              ? 'Not applicable'
-              : 'Pending',
-          resolutionTone: item.resolution === 'attested' ? 'success' as const : 'neutral' as const,
-          attestedLabel: item.attestedAt ? `Recorded ${item.attestedAt}` : null,
-          note: item.note ?? '',
-          resolution: item.resolution
-        }))
+        checklist: routineCellChecklistModel(cell)
       }))
     }))
   }

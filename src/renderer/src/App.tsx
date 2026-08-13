@@ -196,7 +196,15 @@ function AppSidebar({
               {
                 id: 'routines',
                 label: 'Routines',
-                icon: 'routines'
+                icon: 'routines',
+                badge: navigationBadges && navigationBadges.routines > 0
+                  ? {
+                      value: navigationBadges.routines,
+                      label: `${navigationBadges.routines} editable ${
+                        navigationBadges.routines === 1 ? 'routine' : 'routines'
+                      }`
+                    }
+                  : undefined
               },
               {
                 id: 'due',

@@ -1,13 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, Check, ChevronRight, ListChecks } from 'lucide-react'
 import type {
-  AttestRoutineRunItemInput,
   RoutineReviewCellSnapshot,
   RoutineReviewRunSnapshot,
-  RoutineRunItemSnapshot,
   RoutineSnapshot
 } from '../../../../shared/contracts'
-import { Button } from '@/components/ui/button'
 import {
   ContextDrawerOutlet,
   type ContextDrawerAdapter,
@@ -23,13 +20,15 @@ import {
 import { StateLabel, type StateLabelModel } from '@/components/ui/state-label'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
 import type { FocusWorkspaceDestinationTarget } from '@/features/application/application-navigation'
-import { routineDrawerAdapter } from '@/features/routines/routine-presenters'
-import { RoutineItemNote } from '@/features/routines/routine-item-note'
+import {
+  routineCellChecklistModel,
+  routineDrawerAdapter
+} from '@/features/routines/routine-presenters'
+import { RoutineCellChecklist } from '@/features/routines/routine-cell-checklist'
 import {
   useRoutinesModel,
   type RoutineParentOption
 } from '@/features/routines/use-routines-model'
-import { cn } from '@/lib/utils'
 
 const CONTEXTUAL_SIDEBAR_MIN = 220
 const CONTEXTUAL_SIDEBAR_MAX = 340
@@ -164,81 +163,6 @@ function queueSidebarItems(entries: readonly RoutineQueueEntry[]): ContextualSid
   }))
 }
 
-function RoutineRunItem({
-  item,
-  immutable,
-  saving,
-  onAttest
-}: {
-  item: RoutineRunItemSnapshot
-  immutable: boolean
-  saving: boolean
-  onAttest: (itemId: number, input: AttestRoutineRunItemInput) => Promise<unknown>
-}): React.JSX.Element {
-  return (
-    <div className="px-4 py-3">
-      <div className="flex items-start gap-3">
-        <label className="flex min-w-0 flex-1 items-start gap-3 text-sm leading-6">
-          <input
-            type="checkbox"
-            className="mt-1.5"
-            aria-label={`Attest: ${item.inspection}`}
-            checked={item.resolution === 'attested'}
-            disabled={immutable || saving}
-            onChange={(event) => void onAttest(item.id, {
-              resolution: event.target.checked ? 'attested' : 'pending'
-            })}
-          />
-          <span className={cn(item.resolution !== 'pending' && 'text-muted-foreground')}>
-            {item.inspection}
-          </span>
-        </label>
-        <Button
-          type="button"
-          size="sm"
-          variant={item.resolution === 'not_applicable' ? 'default' : 'outline'}
-          disabled={immutable || saving}
-          onClick={() => void onAttest(item.id, {
-            resolution: item.resolution === 'not_applicable' ? 'pending' : 'not_applicable'
-          })}
-        >
-          N/A
-        </Button>
-      </div>
-      <RoutineItemNote
-        itemId={item.id}
-        value={item.note ?? ''}
-        inspection={item.inspection}
-        onSave={(note) => onAttest(item.id, { resolution: item.resolution, note })}
-      />
-    </div>
-  )
-}
-
-function CellChecklist({
-  cell,
-  saving,
-  onAttest
-}: {
-  cell: RoutineReviewCellSnapshot
-  saving: boolean
-  onAttest: (itemId: number, input: AttestRoutineRunItemInput) => Promise<unknown>
-}): React.JSX.Element {
-  return (
-    <div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-background/70">
-      {cell.items.map((item) => (
-        <RoutineRunItem
-          key={item.id}
-          item={item}
-          immutable={cell.completionDate !== null}
-          saving={saving}
-          onAttest={onAttest}
-        />
-      ))}
-    </div>
-  )
-}
-
 interface RoutinesWorkspaceProps {
   contextDrawer: ContextDrawerControl
   hideSensitiveContent: boolean
@@ -268,6 +192,9 @@ export function RoutinesWorkspace({
   const sidebarItems = useMemo(() => queueSidebarItems(entries), [entries])
   const selectedEntry = entries.find(({ id }) => id === navigationSnapshot.selectedItemId) ?? null
   const selectedRoutine = selectedEntry?.routine ?? null
+  const editableRoutineCount = new Set(
+    entries.filter(({ cell }) => cell !== null).map(({ routine }) => routine.id)
+  ).size
 
   useEffect(() => {
     level.setItems(sidebarItems)
@@ -350,10 +277,15 @@ export function RoutinesWorkspace({
                         <span>Template v{selectedEntry.run?.templateVersion ?? selectedEntry.routine.template.version}</span>
                       </div>
                     </div>
-                    <span className="text-xs font-medium tabular-nums">
-                      {selectedEntry.cell?.progress.complete ?? 0} of{' '}
-                      {selectedEntry.cell?.progress.required ?? selectedEntry.routine.template.items.filter(({ required }) => required).length} attested
-                    </span>
+                    <div className="text-right text-xs tabular-nums">
+                      <p className="font-medium">
+                        {editableRoutineCount} editable {editableRoutineCount === 1 ? 'routine' : 'routines'}
+                      </p>
+                      <p className="mt-1 text-muted-foreground">
+                        {selectedEntry.cell?.progress.complete ?? 0} of{' '}
+                        {selectedEntry.cell?.progress.required ?? selectedEntry.routine.template.items.filter(({ required }) => required).length} attested
+                      </p>
+                    </div>
                   </div>
 
                   <section className="mt-6" aria-labelledby="current-checklist-heading">
@@ -361,10 +293,11 @@ export function RoutinesWorkspace({
                       Current immutable checklist
                     </h2>
                     {selectedEntry.cell ? (
-                      <CellChecklist
-                        cell={selectedEntry.cell}
+                      <RoutineCellChecklist
+                        cell={routineCellChecklistModel(selectedEntry.cell)}
                         saving={model.saving}
-                        onAttest={model.attest}
+                        onMutateItem={model.attest}
+                        onFinalize={model.finalize}
                       />
                     ) : (
                       <div className="overflow-hidden rounded-xl border border-border bg-background/70">
@@ -397,7 +330,7 @@ export function RoutinesWorkspace({
                                 : 'incomplete'} · Template v{run.templateVersion}
                             </summary>
                             <div className="mt-3">
-                              <CellChecklist cell={cell} saving={model.saving} onAttest={model.attest} />
+                              <RoutineCellChecklist cell={routineCellChecklistModel(cell)} />
                             </div>
                           </details>
                         ))}

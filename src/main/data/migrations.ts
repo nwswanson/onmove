@@ -3037,6 +3037,29 @@ const migrations: readonly Migration[] = [
         END;
       `)
     }
+  },
+  {
+    version: 30,
+    name: 'explicit_routine_cell_finalization',
+    up(database) {
+      const columns = database.all<{ name: string }>(
+        'PRAGMA table_info(routine_review_cell_attestations)'
+      )
+      if (columns.length === 0) return
+      database.exec(`
+        DROP TRIGGER IF EXISTS completed_routine_cell_attestations_are_immutable;
+
+        CREATE TRIGGER completed_routine_cell_attestations_are_immutable
+        BEFORE UPDATE ON routine_review_cell_attestations
+        WHEN EXISTS (
+          SELECT 1 FROM routine_review_cells
+          WHERE id = OLD.cell_id AND completed_at IS NOT NULL
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Finalized Routine Run Subject cells are immutable');
+        END;
+      `)
+    }
   }
 ]
 

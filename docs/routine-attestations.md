@@ -54,9 +54,8 @@ Migration 28 adds the attestation inclusion flag and independent Subject cells. 
 Run resolutions are copied into every Subject cell represented by their historical Scope snapshot,
 preserving recorded completion while making every later edit cell-specific.
 
-Migration 29 adds an optional rich-text note to every cell item. It narrows the completed-cell
-immutability trigger so notes remain editable while completed resolutions and attestation times
-stay frozen.
+Migration 29 adds an optional rich-text note to every cell item. Migration 30 establishes explicit
+cell finalization and freezes the complete item state—including its note—after finalization.
 
 Routine creation validates all of the following in one transaction:
 
@@ -86,7 +85,7 @@ copies:
 - Scope id and name; and
 - the then-effective Subject ids and names as JSON snapshot data.
 
-The repository then creates one immutable attestation cell per copied Subject. An open Routine, or
+The repository then creates one independently editable attestation cell per copied Subject. An open Routine, or
 a scoped Routine whose effective population is empty, receives one explicitly unscoped cell. Two
 Subjects therefore mean two independently completable copies of the same Run checklist. The Run is
 complete only after both Subject cells are complete.
@@ -95,9 +94,9 @@ Changing the template, Scope membership, Scope application, or current Scope nam
 never rewrite an existing Run. Scope deletion clears only the live definition reference through
 `SET NULL`; the Run's scalar Scope id plus copied name and Subject population remain readable.
 
-Run schedule and checklist snapshot columns have SQLite immutability triggers. A completed Run can
-no longer change resolution, attestation time, completion time, or legacy issue content. Its item
-notes deliberately remain editable.
+Run schedule and checklist snapshot columns have SQLite immutability triggers. A finalized Subject
+cell can no longer change resolution, attestation time, completion time, note, or legacy issue
+content.
 
 ## Completion and evidence notes
 
@@ -113,15 +112,16 @@ complete when it is either attested or not applicable.
 Every item has an optional inline rich-text note. It uses the same versioned Lexical envelope as
 other multiline fields, accepts legacy plain text, saves through the 750 ms throttled autosave
 path, and flushes on blur. Notes are evidence only: changing one does not alter a resolution,
-attestation time, cell completion, Run completion, schedule, or derived status. A note remains
-editable after completion so the user can clarify evidence without rewriting what was attested.
-There is no pop-out action.
+attestation time, cell completion, Run completion, schedule, or derived status. There is no pop-out
+action. Notes can be edited only while their exact Subject cell is open.
 
 The previous Issue-found and typed follow-up fields remain in SQLite and portable import solely so
 older archives do not lose data. Current UI and callers do not create or edit them.
 
-The repository writes a cell's completion only when no required cell attestation remains pending,
-and writes the occurrence completion only after every cell completes. Partial work in one Subject
+Resolving the last required item enables `Finalize check-in` but does not complete anything by
+itself. Finalization first requires no required item to remain pending, flushes pending notes in the
+renderer, and then writes the cell completion. The repository writes occurrence completion only
+after every cell has been explicitly finalized. Partial or merely checked work in one Subject
 cannot refresh another Subject or the aggregate Routine.
 
 ## Anchored recurrence
@@ -186,9 +186,11 @@ The top-level contextual sidebar mirrors that ownership. Every Overall or Thread
 Routine rows carry a checklist icon and derived status and cannot be dragged as Commitments.
 Selecting one preserves the top-level hierarchy and renders check-in history in the main canvas.
 That history includes the current and previous immutable Runs, per-Subject progress, scheduled and
-completion dates, lateness, template versions, resolutions, and an autosaving optional rich-text
-note beneath every item. An explicit `Edit` button opens the definition modal; selecting the
-Routine itself never edits its definition.
+completion dates, lateness, template versions, resolutions, and item notes. The current cell uses
+the same live checklist receiver as the global Routines workspace, including resolution controls,
+autosaving notes, and explicit finalization. Finalized cells render their notes as read-only cards.
+An explicit `Edit` button opens the definition modal; selecting the Routine itself never edits its
+definition.
 
 The definition modal owns the name, cadence, schedule anchor, optional parent Scope,
 `needsAttestation`, sensitivity, checklist versioning, and deletion. Clearing `needsAttestation`
@@ -203,5 +205,6 @@ rows preview the template that will be snapshotted when that anchored occurrence
 generic context drawer receives a data-only, read-only Routine adapter so definition mutations stay
 with the owning parent. The shared `StateLabel` receiver owns color/label markup, while the feature
 model replaces snapshots after every cell resolution or note save. Completed Run resolution
-controls are disabled while their notes remain editable. There is no generic lifecycle selector,
-Issue-found UI, note pop-out, or recurring Todo UI.
+controls and notes are read-only. The primary navigation and workspace header count distinct
+Routines with at least one editable cell. There is no generic lifecycle selector, Issue-found UI,
+note pop-out, or recurring Todo UI.

@@ -120,7 +120,7 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
       .fill('Verify the retrospective was reviewed.')
     await edit.getByRole('button', { name: 'Save Routine' }).click()
 
-    await window.getByRole('button', { name: 'Routines', exact: true }).click()
+    await window.getByRole('button', { name: /^Routines/ }).click()
     await expect(window.getByRole('heading', { name: 'Weekly delivery inspection' })).toBeVisible()
 
     await expect(window.getByText('0 of 2 attested')).toBeVisible()
@@ -141,6 +141,8 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
     await window.getByRole('checkbox', {
       name: 'Attest: Confirm scope changes received approval.'
     }).click()
+    await expect(window.getByText('2 of 2 attested')).toBeVisible()
+    await window.getByRole('button', { name: 'Finalize check-in' }).click()
     await expect(window.getByText('0 of 3 attested')).toBeVisible()
 
     await window.getByRole('button', { name: 'Toggle context drawer' }).click()
@@ -151,6 +153,19 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
     await expect(drawer.getByRole('button', { name: 'Edit future checklist' })).toHaveCount(0)
     await expect(window.getByText('Template v2')).toBeVisible()
     await expect(window.getByText('Verify the retrospective was reviewed.')).toBeVisible()
+
+    await window.getByRole('button', {
+      name: /Routine portfolio \/ Sprint execution/
+    }).click()
+    await contextualSidebar.getByRole('button', {
+      name: 'Open Sprint execution Routine Weekly delivery inspection'
+    }).click()
+    await expect(window.getByLabel(
+      'Recorded note for Confirm scope changes received approval.'
+    )).toContainText('Approval record was reviewed')
+    await expect(window.getByLabel(
+      'Optional note for Confirm scope changes received approval.'
+    )).toHaveCount(0)
 
     const stored = new DatabaseSync(databasePath, { readOnly: true })
     try {
@@ -188,7 +203,7 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
       env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
     })
     const reloaded = await application.firstWindow()
-    await reloaded.getByRole('button', { name: 'Routines', exact: true }).click()
+    await reloaded.getByRole('button', { name: /^Routines/ }).click()
     await expect(reloaded.getByRole('heading', {
       name: 'Weekly delivery inspection'
     })).toBeVisible()

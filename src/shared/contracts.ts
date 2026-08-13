@@ -51,6 +51,7 @@ export const IPC_CHANNELS = {
   updateRoutine: 'domain:update-routine',
   deleteRoutine: 'domain:delete-routine',
   attestRoutineCellItem: 'domain:attest-routine-cell-item',
+  finalizeRoutineCell: 'domain:finalize-routine-cell',
   listUpdates: 'domain:list-updates',
   createUpdate: 'domain:create-update',
   updateUpdate: 'domain:update-update',
@@ -84,6 +85,7 @@ export const IPC_SYNC_CHANNELS = {
 export const IPC_EVENTS = {
   sensitiveContentVisibilityChanged: 'app:sensitive-content-visibility-changed',
   navigationBadgesInvalidated: 'app:navigation-badges-invalidated',
+  routinesChanged: 'app:routines-changed',
   richTextDocumentChanged: 'rich-text:document-changed'
 } as const
 
@@ -825,6 +827,7 @@ export interface NavigationBadgeOverviewSnapshot {
   dueThrough: string
   todos: NavigationBadgeCountSnapshot
   review: NavigationBadgeCountSnapshot
+  routines: NavigationBadgeCountSnapshot
   due: NavigationBadgeCountSnapshot
 }
 
@@ -1153,6 +1156,7 @@ export interface DomainApi {
     attestationId: number,
     input: AttestRoutineRunItemInput
   ) => Promise<RoutineSnapshot>
+  finalizeRoutineCell: (cellId: number) => Promise<RoutineSnapshot>
   listUpdates: (parent: UpdateParent) => Promise<UpdateSnapshot[]>
   createUpdate: (input: CreateUpdateInput) => Promise<UpdateSnapshot>
   updateUpdate: (id: number, input: EditUpdateInput) => Promise<UpdateSnapshot>
@@ -1228,6 +1232,7 @@ export interface OnMoveApi {
   getSensitiveContentHidden: () => Promise<boolean>
   onSensitiveContentVisibilityChanged: (listener: (hidden: boolean) => void) => () => void
   onNavigationBadgesInvalidated: (listener: () => void) => () => void
+  onRoutinesChanged: (listener: () => void) => () => void
   recordGreeting: () => Promise<AppState>
   showDataFolder: () => Promise<void>
   backups: BackupApi

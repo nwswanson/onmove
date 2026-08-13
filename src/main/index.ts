@@ -149,6 +149,14 @@ function invalidateNavigationBadges(): void {
   }
 }
 
+function broadcastRoutinesChanged(): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(IPC_EVENTS.routinesChanged)
+    }
+  }
+}
+
 function showDataFolder(): void {
   if (database) {
     shell.showItemInFolder(database.getState().databasePath)
@@ -308,7 +316,8 @@ app.whenReady().then(() => {
       targetFor: (webContentsId) => richTextWindowTargets.get(webContentsId) ?? null,
       broadcast: broadcastRichTextChange
     },
-    invalidateNavigationBadges
+    invalidateNavigationBadges,
+    broadcastRoutinesChanged
   )
 
   Menu.setApplicationMenu(

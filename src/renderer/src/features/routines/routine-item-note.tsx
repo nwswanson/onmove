@@ -1,19 +1,30 @@
-import { useEffect, useRef, useState } from 'react'
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState
+} from 'react'
 import { RichTextEditor } from '@/components/ui/rich-text-editor'
 import { useThrottledAutosave } from '@/lib/use-throttled-autosave'
 
-export function RoutineItemNote({
-  itemId,
-  value,
-  inspection,
-  onSave
-}: {
+export interface RoutineItemNoteHandle {
+  flush: () => Promise<void>
+}
+
+export const RoutineItemNote = forwardRef<RoutineItemNoteHandle, {
   itemId: number
   value: string
   inspection: string
   onSave: (value: string) => unknown | Promise<unknown>
-}): React.JSX.Element {
+}>(function RoutineItemNote({
+  itemId,
+  value,
+  inspection,
+  onSave
+}, forwardedRef): React.JSX.Element {
   const [draft, setDraft] = useState(value)
+  const draftRef = useRef(value)
   const priorExternal = useRef(value)
   const autosave = useThrottledAutosave({
     initialValue: value,
@@ -24,10 +35,18 @@ export function RoutineItemNote({
 
   useEffect(() => {
     if (value === priorExternal.current) return
-    setDraft((current) => current === priorExternal.current ? value : current)
+    setDraft((current) => {
+      const next = current === priorExternal.current ? value : current
+      draftRef.current = next
+      return next
+    })
     priorExternal.current = value
     autosave.acceptExternal(value)
   }, [autosave, value])
+
+  useImperativeHandle(forwardedRef, () => ({
+    flush: () => autosave.flush(draftRef.current)
+  }), [autosave])
 
   return (
     <div className="ml-7 mt-2">
@@ -39,10 +58,12 @@ export function RoutineItemNote({
         ariaLabel={`Optional note for ${inspection}`}
         placeholder="Optional note…"
         onChange={(next) => {
+          draftRef.current = next
           setDraft(next)
           autosave.schedule(next)
         }}
         onBlur={(next) => {
+          draftRef.current = next
           setDraft(next)
           void autosave.flush(next)
         }}
@@ -54,4 +75,4 @@ export function RoutineItemNote({
       )}
     </div>
   )
-}
+})

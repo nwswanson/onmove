@@ -67,9 +67,10 @@
   derived status dot. Routine rows are non-draggable selections that preserve the top-level
   contextual sidebar and open a main view of current and previous immutable check-ins, including
   Subject cells, completion timing, template versions, resolutions, and optional evidence notes.
-  Checklist snapshots and completed resolutions remain read-only, but every item note remains an
-  autosaving rich-text editor in both this history and the global Routines execution screen. Never
-  expose a note pop-out action or the legacy Issue-found/follow-up controls.
+  Use the same live checklist receiver in this history and the global Routines execution screen.
+  Before finalization it owns resolution controls and autosaving rich-text notes; afterward it
+  renders resolutions and notes as read-only content. Never expose a note pop-out action or the
+  legacy Issue-found/follow-up controls.
   Put an explicit `Edit` button in that history view; only it opens the parent-owned definition
   modal. Creation opens for that exact scope and never enters a filtered level. Do not render a
   Commitments drilldown in the contextual tree.
@@ -267,8 +268,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
   Overdue, or Lapsed state through the shared semantic state-label receiver. Current Run checklist
   text is read-only; template edits create a future version instead of mutating materialized Runs.
   Give every Run × Subject checklist item an optional inline rich-text note. Persist it through the
-  shared throttled autosave path and allow note edits after completion without changing the frozen
-  resolution or attestation timestamp.
+  shared throttled autosave path while its Subject cell is open. Resolving every required item only
+  enables an explicit `Finalize check-in` action; it does not stamp completion automatically.
+  Finalization flushes pending notes, stamps cell completion, and freezes every item resolution,
+  attestation timestamp, and note in that cell.
 - Create and manage Routines only from the owning Focus Overall or Thread screen. Put `Add Routine`
   beside `Add commitment`, render the parent's Routine definitions directly beneath its Commitment
   collection, and open the shared definition modal when a Routine row is selected. The modal owns
@@ -281,7 +284,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
   per actionable `Routine × Subject` (or one unscoped Routine), grouped as Past due, Today, This
   week, and Upcoming. Selecting a row renders only that cell's checklist. Keep this destination an
   execution surface: its `ContextDrawerAdapter` may describe definition metadata, but it must not
-  create, edit, or delete Routine definitions.
+  create, edit, or delete Routine definitions. Badge the primary Routines destination with the
+  number of distinct visible Routines that currently have at least one editable cell, and show the
+  same count in the workspace header.
 - Treat due-date presence as the only user-facing Commitment mode. Do not expose an independent
   `ongoing` / `action` selector or label. The generic Commitment type remains `tracking` regardless
   of due date; mirror undated/due-dated compatibility values only inside the private
@@ -461,12 +466,12 @@ foreground colors and do not rely on color alone to communicate selection or sta
   as the Commitment's type or use it to branch application behavior.
 - Keep Routine recurrence anchored to `anchor_on`; late completion never moves future dates. Every
   materialized Run stores its template version, inspection text/order/required flags, review window,
-  and Scope/Subject-name snapshot. Materialize one immutable attestation cell per effective Subject,
-  or one unscoped cell when no Subject applies. Run snapshot fields and completed cells/Runs are
-  immutable. Only full resolution of every required cell refreshes the practice; optional item-note
-  evidence never changes Routine color. Keep `needsAttestation` as a queue-inclusion flag independent
-  of status. Legacy issue rows remain importable/readable compatibility data but have no creation or
-  editing UI.
+  and Scope/Subject-name snapshot. Materialize one independently editable attestation cell per
+  effective Subject, or one unscoped cell when no Subject applies. Run snapshot fields and finalized
+  cells/Runs are immutable. Only explicit finalization after full resolution of every required item
+  refreshes the practice; optional item-note evidence never changes Routine color. Keep
+  `needsAttestation` as a queue-inclusion flag independent of status. Legacy issue rows remain
+  importable/readable compatibility data but have no creation or editing UI.
 - Persist nullable, calendar-validated due dates independently on Focus, Thread, and Commitment.
   Parent dates are advisory planning boundaries, not database constraints: descendants may extend
   beyond them and the renderer owns the direct-parent warning.

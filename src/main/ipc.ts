@@ -54,11 +54,18 @@ export function registerAppIpc(
   shell: FolderOpener,
   getSensitiveContentHidden: () => boolean = () => false,
   richTextWindows: RichTextWindowCoordinator = emptyRichTextWindows,
-  invalidateNavigationBadges: () => void = () => undefined
+  invalidateNavigationBadges: () => void = () => undefined,
+  notifyRoutinesChanged: () => void = () => undefined
 ): () => void {
   function mutation<T>(operation: () => T): T {
     const result = operation()
     invalidateNavigationBadges()
+    return result
+  }
+
+  function routineMutation<T>(operation: () => T): T {
+    const result = mutation(operation)
+    notifyRoutinesChanged()
     return result
   }
 
@@ -218,18 +225,23 @@ export function registerAppIpc(
   )
   ipcMain.handle(IPC_CHANNELS.listRoutines, () => database.domain.routines.list())
   ipcMain.handle(IPC_CHANNELS.createRoutine, (_event, input: CreateRoutineInput) =>
-    mutation(() => database.domain.routines.create(input).snapshot())
+    routineMutation(() => database.domain.routines.create(input).snapshot())
   )
   ipcMain.handle(IPC_CHANNELS.updateRoutine, (_event, id: number, input: UpdateRoutineInput) =>
-    mutation(() => database.domain.routines.update(id, input))
+    routineMutation(() => database.domain.routines.update(id, input))
   )
   ipcMain.handle(IPC_CHANNELS.deleteRoutine, (_event, id: number) =>
-    mutation(() => database.domain.routines.delete(id))
+    routineMutation(() => database.domain.routines.delete(id))
   )
   ipcMain.handle(
     IPC_CHANNELS.attestRoutineCellItem,
     (_event, attestationId: number, input: AttestRoutineRunItemInput) =>
-      mutation(() => database.domain.routines.attestCellItem(attestationId, input))
+      routineMutation(() => database.domain.routines.attestCellItem(attestationId, input))
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.finalizeRoutineCell,
+    (_event, cellId: number) =>
+      routineMutation(() => database.domain.routines.finalizeCell(cellId))
   )
   ipcMain.handle(IPC_CHANNELS.listUpdates, (_event, parent: UpdateParent) => {
     if (parent.type === 'focus') return database.domain.updates.listForFocus(parent.id)

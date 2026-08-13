@@ -217,8 +217,9 @@ adds `needs_attestation` and independently completable cells: one cell per effec
 scheduled boundary, or one unscoped cell. Routine status has no writable lifecycle selector: it is
 projected solely from full required-cell attestation against the anchored schedule. Full semantics
 are in [`routine-attestations.md`](routine-attestations.md).
-Migration 29 gives every cell item an optional rich-text evidence note that stays editable without
-changing an immutable completed resolution.
+Migration 29 gives every cell item an optional rich-text evidence note. Migration 30 makes Subject
+cell completion an explicit finalize operation: required resolutions must be complete first, and
+finalization freezes the resolutions, attestation timestamps, and notes together.
 
 ## Subjects, Scopes, and exact Update cells
 
