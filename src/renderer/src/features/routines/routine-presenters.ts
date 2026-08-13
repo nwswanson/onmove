@@ -10,11 +10,6 @@ function statusModel(status: RoutineSnapshot['status']): StateLabelModel {
   return { label: 'Lapsed', tone: 'danger' }
 }
 
-function followUpLabel(value: 'none' | 'update' | 'commitment' | 'move'): string {
-  if (value === 'none') return 'Recorded without a follow-up artifact'
-  return `Follow-up: ${value[0].toUpperCase()}${value.slice(1)}`
-}
-
 export function routineHistoryModel(routine: RoutineSnapshot): RoutineHistoryModel {
   const checkIns = [routine.currentRun, ...routine.previousRuns]
     .filter((run): run is NonNullable<RoutineSnapshot['currentRun']> => run !== null)
@@ -47,7 +42,7 @@ export function routineHistoryModel(routine: RoutineSnapshot): RoutineHistoryMod
           ? `Completed ${cell.completionDate}${cell.completedLate ? ' · late' : ''}`
           : 'Incomplete',
         items: cell.items.map((item) => ({
-          id: String(item.id),
+          id: item.id,
           inspection: item.inspection,
           resolutionLabel: item.resolution === 'attested'
             ? 'Attested'
@@ -56,12 +51,8 @@ export function routineHistoryModel(routine: RoutineSnapshot): RoutineHistoryMod
               : 'Pending',
           resolutionTone: item.resolution === 'attested' ? 'success' as const : 'neutral' as const,
           attestedLabel: item.attestedAt ? `Recorded ${item.attestedAt}` : null,
-          issue: item.issue
-            ? {
-                description: item.issue.description,
-                followUpLabel: followUpLabel(item.issue.followUpType)
-              }
-            : null
+          note: item.note ?? '',
+          resolution: item.resolution
         }))
       }))
     }))

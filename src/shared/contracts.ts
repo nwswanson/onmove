@@ -635,6 +635,9 @@ export interface RoutineRunItemSnapshot {
   required: boolean
   resolution: RoutineRunItemResolution
   attestedAt: string | null
+  /** Optional rich-text evidence recorded for this exact Run × Subject item. */
+  note: string
+  /** @deprecated Legacy issue evidence remains readable but is no longer editable in the UI. */
   issue: RoutineRunIssueSnapshot | null
 }
 
@@ -716,8 +719,13 @@ export interface UpdateRoutineInput {
 
 export interface AttestRoutineRunItemInput {
   resolution: RoutineRunItemResolution
+  /** Versioned rich-text envelope or legacy plain text. */
+  note?: string
+  /** @deprecated Kept for tolerant import and older renderer compatibility. */
   issueFound?: boolean
+  /** @deprecated Kept for tolerant import and older renderer compatibility. */
   issueDescription?: string
+  /** @deprecated Kept for tolerant import and older renderer compatibility. */
   issueFollowUpType?: RoutineIssueFollowUpType
 }
 

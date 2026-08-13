@@ -238,6 +238,35 @@ describe('database migrations', () => {
     raw.close()
   })
 
+  it('adds mutable Routine evidence notes without weakening completed resolution snapshots', () => {
+    const database = new AppDatabase(databasePath)
+    const focus = database.domain.focuses.create({ title: 'Routine notes' })
+    const routine = database.domain.routines.create({
+      parent: { type: 'focus', id: focus.id },
+      name: 'Evidence review',
+      cadenceDays: 7,
+      anchorDate: '2026-08-13',
+      checklist: [{ inspection: 'Verify evidence.' }]
+    }, new Date('2026-08-13T10:00:00.000Z'))
+    const item = routine.snapshot('2026-08-13').currentRun!.items[0]
+    database.domain.routines.attestCellItem(item.id, {
+      resolution: 'attested'
+    }, new Date('2026-08-13T11:00:00.000Z'))
+    database.close()
+
+    const raw = new DatabaseSync(databasePath)
+    expect(raw.prepare(
+      'SELECT note FROM routine_review_cell_attestations WHERE id = ?'
+    ).get(item.id)).toMatchObject({ note: '' })
+    expect(() => raw.prepare(
+      'UPDATE routine_review_cell_attestations SET note = ? WHERE id = ?'
+    ).run('Editable evidence', item.id)).not.toThrow()
+    expect(() => raw.prepare(
+      "UPDATE routine_review_cell_attestations SET resolution = 'pending', attested_at = NULL WHERE id = ?"
+    ).run(item.id)).toThrow(/resolutions are immutable/)
+    raw.close()
+  })
+
   it('stores calendar-validated scoped review pokes with aggregate cascades', () => {
     const now = new Date('2026-08-10T12:00:00.000Z')
     const database = new AppDatabase(databasePath)

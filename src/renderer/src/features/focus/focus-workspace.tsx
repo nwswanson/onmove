@@ -1320,6 +1320,9 @@ export function FocusWorkspace({
               parent: selectedRoutine.parent,
               routine: selectedRoutine
             })}
+            onSaveItemNote={async (itemId, resolution, note) => {
+              await model.updateRoutineRunItem(itemId, { resolution, note })
+            }}
           />
         ) : activeCommitmentParent && !commitmentRouteHidden ? (
           <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="commitment-heading">

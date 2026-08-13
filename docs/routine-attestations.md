@@ -15,8 +15,8 @@ A Routine is not:
 - a health score for its parent.
 
 Its color answers one narrow question: is the inspection practice being performed on schedule?
-Issues found during the inspection are evidence or follow-up intent. They do not make the Routine
-red or green.
+Optional notes recorded beside an inspection are evidence. They do not make the Routine red or
+green.
 
 ## Durable structure
 
@@ -40,7 +40,8 @@ commitments
                             ├── routine_review_run_items (1:n, checklist snapshot)
                             └── routine_review_cells (1:n, unscoped or one per Subject)
                                     └── routine_review_cell_attestations (one per Run item)
-                                            └── routine_review_cell_issues (0..1)
+                                            resolution, attested_at, optional rich-text note
+                                            └── routine_review_cell_issues (legacy compatibility)
 ```
 
 Migration 27 adds the constrained `behavior_type` discriminator. Migration 26's constrained
@@ -52,6 +53,10 @@ repositories use `behavior_type`: `CommitmentRepository` filters to `tracking`, 
 Migration 28 adds the attestation inclusion flag and independent Subject cells. Existing aggregate
 Run resolutions are copied into every Subject cell represented by their historical Scope snapshot,
 preserving recorded completion while making every later edit cell-specific.
+
+Migration 29 adds an optional rich-text note to every cell item. It narrows the completed-cell
+immutability trigger so notes remain editable while completed resolutions and attestation times
+stay frozen.
 
 Routine creation validates all of the following in one transaction:
 
@@ -91,9 +96,10 @@ never rewrite an existing Run. Scope deletion clears only the live definition re
 `SET NULL`; the Run's scalar Scope id plus copied name and Subject population remain readable.
 
 Run schedule and checklist snapshot columns have SQLite immutability triggers. A completed Run can
-no longer change resolution, attestation time, completion time, or issue content.
+no longer change resolution, attestation time, completion time, or legacy issue content. Its item
+notes deliberately remain editable.
 
-## Attestation and issues
+## Completion and evidence notes
 
 Each Run item has one resolution per Subject cell:
 
@@ -104,12 +110,15 @@ Each Run item has one resolution per Subject cell:
 Checking an inspection does not claim that the inspected condition was healthy. A required item is
 complete when it is either attested or not applicable.
 
-An attested item can record one Issue with free text and a typed follow-up intent of `none`,
-`update`, `commitment`, or `move`. This keeps the discovery durable and gives later typed creation
-flows a stable dispatch contract. The issue and intended artifact are deliberately separate: issue
-presence never feeds Routine status. Creating and linking a concrete follow-up artifact remains a
-named domain operation rather than a polymorphic foreign key or hidden side effect of checking a
-box.
+Every item has an optional inline rich-text note. It uses the same versioned Lexical envelope as
+other multiline fields, accepts legacy plain text, saves through the 750 ms throttled autosave
+path, and flushes on blur. Notes are evidence only: changing one does not alter a resolution,
+attestation time, cell completion, Run completion, schedule, or derived status. A note remains
+editable after completion so the user can clarify evidence without rewriting what was attested.
+There is no pop-out action.
+
+The previous Issue-found and typed follow-up fields remain in SQLite and portable import solely so
+older archives do not lose data. Current UI and callers do not create or edit them.
 
 The repository writes a cell's completion only when no required cell attestation remains pending,
 and writes the occurrence completion only after every cell completes. Partial work in one Subject
@@ -143,12 +152,12 @@ skips it or moves the recurrence.
 
 Occurrence progress sums required resolutions across its cells. Each queue item displays its own
 Subject-cell progress. Previous Runs retain scheduled date, completion date, late marker, template
-version, Scope snapshot, every cell resolution, and issues.
+version, Scope snapshot, every cell resolution, and optional item notes.
 
 ## Deletion, moves, import, and visibility
 
 Deleting a Routine, its Thread, or its Focus cascades through definitions, versions, Runs, Run
-items, Subject cells, cell attestations, and issues. There is no Update rescue requirement because
+items, Subject cells, cell attestations, notes, and legacy issues. There is no Update rescue requirement because
 attestation records are not Update evidence. Tracking Updates elsewhere in the deleted hierarchy
 still use the universal archive trigger.
 
@@ -162,7 +171,7 @@ values, and relies on the same SQLite constraints before committing replacement 
 
 Sensitive Routines are filtered at the top-level Routines collection boundary. A sensitive Focus or
 Thread cascades visibility to its Routines, matching the rest of the application. Stored Run and
-issue data is never redacted or destroyed by a visibility preference.
+note or legacy issue data is never redacted or destroyed by a visibility preference.
 
 ## UI ownership
 
@@ -175,10 +184,11 @@ feed the same execution queue.
 The top-level contextual sidebar mirrors that ownership. Every Overall or Thread node presents
 `Add commitment` followed by `Add Routine`, then its current Commitments and direct Routines.
 Routine rows carry a checklist icon and derived status and cannot be dragged as Commitments.
-Selecting one preserves the top-level hierarchy and renders a read-only check-in history in the
-main canvas. That history includes the current and previous immutable Runs, per-Subject progress,
-scheduled and completion dates, lateness, template versions, attestations, and recorded issues. An
-explicit `Edit` button opens the definition modal; selecting the Routine itself never edits it.
+Selecting one preserves the top-level hierarchy and renders check-in history in the main canvas.
+That history includes the current and previous immutable Runs, per-Subject progress, scheduled and
+completion dates, lateness, template versions, resolutions, and an autosaving optional rich-text
+note beneath every item. An explicit `Edit` button opens the definition modal; selecting the
+Routine itself never edits its definition.
 
 The definition modal owns the name, cadence, schedule anchor, optional parent Scope,
 `needsAttestation`, sensitivity, checklist versioning, and deletion. Clearing `needsAttestation`
@@ -192,5 +202,6 @@ Past due, Today, This week, and Upcoming, and presents one immutable checklist a
 rows preview the template that will be snapshotted when that anchored occurrence becomes due. Its
 generic context drawer receives a data-only, read-only Routine adapter so definition mutations stay
 with the owning parent. The shared `StateLabel` receiver owns color/label markup, while the feature
-model replaces snapshots after every cell attestation. Completed Run controls are disabled. There
-is no generic lifecycle selector and no recurring Todo UI.
+model replaces snapshots after every cell resolution or note save. Completed Run resolution
+controls are disabled while their notes remain editable. There is no generic lifecycle selector,
+Issue-found UI, note pop-out, or recurring Todo UI.

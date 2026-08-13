@@ -133,14 +133,12 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
     }).click()
     await expect(window.getByText('1 of 2 attested')).toBeVisible()
 
-    const secondInspection = window.getByText('Confirm scope changes received approval.')
-      .locator('..').locator('..').locator('..')
-    await secondInspection.getByRole('checkbox', { name: 'Issue found' }).click()
-    await secondInspection.getByLabel(
-      'Issue found for Confirm scope changes received approval.'
-    ).fill('Approval record was missing')
-    await secondInspection.getByLabel('Issue follow-up').selectOption('commitment')
-    await secondInspection.getByRole('checkbox', {
+    await window.getByLabel(
+      'Optional note for Confirm scope changes received approval.'
+    ).fill('Approval record was reviewed')
+    await window.getByRole('heading', { name: 'Weekly delivery inspection' }).click()
+    await window.waitForTimeout(900)
+    await window.getByRole('checkbox', {
       name: 'Attest: Confirm scope changes received approval.'
     }).click()
     await expect(window.getByText('0 of 3 attested')).toBeVisible()
@@ -171,12 +169,13 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
         `SELECT count(*) AS count FROM routine_review_cell_attestations
          WHERE resolution <> 'pending'`
       ).get()).toMatchObject({ count: 2 })
-      expect(stored.prepare(
-        'SELECT description, follow_up_type FROM routine_review_cell_issues'
-      ).get()).toMatchObject({
-        description: 'Approval record was missing',
-        follow_up_type: 'commitment'
-      })
+      const note = stored.prepare(
+        `SELECT attestation.note
+         FROM routine_review_cell_attestations attestation
+         JOIN routine_review_run_items item ON item.id = attestation.run_item_id
+         WHERE item.inspection = ?`
+      ).get('Confirm scope changes received approval.') as { note?: string } | undefined
+      expect(note?.note).toContain('Approval record was reviewed')
     } finally {
       stored.close()
     }

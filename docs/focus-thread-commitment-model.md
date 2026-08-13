@@ -359,7 +359,7 @@ initial cadence baseline.
 
 The `routine` Commitment implementation deliberately splits a reusable inspection template from
 generated Review Runs. It is neither Update cadence nor recurring Todo generation. Routine Scope,
-anchored scheduling, immutable snapshots, attestations, issues, and derived status are specified in
+anchored scheduling, immutable snapshots, per-item evidence notes, and derived status are specified in
 [`routine-attestations.md`](routine-attestations.md). Promisor and beneficiary fields remain future
 extensions for tracking Commitments.
 

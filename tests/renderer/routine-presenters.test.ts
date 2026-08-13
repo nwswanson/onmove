@@ -43,6 +43,7 @@ function run({
             required: true,
             resolution: completionDate ? 'attested' : 'pending',
             attestedAt: completionDate ? `${completionDate}T12:00:00.000Z` : null,
+            note: completionDate ? 'Reviewed the approval evidence.' : '',
             issue: completionDate ? {
               id: id * 10000,
               description: 'Approval record was missing',
@@ -89,7 +90,7 @@ function routine(): RoutineSnapshot {
 }
 
 describe('Routine presentation adapters', () => {
-  it('projects current and previous immutable check-ins with Subject evidence and issues', () => {
+  it('projects current and previous immutable check-ins with editable evidence notes', () => {
     const model = routineHistoryModel(routine())
 
     expect(model).toMatchObject({
@@ -117,10 +118,7 @@ describe('Routine presentation adapters', () => {
         completionLabel: 'Completed 2026-08-05 · late',
         items: [expect.objectContaining({
           resolutionLabel: 'Attested',
-          issue: {
-            description: 'Approval record was missing',
-            followUpLabel: 'Follow-up: Commitment'
-          }
+          note: 'Reviewed the approval evidence.'
         })]
       })]
     })

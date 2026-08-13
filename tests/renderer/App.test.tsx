@@ -237,6 +237,7 @@ function routine(overrides: Partial<RoutineSnapshot> = {}): RoutineSnapshot {
           required: true,
           resolution: 'pending',
           attestedAt: null,
+          note: '',
           issue: null
         },
         {
@@ -247,6 +248,7 @@ function routine(overrides: Partial<RoutineSnapshot> = {}): RoutineSnapshot {
           required: true,
           resolution: 'pending',
           attestedAt: null,
+          note: '',
           issue: null
         }
       ],
@@ -266,6 +268,7 @@ function routine(overrides: Partial<RoutineSnapshot> = {}): RoutineSnapshot {
               required: true,
               resolution: 'pending',
               attestedAt: null,
+              note: '',
               issue: null
             },
             {
@@ -276,6 +279,7 @@ function routine(overrides: Partial<RoutineSnapshot> = {}): RoutineSnapshot {
               required: true,
               resolution: 'pending',
               attestedAt: null,
+              note: '',
               issue: null
             }
           ]
@@ -601,7 +605,22 @@ describe('App', () => {
         }))
       }
     })
-    const attestRoutineCellItem = vi.fn().mockResolvedValue(attested)
+    const attestRoutineCellItem = vi.fn().mockImplementation(async (itemId, input) => {
+      if (input.note === undefined) return attested
+      const updateRun = (run: NonNullable<RoutineSnapshot['currentRun']>) => ({
+        ...run,
+        items: run.items.map((item) => item.id === itemId
+          ? { ...item, note: input.note }
+          : item),
+        cells: run.cells.map((cell) => ({
+          ...cell,
+          items: cell.items.map((item) => item.id === itemId
+            ? { ...item, note: input.note }
+            : item)
+        }))
+      })
+      return routine({ currentRun: updateRun(currentRoutine.currentRun!) })
+    })
     const updateRoutine = vi.fn().mockImplementation(async (_id, input) => routine({
       name: input.name ?? currentRoutine.name,
       template: {
@@ -634,6 +653,18 @@ describe('App', () => {
     }))
     expect(screen.getByRole('heading', { name: 'Weekly delivery inspection' })).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Check-in history' })).toBeVisible()
+    const historyNote = screen.getByLabelText(
+      'Optional note for Verify delivery risks were represented.'
+    )
+    await user.click(historyNote)
+    await user.paste('Evidence checked in parent context.')
+    await waitFor(() => expect(historyNote).toHaveTextContent(
+      'Evidence checked in parent context.'
+    ))
+    await waitFor(() => expect(attestRoutineCellItem).toHaveBeenCalledWith(601, {
+      resolution: 'pending',
+      note: expect.stringContaining('Evidence checked in parent context.')
+    }), { timeout: 2_000 })
     await user.click(screen.getByRole('button', { name: 'Edit' }))
     const dialog = screen.getByRole('dialog', { name: 'Edit Routine' })
     const name = within(dialog).getByLabelText('Routine name')
@@ -661,6 +692,20 @@ describe('App', () => {
     expect(within(screen.getByRole('main')).getByText('Overdue')).toBeVisible()
     expect(screen.getByText('0 of 2 attested')).toBeVisible()
     expect(screen.getByRole('button', { name: /Project Atlas \/ Sprint execution/ })).toBeVisible()
+    expect(screen.queryByText('Issue found')).not.toBeInTheDocument()
+    expect(within(screen.getByRole('main')).queryByRole('button', {
+      name: /Open .* in a new window/
+    })).not.toBeInTheDocument()
+    const executionNote = screen.getByLabelText(
+      'Optional note for Confirm scope changes received approval.'
+    )
+    await user.click(executionNote)
+    await user.paste('Approval evidence reviewed.')
+    await waitFor(() => expect(executionNote).toHaveTextContent('Approval evidence reviewed.'))
+    await waitFor(() => expect(attestRoutineCellItem).toHaveBeenCalledWith(602, {
+      resolution: 'pending',
+      note: expect.stringContaining('Approval evidence reviewed.')
+    }), { timeout: 2_000 })
 
     await user.click(screen.getByRole('checkbox', {
       name: 'Attest: Verify delivery risks were represented.'

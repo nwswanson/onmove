@@ -3008,6 +3008,35 @@ const migrations: readonly Migration[] = [
         END;
       `)
     }
+  },
+  {
+    version: 29,
+    name: 'routine_attestation_rich_text_notes',
+    up(database) {
+      const columns = database.all<{ name: string }>(
+        'PRAGMA table_info(routine_review_cell_attestations)'
+      )
+      if (columns.length === 0) return
+      if (!columns.some(({ name }) => name === 'note')) {
+        database.exec(`
+          ALTER TABLE routine_review_cell_attestations
+          ADD COLUMN note TEXT NOT NULL DEFAULT '';
+        `)
+      }
+      database.exec(`
+        DROP TRIGGER IF EXISTS completed_routine_cell_attestations_are_immutable;
+
+        CREATE TRIGGER completed_routine_cell_attestations_are_immutable
+        BEFORE UPDATE OF resolution, attested_at ON routine_review_cell_attestations
+        WHEN EXISTS (
+          SELECT 1 FROM routine_review_cells
+          WHERE id = OLD.cell_id AND completed_at IS NOT NULL
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Completed Routine Run Subject cell resolutions are immutable');
+        END;
+      `)
+    }
   }
 ]
 

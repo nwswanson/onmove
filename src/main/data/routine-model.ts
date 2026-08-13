@@ -75,6 +75,7 @@ interface RunItemRow {
   required: number
   resolution: string
   attested_at: string | null
+  note: string
   issue_id: number | null
   issue_description: string | null
   issue_follow_up_type: string | null
@@ -90,6 +91,9 @@ interface RunOwnerRow {
   run_id: number
   cell_id: number
   completed_at: string | null
+  resolution: string
+  attested_at: string | null
+  note: string
 }
 
 function assertId(id: number, label: string): void {
@@ -348,13 +352,19 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
     if (!ROUTINE_RUN_ITEM_RESOLUTIONS.includes(input.resolution)) {
       throw new ModelValidationError(`unsupported Routine attestation: ${input.resolution}`)
     }
+    if (input.note !== undefined && typeof input.note !== 'string') {
+      throw new ModelValidationError('Routine item note must be text')
+    }
+    const issueMutation = input.issueFound !== undefined ||
+      input.issueDescription !== undefined || input.issueFollowUpType !== undefined
     const followUpType = input.issueFollowUpType ?? 'none'
-    if (!ROUTINE_ISSUE_FOLLOW_UP_TYPES.includes(followUpType)) {
+    if (issueMutation && !ROUTINE_ISSUE_FOLLOW_UP_TYPES.includes(followUpType)) {
       throw new ModelValidationError(`unsupported Routine issue follow-up: ${followUpType}`)
     }
     const owner = this.database.get<RunOwnerRow>(
       `SELECT run.routine_id, run.id AS run_id, cell.id AS cell_id,
-              cell.completed_at
+              cell.completed_at, attestation.resolution, attestation.attested_at,
+              attestation.note
        FROM routine_review_cell_attestations attestation
        JOIN routine_review_cells cell ON cell.id = attestation.cell_id
        JOIN routine_review_runs run ON run.id = cell.run_id
@@ -362,22 +372,39 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
       [attestationId]
     )
     if (!owner) throw new ModelNotFoundError('Routine Run cell attestation', attestationId)
-    if (owner.completed_at !== null) {
-      throw new ModelValidationError('Completed Routine Run Subject cells cannot be changed')
+    if (owner.completed_at !== null && input.resolution !== owner.resolution) {
+      throw new ModelValidationError('Completed Routine Run Subject cell resolutions cannot be changed')
     }
-    if (input.issueFound !== true && followUpType !== 'none') {
+    if (owner.completed_at !== null && issueMutation) {
+      throw new ModelValidationError('Completed Routine Run Subject cell issues cannot be changed')
+    }
+    if (issueMutation && input.issueFound !== true && followUpType !== 'none') {
       throw new ModelValidationError('Routine issue follow-up requires Issue found')
     }
     const changedAt = timestamp(now)
+    const note = input.note ?? owner.note
+    const resolutionChanged = input.resolution !== owner.resolution
+    const attestedAt = input.resolution === 'pending'
+      ? null
+      : resolutionChanged
+        ? changedAt
+        : owner.attested_at
 
     this.database.transaction(() => {
-      this.database.run(
-        `UPDATE routine_review_cell_attestations
-         SET resolution = ?, attested_at = ?
-         WHERE id = ?`,
-        [input.resolution, input.resolution === 'pending' ? null : changedAt, attestationId]
-      )
-      if (input.issueFound === true) {
+      if (owner.completed_at !== null) {
+        this.database.run(
+          'UPDATE routine_review_cell_attestations SET note = ? WHERE id = ?',
+          [note, attestationId]
+        )
+      } else {
+        this.database.run(
+          `UPDATE routine_review_cell_attestations
+           SET resolution = ?, attested_at = ?, note = ?
+           WHERE id = ?`,
+          [input.resolution, attestedAt, note, attestationId]
+        )
+      }
+      if (issueMutation && input.issueFound === true) {
         this.database.run(
           `INSERT INTO routine_review_cell_issues (
              attestation_id, description, follow_up_type, created_at, updated_at
@@ -388,7 +415,7 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
              updated_at = excluded.updated_at`,
           [attestationId, input.issueDescription?.trim() ?? '', followUpType, changedAt, changedAt]
         )
-      } else {
+      } else if (issueMutation) {
         this.database.run(
           'DELETE FROM routine_review_cell_issues WHERE attestation_id = ?',
           [attestationId]
@@ -642,6 +669,7 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
       const items = this.database.all<RunItemRow>(
         `SELECT attestation.id, item.id AS run_item_id, item.position, item.inspection,
               item.required, attestation.resolution, attestation.attested_at,
+              attestation.note,
               issue.id AS issue_id,
               issue.description AS issue_description,
               issue.follow_up_type AS issue_follow_up_type,
@@ -701,6 +729,7 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
       required: Boolean(row.required),
       resolution: row.resolution as RoutineRunItemResolution,
       attestedAt: row.attested_at,
+      note: row.note,
       issue: row.issue_id === null
         ? null
         : {

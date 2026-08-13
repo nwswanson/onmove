@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type {
+  AttestRoutineRunItemInput,
   CommitmentParent,
   CommitmentMovePlanSnapshot,
   CommitmentSnapshot,
@@ -77,6 +78,10 @@ export interface FocusWorkspaceModel {
   createCommitment: (input: CreateCommitmentInput) => Promise<CommitmentSnapshot>
   createRoutine: (input: CreateRoutineInput) => Promise<RoutineSnapshot>
   updateRoutine: (id: number, input: UpdateRoutineInput) => Promise<RoutineSnapshot>
+  updateRoutineRunItem: (
+    attestationId: number,
+    input: AttestRoutineRunItemInput
+  ) => Promise<RoutineSnapshot>
   deleteRoutine: (id: number) => Promise<boolean>
   updateCommitment: (id: number, input: UpdateCommitmentInput) => Promise<CommitmentSnapshot>
   planCommitmentMove: (
@@ -491,6 +496,17 @@ export function useFocusWorkspaceModel({
     return updated
   }
 
+  async function updateRoutineRunItem(
+    attestationId: number,
+    input: AttestRoutineRunItemInput
+  ): Promise<RoutineSnapshot> {
+    const updated = await window.onmove.domain.attestRoutineCellItem(attestationId, input)
+    setRoutines((current) => current.map((routine) =>
+      routine.id === updated.id ? updated : routine
+    ))
+    return updated
+  }
+
   async function deleteRoutine(id: number): Promise<boolean> {
     const deleted = await window.onmove.domain.deleteRoutine(id)
     if (deleted) setRoutines((current) => current.filter((routine) => routine.id !== id))
@@ -660,6 +676,7 @@ export function useFocusWorkspaceModel({
     createCommitment,
     createRoutine,
     updateRoutine,
+    updateRoutineRunItem,
     deleteRoutine,
     updateCommitment,
     planCommitmentMove,

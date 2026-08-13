@@ -52,6 +52,7 @@ describe('DataArchiveRepository', () => {
     const routineRun = routine.snapshot('2026-08-09').currentRun!
     source.domain.routines.attestCellItem(routineRun.items[0].id, {
       resolution: 'attested',
+      note: 'Reviewed the approval packet.',
       issueFound: true,
       issueDescription: 'Approval evidence was incomplete',
       issueFollowUpType: 'commitment'
@@ -145,7 +146,10 @@ describe('DataArchiveRepository', () => {
       }
     })
     expect(importedRoutine.currentRun!.items).toEqual(expect.arrayContaining([
-      expect.objectContaining({ issue: expect.objectContaining({ followUpType: 'commitment' }) })
+      expect.objectContaining({
+        note: 'Reviewed the approval packet.',
+        issue: expect.objectContaining({ followUpType: 'commitment' })
+      })
     ]))
   })
 
@@ -193,6 +197,7 @@ describe('DataArchiveRepository', () => {
         progress: { complete: 1, required: 1 },
         items: [{
           resolution: 'attested',
+          note: '',
           issue: { description: 'Older issue evidence', followUpType: 'update' }
         }]
       }]

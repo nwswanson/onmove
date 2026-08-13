@@ -88,6 +88,14 @@ describe('Routine Commitment model', () => {
       description: 'Risk entry was stale',
       followUpType: 'update'
     })
+    const noted = database!.domain.routines.attestCellItem(firstItem.id, {
+      resolution: 'attested',
+      note: 'Legacy discovery retained with this note.'
+    }, new Date('2026-01-02T12:30:00.000Z'))
+    expect(noted.currentRun!.items[0]).toMatchObject({
+      note: 'Legacy discovery retained with this note.',
+      issue: { description: 'Risk entry was stale', followUpType: 'update' }
+    })
 
     const complete = database!.domain.routines.attestCellItem(secondItem.id, {
       resolution: 'not_applicable'
@@ -120,6 +128,43 @@ describe('Routine Commitment model', () => {
     expect(late.currentRun).toMatchObject({ scheduledDate: '2026-01-08', completionDate: null })
     expect(late.nextReviewDate).toBe('2026-01-08')
     expect(late.status).toBe('yellow')
+  })
+
+  it('autosaves optional rich-text notes without making completed resolutions mutable', () => {
+    const { routine } = createRoutine({
+      checklist: [{ inspection: 'Verify the evidence was reviewed.' }]
+    })
+    const item = routine.snapshot('2026-01-01').currentRun!.items[0]
+    const firstNote = 'onmove-rich-text:1:{"root":{"children":[]}}'
+    const drafted = database!.domain.routines.attestCellItem(item.id, {
+      resolution: 'pending',
+      note: firstNote
+    }, new Date('2026-01-01T12:15:00.000Z'))
+    expect(drafted.currentRun!.items[0]).toMatchObject({
+      resolution: 'pending',
+      note: firstNote,
+      attestedAt: null
+    })
+
+    const completed = database!.domain.routines.attestCellItem(item.id, {
+      resolution: 'attested'
+    }, new Date('2026-01-01T12:30:00.000Z'))
+    const recordedAt = completed.currentRun!.items[0].attestedAt
+    expect(completed.currentRun!.items[0].note).toBe(firstNote)
+
+    const revised = database!.domain.routines.attestCellItem(item.id, {
+      resolution: 'attested',
+      note: 'Clarified after completion.'
+    }, new Date('2026-01-02T12:00:00.000Z'))
+    expect(revised.currentRun!.items[0]).toMatchObject({
+      resolution: 'attested',
+      attestedAt: recordedAt,
+      note: 'Clarified after completion.'
+    })
+    expect(() => database!.domain.routines.attestCellItem(item.id, {
+      resolution: 'pending',
+      note: 'Resolution change should fail.'
+    })).toThrow(/resolutions cannot be changed/)
   })
 
   it('versions templates and never rewrites an already materialized Run checklist', () => {

@@ -339,6 +339,7 @@ function normalizeRow(
   }
   if (table === 'routine_review_cell_attestations') {
     setFallback(row, 'resolution', 'pending')
+    setFallback(row, 'note', '')
     if (row.resolution === 'pending') row.attested_at = null
     else setFallback(row, 'attested_at', timestamp)
   }

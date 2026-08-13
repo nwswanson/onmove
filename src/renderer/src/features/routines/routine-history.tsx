@@ -2,14 +2,16 @@ import { AlertTriangle, Check, ListChecks, Minus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StateLabel, type StateLabelModel } from '@/components/ui/state-label'
 import { TaggedText } from '@/components/ui/tagged-text'
+import { RoutineItemNote } from '@/features/routines/routine-item-note'
 
 export interface RoutineHistoryItemModel {
-  id: string
+  id: number
   inspection: string
   resolutionLabel: string
   resolutionTone: 'success' | 'neutral'
   attestedLabel: string | null
-  issue: { description: string; followUpLabel: string } | null
+  note: string
+  resolution: 'pending' | 'attested' | 'not_applicable'
 }
 
 export interface RoutineHistoryCellModel {
@@ -42,10 +44,16 @@ export interface RoutineHistoryModel {
 
 export function RoutineHistory({
   model,
-  onEdit
+  onEdit,
+  onSaveItemNote
 }: {
   model: RoutineHistoryModel
   onEdit: () => void
+  onSaveItemNote: (
+    itemId: number,
+    resolution: RoutineHistoryItemModel['resolution'],
+    note: string
+  ) => unknown | Promise<unknown>
 }): React.JSX.Element {
   return (
     <section
@@ -131,13 +139,12 @@ export function RoutineHistory({
                             {item.attestedLabel && (
                               <p className="mt-1 pl-6 text-xs text-muted-foreground">{item.attestedLabel}</p>
                             )}
-                            {item.issue && (
-                              <div className="mt-2 ml-6 rounded-md border border-destructive/25 bg-destructive/8 px-2.5 py-2 text-xs">
-                                <p className="font-medium text-destructive">Issue found</p>
-                                <p className="mt-0.5 text-foreground"><TaggedText value={item.issue.description} /></p>
-                                <p className="mt-1 text-muted-foreground">{item.issue.followUpLabel}</p>
-                              </div>
-                            )}
+                            <RoutineItemNote
+                              itemId={item.id}
+                              value={item.note}
+                              inspection={item.inspection}
+                              onSave={(note) => onSaveItemNote(item.id, item.resolution, note)}
+                            />
                           </li>
                         ))}
                       </ul>

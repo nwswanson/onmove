@@ -20,11 +20,11 @@ import {
   type ContextualSidebarItemModel,
   useContextualSidebarNavigation
 } from '@/components/ui/contextual-sidebar'
-import { Input } from '@/components/ui/input'
 import { StateLabel, type StateLabelModel } from '@/components/ui/state-label'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
 import type { FocusWorkspaceDestinationTarget } from '@/features/application/application-navigation'
 import { routineDrawerAdapter } from '@/features/routines/routine-presenters'
+import { RoutineItemNote } from '@/features/routines/routine-item-note'
 import {
   useRoutinesModel,
   type RoutineParentOption
@@ -175,17 +175,6 @@ function RoutineRunItem({
   saving: boolean
   onAttest: (itemId: number, input: AttestRoutineRunItemInput) => Promise<unknown>
 }): React.JSX.Element {
-  const [issueDescription, setIssueDescription] = useState(item.issue?.description ?? '')
-  const [followUpType, setFollowUpType] = useState(item.issue?.followUpType ?? 'none')
-  const issueFound = item.issue !== null
-  const issueInput = (overrides: Partial<AttestRoutineRunItemInput> = {}): AttestRoutineRunItemInput => ({
-    resolution: item.resolution,
-    issueFound,
-    issueDescription,
-    issueFollowUpType: followUpType,
-    ...overrides
-  })
-
   return (
     <div className="px-4 py-3">
       <div className="flex items-start gap-3">
@@ -196,11 +185,9 @@ function RoutineRunItem({
             aria-label={`Attest: ${item.inspection}`}
             checked={item.resolution === 'attested'}
             disabled={immutable || saving}
-            onChange={(event) => void onAttest(item.id, issueInput({
-              resolution: event.target.checked ? 'attested' : 'pending',
-              issueFound: event.target.checked ? issueFound : false,
-              issueFollowUpType: event.target.checked ? followUpType : 'none'
-            }))}
+            onChange={(event) => void onAttest(item.id, {
+              resolution: event.target.checked ? 'attested' : 'pending'
+            })}
           />
           <span className={cn(item.resolution !== 'pending' && 'text-muted-foreground')}>
             {item.inspection}
@@ -211,57 +198,19 @@ function RoutineRunItem({
           size="sm"
           variant={item.resolution === 'not_applicable' ? 'default' : 'outline'}
           disabled={immutable || saving}
-          onClick={() => void onAttest(item.id, issueInput({
-            resolution: item.resolution === 'not_applicable' ? 'pending' : 'not_applicable',
-            issueFound: item.resolution === 'not_applicable' ? false : issueFound,
-            issueFollowUpType: item.resolution === 'not_applicable' ? 'none' : followUpType
-          }))}
+          onClick={() => void onAttest(item.id, {
+            resolution: item.resolution === 'not_applicable' ? 'pending' : 'not_applicable'
+          })}
         >
           N/A
         </Button>
       </div>
-      <div className="ml-7 mt-2 rounded-lg bg-muted/45 px-3 py-2.5">
-        <label className="flex items-center gap-2 text-xs font-medium">
-          <input
-            type="checkbox"
-            checked={issueFound}
-            disabled={immutable || saving}
-            onChange={(event) => void onAttest(item.id, issueInput({
-              issueFound: event.target.checked,
-              issueFollowUpType: event.target.checked ? followUpType : 'none'
-            }))}
-          />
-          Issue found
-        </label>
-        {issueFound && (
-          <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_10rem]">
-            <Input
-              aria-label={`Issue found for ${item.inspection}`}
-              value={issueDescription}
-              disabled={immutable || saving}
-              placeholder="What did the inspection reveal?"
-              onChange={(event) => setIssueDescription(event.target.value)}
-              onBlur={() => void onAttest(item.id, issueInput({ issueDescription }))}
-            />
-            <select
-              aria-label="Issue follow-up"
-              className="h-9 rounded-lg border border-border bg-background px-2 text-xs"
-              value={followUpType}
-              disabled={immutable || saving}
-              onChange={(event) => {
-                const value = event.target.value as AttestRoutineRunItemInput['issueFollowUpType']
-                setFollowUpType(value ?? 'none')
-                void onAttest(item.id, issueInput({ issueFollowUpType: value }))
-              }}
-            >
-              <option value="none">Record only</option>
-              <option value="update">Follow up with Update</option>
-              <option value="commitment">Follow up with Commitment</option>
-              <option value="move">Follow up with Move</option>
-            </select>
-          </div>
-        )}
-      </div>
+      <RoutineItemNote
+        itemId={item.id}
+        value={item.note ?? ''}
+        inspection={item.inspection}
+        onSave={(note) => onAttest(item.id, { resolution: item.resolution, note })}
+      />
     </div>
   )
 }
