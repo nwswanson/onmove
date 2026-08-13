@@ -76,6 +76,113 @@ test('badges actionable navigation and decrements Review after persistence', asy
   }
 })
 
+test('creates, attests, versions, and reloads a recurring Routine Run', async () => {
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-routine-e2e-'))
+  const databasePath = join(userDataDirectory, 'onmove.sqlite3')
+  const seeded = new AppDatabase(databasePath)
+  const focus = seeded.domain.focuses.create({ title: 'Routine portfolio' })
+  seeded.domain.threads.create({
+    focusId: focus.id,
+    title: 'Sprint execution',
+    reviewFrequencyDays: 7
+  })
+  seeded.close()
+  let application: ElectronApplication | undefined
+
+  try {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    const window = await application.firstWindow()
+
+    await window.getByRole('button', { name: 'Routines', exact: true }).click()
+    await expect(window.getByRole('heading', { name: 'Routines', exact: true })).toBeVisible()
+    await window.getByRole('button', { name: 'New Routine' }).click()
+    const editor = window.getByRole('dialog', { name: 'New Routine' })
+    await editor.getByLabel('Routine name').fill('Weekly delivery inspection')
+    await editor.getByLabel('Focus or Thread').selectOption({
+      label: 'Routine portfolio / Sprint execution'
+    })
+    await editor.getByRole('button', { name: 'Create Routine' }).click()
+
+    await expect(window.getByText('Weekly delivery inspection')).toBeVisible()
+    await expect(window.getByText('0 of 2 attested')).toBeVisible()
+    await expect(window.getByText('Current', { exact: true })).toBeVisible()
+
+    await window.getByRole('checkbox', {
+      name: 'Attest: Verify delivery risks are represented in the weekly update.'
+    }).click()
+    await expect(window.getByText('1 of 2 attested')).toBeVisible()
+
+    const secondInspection = window.getByText('Confirm scope changes received approval.')
+      .locator('..').locator('..').locator('..')
+    await secondInspection.getByRole('checkbox', { name: 'Issue found' }).click()
+    await secondInspection.getByLabel(
+      'Issue found for Confirm scope changes received approval.'
+    ).fill('Approval record was missing')
+    await secondInspection.getByLabel('Issue follow-up').selectOption('commitment')
+    await secondInspection.getByRole('checkbox', {
+      name: 'Attest: Confirm scope changes received approval.'
+    }).click()
+    await expect(window.getByText('2 of 2 attested')).toBeVisible()
+
+    await window.getByRole('button', { name: 'Edit Weekly delivery inspection' }).click()
+    const edit = window.getByRole('dialog', { name: 'Edit Routine' })
+    await edit.getByRole('button', { name: 'Add inspection' }).click()
+    await edit.getByRole('textbox', { name: 'Inspection 3' })
+      .fill('Verify the retrospective was reviewed.')
+    await edit.getByRole('button', { name: 'Save future template' }).click()
+    await expect(window.getByText('Template v1')).toBeVisible()
+    await expect(window.getByText('Verify the retrospective was reviewed.')).toHaveCount(0)
+
+    const stored = new DatabaseSync(databasePath, { readOnly: true })
+    try {
+      expect(stored.prepare(
+        `SELECT behavior_type, title FROM commitments WHERE id IN (
+           SELECT commitment_id FROM routine_definitions
+         )`
+      ).get()).toMatchObject({
+        behavior_type: 'routine',
+        title: 'Weekly delivery inspection'
+      })
+      expect(stored.prepare(
+        'SELECT current_template_version FROM routine_definitions'
+      ).get()).toMatchObject({ current_template_version: 2 })
+      expect(stored.prepare(
+        `SELECT count(*) AS count FROM routine_review_run_items
+         WHERE resolution <> 'pending'`
+      ).get()).toMatchObject({ count: 2 })
+      expect(stored.prepare(
+        'SELECT description, follow_up_type FROM routine_run_issues'
+      ).get()).toMatchObject({
+        description: 'Approval record was missing',
+        follow_up_type: 'commitment'
+      })
+    } finally {
+      stored.close()
+    }
+
+    await application.close()
+    application = undefined
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    const reloaded = await application.firstWindow()
+    await reloaded.getByRole('button', { name: 'Routines', exact: true }).click()
+    await expect(reloaded.getByText('Weekly delivery inspection')).toBeVisible()
+    await expect(reloaded.getByText('2 of 2 attested')).toBeVisible()
+    await expect(reloaded.getByText('Template v1')).toBeVisible()
+  } finally {
+    await application?.close().catch(() => undefined)
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
 test('opens and closes multiple main windows through the New Window menu', async () => {
   const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-multi-window-e2e-'))
   const databasePath = join(userDataDirectory, 'onmove.sqlite3')

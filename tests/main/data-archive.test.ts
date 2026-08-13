@@ -39,6 +39,23 @@ describe('DataArchiveRepository', () => {
       title: 'Improve ticket quality',
       dueDate: '2026-09-01'
     }).snapshot()
+    const routine = source.domain.routines.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Inspect delivery evidence',
+      cadenceDays: 7,
+      anchorDate: '2026-08-09',
+      checklist: [
+        { inspection: 'Verify delivery risks were represented.' },
+        { inspection: 'Confirm scope changes received approval.' }
+      ]
+    }, new Date('2026-08-09T08:00:00.000Z'))
+    const routineRun = routine.snapshot('2026-08-09').currentRun!
+    source.domain.routines.attestRunItem(routineRun.items[0].id, {
+      resolution: 'attested',
+      issueFound: true,
+      issueDescription: 'Approval evidence was incomplete',
+      issueFollowUpType: 'commitment'
+    }, new Date('2026-08-09T09:00:00.000Z'))
     source.domain.focuses.requireModel(focus.id)
       .pokeReview(new Date('2026-08-07T12:00:00.000Z'))
     source.domain.threads.requireModel(thread.id)
@@ -70,7 +87,7 @@ describe('DataArchiveRepository', () => {
       appVersion: '9.9.9',
       exportedAt: '2026-08-09T12:00:00.000Z'
     })
-    expect(archive.tables.commitment_parent_transitions).toHaveLength(1)
+    expect(archive.tables.commitment_parent_transitions).toHaveLength(2)
     expect(archive.tables.thread_parent_transitions).toHaveLength(1)
 
     const target = createDatabase('archive-target')
@@ -117,6 +134,19 @@ describe('DataArchiveRepository', () => {
       })
     expect(target.domain.commitments.materialize(importedCommitment.id).notes[0].content)
       .toBe('Durable imported note')
+    const importedRoutine = target.domain.routines.list('2026-08-09')[0]
+    expect(importedRoutine).toMatchObject({
+      id: routine.id,
+      type: 'routine',
+      name: 'Inspect delivery evidence',
+      currentRun: {
+        templateVersion: 1,
+        progress: { complete: 1, required: 2 }
+      }
+    })
+    expect(importedRoutine.currentRun!.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ issue: expect.objectContaining({ followUpType: 'commitment' }) })
+    ]))
   })
 
   it('exports rescued Updates and merges them with Updates archived by replacement import', () => {

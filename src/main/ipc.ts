@@ -3,11 +3,13 @@ import {
   IPC_CHANNELS,
   IPC_SYNC_CHANNELS,
   type AddFocusScopeSubjectInput,
+  type AttestRoutineRunItemInput,
   type CommitmentParent,
   type CreateCommitmentInput,
   type CreateFocusInput,
   type CreateItemInput,
   type CreateRelationInput,
+  type CreateRoutineInput,
   type CreateThreadInput,
   type CreateTodoInput,
   type CreateUpdateInput,
@@ -25,6 +27,7 @@ import {
   type UpdateParent,
   type UpdateCommitmentInput,
   type UpdateFocusInput,
+  type UpdateRoutineInput,
   type UpdateThreadInput,
   type UpdateTodoInput
 } from '../shared/contracts'
@@ -212,6 +215,21 @@ export function registerAppIpc(
   )
   ipcMain.handle(IPC_CHANNELS.deleteCommitment, (_event, id: number) =>
     mutation(() => database.domain.commitments.delete(id))
+  )
+  ipcMain.handle(IPC_CHANNELS.listRoutines, () => database.domain.routines.list())
+  ipcMain.handle(IPC_CHANNELS.createRoutine, (_event, input: CreateRoutineInput) =>
+    mutation(() => database.domain.routines.create(input).snapshot())
+  )
+  ipcMain.handle(IPC_CHANNELS.updateRoutine, (_event, id: number, input: UpdateRoutineInput) =>
+    mutation(() => database.domain.routines.update(id, input))
+  )
+  ipcMain.handle(IPC_CHANNELS.deleteRoutine, (_event, id: number) =>
+    mutation(() => database.domain.routines.delete(id))
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.attestRoutineRunItem,
+    (_event, runItemId: number, input: AttestRoutineRunItemInput) =>
+      mutation(() => database.domain.routines.attestRunItem(runItemId, input))
   )
   ipcMain.handle(IPC_CHANNELS.listUpdates, (_event, parent: UpdateParent) => {
     if (parent.type === 'focus') return database.domain.updates.listForFocus(parent.id)

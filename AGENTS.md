@@ -251,6 +251,13 @@ foreground colors and do not rely on color alone to communicate selection or sta
   requests or Commitment ids for open, pin, and completion actions. Successful parent-page
   creation must select the new nested Commitment route without entering the filtered Commitment
   level; creation from an already-filtered level remains in that level.
+- Treat `tracking` and `routine` as separate Commitment behavior adapters. Existing Focus/Thread
+  Commitment collections, health rollups, Update commands, Due, and Review consume tracking records
+  only. The top-level Routines view consumes `RoutineSnapshot` only; do not switch on behavior inside
+  low-level UI receivers.
+- A Routine has no lifecycle status selector and never generates Todos. Render its derived Current,
+  Overdue, or Lapsed state through the shared semantic state-label receiver. Current Run checklist
+  text is read-only; template edits create a future version instead of mutating materialized Runs.
 - Treat due-date presence as the only user-facing Commitment mode. Do not expose an independent
   `ongoing` / `action` selector or label. The generic Commitment type remains `tracking` regardless
   of due date; mirror undated/due-dated compatibility values only inside the private
@@ -423,11 +430,15 @@ foreground colors and do not rely on color alone to communicate selection or sta
   `needsReview` separate from lifecycle status and from all derived review projections.
 - A Commitment must have exactly one Focus or Thread parent. An Update must have exactly one Focus,
   Thread, or Commitment parent. Preserve these SQLite constraints and cascades.
-- Treat Commitment as a generic behavior-discriminated model. `CommitmentSnapshot<TType>` and its
-  creation input currently admit only `type: 'tracking'`; persist that value in constrained
-  `commitment_type` and pass it through renderer, preload, IPC, and repository boundaries. Keep the
-  due-date-derived `action`/`ongoing` compatibility value isolated in `legacy_due_type`; never expose
-  it as the Commitment's type or use it to branch application behavior.
+- Treat Commitment as a generic behavior-discriminated model. `tracking` and `routine` share only
+  the base Focus-or-Thread ownership boundary. Migration 26's constrained `commitment_type` remains
+  tracking compatibility storage; migration 27's constrained `behavior_type` is canonical. Keep the
+  due-derived `action`/`ongoing` compatibility value isolated in `legacy_due_type`; never expose it
+  as the Commitment's type or use it to branch application behavior.
+- Keep Routine recurrence anchored to `anchor_on`; late completion never moves future dates. Every
+  materialized Run stores its template version, inspection text/order/required flags, review window,
+  and Scope/Subject-name snapshot. Run snapshot fields and completed Runs are immutable. Only full
+  resolution of required entries refreshes the practice; issue evidence never changes Routine color.
 - Persist nullable, calendar-validated due dates independently on Focus, Thread, and Commitment.
   Parent dates are advisory planning boundaries, not database constraints: descendants may extend
   beyond them and the renderer owns the direct-parent warning.

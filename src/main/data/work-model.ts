@@ -199,6 +199,9 @@ function normalizeCommitmentType(type: CommitmentType): CommitmentType {
   if (!COMMITMENT_TYPES.includes(type)) {
     throw new ModelValidationError(`unsupported commitment type: ${type}`)
   }
+  if (type !== 'tracking') {
+    throw new ModelValidationError('Routine Commitments must be created through the Routine repository')
+  }
   return type
 }
 
@@ -611,6 +614,7 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
         this.remapOwnedScope('todos', id, sourceScopeId, targetScopeId)
         this.remapOwnedScope('todo_lists', id, sourceScopeId, targetScopeId)
         this.remapReviewPokes(id, sourceScopeId, targetScopeId)
+        this.remapRoutineScopes(id, sourceScopeId, targetScopeId)
       }
 
       if (plan.scopeStrategy === 'copy-custom') {
@@ -796,7 +800,7 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
     const commitmentStates = this.database
       .all<{ id: number }>(
         `SELECT id FROM commitments
-         WHERE thread_id = ? AND status = 'active' ORDER BY id`,
+         WHERE thread_id = ? AND behavior_type = 'tracking' AND status = 'active' ORDER BY id`,
         [id]
       )
       .map(({ id: commitmentId }) =>
@@ -943,8 +947,14 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
        SELECT record.scope_id
        FROM commitment_review_cell_pokes record
        JOIN commitments commitment ON commitment.id = record.commitment_id
-       WHERE commitment.thread_id = ?`,
+       WHERE commitment.thread_id = ?
+       UNION
+       SELECT routine.scope_id
+       FROM routine_definitions routine
+       JOIN commitments commitment ON commitment.id = routine.commitment_id
+       WHERE commitment.thread_id = ? AND routine.scope_id IS NOT NULL`,
       [
+        threadId,
         threadId,
         threadId,
         threadId,
@@ -1070,6 +1080,21 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
       `UPDATE commitment_review_cell_pokes SET scope_id = ?
        WHERE scope_id = ? AND commitment_id IN (
          SELECT id FROM commitments WHERE thread_id = ?
+       )`,
+      [targetScopeId, sourceScopeId, threadId]
+    )
+  }
+
+  private remapRoutineScopes(
+    threadId: number,
+    sourceScopeId: number,
+    targetScopeId: number
+  ): void {
+    this.database.run(
+      `UPDATE routine_definitions
+       SET scope_id = ?
+       WHERE scope_id = ? AND commitment_id IN (
+         SELECT id FROM commitments WHERE thread_id = ? AND behavior_type = 'routine'
        )`,
       [targetScopeId, sourceScopeId, threadId]
     )
@@ -1395,7 +1420,10 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
 
   delete(id: number): boolean {
     assertId(id, 'commitment')
-    return this.database.run('DELETE FROM commitments WHERE id = ?', [id]).changes > 0
+    return this.database.run(
+      "DELETE FROM commitments WHERE id = ? AND behavior_type = 'tracking'",
+      [id]
+    ).changes > 0
   }
 
   statusHistory(id: number): CommitmentStatusTransition[] {
@@ -1448,7 +1476,7 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
       `SELECT id, focus_id, thread_id, commitment_type, legacy_due_type, title, status,
               due_on, cadence_days, review_frequency_days, needs_review,
               sensitive, review_poked_on, created_at, updated_at
-       FROM commitments WHERE id = ?`,
+       FROM commitments WHERE id = ? AND behavior_type = 'tracking'`,
       [id]
     )
     if (!row) throw new ModelNotFoundError('Commitment', id)
@@ -1501,7 +1529,7 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
       `SELECT id, focus_id, thread_id, commitment_type, legacy_due_type, title, status,
               due_on, cadence_days, review_frequency_days, needs_review,
               sensitive, review_poked_on, created_at, updated_at
-       FROM commitments WHERE id = ?`,
+       FROM commitments WHERE id = ? AND behavior_type = 'tracking'`,
       [id]
     )
     if (!row) return null
@@ -1560,7 +1588,7 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
     return {
       id: Number(row.id),
       parent: commitmentParentFromRow(row),
-      type: row.commitment_type as CommitmentType,
+      type: row.commitment_type as 'tracking',
       title: row.title,
       status: row.status as CommitmentStatus,
       state: application.effectiveScopeId === null
@@ -1591,7 +1619,11 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
     assertId(id, column === 'focus_id' ? 'focus' : 'thread')
     const date = normalizeDate(asOf, 'asOf')
     return this.database
-      .all<{ id: number }>(`SELECT id FROM commitments WHERE ${column} = ? ORDER BY id`, [id])
+      .all<{ id: number }>(
+        `SELECT id FROM commitments
+         WHERE ${column} = ? AND behavior_type = 'tracking' ORDER BY id`,
+        [id]
+      )
       .map(({ id: commitmentId }) => this.materialize(Number(commitmentId), date))
   }
 

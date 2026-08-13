@@ -185,6 +185,14 @@ describe('database migrations', () => {
 
     const previous = new DatabaseSync(databasePath)
     previous.exec(`
+      DROP TABLE routine_run_issues;
+      DROP TABLE routine_review_run_items;
+      DROP TABLE routine_review_runs;
+      DROP TABLE routine_template_items;
+      DROP TABLE routine_template_versions;
+      DROP TABLE routine_definitions;
+      ALTER TABLE commitments DROP COLUMN behavior_type;
+      DELETE FROM schema_migrations WHERE version = 27;
       ALTER TABLE commitments DROP COLUMN commitment_type;
       ALTER TABLE commitments RENAME COLUMN legacy_due_type TO commitment_type;
       DELETE FROM schema_migrations WHERE version = 26;
@@ -204,17 +212,19 @@ describe('database migrations', () => {
 
     const raw = new DatabaseSync(databasePath)
     expect(raw.prepare(
-      `SELECT commitment_type, legacy_due_type FROM commitments
+      `SELECT commitment_type, behavior_type, legacy_due_type FROM commitments
        WHERE id = ?`
     ).get(dueDated.id)).toMatchObject({
       commitment_type: 'tracking',
+      behavior_type: 'tracking',
       legacy_due_type: 'action'
     })
     expect(raw.prepare(
-      `SELECT commitment_type, legacy_due_type FROM commitments
+      `SELECT commitment_type, behavior_type, legacy_due_type FROM commitments
        WHERE id = ?`
     ).get(undated.id)).toMatchObject({
       commitment_type: 'tracking',
+      behavior_type: 'tracking',
       legacy_due_type: 'ongoing'
     })
     expect(() => raw.prepare(

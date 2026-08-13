@@ -210,6 +210,19 @@ describe('registerAppIpc', () => {
           })),
           delete: vi.fn(() => true)
         },
+        routines: {
+          list: vi.fn(() => [{ id: 35, type: 'routine', name: 'Inspect delivery' }]),
+          create: vi.fn(() => ({
+            snapshot: () => ({ id: 36, type: 'routine', name: 'Inspect scope' })
+          })),
+          update: vi.fn(() => ({ id: 35, type: 'routine', name: 'Inspect delivery weekly' })),
+          attestRunItem: vi.fn(() => ({
+            id: 35,
+            type: 'routine',
+            currentRun: { progress: { complete: 1, required: 2 } }
+          })),
+          delete: vi.fn(() => true)
+        },
         updates: {
           listForFocus: vi.fn(() => [{ id: 41, observation: 'Focus update' }]),
           listForThread: vi.fn(() => [{ id: 42, observation: 'Thread update' }]),
@@ -487,6 +500,22 @@ describe('registerAppIpc', () => {
       lastReviewDate: '2026-08-10'
     })
     expect(await handlers.get(IPC_CHANNELS.deleteCommitment)?.(undefined, 31)).toBe(true)
+    expect(await handlers.get(IPC_CHANNELS.listRoutines)?.()).toMatchObject([
+      { id: 35, type: 'routine', name: 'Inspect delivery' }
+    ])
+    expect(await handlers.get(IPC_CHANNELS.createRoutine)?.(undefined, {
+      parent: { type: 'focus', id: 12 },
+      name: 'Inspect scope',
+      cadenceDays: 7,
+      checklist: [{ inspection: 'Verify scope.' }]
+    })).toMatchObject({ id: 36, type: 'routine' })
+    expect(await handlers.get(IPC_CHANNELS.updateRoutine)?.(undefined, 35, {
+      name: 'Inspect delivery weekly'
+    })).toMatchObject({ name: 'Inspect delivery weekly' })
+    expect(await handlers.get(IPC_CHANNELS.attestRoutineRunItem)?.(undefined, 91, {
+      resolution: 'attested'
+    })).toMatchObject({ currentRun: { progress: { complete: 1, required: 2 } } })
+    expect(await handlers.get(IPC_CHANNELS.deleteRoutine)?.(undefined, 35)).toBe(true)
     expect(await handlers.get(IPC_CHANNELS.listUpdates)?.(undefined, {
       type: 'commitment',
       id: 31

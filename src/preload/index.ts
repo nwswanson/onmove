@@ -86,6 +86,12 @@ const api: OnMoveApi = {
     pokeCommitmentReview: (id, cell) =>
       ipcRenderer.invoke(IPC_CHANNELS.pokeCommitmentReview, id, cell),
     deleteCommitment: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteCommitment, id),
+    listRoutines: () => ipcRenderer.invoke(IPC_CHANNELS.listRoutines),
+    createRoutine: (input) => ipcRenderer.invoke(IPC_CHANNELS.createRoutine, input),
+    updateRoutine: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateRoutine, id, input),
+    deleteRoutine: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteRoutine, id),
+    attestRoutineRunItem: (runItemId, input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.attestRoutineRunItem, runItemId, input),
     listUpdates: (parent) => ipcRenderer.invoke(IPC_CHANNELS.listUpdates, parent),
     createUpdate: (input) => ipcRenderer.invoke(IPC_CHANNELS.createUpdate, input),
     updateUpdate: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateUpdate, id, input),

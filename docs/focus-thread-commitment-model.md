@@ -292,7 +292,7 @@ todo and does not block its parent from closing.
 | Field | Meaning |
 | --- | --- |
 | `parent` | Exactly one Focus or Thread. |
-| `type` | Durable behavior discriminator. The only current value is `tracking`; the TypeScript snapshot is generic as `CommitmentSnapshot<TType>`. |
+| `type` | Durable behavior discriminator. `tracking` uses the evidence/cadence model in this section; `routine` uses immutable scheduled attestation Runs. |
 | `title` | Required statement of what is expected. |
 | `status` | `active`, `paused`, `done`, or `cancelled`, with transition history. |
 | `dueDate` | Optional due date and the sole user-facing distinction between continuing and finite Commitments. |
@@ -314,7 +314,7 @@ Focus, and a Commitment may extend beyond its direct Focus or Thread parent. The
 main screen compares only the direct parent and presents an accessible warning tooltip; persistence,
 reparenting, and import never clip or reject the child date for this reason.
 
-`tracking` is the first Commitment implementation, not a synonym for due-date presence. Creation
+`tracking` is the evidence-tracking Commitment implementation, not a synonym for due-date presence. Creation
 passes the discriminator through the typed renderer, preload, IPC, and repository boundaries, and
 SQLite persists it in constrained `commitment_type`. The former `action`/`ongoing` column survives
 only as `legacy_due_type` for archive compatibility; it is derived from `dueDate`, never exposed in
@@ -357,9 +357,11 @@ A bounded Commitment therefore has independent evidence and cadence per Subject 
 shared Update stream. Empty cells contribute `none` and use the Commitment creation date as their
 initial cadence baseline.
 
-The current Commitment record can act as a scoped repeated expectation, but the model does not yet
-split a Commitment series from generated one-to-one occurrences. Promisor, beneficiary, recurrence
-triggers, acceptance criteria, and occurrence records are also future extensions.
+The `routine` Commitment implementation deliberately splits a reusable inspection template from
+generated Review Runs. It is neither Update cadence nor recurring Todo generation. Routine Scope,
+anchored scheduling, immutable snapshots, attestations, issues, and derived status are specified in
+[`routine-attestations.md`](routine-attestations.md). Promisor and beneficiary fields remain future
+extensions for tracking Commitments.
 
 ### Update
 

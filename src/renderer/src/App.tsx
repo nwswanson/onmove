@@ -43,6 +43,7 @@ import { SettingsWorkspace } from '@/features/settings/settings-workspace'
 import { TodoWorkspace } from '@/features/todos/todo-workspace'
 import { TagsWorkspace } from '@/features/tags/tags-workspace'
 import { ReviewWorkspace } from '@/features/review/review-workspace'
+import { RoutinesWorkspace } from '@/features/routines/routines-workspace'
 import { DueWorkspace } from '@/features/due/due-workspace'
 import { ArchiveWorkspace } from '@/features/archive/archive-workspace'
 import { UpdateComposerProvider } from '@/features/updates/update-composer'
@@ -122,12 +123,13 @@ interface AppSidebarProps {
   focusItems: readonly SidebarNavigationItemModel[]
   navigationBadges: NavigationBadgeCounts | null
   selectedFocusId: string | null
-  selectedView: 'todos' | 'tags' | 'review' | 'due' | 'archive' | 'focus' | 'settings'
+  selectedView: 'todos' | 'tags' | 'review' | 'routines' | 'due' | 'archive' | 'focus' | 'settings'
   enabled: boolean
   width: number
   onTodos: () => void
   onTags: () => void
   onReview: () => void
+  onRoutines: () => void
   onDue: () => void
   onArchive: () => void
   onSettings: () => void
@@ -146,6 +148,7 @@ function AppSidebar({
   onTodos,
   onTags,
   onReview,
+  onRoutines,
   onDue,
   onArchive,
   onSettings,
@@ -155,7 +158,8 @@ function AppSidebar({
 }: AppSidebarProps): React.JSX.Element {
   const selectedItemId =
     selectedView === 'todos' || selectedView === 'tags' ||
-      selectedView === 'review' || selectedView === 'due' || selectedView === 'archive'
+      selectedView === 'review' || selectedView === 'routines' ||
+      selectedView === 'due' || selectedView === 'archive'
       ? selectedView
       : null
 
@@ -190,6 +194,11 @@ function AppSidebar({
                   : undefined
               },
               {
+                id: 'routines',
+                label: 'Routines',
+                icon: 'routines'
+              },
+              {
                 id: 'due',
                 label: 'Due',
                 icon: 'due',
@@ -210,6 +219,7 @@ function AppSidebar({
             onSelect={(itemId) => {
               if (itemId === 'tags') onTags()
               else if (itemId === 'review') onReview()
+              else if (itemId === 'routines') onRoutines()
               else if (itemId === 'due') onDue()
               else if (itemId === 'archive') onArchive()
               else onTodos()
@@ -305,6 +315,8 @@ export function App(): React.JSX.Element {
       ? 'Archive'
       : application.selectedView === 'due'
       ? 'Due'
+      : application.selectedView === 'routines'
+        ? 'Routines'
       : application.selectedView === 'review'
         ? 'Review'
         : application.selectedView === 'tags'
@@ -446,6 +458,11 @@ export function App(): React.JSX.Element {
               setTagsDestination(null)
               application.goReview()
             }}
+            onRoutines={() => {
+              setFocusDestination(null)
+              setTagsDestination(null)
+              application.goRoutines()
+            }}
             onDue={() => {
               setFocusDestination(null)
               setTagsDestination(null)
@@ -497,6 +514,12 @@ export function App(): React.JSX.Element {
               onReviewChanged={async (focusId) => {
                 await application.refreshFocus(focusId)
               }}
+            />
+          ) : application.selectedView === 'routines' ? (
+            <RoutinesWorkspace
+              contextDrawer={contextDrawer}
+              hideSensitiveContent={application.sensitiveContentHidden}
+              onOpenContext={openWorkContext}
             />
           ) : application.selectedView === 'due' ? (
             <DueWorkspace

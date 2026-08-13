@@ -25,6 +25,12 @@ export const DATA_ARCHIVE_TABLES = [
   'focus_scope_applications',
   'thread_scope_applications',
   'commitment_scope_applications',
+  'routine_definitions',
+  'routine_template_versions',
+  'routine_template_items',
+  'routine_review_runs',
+  'routine_review_run_items',
+  'routine_run_issues',
   'thread_review_cell_pokes',
   'commitment_review_cell_pokes',
   'updates',
@@ -88,7 +94,8 @@ const BOOLEAN_COLUMNS = new Set([
   'sensitive',
   'needs_review',
   'done',
-  'shared_across_subjects'
+  'shared_across_subjects',
+  'required'
 ])
 const INTEGER_COLUMNS = new Set([
   'id',
@@ -118,11 +125,28 @@ const INTEGER_COLUMNS = new Set([
   'description_revision',
   'observation_revision',
   'content_revision',
-  'revision'
+  'revision',
+  'routine_id',
+  'run_id',
+  'run_item_id',
+  'template_version_id',
+  'template_item_id',
+  'current_template_version',
+  'template_version',
+  'version',
+  'position'
 ])
 const TIMESTAMP_COLUMNS = new Set(['created_at', 'updated_at', 'changed_at', 'deleted_at'])
 const OPTIONAL_TIMESTAMP_COLUMNS = new Set(['completed_at'])
-const DATE_COLUMNS = new Set(['recorded_on', 'effective_from', 'reviewed_on'])
+const DATE_COLUMNS = new Set([
+  'recorded_on',
+  'effective_from',
+  'reviewed_on',
+  'anchor_on',
+  'schedule_effective_on',
+  'scheduled_on',
+  'review_window_ends_on'
+])
 const OPTIONAL_DATE_COLUMNS = new Set(['due_on', 'effective_until', 'review_poked_on'])
 
 function quoteIdentifier(value: string): string {
@@ -154,6 +178,12 @@ function validTimestamp(value: unknown): value is string {
   return typeof value === 'string' && !Number.isNaN(Date.parse(value))
 }
 
+function dateAfter(value: string, days: number): string {
+  const date = new Date(`${value}T00:00:00.000Z`)
+  date.setUTCDate(date.getUTCDate() + days)
+  return date.toISOString().slice(0, 10)
+}
+
 function camelCase(column: string): string {
   return column.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase())
 }
@@ -172,10 +202,20 @@ function sqliteValue(column: string, type: string, value: unknown): SqlValue | u
     const integer = finiteInteger(value)
     if (integer === null) return undefined
     if (column === 'sort_key') return Math.max(0, integer)
+    if (column === 'position') return Math.max(0, integer)
     if (column.endsWith('revision')) return Math.max(0, integer)
     if (column.endsWith('_days')) return integer > 0 ? integer : undefined
     if (column === 'id' || column.endsWith('_id')) return integer > 0 ? integer : undefined
     return integer
+  }
+  if (column === 'scope_snapshot_json') {
+    if (Array.isArray(value)) return JSON.stringify(value)
+    if (typeof value !== 'string') return '[]'
+    try {
+      return Array.isArray(JSON.parse(value) as unknown) ? value : '[]'
+    } catch {
+      return '[]'
+    }
   }
   if (column.endsWith('_json')) {
     if (isRecord(value)) return JSON.stringify(value)
@@ -262,7 +302,41 @@ function normalizeRow(
   }
   if (table === 'commitments') {
     setFallback(row, 'commitment_type', 'tracking')
+    setFallback(row, 'behavior_type', 'tracking')
     setFallback(row, 'legacy_due_type', typeof row.due_on === 'string' ? 'action' : 'ongoing')
+  }
+  if (table === 'routine_definitions') {
+    setFallback(row, 'cadence_days', 7)
+    setFallback(row, 'anchor_on', date)
+    setFallback(row, 'schedule_effective_on', row.anchor_on ?? date)
+    setFallback(row, 'current_template_version', 1)
+  }
+  if (table === 'routine_template_versions') {
+    setFallback(row, 'version', 1)
+    setFallback(row, 'effective_at', timestamp)
+  }
+  if (table === 'routine_template_items') {
+    setFallback(row, 'position', Math.max(0, rowNumber - 1))
+    setFallback(row, 'inspection', fallbackLabel)
+    setFallback(row, 'required', 1)
+  }
+  if (table === 'routine_review_runs') {
+    setFallback(row, 'scheduled_on', date)
+    setFallback(row, 'review_window_ends_on', dateAfter(String(row.scheduled_on), 7))
+    setFallback(row, 'template_version', 1)
+    setFallback(row, 'scope_snapshot_json', '[]')
+  }
+  if (table === 'routine_review_run_items') {
+    setFallback(row, 'position', Math.max(0, rowNumber - 1))
+    setFallback(row, 'inspection', fallbackLabel)
+    setFallback(row, 'required', 1)
+    setFallback(row, 'resolution', 'pending')
+    if (row.resolution === 'pending') row.attested_at = null
+    else setFallback(row, 'attested_at', timestamp)
+  }
+  if (table === 'routine_run_issues') {
+    setFallback(row, 'description', '')
+    setFallback(row, 'follow_up_type', 'none')
   }
   if (table === 'todo_sort_placements') setFallback(row, 'sort_key', 0)
 
@@ -274,9 +348,25 @@ function normalizeRow(
   }
   if (table === 'commitments') {
     if (row.commitment_type !== 'tracking') row.commitment_type = 'tracking'
+    if (!['tracking', 'routine'].includes(String(row.behavior_type))) {
+      row.behavior_type = 'tracking'
+    }
     if (!['action', 'ongoing'].includes(String(row.legacy_due_type))) {
       row.legacy_due_type = typeof row.due_on === 'string' ? 'action' : 'ongoing'
     }
+  }
+  if (
+    table === 'routine_review_run_items' &&
+    !['pending', 'attested', 'not_applicable'].includes(String(row.resolution))
+  ) {
+    row.resolution = 'pending'
+    row.attested_at = null
+  }
+  if (
+    table === 'routine_run_issues' &&
+    !['none', 'update', 'commitment', 'move'].includes(String(row.follow_up_type))
+  ) {
+    row.follow_up_type = 'none'
   }
   if (
     (table === 'updates' || table === 'archived_updates') &&

@@ -32,6 +32,7 @@ import { TagRepository } from './tag-model'
 import { ReviewRepository } from './review-model'
 import { DueRepository } from './due-model'
 import { NavigationRepository } from './navigation-model'
+import { RoutineRepository } from './routine-model'
 
 type RelationRecord = RelationSnapshot
 
@@ -548,6 +549,7 @@ export class DomainStore {
   readonly scopeApplications: ScopeApplicationRepository
   readonly threads: ThreadRepository
   readonly commitments: CommitmentRepository
+  readonly routines: RoutineRepository
   readonly updates: UpdateRepository
   readonly archivedUpdates: UpdateArchiveRepository
   readonly todos: TodoRepository
@@ -570,6 +572,7 @@ export class DomainStore {
     this.scopeApplications = new ScopeApplicationRepository(database)
     this.threads = new ThreadRepository(database)
     this.commitments = new CommitmentRepository(database)
+    this.routines = new RoutineRepository(database)
     this.updates = new UpdateRepository(database)
     this.archivedUpdates = new UpdateArchiveRepository(database)
     this.todos = new TodoRepository(database)

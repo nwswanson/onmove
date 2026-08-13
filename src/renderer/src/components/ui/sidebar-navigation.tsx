@@ -5,6 +5,7 @@ import {
   ListChecks,
   PauseCircle,
   Plus,
+  Repeat2,
   Tags
 } from 'lucide-react'
 import { useDroppable } from '@dnd-kit/core'
@@ -26,7 +27,7 @@ export interface SidebarNavigationItemModel {
   id: string
   label: string
   ariaLabel?: string
-  icon?: 'todos' | 'tags' | 'review' | 'due' | 'archive' | 'sunflower' | 'paused'
+  icon?: 'todos' | 'tags' | 'review' | 'routines' | 'due' | 'archive' | 'sunflower' | 'paused'
   sunflower?: SemanticSunflowerModel
   tone?: 'default' | 'muted'
   disabled?: boolean
@@ -108,6 +109,8 @@ function SidebarNavigationRow({
           <Tags aria-hidden="true" />
         ) : item.icon === 'review' ? (
           <ClipboardCheck aria-hidden="true" />
+        ) : item.icon === 'routines' ? (
+          <Repeat2 aria-hidden="true" />
         ) : item.icon === 'due' ? (
           <CalendarClock aria-hidden="true" />
         ) : item.icon === 'archive' ? (

@@ -30,6 +30,9 @@ focus/thread/commitment ── exactly one Scope application
 
 scoped Update ── exactly one Scope + Subject cell
 
+commitment(type=routine) 1 ── n immutable template versions
+routine 1 ── n scheduled Review Runs ── n snapshotted inspections
+
 updates DELETE ── archived_updates                         BEFORE DELETE rescue
 ```
 
@@ -194,13 +197,24 @@ The executable reminder and contextual sorting contract is specified in
 [`todo-model.md`](todo-model.md).
 The internal SQLite recovery policy is specified in
 [`rolling-backups.md`](rolling-backups.md).
+Recurring attestation semantics are specified in
+[`routine-attestations.md`](routine-attestations.md).
 
 Commitments use an explicit behavior discriminator rather than encoding behavior in due-date
-presence. The public model is generic as `CommitmentSnapshot<TType>` and currently constrains
-`TType` to `tracking`. New creation passes `type: 'tracking'` through the renderer, preload, IPC, and
-repository into SQLite's constrained `commitment_type` column. Migration 26 preserves the former
-due-date-derived `action`/`ongoing` value as internal `legacy_due_type`; it remains import-compatible
-but is not part of snapshots or mutations. Due date continues to own finite-work UI behavior.
+presence. The generic family currently contains `tracking` and `routine`. Migration 26's constrained
+`commitment_type` remains compatibility storage for the original tracking implementation;
+migration 27 adds canonical `behavior_type` without rebuilding the heavily referenced base table.
+`CommitmentRepository` admits only tracking records, while `RoutineRepository` admits only Routine
+records. A Routine therefore cannot leak into lifecycle-status, Update-cadence, or due-date contracts
+owned by tracking Commitments. The former due-derived `action`/`ongoing` value remains private
+`legacy_due_type` import compatibility data.
+
+Routine definitions reuse the base Commitment's exclusive Focus-or-Thread ownership, title,
+sensitivity, parent-transition history, and cascade boundary. Dedicated tables own their positive
+cadence, schedule anchor, optional same-Focus Scope, immutable template versions, scheduled Review
+Runs, snapshotted checklist items, attestations, and recorded issues. Routine status has no writable
+lifecycle selector: it is projected solely from full required-item attestation against the anchored
+schedule. Full semantics are in [`routine-attestations.md`](routine-attestations.md).
 
 ## Subjects, Scopes, and exact Update cells
 

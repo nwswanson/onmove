@@ -12,6 +12,7 @@ import type {
   OnMoveApi,
   ReviewQueueItemSnapshot,
   RichTextDocumentSnapshot,
+  RoutineSnapshot,
   SubjectSnapshot,
   ThreadSnapshot,
   TodoOverviewItemSnapshot,
@@ -195,6 +196,64 @@ function reviewItem(
   }
 }
 
+function routine(overrides: Partial<RoutineSnapshot> = {}): RoutineSnapshot {
+  return {
+    id: 301,
+    parent: { type: 'thread', id: 21 },
+    type: 'routine',
+    name: 'Weekly delivery inspection',
+    sensitive: false,
+    cadenceDays: 7,
+    anchorDate: '2026-08-10',
+    scope: null,
+    status: 'yellow',
+    nextReviewDate: '2026-08-10',
+    overdueDays: 2,
+    template: {
+      version: 1,
+      effectiveAt: '2026-08-10T09:00:00.000Z',
+      items: [
+        { id: 401, position: 0, inspection: 'Verify delivery risks were represented.', required: true },
+        { id: 402, position: 1, inspection: 'Confirm scope changes received approval.', required: true }
+      ]
+    },
+    currentRun: {
+      id: 501,
+      scheduledDate: '2026-08-10',
+      reviewWindowEndsDate: '2026-08-17',
+      completionDate: null,
+      completedLate: false,
+      templateVersion: 1,
+      scope: null,
+      progress: { complete: 0, required: 2 },
+      items: [
+        {
+          id: 601,
+          position: 0,
+          inspection: 'Verify delivery risks were represented.',
+          required: true,
+          resolution: 'pending',
+          attestedAt: null,
+          issue: null
+        },
+        {
+          id: 602,
+          position: 1,
+          inspection: 'Confirm scope changes received approval.',
+          required: true,
+          resolution: 'pending',
+          attestedAt: null,
+          issue: null
+        }
+      ]
+    },
+    previousRuns: [],
+    createdAt: '2026-08-10T09:00:00.000Z',
+    updatedAt: '2026-08-10T09:00:00.000Z',
+    ...overrides
+  }
+}
+
 function installApi(
   domainOverrides: Partial<DomainApi> = {},
   apiOverrides: Partial<OnMoveApi> = {}
@@ -277,6 +336,11 @@ function installApi(
     moveCommitment: vi.fn(),
     pokeCommitmentReview: vi.fn(),
     deleteCommitment: vi.fn(),
+    listRoutines: vi.fn().mockResolvedValue([]),
+    createRoutine: vi.fn(),
+    updateRoutine: vi.fn(),
+    deleteRoutine: vi.fn(),
+    attestRoutineRunItem: vi.fn(),
     listUpdates: vi.fn().mockResolvedValue([]),
     createUpdate: vi.fn(),
     updateUpdate: vi.fn(),
@@ -408,6 +472,73 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'New focus' })).toBeEnabled()
     expect(screen.queryByText('Placeholder')).not.toBeInTheDocument()
     expect(screen.queryByText('Overview')).not.toBeInTheDocument()
+  })
+
+  it('attests immutable Routine Runs and versions template edits from the Routines view', async () => {
+    const currentFocus = focus({ id: 1, title: 'Project Atlas' })
+    const currentThread = thread({ id: 21, focusId: 1, title: 'Sprint execution' })
+    const currentRoutine = routine()
+    const attested = routine({
+      currentRun: {
+        ...currentRoutine.currentRun!,
+        progress: { complete: 1, required: 2 },
+        items: currentRoutine.currentRun!.items.map((item, index) => index === 0
+          ? { ...item, resolution: 'attested', attestedAt: '2026-08-12T12:00:00.000Z' }
+          : item)
+      }
+    })
+    const attestRoutineRunItem = vi.fn().mockResolvedValue(attested)
+    const updateRoutine = vi.fn().mockImplementation(async (_id, input) => routine({
+      name: input.name ?? currentRoutine.name,
+      template: {
+        version: 2,
+        effectiveAt: '2026-08-12T12:00:00.000Z',
+        items: input.checklist.map((item: { inspection: string; required?: boolean }, index: number) => ({
+          id: 700 + index,
+          position: index,
+          inspection: item.inspection,
+          required: item.required ?? true
+        }))
+      }
+    }))
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([currentFocus]),
+      listThreads: vi.fn().mockResolvedValue([currentThread]),
+      listRoutines: vi.fn().mockResolvedValue([currentRoutine]),
+      attestRoutineRunItem,
+      updateRoutine
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Routines' }))
+    expect(screen.getByRole('heading', { name: 'Routines' })).toBeVisible()
+    expect(screen.getByText('Weekly delivery inspection')).toBeVisible()
+    expect(screen.getByText('Overdue')).toBeVisible()
+    expect(screen.getByText('0 of 2 attested')).toBeVisible()
+    expect(screen.getByRole('button', { name: /Project Atlas \/ Sprint execution/ })).toBeVisible()
+
+    await user.click(screen.getByRole('checkbox', {
+      name: 'Attest: Verify delivery risks were represented.'
+    }))
+    expect(attestRoutineRunItem).toHaveBeenCalledWith(601, expect.objectContaining({
+      resolution: 'attested'
+    }))
+    expect(await screen.findByText('1 of 2 attested')).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: 'Edit Weekly delivery inspection' }))
+    const dialog = screen.getByRole('dialog', { name: 'Edit Routine' })
+    const name = within(dialog).getByLabelText('Routine name')
+    await user.clear(name)
+    await user.type(name, 'Weekly evidence inspection')
+    await user.click(within(dialog).getByRole('button', { name: 'Save future template' }))
+    expect(updateRoutine).toHaveBeenCalledWith(301, expect.objectContaining({
+      name: 'Weekly evidence inspection',
+      checklist: [
+        expect.objectContaining({ inspection: 'Verify delivery risks were represented.' }),
+        expect.objectContaining({ inspection: 'Confirm scope changes received approval.' })
+      ]
+    }))
   })
 
   it('shows retained Updates read-only and permanently deletes one or all from Archive', async () => {

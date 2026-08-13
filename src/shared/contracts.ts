@@ -46,6 +46,11 @@ export const IPC_CHANNELS = {
   moveCommitment: 'domain:move-commitment',
   pokeCommitmentReview: 'domain:poke-commitment-review',
   deleteCommitment: 'domain:delete-commitment',
+  listRoutines: 'domain:list-routines',
+  createRoutine: 'domain:create-routine',
+  updateRoutine: 'domain:update-routine',
+  deleteRoutine: 'domain:delete-routine',
+  attestRoutineRunItem: 'domain:attest-routine-run-item',
   listUpdates: 'domain:list-updates',
   createUpdate: 'domain:create-update',
   updateUpdate: 'domain:update-update',
@@ -212,7 +217,7 @@ export type HealthState = (typeof HEALTH_STATES)[number]
  * implementation; the generic parameter keeps later types explicit at every
  * repository and IPC boundary without changing the enclosing entity shape.
  */
-export const COMMITMENT_TYPES = ['tracking'] as const
+export const COMMITMENT_TYPES = ['tracking', 'routine'] as const
 export type CommitmentType = (typeof COMMITMENT_TYPES)[number]
 
 export const SCOPE_SOURCE_TYPES = ['explicit', 'derived'] as const
@@ -494,10 +499,10 @@ export type CommitmentParent =
   | { type: 'focus'; id: number }
   | { type: 'thread'; id: number }
 
-export interface CommitmentSnapshot<TType extends CommitmentType = CommitmentType> {
+export interface TrackingCommitmentSnapshot {
   id: number
   parent: CommitmentParent
-  type: TType
+  type: 'tracking'
   title: string
   status: CommitmentStatus
   state: HealthState
@@ -518,9 +523,13 @@ export interface CommitmentSnapshot<TType extends CommitmentType = CommitmentTyp
   updatedAt: string
 }
 
-export interface CreateCommitmentInput<TType extends CommitmentType = CommitmentType> {
+/** Generic Commitment projection; each behavior owns its own receiver contract. */
+export type CommitmentSnapshot<TType extends CommitmentType = 'tracking'> =
+  TType extends 'routine' ? RoutineSnapshot : TrackingCommitmentSnapshot
+
+export interface CreateTrackingCommitmentInput {
   parent: CommitmentParent
-  type: TType
+  type: 'tracking'
   title: string
   status?: CommitmentStatus
   dueDate?: string | null
@@ -529,6 +538,10 @@ export interface CreateCommitmentInput<TType extends CommitmentType = Commitment
   needsReview?: boolean
   sensitive?: boolean
 }
+
+/** Generic creation contract; callers normally use the behavior-specific named API. */
+export type CreateCommitmentInput<TType extends CommitmentType = 'tracking'> =
+  TType extends 'routine' ? CreateRoutineInput : CreateTrackingCommitmentInput
 
 export interface UpdateCommitmentInput {
   title?: string
@@ -567,6 +580,127 @@ export interface MoveCommitmentInput {
   parent: CommitmentParent
   /** Must exactly match the planner's additions when scope widening is required. */
   confirmedScopeSubjectIds?: readonly number[]
+}
+
+export const ROUTINE_STATUSES = ['green', 'yellow', 'red'] as const
+export type RoutineStatus = (typeof ROUTINE_STATUSES)[number]
+
+export const ROUTINE_RUN_ITEM_RESOLUTIONS = [
+  'pending',
+  'attested',
+  'not_applicable'
+] as const
+export type RoutineRunItemResolution = (typeof ROUTINE_RUN_ITEM_RESOLUTIONS)[number]
+
+export const ROUTINE_ISSUE_FOLLOW_UP_TYPES = [
+  'none',
+  'update',
+  'commitment',
+  'move'
+] as const
+export type RoutineIssueFollowUpType = (typeof ROUTINE_ISSUE_FOLLOW_UP_TYPES)[number]
+
+export interface RoutineTemplateItemSnapshot {
+  id: number
+  position: number
+  inspection: string
+  required: boolean
+}
+
+export interface RoutineTemplateSnapshot {
+  version: number
+  effectiveAt: string
+  items: RoutineTemplateItemSnapshot[]
+}
+
+export interface RoutineScopeSnapshot {
+  id: number
+  name: string
+  subjects: Array<{ id: number; name: string }>
+}
+
+export interface RoutineRunIssueSnapshot {
+  id: number
+  description: string
+  followUpType: RoutineIssueFollowUpType
+  createdAt: string
+}
+
+export interface RoutineRunItemSnapshot {
+  id: number
+  position: number
+  inspection: string
+  required: boolean
+  resolution: RoutineRunItemResolution
+  attestedAt: string | null
+  issue: RoutineRunIssueSnapshot | null
+}
+
+export interface RoutineReviewRunSnapshot {
+  id: number
+  scheduledDate: string
+  reviewWindowEndsDate: string
+  completionDate: string | null
+  completedLate: boolean
+  templateVersion: number
+  scope: RoutineScopeSnapshot | null
+  progress: { complete: number; required: number }
+  items: RoutineRunItemSnapshot[]
+}
+
+/**
+ * The Routine implementation of Commitment. Its color describes attestation
+ * timeliness only; issue evidence is intentionally not part of `status`.
+ */
+export interface RoutineSnapshot {
+  id: number
+  parent: CommitmentParent
+  type: 'routine'
+  name: string
+  sensitive: boolean
+  cadenceDays: number
+  anchorDate: string
+  scope: RoutineScopeSnapshot | null
+  status: RoutineStatus
+  nextReviewDate: string
+  overdueDays: number
+  template: RoutineTemplateSnapshot
+  currentRun: RoutineReviewRunSnapshot | null
+  previousRuns: RoutineReviewRunSnapshot[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface RoutineTemplateItemInput {
+  inspection: string
+  required?: boolean
+}
+
+export interface CreateRoutineInput {
+  parent: CommitmentParent
+  name: string
+  cadenceDays: number
+  anchorDate?: string
+  scopeId?: number | null
+  sensitive?: boolean
+  checklist: RoutineTemplateItemInput[]
+}
+
+export interface UpdateRoutineInput {
+  name?: string
+  cadenceDays?: number
+  anchorDate?: string
+  scopeId?: number | null
+  sensitive?: boolean
+  /** Supplying a checklist creates a new immutable template version. */
+  checklist?: RoutineTemplateItemInput[]
+}
+
+export interface AttestRoutineRunItemInput {
+  resolution: RoutineRunItemResolution
+  issueFound?: boolean
+  issueDescription?: string
+  issueFollowUpType?: RoutineIssueFollowUpType
 }
 
 export interface CommitmentParentTransition {
@@ -985,6 +1119,14 @@ export interface DomainApi {
   moveCommitment: (id: number, input: MoveCommitmentInput) => Promise<CommitmentSnapshot>
   pokeCommitmentReview: (id: number, cell?: UpdateScopeCell) => Promise<CommitmentSnapshot>
   deleteCommitment: (id: number) => Promise<boolean>
+  listRoutines: () => Promise<RoutineSnapshot[]>
+  createRoutine: (input: CreateRoutineInput) => Promise<RoutineSnapshot>
+  updateRoutine: (id: number, input: UpdateRoutineInput) => Promise<RoutineSnapshot>
+  deleteRoutine: (id: number) => Promise<boolean>
+  attestRoutineRunItem: (
+    runItemId: number,
+    input: AttestRoutineRunItemInput
+  ) => Promise<RoutineSnapshot>
   listUpdates: (parent: UpdateParent) => Promise<UpdateSnapshot[]>
   createUpdate: (input: CreateUpdateInput) => Promise<UpdateSnapshot>
   updateUpdate: (id: number, input: EditUpdateInput) => Promise<UpdateSnapshot>

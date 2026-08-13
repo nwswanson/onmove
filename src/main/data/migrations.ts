@@ -2554,6 +2554,281 @@ const migrations: readonly Migration[] = [
         `)
       }
     }
+  },
+  {
+    version: 27,
+    name: 'routine_commitments_and_attestation_runs',
+    up(database) {
+      const commitmentColumns = database.all<{ name: string }>(
+        'PRAGMA table_info(commitments)'
+      )
+      if (commitmentColumns.length === 0) return
+      const names = new Set(commitmentColumns.map(({ name }) => name))
+
+      // v26's first type discriminator is constrained to tracking. A separate
+      // behavior discriminator widens the generic family without rebuilding a
+      // table referenced by evidence, notes, Todos, history, and Scope tables.
+      if (!names.has('behavior_type')) {
+        database.exec(`
+          ALTER TABLE commitments
+          ADD COLUMN behavior_type TEXT NOT NULL DEFAULT 'tracking'
+            CHECK (behavior_type IN ('tracking', 'routine'));
+        `)
+      }
+
+      database.exec(`
+        CREATE TABLE routine_definitions (
+          commitment_id INTEGER PRIMARY KEY
+            REFERENCES commitments(id) ON DELETE CASCADE,
+          cadence_days INTEGER NOT NULL CHECK (cadence_days > 0),
+          anchor_on TEXT NOT NULL CHECK (
+            length(anchor_on) = 10 AND anchor_on = date(anchor_on)
+          ),
+          schedule_effective_on TEXT NOT NULL CHECK (
+            length(schedule_effective_on) = 10 AND
+            schedule_effective_on = date(schedule_effective_on)
+          ),
+          scope_id INTEGER REFERENCES scopes(id) ON DELETE SET NULL,
+          current_template_version INTEGER NOT NULL DEFAULT 1
+            CHECK (current_template_version > 0),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT;
+
+        CREATE TABLE routine_template_versions (
+          id INTEGER PRIMARY KEY,
+          routine_id INTEGER NOT NULL
+            REFERENCES routine_definitions(commitment_id) ON DELETE CASCADE,
+          version INTEGER NOT NULL CHECK (version > 0),
+          effective_at TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          UNIQUE (routine_id, version)
+        ) STRICT;
+
+        CREATE TABLE routine_template_items (
+          id INTEGER PRIMARY KEY,
+          template_version_id INTEGER NOT NULL
+            REFERENCES routine_template_versions(id) ON DELETE CASCADE,
+          position INTEGER NOT NULL CHECK (position >= 0),
+          inspection TEXT NOT NULL CHECK (length(trim(inspection)) > 0),
+          required INTEGER NOT NULL DEFAULT 1 CHECK (required IN (0, 1)),
+          UNIQUE (template_version_id, position)
+        ) STRICT;
+
+        CREATE TABLE routine_review_runs (
+          id INTEGER PRIMARY KEY,
+          routine_id INTEGER NOT NULL
+            REFERENCES routine_definitions(commitment_id) ON DELETE CASCADE,
+          scheduled_on TEXT NOT NULL CHECK (
+            length(scheduled_on) = 10 AND scheduled_on = date(scheduled_on)
+          ),
+          review_window_ends_on TEXT NOT NULL CHECK (
+            length(review_window_ends_on) = 10 AND
+            review_window_ends_on = date(review_window_ends_on) AND
+            review_window_ends_on > scheduled_on
+          ),
+          template_version_id INTEGER NOT NULL
+            REFERENCES routine_template_versions(id),
+          template_version INTEGER NOT NULL CHECK (template_version > 0),
+          scope_id INTEGER,
+          scope_name TEXT,
+          scope_snapshot_json TEXT NOT NULL DEFAULT '[]' CHECK (
+            json_valid(scope_snapshot_json) AND
+            json_type(scope_snapshot_json) = 'array'
+          ),
+          completed_at TEXT,
+          created_at TEXT NOT NULL,
+          UNIQUE (routine_id, scheduled_on)
+        ) STRICT;
+
+        CREATE TABLE routine_review_run_items (
+          id INTEGER PRIMARY KEY,
+          run_id INTEGER NOT NULL
+            REFERENCES routine_review_runs(id) ON DELETE CASCADE,
+          template_item_id INTEGER REFERENCES routine_template_items(id) ON DELETE SET NULL,
+          position INTEGER NOT NULL CHECK (position >= 0),
+          inspection TEXT NOT NULL CHECK (length(trim(inspection)) > 0),
+          required INTEGER NOT NULL CHECK (required IN (0, 1)),
+          resolution TEXT NOT NULL DEFAULT 'pending'
+            CHECK (resolution IN ('pending', 'attested', 'not_applicable')),
+          attested_at TEXT,
+          CHECK (
+            (resolution = 'pending' AND attested_at IS NULL) OR
+            (resolution <> 'pending' AND attested_at IS NOT NULL)
+          ),
+          UNIQUE (run_id, position)
+        ) STRICT;
+
+        CREATE TABLE routine_run_issues (
+          id INTEGER PRIMARY KEY,
+          run_item_id INTEGER NOT NULL UNIQUE
+            REFERENCES routine_review_run_items(id) ON DELETE CASCADE,
+          description TEXT NOT NULL DEFAULT '',
+          follow_up_type TEXT NOT NULL DEFAULT 'none'
+            CHECK (follow_up_type IN ('none', 'update', 'commitment', 'move')),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT;
+
+        CREATE INDEX routine_review_runs_routine_schedule_index
+          ON routine_review_runs(routine_id, scheduled_on DESC);
+        CREATE INDEX routine_review_run_items_run_index
+          ON routine_review_run_items(run_id, position);
+
+        CREATE TRIGGER routine_definitions_require_routine_commitment_insert
+        BEFORE INSERT ON routine_definitions
+        WHEN NOT EXISTS (
+          SELECT 1 FROM commitments
+          WHERE id = NEW.commitment_id AND behavior_type = 'routine'
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Routine definition requires a routine Commitment');
+        END;
+
+        CREATE TRIGGER routine_definitions_scope_must_share_focus_insert
+        BEFORE INSERT ON routine_definitions
+        WHEN NEW.scope_id IS NOT NULL AND NOT EXISTS (
+          SELECT 1
+          FROM commitments commitment
+          LEFT JOIN threads thread ON thread.id = commitment.thread_id
+          JOIN scopes scope ON scope.id = NEW.scope_id
+          WHERE commitment.id = NEW.commitment_id
+            AND scope.focus_id = COALESCE(commitment.focus_id, thread.focus_id)
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Routine Scope must belong to its Focus');
+        END;
+
+        CREATE TRIGGER routine_definitions_scope_must_share_focus_update
+        BEFORE UPDATE OF scope_id ON routine_definitions
+        WHEN NEW.scope_id IS NOT NULL AND NOT EXISTS (
+          SELECT 1
+          FROM commitments commitment
+          LEFT JOIN threads thread ON thread.id = commitment.thread_id
+          JOIN scopes scope ON scope.id = NEW.scope_id
+          WHERE commitment.id = NEW.commitment_id
+            AND scope.focus_id = COALESCE(commitment.focus_id, thread.focus_id)
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Routine Scope must belong to its Focus');
+        END;
+
+        CREATE TRIGGER routine_template_versions_are_immutable
+        BEFORE UPDATE ON routine_template_versions
+        BEGIN
+          SELECT RAISE(ABORT, 'Routine template versions are immutable');
+        END;
+
+        CREATE TRIGGER routine_template_versions_delete_only_with_routine
+        BEFORE DELETE ON routine_template_versions
+        WHEN EXISTS (
+          SELECT 1 FROM routine_definitions WHERE commitment_id = OLD.routine_id
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Routine template versions are immutable');
+        END;
+
+        CREATE TRIGGER routine_template_items_are_immutable
+        BEFORE UPDATE ON routine_template_items
+        BEGIN
+          SELECT RAISE(ABORT, 'Routine template items are immutable');
+        END;
+
+        CREATE TRIGGER routine_template_items_delete_only_with_version
+        BEFORE DELETE ON routine_template_items
+        WHEN EXISTS (
+          SELECT 1 FROM routine_template_versions WHERE id = OLD.template_version_id
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Routine template items are immutable');
+        END;
+
+        CREATE TRIGGER routine_runs_keep_schedule_snapshot
+        BEFORE UPDATE OF routine_id, scheduled_on, review_window_ends_on,
+          template_version_id, template_version, scope_id, scope_name, scope_snapshot_json
+        ON routine_review_runs
+        BEGIN
+          SELECT RAISE(ABORT, 'Routine Run snapshots are immutable');
+        END;
+
+        CREATE TRIGGER routine_runs_delete_only_with_routine
+        BEFORE DELETE ON routine_review_runs
+        WHEN EXISTS (
+          SELECT 1 FROM routine_definitions WHERE commitment_id = OLD.routine_id
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Routine Run snapshots are immutable');
+        END;
+
+        CREATE TRIGGER completed_routine_runs_stay_complete
+        BEFORE UPDATE OF completed_at ON routine_review_runs
+        WHEN OLD.completed_at IS NOT NULL AND NEW.completed_at IS NOT OLD.completed_at
+        BEGIN
+          SELECT RAISE(ABORT, 'Completed Routine Runs are immutable');
+        END;
+
+        CREATE TRIGGER routine_run_item_snapshots_are_immutable
+        BEFORE UPDATE OF run_id, template_item_id, position, inspection, required
+        ON routine_review_run_items
+        BEGIN
+          SELECT RAISE(ABORT, 'Routine Run checklist snapshots are immutable');
+        END;
+
+        CREATE TRIGGER routine_run_items_delete_only_with_run
+        BEFORE DELETE ON routine_review_run_items
+        WHEN EXISTS (SELECT 1 FROM routine_review_runs WHERE id = OLD.run_id)
+        BEGIN
+          SELECT RAISE(ABORT, 'Routine Run checklist snapshots are immutable');
+        END;
+
+        CREATE TRIGGER completed_routine_run_items_are_immutable
+        BEFORE UPDATE OF resolution, attested_at ON routine_review_run_items
+        WHEN EXISTS (
+          SELECT 1 FROM routine_review_runs
+          WHERE id = OLD.run_id AND completed_at IS NOT NULL
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Completed Routine Runs are immutable');
+        END;
+
+        CREATE TRIGGER completed_routine_run_issues_are_immutable
+        BEFORE UPDATE ON routine_run_issues
+        WHEN EXISTS (
+          SELECT 1
+          FROM routine_review_run_items item
+          JOIN routine_review_runs run ON run.id = item.run_id
+          WHERE item.id = OLD.run_item_id AND run.completed_at IS NOT NULL
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Completed Routine Run issues are immutable');
+        END;
+
+
+        CREATE TRIGGER completed_routine_run_issues_cannot_be_added
+        BEFORE INSERT ON routine_run_issues
+        WHEN EXISTS (
+          SELECT 1
+          FROM routine_review_run_items item
+          JOIN routine_review_runs run ON run.id = item.run_id
+          WHERE item.id = NEW.run_item_id AND run.completed_at IS NOT NULL
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Completed Routine Run issues are immutable');
+        END;
+
+        CREATE TRIGGER completed_routine_run_issues_cannot_be_deleted
+        BEFORE DELETE ON routine_run_issues
+        WHEN EXISTS (
+          SELECT 1
+          FROM routine_review_run_items item
+          JOIN routine_review_runs run ON run.id = item.run_id
+          WHERE item.id = OLD.run_item_id AND run.completed_at IS NOT NULL
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Completed Routine Run issues are immutable');
+        END;
+      `)
+    }
   }
 ]
 
