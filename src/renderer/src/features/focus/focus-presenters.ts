@@ -34,7 +34,6 @@ import type { WorkspaceTabBarModel } from '@/components/ui/workspace-tab-bar'
 import {
   buildCommitmentListModel,
   commitmentCompletionModel,
-  legacyCommitmentTypeForDueDate,
   type CommitmentListModel
 } from '@/features/focus/commitment-list-model'
 import { healthStateLabel } from '@/features/shared/state-presenters'
@@ -771,7 +770,6 @@ export function commitmentDrawerAdapter({
           return onSave({
             title: textValue(values, 'title'),
             dueDate,
-            type: legacyCommitmentTypeForDueDate(dueDate),
             reviewFrequencyDays: positiveDaysValue(values, 'review-frequency')
           })
         }
@@ -804,7 +802,6 @@ export function commitmentDrawerAdapter({
             return onSave({
               title: textValue(values, 'title'),
               dueDate,
-              type: legacyCommitmentTypeForDueDate(dueDate),
               reviewFrequencyDays: positiveDaysValue(values, 'review-frequency'),
               needsReview: booleanValue(values, 'needs-review'),
               sensitive: booleanValue(values, 'sensitive')

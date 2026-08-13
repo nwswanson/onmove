@@ -35,7 +35,7 @@ describe('DataArchiveRepository', () => {
     }).snapshot()
     const commitment = source.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'action',
+      type: 'tracking',
       title: 'Improve ticket quality',
       dueDate: '2026-09-01'
     }).snapshot()
@@ -99,7 +99,7 @@ describe('DataArchiveRepository', () => {
     const importedCommitment = target.domain.commitments.listForThread(importedThread.id)[0]
     expect(importedCommitment).toMatchObject({
       title: 'Improve ticket quality',
-      type: 'action',
+      type: 'tracking',
       dueDate: '2026-09-01',
       state: 'green',
       lastReviewDate: '2026-08-10',
@@ -261,7 +261,9 @@ describe('DataArchiveRepository', () => {
         commitments: [{
           id: 30,
           threadId: 20,
-          title: 'Older commitment'
+          commitmentType: 'action',
+          title: 'Older commitment',
+          dueOn: '2026-09-15'
         }],
         todos: [{
           id: 40,
@@ -288,7 +290,12 @@ describe('DataArchiveRepository', () => {
     expect(thread).toMatchObject({ id: 20, title: 'Older thread', reviewFrequencyDays: 7 })
     expect(thread.notes).toHaveLength(1)
     const commitment = target.domain.commitments.listForThread(thread.id)[0]
-    expect(commitment).toMatchObject({ id: 30, title: 'Older commitment', type: 'ongoing' })
+    expect(commitment).toMatchObject({
+      id: 30,
+      title: 'Older commitment',
+      type: 'tracking',
+      dueDate: '2026-09-15'
+    })
     expect(commitment.notes).toHaveLength(1)
     expect(target.domain.todos.find(40)).toMatchObject({
       name: 'Older completed Todo',

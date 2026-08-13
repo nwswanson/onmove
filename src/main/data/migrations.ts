@@ -2520,6 +2520,40 @@ const migrations: readonly Migration[] = [
         `)
       }
     }
+  },
+  {
+    version: 26,
+    name: 'generic_commitment_type',
+    up(database) {
+      const commitmentColumns = database.all<{ name: string }>(
+        'PRAGMA table_info(commitments)'
+      )
+      if (commitmentColumns.length === 0) return
+      const names = new Set(commitmentColumns.map(({ name }) => name))
+
+      // v25 and earlier used `commitment_type` for a due-date-derived
+      // action/ongoing compatibility value. Preserve it under an explicitly
+      // legacy name, then give the canonical column to the real generic type.
+      if (names.has('commitment_type') && !names.has('legacy_due_type')) {
+        database.exec('ALTER TABLE commitments RENAME COLUMN commitment_type TO legacy_due_type;')
+        names.delete('commitment_type')
+        names.add('legacy_due_type')
+      }
+      if (!names.has('legacy_due_type')) {
+        database.exec(`
+          ALTER TABLE commitments
+          ADD COLUMN legacy_due_type TEXT NOT NULL DEFAULT 'ongoing'
+            CHECK (legacy_due_type IN ('action', 'ongoing'));
+        `)
+      }
+      if (!names.has('commitment_type')) {
+        database.exec(`
+          ALTER TABLE commitments
+          ADD COLUMN commitment_type TEXT NOT NULL DEFAULT 'tracking'
+            CHECK (commitment_type IN ('tracking'));
+        `)
+      }
+    }
   }
 ]
 

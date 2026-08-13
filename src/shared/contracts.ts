@@ -207,7 +207,12 @@ export type CommitmentStatus = FocusStatus
 export const HEALTH_STATES = ['red', 'yellow', 'green', 'none'] as const
 export type HealthState = (typeof HEALTH_STATES)[number]
 
-export const COMMITMENT_TYPES = ['action', 'ongoing'] as const
+/**
+ * Durable Commitment behavior discriminators. `tracking` is the first
+ * implementation; the generic parameter keeps later types explicit at every
+ * repository and IPC boundary without changing the enclosing entity shape.
+ */
+export const COMMITMENT_TYPES = ['tracking'] as const
 export type CommitmentType = (typeof COMMITMENT_TYPES)[number]
 
 export const SCOPE_SOURCE_TYPES = ['explicit', 'derived'] as const
@@ -489,11 +494,10 @@ export type CommitmentParent =
   | { type: 'focus'; id: number }
   | { type: 'thread'; id: number }
 
-export interface CommitmentSnapshot {
+export interface CommitmentSnapshot<TType extends CommitmentType = CommitmentType> {
   id: number
   parent: CommitmentParent
-  /** Legacy storage compatibility; user-facing behavior is derived from `dueDate`. */
-  type: CommitmentType
+  type: TType
   title: string
   status: CommitmentStatus
   state: HealthState
@@ -514,10 +518,9 @@ export interface CommitmentSnapshot {
   updatedAt: string
 }
 
-export interface CreateCommitmentInput {
+export interface CreateCommitmentInput<TType extends CommitmentType = CommitmentType> {
   parent: CommitmentParent
-  /** Legacy storage compatibility; callers derive this from `dueDate`. */
-  type: CommitmentType
+  type: TType
   title: string
   status?: CommitmentStatus
   dueDate?: string | null
@@ -528,8 +531,6 @@ export interface CreateCommitmentInput {
 }
 
 export interface UpdateCommitmentInput {
-  /** Legacy storage compatibility; callers derive this from `dueDate`. */
-  type?: CommitmentType
   title?: string
   status?: CommitmentStatus
   dueDate?: string | null

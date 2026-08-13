@@ -34,19 +34,19 @@ describe('Review model', () => {
     )
     const overall = database!.domain.commitments.create({
       parent: { type: 'focus', id: focus.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Keep sponsors aligned',
       cadenceDays: 7
     }, new Date('2026-01-01T12:00:00.000Z'))
     const threaded = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve ticket quality',
       cadenceDays: 7
     }, new Date('2026-01-01T12:00:00.000Z'))
     const unscheduled = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Unscheduled expectation'
     })
 
@@ -102,7 +102,7 @@ describe('Review model', () => {
     }, new Date('2026-01-01T12:00:00.000Z'))
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Hold a substantive career conversation',
       cadenceDays: 7
     }, new Date('2026-01-01T12:00:00.000Z'))
@@ -191,7 +191,7 @@ describe('Review model', () => {
     }, new Date('2026-01-01T12:00:00.000Z'))
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Watch the near-term risk',
       reviewFrequencyDays: 3
     }, new Date('2026-01-01T12:00:00.000Z'))
@@ -228,7 +228,7 @@ describe('Review model', () => {
     })
     const hiddenCommitment = database!.domain.commitments.create({
       parent: { type: 'focus', id: pausedFocus.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Hidden cadence',
       cadenceDays: 1
     }, new Date('2026-01-01T12:00:00.000Z'))
@@ -238,7 +238,7 @@ describe('Review model', () => {
     })
     const visibleCommitment = database!.domain.commitments.create({
       parent: { type: 'focus', id: activeFocus.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Visible cadence',
       cadenceDays: 1
     }, new Date('2026-01-01T12:00:00.000Z'))

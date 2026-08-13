@@ -67,6 +67,7 @@ interface CommitmentRow {
   focus_id: number | null
   thread_id: number | null
   commitment_type: string
+  legacy_due_type: string
   title: string
   status: string
   due_on: string | null
@@ -1177,13 +1178,14 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
     const commitmentId = this.database.transaction(() => {
       const result = this.database.run(
         `INSERT INTO commitments (
-           focus_id, thread_id, commitment_type, title, status, due_on,
+          focus_id, thread_id, commitment_type, legacy_due_type, title, status, due_on,
            cadence_days, review_frequency_days, needs_review, sensitive, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           focusId,
           threadId,
           normalizeCommitmentType(input.type),
+          input.dueDate == null ? 'ongoing' : 'action',
           normalizeTitle(input.title, 'commitment'),
           normalizeStatus(input.status),
           normalizeOptionalDate(input.dueDate, 'dueDate'),
@@ -1224,19 +1226,17 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
     const dueDate = input.dueDate === undefined
       ? current.dueDate
       : normalizeOptionalDate(input.dueDate, 'dueDate')
-    // `commitment_type` remains for archive/schema compatibility. New UI
-    // behavior is defined solely by due-date presence; remove this mirrored
-    // write when a future migration drops the legacy column and contract field.
-    const legacyType = input.dueDate === undefined
-      ? (input.type === undefined ? current.type : normalizeCommitmentType(input.type))
-      : (dueDate === null ? 'ongoing' : 'action')
+    // The former action/ongoing distinction is isolated for archive/schema
+    // compatibility. User-facing behavior is defined solely by due-date
+    // presence and the generic Commitment type remains immutable.
+    const legacyDueType = dueDate === null ? 'ongoing' : 'action'
     this.database.run(
       `UPDATE commitments
-       SET commitment_type = ?, title = ?, status = ?, due_on = ?, cadence_days = ?,
+       SET legacy_due_type = ?, title = ?, status = ?, due_on = ?, cadence_days = ?,
            review_frequency_days = ?, needs_review = ?, sensitive = ?, updated_at = ?
       WHERE id = ?`,
       [
-        legacyType,
+        legacyDueType,
         input.title === undefined ? current.title : normalizeTitle(input.title, 'commitment'),
         input.status === undefined ? current.status : normalizeStatus(input.status),
         dueDate,
@@ -1445,7 +1445,7 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
   scopeMatrix(id: number, asOf = today()): CommitmentScopeCellSnapshot[] {
     const date = normalizeDate(asOf, 'asOf')
     const row = this.database.get<CommitmentRow>(
-      `SELECT id, focus_id, thread_id, commitment_type, title, status,
+      `SELECT id, focus_id, thread_id, commitment_type, legacy_due_type, title, status,
               due_on, cadence_days, review_frequency_days, needs_review,
               sensitive, review_poked_on, created_at, updated_at
        FROM commitments WHERE id = ?`,
@@ -1498,7 +1498,7 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
   private materializeOrNull(id: number, asOf: string): CommitmentRecord | null {
     assertId(id, 'commitment')
     const row = this.database.get<CommitmentRow>(
-      `SELECT id, focus_id, thread_id, commitment_type, title, status,
+      `SELECT id, focus_id, thread_id, commitment_type, legacy_due_type, title, status,
               due_on, cadence_days, review_frequency_days, needs_review,
               sensitive, review_poked_on, created_at, updated_at
        FROM commitments WHERE id = ?`,

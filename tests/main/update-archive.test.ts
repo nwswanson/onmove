@@ -77,7 +77,7 @@ describe('UpdateArchiveRepository', () => {
     }
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve ticket quality'
     })
     const updates = [

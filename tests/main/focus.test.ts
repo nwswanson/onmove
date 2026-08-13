@@ -197,7 +197,7 @@ describe('Focus models', () => {
     })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'focus', id: focus.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Align sponsors'
     })
 

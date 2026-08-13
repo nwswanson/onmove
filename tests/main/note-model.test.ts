@@ -31,7 +31,7 @@ describe('Note and durable rich-text models', () => {
     })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve ticket quality'
     })
 
@@ -139,12 +139,12 @@ describe('Note and durable rich-text models', () => {
     })
     const threadedCommitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve ticket quality'
     })
     const overallCommitment = database!.domain.commitments.create({
       parent: { type: 'focus', id: focus.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Keep sponsors aligned'
     })
 

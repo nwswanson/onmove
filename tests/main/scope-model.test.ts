@@ -113,7 +113,7 @@ describe('Subject, Scope, and scoped Update models', () => {
     })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Hold a career conversation'
     })
     database!.domain.updates.create({
@@ -250,7 +250,7 @@ describe('Subject, Scope, and scoped Update models', () => {
     })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: inheritedThread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Discuss career direction'
     })
     expect(database!.domain.scopeApplications.get({
@@ -364,7 +364,7 @@ describe('Subject, Scope, and scoped Update models', () => {
     )
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Hold a substantive career conversation'
     })
     const alexReview = database!.domain.updates.create({
@@ -450,12 +450,12 @@ describe('Subject, Scope, and scoped Update models', () => {
     })
     const childCommitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Hold career conversations'
     })
     const directCommitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Review growth plans'
     })
     const threadUpdate = database!.domain.updates.create({
@@ -520,7 +520,7 @@ describe('Subject, Scope, and scoped Update models', () => {
     })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Hold a career conversation'
     })
 
@@ -556,7 +556,7 @@ describe('Subject, Scope, and scoped Update models', () => {
 
     const openCommitment = database!.domain.commitments.create({
       parent: { type: 'focus', id: focus.id },
-      type: 'action',
+      type: 'tracking',
       title: 'Obtain executive approval'
     })
     expect(() => database!.domain.updates.create({
@@ -599,7 +599,7 @@ describe('Subject, Scope, and scoped Update models', () => {
 
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Subject-specific work'
     }, now)
     expect(() => database!.domain.updates.create({
@@ -633,7 +633,7 @@ describe('Subject, Scope, and scoped Update models', () => {
     const commitment = database!.domain.commitments.create(
       {
         parent: { type: 'thread', id: thread.id },
-        type: 'ongoing',
+        type: 'tracking',
         title: 'Hold substantive one-on-ones',
         cadenceDays: 7
       },
@@ -701,7 +701,7 @@ describe('Subject, Scope, and scoped Update models', () => {
     }, now)
     const inherited = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve ticket quality'
     }, now)
     database!.domain.updates.create({
@@ -948,7 +948,7 @@ describe('Subject, Scope, and scoped Update models', () => {
     })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Discuss career direction'
     })
     const update = database!.domain.updates.create({
@@ -1224,12 +1224,12 @@ describe('Subject, Scope, and scoped Update models', () => {
     }, now)
     const firstCommitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve ticket quality'
     }, now)
     const secondCommitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Keep refinement healthy'
     }, now)
 

@@ -80,46 +80,46 @@ describe('Thread, Commitment, and Update models', () => {
     expect(() => thread.update({ dueDate: '2026-02-30' })).toThrow(ModelValidationError)
   })
 
-  it('parents commitments to exactly one focus or thread and supports both commitment types', () => {
+  it('parents generic tracking Commitments to exactly one Focus or Thread', () => {
     const focus = database!.domain.focuses.create({ title: 'Project execution' })
     const thread = database!.domain.threads.create({
       focusId: focus.id,
       title: 'Sprint execution',
       reviewFrequencyDays: 7
     })
-    const action = database!.domain.commitments.create({
+    const dueDated = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'action',
+      type: 'tracking',
       title: 'Improve ticket quality',
       dueDate: '2026-02-15'
     })
-    const ongoing = database!.domain.commitments.create({
+    const undated = database!.domain.commitments.create({
       parent: { type: 'focus', id: focus.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Weekly stakeholder alignment',
       cadenceDays: 7
     })
 
-    expect(action.snapshot('2026-02-01')).toMatchObject({
+    expect(dueDated.snapshot('2026-02-01')).toMatchObject({
       parent: { type: 'thread', id: thread.id },
-      type: 'action',
+      type: 'tracking',
       dueDate: '2026-02-15',
       state: 'none'
     })
-    expect(ongoing.snapshot('2026-02-01')).toMatchObject({
+    expect(undated.snapshot('2026-02-01')).toMatchObject({
       parent: { type: 'focus', id: focus.id },
-      type: 'ongoing',
+      type: 'tracking',
       cadenceDays: 7
     })
     expect(database!.domain.commitments.listForThread(thread.id)).toHaveLength(1)
     expect(database!.domain.commitments.listForFocus(focus.id)).toHaveLength(1)
   })
 
-  it('mirrors the legacy commitment type whenever due-date presence changes', () => {
+  it('keeps generic type stable while isolating the legacy due-date compatibility value', () => {
     const focus = database!.domain.focuses.create({ title: 'Project execution' })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'focus', id: focus.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Publish the launch plan'
     })
 
@@ -128,7 +128,14 @@ describe('Thread, Commitment, and Update models', () => {
     })
     expect(dueDated).toMatchObject({
       dueDate: '2026-09-15',
-      type: 'action'
+      type: 'tracking'
+    })
+    const raw = new DatabaseSync(databasePath)
+    expect(raw.prepare(
+      'SELECT commitment_type, legacy_due_type FROM commitments WHERE id = ?'
+    ).get(commitment.id)).toMatchObject({
+      commitment_type: 'tracking',
+      legacy_due_type: 'action'
     })
 
     const undated = database!.domain.commitments.update(commitment.id, {
@@ -136,8 +143,15 @@ describe('Thread, Commitment, and Update models', () => {
     })
     expect(undated).toMatchObject({
       dueDate: null,
-      type: 'ongoing'
+      type: 'tracking'
     })
+    expect(raw.prepare(
+      'SELECT commitment_type, legacy_due_type FROM commitments WHERE id = ?'
+    ).get(commitment.id)).toMatchObject({
+      commitment_type: 'tracking',
+      legacy_due_type: 'ongoing'
+    })
+    raw.close()
   })
 
   it('moves a Commitment subtree between compatible inherited Threads without scope mutation', () => {
@@ -158,7 +172,7 @@ describe('Thread, Commitment, and Update models', () => {
     })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: source.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Keep the rollout healthy'
     })
 
@@ -213,7 +227,7 @@ describe('Thread, Commitment, and Update models', () => {
     }, now)
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Keep ticket quality high'
     }, now)
     const directUpdate = database!.domain.updates.create({
@@ -372,7 +386,7 @@ describe('Thread, Commitment, and Update models', () => {
     })
     const child = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Keep child identity'
     })
 
@@ -501,7 +515,7 @@ describe('Thread, Commitment, and Update models', () => {
     const subject = sourceScope.subjects[0]
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: source.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve ticket quality'
     })
     const update = database!.domain.updates.create({
@@ -578,7 +592,7 @@ describe('Thread, Commitment, and Update models', () => {
     const partner = sourceScope.subjects.find(({ name }) => name === 'Partner Team')!
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: source.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Partner readiness'
     })
 
@@ -606,7 +620,7 @@ describe('Thread, Commitment, and Update models', () => {
     })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve ticket quality'
     })
 
@@ -640,7 +654,7 @@ describe('Thread, Commitment, and Update models', () => {
     const focus = database!.domain.focuses.create({ title: 'Project execution' })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'focus', id: focus.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve ticket quality'
     })
     const update = database!.domain.updates.create({
@@ -677,7 +691,7 @@ describe('Thread, Commitment, and Update models', () => {
     })
     const nestedCommitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve ticket quality'
     })
     const nestedUpdate = database!.domain.updates.create({
@@ -692,7 +706,7 @@ describe('Thread, Commitment, and Update models', () => {
     })
     const focusCommitment = database!.domain.commitments.create({
       parent: { type: 'focus', id: focus.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Align sponsors'
     })
     const focusCommitmentUpdate = database!.domain.updates.create({
@@ -730,7 +744,7 @@ describe('Thread, Commitment, and Update models', () => {
 
     const quality = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve ticket quality'
     })
     expect(thread.snapshot('2026-01-01').health).toBe('none')
@@ -744,7 +758,7 @@ describe('Thread, Commitment, and Update models', () => {
 
     const refinement = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Weekly refinement'
     })
     database!.domain.updates.create({
@@ -757,7 +771,7 @@ describe('Thread, Commitment, and Update models', () => {
 
     const blocker = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'action',
+      type: 'tracking',
       title: 'Remove test environment blocker'
     })
     database!.domain.updates.create({
@@ -778,7 +792,7 @@ describe('Thread, Commitment, and Update models', () => {
     const focus = database!.domain.focuses.create({ title: 'Project execution' })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'focus', id: focus.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Maintain project clarity'
     })
     database!.domain.updates.create({
@@ -827,7 +841,7 @@ describe('Thread, Commitment, and Update models', () => {
     })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve ticket quality'
     })
     database!.domain.updates.create({
@@ -852,7 +866,7 @@ describe('Thread, Commitment, and Update models', () => {
     )
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve ticket quality'
     })
     database!.domain.updates.create({
@@ -914,7 +928,7 @@ describe('Thread, Commitment, and Update models', () => {
     }, new Date('2026-01-01T12:00:00.000Z'))
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Watch near-term risk',
       cadenceDays: 14,
       reviewFrequencyDays: 3
@@ -955,7 +969,7 @@ describe('Thread, Commitment, and Update models', () => {
     const commitment = database!.domain.commitments.create(
       {
         parent: { type: 'thread', id: thread.id },
-        type: 'ongoing',
+        type: 'tracking',
         title: 'Improve ticket quality',
         cadenceDays: 7
       },
@@ -1019,7 +1033,7 @@ describe('Thread, Commitment, and Update models', () => {
     const commitment = database!.domain.commitments.create(
       {
         parent: { type: 'focus', id: focus.id },
-        type: 'ongoing',
+        type: 'tracking',
         title: 'Weekly refinement',
         cadenceDays: 7
       },
@@ -1071,7 +1085,7 @@ describe('Thread, Commitment, and Update models', () => {
     })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'action',
+      type: 'tracking',
       title: 'Improve ticket quality'
     })
 
@@ -1116,7 +1130,7 @@ describe('Thread, Commitment, and Update models', () => {
     expect(() =>
       database!.domain.commitments.create({
         parent: { type: 'focus', id: focus.id },
-        type: 'ongoing',
+        type: 'tracking',
         title: 'Bad cadence',
         cadenceDays: -1
       })
@@ -1124,7 +1138,14 @@ describe('Thread, Commitment, and Update models', () => {
     expect(() =>
       database!.domain.commitments.create({
         parent: { type: 'focus', id: focus.id },
-        type: 'ongoing',
+        type: 'future-type' as never,
+        title: 'Unknown behavior family'
+      })
+    ).toThrow(ModelValidationError)
+    expect(() =>
+      database!.domain.commitments.create({
+        parent: { type: 'focus', id: focus.id },
+        type: 'tracking',
         title: 'Bad review frequency',
         reviewFrequencyDays: 0
       })
@@ -1132,7 +1153,7 @@ describe('Thread, Commitment, and Update models', () => {
     expect(() =>
       database!.domain.commitments.create({
         parent: { type: 'focus', id: focus.id },
-        type: 'ongoing',
+        type: 'tracking',
         title: 'Bad review flag',
         needsReview: 'yes' as never
       })
@@ -1140,7 +1161,7 @@ describe('Thread, Commitment, and Update models', () => {
     expect(() =>
       database!.domain.commitments.create({
         parent: { type: 'focus', id: focus.id },
-        type: 'action',
+        type: 'tracking',
         title: 'Bad date',
         dueDate: '2026-02-30'
       })
@@ -1171,7 +1192,7 @@ describe('Thread, Commitment, and Update models', () => {
     const focus = database!.domain.focuses.create({ title: 'Project execution' })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'focus', id: focus.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Keep sponsors aligned'
     })
 
@@ -1204,7 +1225,7 @@ describe('Thread, Commitment, and Update models', () => {
         .prepare(
           `INSERT INTO commitments (
              focus_id, thread_id, commitment_type, title, status, created_at, updated_at
-           ) VALUES (?, ?, 'action', 'Invalid', 'active', ?, ?)`
+           ) VALUES (?, ?, 'tracking', 'Invalid', 'active', ?, ?)`
         )
         .run(focus.id, thread.id, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
     ).toThrow()
@@ -1229,12 +1250,12 @@ describe('Thread, Commitment, and Update models', () => {
     })
     const threadCommitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'action',
+      type: 'tracking',
       title: 'Improve ticket quality'
     })
     const focusCommitment = database!.domain.commitments.create({
       parent: { type: 'focus', id: focus.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Stakeholder alignment'
     })
     database!.domain.updates.create({
@@ -1276,7 +1297,7 @@ describe('Thread, Commitment, and Update models', () => {
     })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve ticket quality',
       cadenceDays: 7
     })
@@ -1322,7 +1343,7 @@ describe('Thread, Commitment, and Update models', () => {
     })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Complete diligence',
       sensitive: true
     })

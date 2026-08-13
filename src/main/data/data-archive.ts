@@ -229,7 +229,18 @@ function normalizeRow(
     if (!columnSet.has(key) && !columnSet.has(snakeKey)) ignoredFields.add(`${table}.${key}`)
   }
   for (const column of columns) {
-    const value = sqliteValue(column.name, column.type, sourceValue(source, column.name))
+    const archivedCommitmentType = table === 'commitments'
+      ? sourceValue(source, 'commitment_type')
+      : undefined
+    const sourceColumnValue = table === 'commitments' && column.name === 'legacy_due_type' &&
+      sourceValue(source, 'legacy_due_type') === undefined &&
+      ['action', 'ongoing'].includes(String(archivedCommitmentType))
+      ? archivedCommitmentType
+      : table === 'commitments' && column.name === 'commitment_type' &&
+        ['action', 'ongoing'].includes(String(archivedCommitmentType))
+        ? 'tracking'
+        : sourceValue(source, column.name)
+    const value = sqliteValue(column.name, column.type, sourceColumnValue)
     if (value !== undefined) row[column.name] = value
   }
 
@@ -249,7 +260,10 @@ function normalizeRow(
   if (table === 'threads' || table === 'commitments') {
     setFallback(row, 'review_frequency_days', 7)
   }
-  if (table === 'commitments') setFallback(row, 'commitment_type', 'ongoing')
+  if (table === 'commitments') {
+    setFallback(row, 'commitment_type', 'tracking')
+    setFallback(row, 'legacy_due_type', typeof row.due_on === 'string' ? 'action' : 'ongoing')
+  }
   if (table === 'todo_sort_placements') setFallback(row, 'sort_key', 0)
 
   if (table === 'focuses' && row.kind !== 'generic') row.kind = 'generic'
@@ -258,8 +272,11 @@ function normalizeRow(
       row.status = 'active'
     }
   }
-  if (table === 'commitments' && !['action', 'ongoing'].includes(String(row.commitment_type))) {
-    row.commitment_type = 'ongoing'
+  if (table === 'commitments') {
+    if (row.commitment_type !== 'tracking') row.commitment_type = 'tracking'
+    if (!['action', 'ongoing'].includes(String(row.legacy_due_type))) {
+      row.legacy_due_type = typeof row.due_on === 'string' ? 'action' : 'ongoing'
+    }
   }
   if (
     (table === 'updates' || table === 'archived_updates') &&

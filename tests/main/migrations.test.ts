@@ -118,7 +118,7 @@ describe('database migrations', () => {
     })
     const commitment = database.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Reviewable commitment'
     })
     database.close()
@@ -144,7 +144,7 @@ describe('database migrations', () => {
     const focus = current.domain.focuses.create({ title: 'Legacy schedule' })
     const commitment = current.domain.commitments.create({
       parent: { type: 'focus', id: focus.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Carry the existing cadence forward',
       cadenceDays: 14
     })
@@ -167,6 +167,62 @@ describe('database migrations', () => {
     migrated.close()
   })
 
+  it('promotes tracking to the generic Commitment type without losing legacy due semantics', () => {
+    const current = new AppDatabase(databasePath)
+    const focus = current.domain.focuses.create({ title: 'Typed commitments' })
+    const dueDated = current.domain.commitments.create({
+      parent: { type: 'focus', id: focus.id },
+      type: 'tracking',
+      title: 'Ship the launch',
+      dueDate: '2026-09-15'
+    })
+    const undated = current.domain.commitments.create({
+      parent: { type: 'focus', id: focus.id },
+      type: 'tracking',
+      title: 'Maintain launch health'
+    })
+    current.close()
+
+    const previous = new DatabaseSync(databasePath)
+    previous.exec(`
+      ALTER TABLE commitments DROP COLUMN commitment_type;
+      ALTER TABLE commitments RENAME COLUMN legacy_due_type TO commitment_type;
+      DELETE FROM schema_migrations WHERE version = 26;
+    `)
+    previous.close()
+
+    const migrated = new AppDatabase(databasePath)
+    expect(migrated.domain.commitments.find(dueDated.id)).toMatchObject({
+      type: 'tracking',
+      dueDate: '2026-09-15'
+    })
+    expect(migrated.domain.commitments.find(undated.id)).toMatchObject({
+      type: 'tracking',
+      dueDate: null
+    })
+    migrated.close()
+
+    const raw = new DatabaseSync(databasePath)
+    expect(raw.prepare(
+      `SELECT commitment_type, legacy_due_type FROM commitments
+       WHERE id = ?`
+    ).get(dueDated.id)).toMatchObject({
+      commitment_type: 'tracking',
+      legacy_due_type: 'action'
+    })
+    expect(raw.prepare(
+      `SELECT commitment_type, legacy_due_type FROM commitments
+       WHERE id = ?`
+    ).get(undated.id)).toMatchObject({
+      commitment_type: 'tracking',
+      legacy_due_type: 'ongoing'
+    })
+    expect(() => raw.prepare(
+      "UPDATE commitments SET commitment_type = 'unknown' WHERE id = ?"
+    ).run(dueDated.id)).toThrow()
+    raw.close()
+  })
+
   it('stores calendar-validated scoped review pokes with aggregate cascades', () => {
     const now = new Date('2026-08-10T12:00:00.000Z')
     const database = new AppDatabase(databasePath)
@@ -180,7 +236,7 @@ describe('database migrations', () => {
     const subject = scope.subjects[0]
     const commitment = database.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Keep rollout current',
       cadenceDays: 7
     }, now)
@@ -488,7 +544,7 @@ describe('database migrations', () => {
     })
     const commitment = database.domain.commitments.create({
       parent: { type: 'thread', id: source.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Move safely'
     })
     database.close()
@@ -700,12 +756,12 @@ describe('database migrations', () => {
     })
     const threadCommitment = database.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve ticket quality'
     })
     const focusCommitment = database.domain.commitments.create({
       parent: { type: 'focus', id: focus.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Align sponsors'
     })
     const threadScope = database.domain.threadScopes.addSubject(
@@ -789,7 +845,7 @@ describe('database migrations', () => {
     })
     const commitment = database.domain.commitments.create({
       parent: { type: 'focus', id: firstFocus.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Hold a conversation'
     })
     database.close()

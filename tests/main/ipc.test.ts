@@ -466,7 +466,7 @@ describe('registerAppIpc', () => {
     })
     expect(await handlers.get(IPC_CHANNELS.createCommitment)?.(undefined, {
       parent: { type: 'focus', id: 12 },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Align sponsors'
     })).toMatchObject({ id: 33, title: 'Align sponsors' })
     expect(await handlers.get(IPC_CHANNELS.updateCommitment)?.(undefined, 31, {

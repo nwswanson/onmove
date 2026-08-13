@@ -292,7 +292,7 @@ todo and does not block its parent from closing.
 | Field | Meaning |
 | --- | --- |
 | `parent` | Exactly one Focus or Thread. |
-| `type` | Legacy persistence value mirrored from `dueDate` (`ongoing` when absent, `action` when present). It is not independently user-authored. |
+| `type` | Durable behavior discriminator. The only current value is `tracking`; the TypeScript snapshot is generic as `CommitmentSnapshot<TType>`. |
 | `title` | Required statement of what is expected. |
 | `status` | `active`, `paused`, `done`, or `cancelled`, with transition history. |
 | `dueDate` | Optional due date and the sole user-facing distinction between continuing and finite Commitments. |
@@ -313,6 +313,13 @@ Due dates are deliberately non-constraining across the hierarchy. A Thread may e
 Focus, and a Commitment may extend beyond its direct Focus or Thread parent. The selected entity's
 main screen compares only the direct parent and presents an accessible warning tooltip; persistence,
 reparenting, and import never clip or reject the child date for this reason.
+
+`tracking` is the first Commitment implementation, not a synonym for due-date presence. Creation
+passes the discriminator through the typed renderer, preload, IPC, and repository boundaries, and
+SQLite persists it in constrained `commitment_type`. The former `action`/`ongoing` column survives
+only as `legacy_due_type` for archive compatibility; it is derived from `dueDate`, never exposed in
+snapshots, and cannot change `CommitmentSnapshot.type`. Adding another Commitment behavior requires
+extending the shared type union and a schema migration rather than overloading an unrelated field.
 
 For an Open Commitment, state and cadence use the newest unscoped Update. For a bounded Commitment,
 `scopeMatrix(asOf)` returns one projection per currently effective Subject:
@@ -627,7 +634,7 @@ const direction = database.domain.threads.create({
 
 const conversations = database.domain.commitments.create({
   parent: { type: 'thread', id: direction.id },
-  type: 'ongoing',
+  type: 'tracking',
   title: 'Hold a substantive career conversation',
   cadenceDays: 30
 }) // also defaults to inherited

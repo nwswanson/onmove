@@ -39,20 +39,20 @@ describe('Due model', () => {
     })
     const overall = database!.domain.commitments.create({
       parent: { type: 'focus', id: atlas.id },
-      type: 'action',
+      type: 'tracking',
       title: 'Approve launch',
       dueDate: '2026-09-08'
     })
     const threaded = database!.domain.commitments.create({
       parent: { type: 'thread', id: sprint.id },
-      type: 'action',
+      type: 'tracking',
       title: 'Improve ticket quality',
       dueDate: '2026-09-15',
       status: 'done'
     })
     database!.domain.commitments.create({
       parent: { type: 'focus', id: atlas.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Undated expectation'
     })
 
@@ -87,7 +87,7 @@ describe('Due model', () => {
     })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'action',
+      type: 'tracking',
       title: 'Sign off',
       dueDate: '2026-09-29'
     })

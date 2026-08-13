@@ -1,7 +1,6 @@
 import type {
   CommitmentSnapshot,
   CommitmentStatus,
-  CommitmentType,
   HealthState,
   ThreadSubjectCellSnapshot
 } from '../../../../shared/contracts'
@@ -45,17 +44,6 @@ function groupId(status: CommitmentStatus): CommitmentListGroupId {
   if (status === 'active') return 'active'
   if (status === 'paused') return 'paused'
   return 'closed'
-}
-
-/**
- * Compatibility value for the legacy database column. Due-date presence is
- * now the only UI-authored distinction and this helper can disappear with a
- * future column-removal migration.
- */
-export function legacyCommitmentTypeForDueDate(
-  dueDate: string | null
-): CommitmentType {
-  return dueDate === null ? 'ongoing' : 'action'
 }
 
 /** One-way list affordance for closing due-dated commitments through audited status updates. */

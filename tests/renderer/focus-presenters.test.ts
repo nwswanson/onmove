@@ -66,7 +66,7 @@ const thread: ThreadSnapshot = {
 const commitment: CommitmentSnapshot = {
   id: 20,
   parent: { type: 'focus', id: 1 },
-  type: 'ongoing',
+  type: 'tracking',
   title: 'Improve ticket quality',
   status: 'active',
   state: 'green',
@@ -450,7 +450,7 @@ describe('Focus presentation adapters', () => {
     const action = {
       ...commitment,
       id: 21,
-      type: 'action' as const,
+      type: 'tracking' as const,
       title: 'Publish the launch plan',
       state: 'red' as const,
       dueDate: '2026-02-15'
@@ -692,13 +692,11 @@ describe('Focus presentation adapters', () => {
     expect(onSave).toHaveBeenNthCalledWith(1, {
       title: 'Improve all ticket quality',
       dueDate: '2026-02-15',
-      type: 'action',
       reviewFrequencyDays: 14
     })
     expect(onSave).toHaveBeenNthCalledWith(2, {
       title: 'Improve all ticket quality',
       dueDate: '2026-02-15',
-      type: 'action',
       reviewFrequencyDays: 14,
       needsReview: false,
       sensitive: false

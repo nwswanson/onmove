@@ -54,7 +54,7 @@ function commitment(overrides: Partial<CommitmentSnapshot> = {}): CommitmentSnap
   return {
     id: 20,
     parent: { type: 'thread', id: 10 },
-    type: 'ongoing',
+    type: 'tracking',
     title: 'Improve ticket quality',
     status: 'active',
     state: 'none',

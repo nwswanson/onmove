@@ -16,7 +16,7 @@ function commitment(overrides: Partial<CommitmentSnapshot>): CommitmentSnapshot 
   return {
     id: 1,
     parent: { type: 'focus', id: 1 },
-    type: 'ongoing',
+    type: 'tracking',
     title: 'Commitment',
     status: 'active',
     state: 'none',

@@ -252,9 +252,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
   creation must select the new nested Commitment route without entering the filtered Commitment
   level; creation from an already-filtered level remains in that level.
 - Treat due-date presence as the only user-facing Commitment mode. Do not expose an independent
-  `ongoing` / `action` selector or label. Until a later migration removes the legacy persisted type,
-  mirror undated Commitments to `ongoing` and due-dated Commitments to `action` at the typed model
-  boundary. Render the one-way completion checkbox only on due-dated Commitment list rows. Checking
+  `ongoing` / `action` selector or label. The generic Commitment type remains `tracking` regardless
+  of due date; mirror undated/due-dated compatibility values only inside the private
+  `legacy_due_type` column. Render the one-way completion checkbox only on due-dated Commitment list rows. Checking
   an active or paused due-dated Commitment sends `status: done` through the existing typed mutation
   so transition auditing remains intact; closed Commitments cannot be reopened through the checkbox.
 - Expose optional due dates for Focus, Thread, and Commitment through the shared feature-level
@@ -423,6 +423,11 @@ foreground colors and do not rely on color alone to communicate selection or sta
   `needsReview` separate from lifecycle status and from all derived review projections.
 - A Commitment must have exactly one Focus or Thread parent. An Update must have exactly one Focus,
   Thread, or Commitment parent. Preserve these SQLite constraints and cascades.
+- Treat Commitment as a generic behavior-discriminated model. `CommitmentSnapshot<TType>` and its
+  creation input currently admit only `type: 'tracking'`; persist that value in constrained
+  `commitment_type` and pass it through renderer, preload, IPC, and repository boundaries. Keep the
+  due-date-derived `action`/`ongoing` compatibility value isolated in `legacy_due_type`; never expose
+  it as the Commitment's type or use it to branch application behavior.
 - Persist nullable, calendar-validated due dates independently on Focus, Thread, and Commitment.
   Parent dates are advisory planning boundaries, not database constraints: descendants may extend
   beyond them and the renderer owns the direct-parent warning.

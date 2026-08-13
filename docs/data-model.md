@@ -195,6 +195,13 @@ The executable reminder and contextual sorting contract is specified in
 The internal SQLite recovery policy is specified in
 [`rolling-backups.md`](rolling-backups.md).
 
+Commitments use an explicit behavior discriminator rather than encoding behavior in due-date
+presence. The public model is generic as `CommitmentSnapshot<TType>` and currently constrains
+`TType` to `tracking`. New creation passes `type: 'tracking'` through the renderer, preload, IPC, and
+repository into SQLite's constrained `commitment_type` column. Migration 26 preserves the former
+due-date-derived `action`/`ongoing` value as internal `legacy_due_type`; it remains import-compatible
+but is not part of snapshots or mutations. Due date continues to own finite-work UI behavior.
+
 ## Subjects, Scopes, and exact Update cells
 
 Subjects are global canonical records for anything managed or observed. A Scope is a named,

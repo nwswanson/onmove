@@ -47,7 +47,7 @@ describe('Tag model', () => {
     })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve @Launch ticket quality',
       sensitive: true
     })
@@ -119,7 +119,7 @@ describe('Tag model', () => {
     const focus = database!.domain.focuses.create({ title: 'Project' })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'focus', id: focus.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Deliver @Gone'
     })
     database!.domain.todos.create({

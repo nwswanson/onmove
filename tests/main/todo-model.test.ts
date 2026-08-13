@@ -31,7 +31,7 @@ describe('Todo model', () => {
     })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve ticket quality'
     })
     const focusTodo = database!.domain.todos.create({
@@ -101,7 +101,7 @@ describe('Todo model', () => {
     }, now)
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve ticket quality'
     }, now)
     const aggregate = database!.domain.todos.create({
@@ -391,7 +391,7 @@ describe('Todo model', () => {
 
     const scopedCommitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Scoped commitment'
     }, now)
     expect(() => database!.domain.todos.create({
@@ -434,7 +434,7 @@ describe('Todo model', () => {
     }, now)
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve ticket quality'
     }, now)
     const original = database!.domain.threadScopes.addSubject(
@@ -499,7 +499,7 @@ describe('Todo model', () => {
     })
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve ticket quality'
     })
     const focusTodo = database!.domain.todos.create({
@@ -551,7 +551,7 @@ describe('Todo model', () => {
     }, now)
     const commitment = database!.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Improve ticket quality'
     }, now)
     const active = database!.domain.todos.create({

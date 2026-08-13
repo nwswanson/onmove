@@ -80,7 +80,7 @@ function commitment(overrides: Partial<CommitmentSnapshot> = {}): CommitmentSnap
   return {
     id: 20,
     parent: { type: 'focus', id: 1 },
-    type: 'ongoing',
+    type: 'tracking',
     title: 'Keep sponsors aligned',
     status: 'active',
     state: 'none',
@@ -1885,7 +1885,7 @@ describe('App', () => {
     let currentCommitment = commitment({
       parent: { type: 'thread', id: currentThread.id },
       dueDate: '2026-09-25',
-      type: 'action'
+      type: 'tracking'
     })
     const updateFocus = vi.fn(async (_id: number, input: Parameters<DomainApi['updateFocus']>[1]) => {
       currentFocus = focus({ ...currentFocus, ...input })
@@ -2853,7 +2853,7 @@ describe('App', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Create commitment' }))
     expect(createCommitment).toHaveBeenCalledWith({
       parent: { type: 'thread', id: sprint.id },
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Keep refinement healthy',
       dueDate: null,
       reviewFrequencyDays: 7
@@ -3188,12 +3188,12 @@ describe('App', () => {
     const current = focus()
     const undatedLegacyAction = commitment({
       id: 20,
-      type: 'action',
+      type: 'tracking',
       title: 'Maintain team health'
     })
     const dueDatedLegacyOngoing = commitment({
       id: 21,
-      type: 'ongoing',
+      type: 'tracking',
       title: 'Publish launch plan',
       dueDate: '2026-09-15'
     })
@@ -3389,7 +3389,7 @@ describe('App', () => {
     const created = commitment({
       id: 21,
       title: 'Publish the launch boundary',
-      type: 'action',
+      type: 'tracking',
       dueDate: '2026-09-15'
     })
     const createCommitment = vi.fn().mockResolvedValue(created)
@@ -3413,7 +3413,7 @@ describe('App', () => {
 
     expect(createCommitment).toHaveBeenCalledWith({
       parent: { type: 'focus', id: 1 },
-      type: 'action',
+      type: 'tracking',
       title: 'Publish the launch boundary',
       dueDate: '2026-09-15',
       reviewFrequencyDays: 7
@@ -3799,7 +3799,7 @@ describe('App', () => {
     }))
     const updateCommitment = vi.fn().mockResolvedValue(commitment({
       title: 'Keep sponsors closely aligned',
-      type: 'action',
+      type: 'tracking',
       dueDate: '2026-09-15',
       reviewFrequencyDays: 14,
       needsReview: false
@@ -3861,7 +3861,6 @@ describe('App', () => {
     expect(updateCommitment).toHaveBeenCalledWith(focusCommitment.id, {
       title: 'Keep sponsors closely aligned',
       dueDate: '2026-09-15',
-      type: 'action',
       reviewFrequencyDays: 14,
       needsReview: false,
       sensitive: false

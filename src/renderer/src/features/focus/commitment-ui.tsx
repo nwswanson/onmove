@@ -13,7 +13,6 @@ import {
   type LifecycleStatusOptionModel
 } from '@/components/ui/lifecycle-status'
 import { StateLabel, type StateLabelModel } from '@/components/ui/state-label'
-import { legacyCommitmentTypeForDueDate } from '@/features/focus/commitment-list-model'
 
 interface NewCommitmentDialogProps {
   parent: CommitmentParent
@@ -47,10 +46,10 @@ export function NewCommitmentDialog({
       const normalizedDueDate = dueDate || null
       await onCreate({
         parent,
+        type: 'tracking',
         title,
         dueDate: normalizedDueDate,
-        reviewFrequencyDays: normalizedReviewFrequencyDays,
-        type: legacyCommitmentTypeForDueDate(normalizedDueDate)
+        reviewFrequencyDays: normalizedReviewFrequencyDays
       })
       onClose()
     } catch {

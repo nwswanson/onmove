@@ -304,7 +304,7 @@ test('shows cascade-rescued Updates read-only in Archive and permanently deletes
   })
   const commitment = seed.domain.commitments.create({
     parent: { type: 'thread', id: thread.id },
-    type: 'ongoing',
+    type: 'tracking',
     title: 'Improve ticket quality'
   })
   seed.domain.updates.create({
@@ -371,13 +371,13 @@ test('operates every explicit hierarchy deadline from the global Due worklist', 
   })
   const commitment = seed.domain.commitments.create({
     parent: { type: 'thread', id: thread.id },
-    type: 'action',
+    type: 'tracking',
     title: 'Improve ticket quality',
     dueDate: '2099-01-12'
   })
   seed.domain.commitments.create({
     parent: { type: 'thread', id: thread.id },
-    type: 'ongoing',
+    type: 'tracking',
     title: 'Undated expectation'
   })
   seed.close()
@@ -496,7 +496,7 @@ test('jumps to hierarchy records, all persisted Todos, and Tags through Cmd-K', 
   })
   seed.domain.commitments.create({
     parent: { type: 'thread', id: sprint.id },
-    type: 'ongoing',
+    type: 'tracking',
     title: 'Improve ticket quality'
   })
   const oldCompletionDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
@@ -587,7 +587,7 @@ test('reviews active work before cadence is due and refreshes typed pokes in the
   const reviewSubject = threadScope.subjects[0]
   const currentCommitment = seed.domain.commitments.create({
     parent: { type: 'thread', id: currentThread.id },
-    type: 'ongoing',
+    type: 'tracking',
     title: 'Improve ticket quality'
   }, createdAt)
   seed.close()
@@ -964,6 +964,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     title: string
     threadId: number
     type: string
+    legacyDueType: string
     status: string
   } | undefined {
     const database = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
@@ -971,12 +972,15 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     })
     const row = database
       .prepare(
-        'SELECT title, thread_id AS threadId, commitment_type AS type, status FROM commitments WHERE thread_id IS NOT NULL ORDER BY id LIMIT 1'
+        `SELECT title, thread_id AS threadId, commitment_type AS type,
+                legacy_due_type AS legacyDueType, status
+         FROM commitments WHERE thread_id IS NOT NULL ORDER BY id LIMIT 1`
       )
       .get() as {
         title: string
         threadId: number
         type: string
+        legacyDueType: string
         status: string
       } | undefined
     database.close()
@@ -1070,6 +1074,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     title: string
     focusId: number
     type: string
+    legacyDueType: string
     status: string
     dueDate: string | null
     reviewFrequencyDays: number
@@ -1080,7 +1085,8 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     })
     const row = database
       .prepare(
-        `SELECT title, focus_id AS focusId, commitment_type AS type, status,
+        `SELECT title, focus_id AS focusId, commitment_type AS type,
+                legacy_due_type AS legacyDueType, status,
                 due_on AS dueDate, review_frequency_days AS reviewFrequencyDays,
                 needs_review AS needsReview
          FROM commitments WHERE focus_id IS NOT NULL ORDER BY id LIMIT 1`
@@ -1089,6 +1095,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
         title: string
         focusId: number
         type: string
+        legacyDueType: string
         status: string
         dueDate: string | null
         reviewFrequencyDays: number
@@ -1503,7 +1510,8 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       .click()
     await expect.poll(() => storedThreadCommitment()?.title).toBe('Improve ticket quality')
     await expect(storedThreadCommitment()).toMatchObject({
-      type: 'ongoing',
+      type: 'tracking',
+      legacyDueType: 'ongoing',
       status: 'active'
     })
     const threadCommitmentNavigation = window.getByRole('navigation', {
@@ -1542,7 +1550,8 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await newCommitmentDialog.getByLabel(/Due date/).fill(commitmentDueDate)
     await newCommitmentDialog.getByLabel('Review every (days)').fill('14')
     await window.getByRole('button', { name: 'Create commitment' }).click()
-    await expect.poll(() => storedCommitment()?.type).toBe('action')
+    await expect.poll(() => storedCommitment()?.type).toBe('tracking')
+    await expect.poll(() => storedCommitment()?.legacyDueType).toBe('action')
     await expect.poll(() => storedCommitment()?.dueDate).toBe(commitmentDueDate)
     await expect.poll(() => storedCommitment()?.reviewFrequencyDays).toBe(14)
     const activeCommitmentSunflower = focusSidebarButton.getByRole('img', {
@@ -1956,7 +1965,8 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     })
     expect(storedThreadCommitment()).toMatchObject({
       title: 'Improve ticket quality',
-      type: 'ongoing',
+      type: 'tracking',
+      legacyDueType: 'ongoing',
       status: 'active'
     })
     expect(storedThreadUpdate()).toMatchObject({ state: 'green' })
@@ -1969,6 +1979,8 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     expect(storedCommitment()).toMatchObject({
       title: 'Keep sponsors aligned',
       status: 'done',
+      type: 'tracking',
+      legacyDueType: 'action',
       reviewFrequencyDays: 14,
       needsReview: 0
     })
@@ -2422,7 +2434,7 @@ test('drags a Thread between Focuses and preserves its scoped subtree', async ()
   })
   const commitment = seed.domain.commitments.create({
     parent: { type: 'thread', id: thread.id },
-    type: 'ongoing',
+    type: 'tracking',
     title: 'Portable child'
   })
   seed.domain.updates.create({

@@ -14,7 +14,7 @@ function commitment(
   return {
     id,
     parent: { type: 'focus', id: 1 },
-    type: 'ongoing',
+    type: 'tracking',
     title: `Commitment ${id}`,
     status,
     state,

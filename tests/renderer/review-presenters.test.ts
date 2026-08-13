@@ -60,7 +60,7 @@ const thread: ThreadSnapshot = {
 const commitment: CommitmentSnapshot = {
   id: 3,
   parent: { type: 'thread', id: 2 },
-  type: 'ongoing',
+  type: 'tracking',
   title: 'Improve ticket quality',
   status: 'active',
   state: 'red',
