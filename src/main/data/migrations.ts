@@ -2829,6 +2829,185 @@ const migrations: readonly Migration[] = [
         END;
       `)
     }
+  },
+  {
+    version: 28,
+    name: 'routine_subject_attestation_cells',
+    up(database) {
+      const routineColumns = database.all<{ name: string }>(
+        'PRAGMA table_info(routine_definitions)'
+      )
+      if (routineColumns.length === 0) return
+      if (!routineColumns.some(({ name }) => name === 'needs_attestation')) {
+        database.exec(`
+          ALTER TABLE routine_definitions
+          ADD COLUMN needs_attestation INTEGER NOT NULL DEFAULT 1
+            CHECK (needs_attestation IN (0, 1));
+        `)
+      }
+
+      database.exec(`
+        CREATE TABLE routine_review_cells (
+          id INTEGER PRIMARY KEY,
+          run_id INTEGER NOT NULL
+            REFERENCES routine_review_runs(id) ON DELETE CASCADE,
+          subject_id INTEGER,
+          subject_name TEXT,
+          completed_at TEXT,
+          created_at TEXT NOT NULL,
+          CHECK (
+            (subject_id IS NULL AND subject_name IS NULL) OR
+            (subject_id IS NOT NULL AND length(trim(subject_name)) > 0)
+          )
+        ) STRICT;
+
+        CREATE UNIQUE INDEX routine_review_cells_run_subject_index
+          ON routine_review_cells(run_id, ifnull(subject_id, 0));
+
+        CREATE TABLE routine_review_cell_attestations (
+          id INTEGER PRIMARY KEY,
+          cell_id INTEGER NOT NULL
+            REFERENCES routine_review_cells(id) ON DELETE CASCADE,
+          run_item_id INTEGER NOT NULL
+            REFERENCES routine_review_run_items(id) ON DELETE CASCADE,
+          resolution TEXT NOT NULL DEFAULT 'pending'
+            CHECK (resolution IN ('pending', 'attested', 'not_applicable')),
+          attested_at TEXT,
+          CHECK (
+            (resolution = 'pending' AND attested_at IS NULL) OR
+            (resolution <> 'pending' AND attested_at IS NOT NULL)
+          ),
+          UNIQUE (cell_id, run_item_id)
+        ) STRICT;
+
+        CREATE INDEX routine_review_cell_attestations_cell_index
+          ON routine_review_cell_attestations(cell_id, run_item_id);
+
+        CREATE TABLE routine_review_cell_issues (
+          id INTEGER PRIMARY KEY,
+          attestation_id INTEGER NOT NULL UNIQUE
+            REFERENCES routine_review_cell_attestations(id) ON DELETE CASCADE,
+          description TEXT NOT NULL DEFAULT '',
+          follow_up_type TEXT NOT NULL DEFAULT 'none'
+            CHECK (follow_up_type IN ('none', 'update', 'commitment', 'move')),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT;
+
+        INSERT INTO routine_review_cells (
+          run_id, subject_id, subject_name, completed_at, created_at
+        )
+        SELECT run.id,
+               CAST(json_extract(subject.value, '$.id') AS INTEGER),
+               CAST(json_extract(subject.value, '$.name') AS TEXT),
+               run.completed_at,
+               run.created_at
+        FROM routine_review_runs run, json_each(run.scope_snapshot_json) subject
+        WHERE json_array_length(run.scope_snapshot_json) > 0;
+
+        INSERT INTO routine_review_cells (
+          run_id, subject_id, subject_name, completed_at, created_at
+        )
+        SELECT run.id, NULL, NULL, run.completed_at, run.created_at
+        FROM routine_review_runs run
+        WHERE json_array_length(run.scope_snapshot_json) = 0;
+
+        INSERT INTO routine_review_cell_attestations (
+          cell_id, run_item_id, resolution, attested_at
+        )
+        SELECT cell.id, item.id, item.resolution, item.attested_at
+        FROM routine_review_cells cell
+        JOIN routine_review_run_items item ON item.run_id = cell.run_id;
+
+        INSERT INTO routine_review_cell_issues (
+          attestation_id, description, follow_up_type, created_at, updated_at
+        )
+        SELECT attestation.id, issue.description, issue.follow_up_type,
+               issue.created_at, issue.updated_at
+        FROM routine_review_cell_attestations attestation
+        JOIN routine_run_issues issue ON issue.run_item_id = attestation.run_item_id;
+
+        CREATE TRIGGER routine_review_cells_keep_subject_snapshot
+        BEFORE UPDATE OF run_id, subject_id, subject_name, created_at
+        ON routine_review_cells
+        BEGIN
+          SELECT RAISE(ABORT, 'Routine Run Subject cells are immutable');
+        END;
+
+        CREATE TRIGGER routine_review_cells_delete_only_with_run
+        BEFORE DELETE ON routine_review_cells
+        WHEN EXISTS (SELECT 1 FROM routine_review_runs WHERE id = OLD.run_id)
+        BEGIN
+          SELECT RAISE(ABORT, 'Routine Run Subject cells are immutable');
+        END;
+
+        CREATE TRIGGER routine_cell_attestations_keep_identity
+        BEFORE UPDATE OF cell_id, run_item_id ON routine_review_cell_attestations
+        BEGIN
+          SELECT RAISE(ABORT, 'Routine Run Subject cell attestations are immutable');
+        END;
+
+        CREATE TRIGGER routine_cell_attestations_delete_only_with_cell
+        BEFORE DELETE ON routine_review_cell_attestations
+        WHEN EXISTS (SELECT 1 FROM routine_review_cells WHERE id = OLD.cell_id)
+        BEGIN
+          SELECT RAISE(ABORT, 'Routine Run Subject cell attestations are immutable');
+        END;
+
+        CREATE TRIGGER completed_routine_review_cells_stay_complete
+        BEFORE UPDATE OF completed_at ON routine_review_cells
+        WHEN OLD.completed_at IS NOT NULL AND NEW.completed_at IS NOT OLD.completed_at
+        BEGIN
+          SELECT RAISE(ABORT, 'Completed Routine Run Subject cells are immutable');
+        END;
+
+        CREATE TRIGGER completed_routine_cell_attestations_are_immutable
+        BEFORE UPDATE ON routine_review_cell_attestations
+        WHEN EXISTS (
+          SELECT 1 FROM routine_review_cells
+          WHERE id = OLD.cell_id AND completed_at IS NOT NULL
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Completed Routine Run Subject cells are immutable');
+        END;
+
+        CREATE TRIGGER completed_routine_cell_issues_are_immutable
+        BEFORE UPDATE ON routine_review_cell_issues
+        WHEN EXISTS (
+          SELECT 1
+          FROM routine_review_cell_attestations attestation
+          JOIN routine_review_cells cell ON cell.id = attestation.cell_id
+          WHERE attestation.id = OLD.attestation_id AND cell.completed_at IS NOT NULL
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Completed Routine Run Subject cell issues are immutable');
+        END;
+
+        CREATE TRIGGER completed_routine_cell_issues_cannot_be_added
+        BEFORE INSERT ON routine_review_cell_issues
+        WHEN EXISTS (
+          SELECT 1
+          FROM routine_review_cell_attestations attestation
+          JOIN routine_review_cells cell ON cell.id = attestation.cell_id
+          WHERE attestation.id = NEW.attestation_id AND cell.completed_at IS NOT NULL
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Completed Routine Run Subject cell issues are immutable');
+        END;
+
+        CREATE TRIGGER completed_routine_cell_issues_cannot_be_deleted
+        BEFORE DELETE ON routine_review_cell_issues
+        WHEN EXISTS (
+          SELECT 1
+          FROM routine_review_cell_attestations attestation
+          JOIN routine_review_cells cell ON cell.id = attestation.cell_id
+          WHERE attestation.id = OLD.attestation_id AND cell.completed_at IS NOT NULL
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Completed Routine Run Subject cell issues are immutable');
+        END;
+      `)
+    }
   }
 ]
 

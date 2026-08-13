@@ -50,7 +50,7 @@ export const IPC_CHANNELS = {
   createRoutine: 'domain:create-routine',
   updateRoutine: 'domain:update-routine',
   deleteRoutine: 'domain:delete-routine',
-  attestRoutineRunItem: 'domain:attest-routine-run-item',
+  attestRoutineCellItem: 'domain:attest-routine-cell-item',
   listUpdates: 'domain:list-updates',
   createUpdate: 'domain:create-update',
   updateUpdate: 'domain:update-update',
@@ -627,13 +627,24 @@ export interface RoutineRunIssueSnapshot {
 }
 
 export interface RoutineRunItemSnapshot {
+  /** Cell-attestation id; resolutions are independent for every Subject cell. */
   id: number
+  runItemId: number
   position: number
   inspection: string
   required: boolean
   resolution: RoutineRunItemResolution
   attestedAt: string | null
   issue: RoutineRunIssueSnapshot | null
+}
+
+export interface RoutineReviewCellSnapshot {
+  id: number
+  subject: { id: number; name: string } | null
+  completionDate: string | null
+  completedLate: boolean
+  progress: { complete: number; required: number }
+  items: RoutineRunItemSnapshot[]
 }
 
 export interface RoutineReviewRunSnapshot {
@@ -645,6 +656,8 @@ export interface RoutineReviewRunSnapshot {
   templateVersion: number
   scope: RoutineScopeSnapshot | null
   progress: { complete: number; required: number }
+  cells: RoutineReviewCellSnapshot[]
+  /** @deprecated Read the selected Subject cell instead. Kept for older clients. */
   items: RoutineRunItemSnapshot[]
 }
 
@@ -658,11 +671,14 @@ export interface RoutineSnapshot {
   type: 'routine'
   name: string
   sensitive: boolean
+  needsAttestation: boolean
   cadenceDays: number
   anchorDate: string
   scope: RoutineScopeSnapshot | null
   status: RoutineStatus
   nextReviewDate: string
+  /** Next anchored occurrence after the projection date, even while an older Run is incomplete. */
+  nextScheduledDate: string
   overdueDays: number
   template: RoutineTemplateSnapshot
   currentRun: RoutineReviewRunSnapshot | null
@@ -683,6 +699,7 @@ export interface CreateRoutineInput {
   anchorDate?: string
   scopeId?: number | null
   sensitive?: boolean
+  needsAttestation?: boolean
   checklist: RoutineTemplateItemInput[]
 }
 
@@ -692,6 +709,7 @@ export interface UpdateRoutineInput {
   anchorDate?: string
   scopeId?: number | null
   sensitive?: boolean
+  needsAttestation?: boolean
   /** Supplying a checklist creates a new immutable template version. */
   checklist?: RoutineTemplateItemInput[]
 }
@@ -1123,8 +1141,8 @@ export interface DomainApi {
   createRoutine: (input: CreateRoutineInput) => Promise<RoutineSnapshot>
   updateRoutine: (id: number, input: UpdateRoutineInput) => Promise<RoutineSnapshot>
   deleteRoutine: (id: number) => Promise<boolean>
-  attestRoutineRunItem: (
-    runItemId: number,
+  attestRoutineCellItem: (
+    attestationId: number,
     input: AttestRoutineRunItemInput
   ) => Promise<RoutineSnapshot>
   listUpdates: (parent: UpdateParent) => Promise<UpdateSnapshot[]>

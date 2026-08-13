@@ -69,6 +69,10 @@ import { SensitivityToggle } from '@/features/shared/sensitivity-toggle'
 import { DirectTodos } from '@/features/todos/direct-todos'
 import { DirectUpdates } from '@/features/updates/direct-updates'
 import { DirectNotes } from '@/features/notes/direct-notes'
+import {
+  RoutineEditorDialog,
+  type RoutineEditorParent
+} from '@/features/routines/routine-editor-dialog'
 
 const CONTEXTUAL_SIDEBAR_MIN = 220
 const CONTEXTUAL_SIDEBAR_MAX = 320
@@ -213,6 +217,8 @@ export function FocusWorkspace({
   const [newThreadOpen, setNewThreadOpen] = useState(false)
   const [newCommitmentParent, setNewCommitmentParent] =
     useState<CommitmentParent | null>(null)
+  const [newRoutineParent, setNewRoutineParent] = useState<CommitmentParent | null>(null)
+  const [routineSaving, setRoutineSaving] = useState(false)
   const [contextualSidebarWidth, setContextualSidebarWidth] = useState(252)
   const [commitmentStatusSavingId, setCommitmentStatusSavingId] = useState<number | null>(null)
   const [commitmentStatusError, setCommitmentStatusError] = useState<{
@@ -708,6 +714,32 @@ export function FocusWorkspace({
       : undefined
   )
   const focusTitle = focus.title
+  const routineEditorParent: RoutineEditorParent | null = newRoutineParent
+    ? newRoutineParent.type === 'focus'
+      ? {
+          parent: newRoutineParent,
+          label: focus.title,
+          scope: model.focusScope?.scopeId
+            ? { id: model.focusScope.scopeId, name: 'Focus scope' }
+            : null
+        }
+      : (() => {
+          const thread = model.threads.find(({ id }) => id === newRoutineParent.id)
+          const scope = model.threadScopes[newRoutineParent.id]
+          return thread
+            ? {
+                parent: newRoutineParent,
+                label: `${focus.title} / ${thread.title}`,
+                scope: scope?.scopeId
+                  ? {
+                      id: scope.scopeId,
+                      name: scope.mode === 'inherited' ? 'Inherited scope' : 'Thread scope'
+                    }
+                  : null
+              }
+            : null
+        })()
+    : null
   const commitmentWorkingContext = useCommitmentWorkingContextModel(
     selectedCommitment?.id ?? null
   )
@@ -1417,6 +1449,9 @@ export function FocusWorkspace({
                       onCreate={selectedSubject ? undefined : () =>
                         setNewCommitmentParent({ type: 'thread', id: displayedThread.id })
                       }
+                      onCreateRoutine={selectedSubject ? undefined : () =>
+                        setNewRoutineParent({ type: 'thread', id: displayedThread.id })
+                      }
                       onOpenCollection={selectedSubject ? undefined : () =>
                         drillIntoCommitments({ type: 'thread', id: displayedThread.id })
                       }
@@ -1563,6 +1598,9 @@ export function FocusWorkspace({
               onCreate={() =>
                 setNewCommitmentParent({ type: 'focus', id: focus.id })
               }
+              onCreateRoutine={() =>
+                setNewRoutineParent({ type: 'focus', id: focus.id })
+              }
               onOpenCollection={() =>
                 drillIntoCommitments({ type: 'focus', id: focus.id })
               }
@@ -1646,6 +1684,25 @@ export function FocusWorkspace({
           parent={newCommitmentParent}
           onClose={() => setNewCommitmentParent(null)}
           onCreate={createCommitment}
+        />
+      )}
+      {routineEditorParent && (
+        <RoutineEditorDialog
+          parent={routineEditorParent}
+          saving={routineSaving}
+          onClose={() => setNewRoutineParent(null)}
+          onSave={async (input) => {
+            if (!('parent' in input)) return false
+            setRoutineSaving(true)
+            try {
+              await model.createRoutine(input)
+              return true
+            } catch {
+              return false
+            } finally {
+              setRoutineSaving(false)
+            }
+          }}
         />
       )}
       {pendingThreadMove && (

@@ -30,14 +30,17 @@ commitments
               anchor_on
               schedule_effective_on
               optional Focus-owned scope_id
+              needs_attestation
               current_template_version
                     │
                     ├── routine_template_versions (1:n, immutable)
                     │       └── routine_template_items (1:n, immutable)
                     │
-                    └── routine_review_runs (1:n, schedule snapshot)
+                    └── routine_review_runs (1:n, occurrence snapshot)
                             ├── routine_review_run_items (1:n, checklist snapshot)
-                            └── routine_run_issues (0..1 per Run item)
+                            └── routine_review_cells (1:n, unscoped or one per Subject)
+                                    └── routine_review_cell_attestations (one per Run item)
+                                            └── routine_review_cell_issues (0..1)
 ```
 
 Migration 27 adds the constrained `behavior_type` discriminator. Migration 26's constrained
@@ -45,6 +48,10 @@ Migration 27 adds the constrained `behavior_type` discriminator. Migration 26's 
 would disturb many foreign keys, evidence tables, history tables, and deletion triggers. Public
 repositories use `behavior_type`: `CommitmentRepository` filters to `tracking`, and
 `RoutineRepository` filters to `routine`.
+
+Migration 28 adds the attestation inclusion flag and independent Subject cells. Existing aggregate
+Run resolutions are copied into every Subject cell represented by their historical Scope snapshot,
+preserving recorded completion while making every later edit cell-specific.
 
 Routine creation validates all of the following in one transaction:
 
@@ -74,6 +81,11 @@ copies:
 - Scope id and name; and
 - the then-effective Subject ids and names as JSON snapshot data.
 
+The repository then creates one immutable attestation cell per copied Subject. An open Routine, or
+a scoped Routine whose effective population is empty, receives one explicitly unscoped cell. Two
+Subjects therefore mean two independently completable copies of the same Run checklist. The Run is
+complete only after both Subject cells are complete.
+
 Changing the template, Scope membership, Scope application, or current Scope name can therefore
 never rewrite an existing Run. Scope deletion clears only the live definition reference through
 `SET NULL`; the Run's scalar Scope id plus copied name and Subject population remain readable.
@@ -83,16 +95,14 @@ no longer change resolution, attestation time, completion time, or issue content
 
 ## Attestation and issues
 
-Each Run item has one resolution:
+Each Run item has one resolution per Subject cell:
 
 - `pending` — no attestation yet;
 - `attested` — the user states the inspection was performed; or
 - `not_applicable` — the user explicitly states that inspection did not apply to this Run.
 
 Checking an inspection does not claim that the inspected condition was healthy. A required item is
-complete when it is either attested or not applicable. The repository writes `completed_at` only
-when no required item remains pending. Partial work never changes the Routine schedule or derived
-status baseline.
+complete when it is either attested or not applicable.
 
 An attested item can record one Issue with free text and a typed follow-up intent of `none`,
 `update`, `commitment`, or `move`. This keeps the discovery durable and gives later typed creation
@@ -100,6 +110,10 @@ flows a stable dispatch contract. The issue and intended artifact are deliberate
 presence never feeds Routine status. Creating and linking a concrete follow-up artifact remains a
 named domain operation rather than a polymorphic foreign key or hidden side effect of checking a
 box.
+
+The repository writes a cell's completion only when no required cell attestation remains pending,
+and writes the occurrence completion only after every cell completes. Partial work in one Subject
+cannot refresh another Subject or the aggregate Routine.
 
 ## Anchored recurrence
 
@@ -127,16 +141,16 @@ Its actual completion date and `completedLate` projection remain in history. If 
 has already become due, that newer Run correctly remains overdue; late completion never silently
 skips it or moves the recurrence.
 
-The current Run progress is the number of required items whose resolution is no longer pending over
-the total required count. Previous Runs retain scheduled date, completion date, late marker,
-template version, Scope snapshot, all checklist resolutions, and issues.
+Occurrence progress sums required resolutions across its cells. Each queue item displays its own
+Subject-cell progress. Previous Runs retain scheduled date, completion date, late marker, template
+version, Scope snapshot, every cell resolution, and issues.
 
 ## Deletion, moves, import, and visibility
 
 Deleting a Routine, its Thread, or its Focus cascades through definitions, versions, Runs, Run
-items, and issues. There is no Update rescue requirement because attestation records are not Update
-evidence. Tracking Updates elsewhere in the deleted hierarchy still use the universal archive
-trigger.
+items, Subject cells, cell attestations, and issues. There is no Update rescue requirement because
+attestation records are not Update evidence. Tracking Updates elsewhere in the deleted hierarchy
+still use the universal archive trigger.
 
 Moving a Thread to another Focus includes Routine Scope references in the existing move planner's
 Scope graph. The move clones referenced Scopes into the destination Focus and remaps only the live
@@ -152,10 +166,18 @@ issue data is never redacted or destroyed by a visibility preference.
 
 ## UI ownership
 
-The top-level Routines workspace owns Routine presentation and calls only named preload methods.
-It displays association, derived semantic status, next/overdue timing, progress, the immutable
-current checklist, and expandable Run history. The shared `StateLabel` receiver owns color/label
-markup. The feature model owns persistence calls and replaces snapshots after every attestation.
+Routine creation belongs to a Focus or Thread workspace beside `Add commitment`; the global queue
+cannot create a Routine because parent and Scope are deliberate creation context. The top-level
+Routines workspace uses the shared contextual sidebar. It flattens the actionable projection to one
+row per `Routine × Subject` (or one unscoped row), groups rows into Past due, Today, This week, and
+Upcoming, and presents one immutable checklist at a time. Upcoming rows preview the template that
+will be snapshotted when that anchored occurrence becomes due.
+
+The generic context drawer receives a data-only Routine adapter. It owns editing for name, cadence,
+`needsAttestation`, sensitivity, template-editor launch, and deletion. Clearing `needsAttestation`
+removes the Routine's cells from the queue without deleting immutable history. The shared
+`StateLabel` receiver owns color/label markup. The feature model owns persistence and replaces
+snapshots after every cell attestation.
 
 The editor changes the Routine definition and appends a future template version; it never binds
 editable controls to a Run's copied inspection text. Completed Run controls are disabled. There is

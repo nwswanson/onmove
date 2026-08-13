@@ -216,7 +216,7 @@ describe('registerAppIpc', () => {
             snapshot: () => ({ id: 36, type: 'routine', name: 'Inspect scope' })
           })),
           update: vi.fn(() => ({ id: 35, type: 'routine', name: 'Inspect delivery weekly' })),
-          attestRunItem: vi.fn(() => ({
+          attestCellItem: vi.fn(() => ({
             id: 35,
             type: 'routine',
             currentRun: { progress: { complete: 1, required: 2 } }
@@ -512,7 +512,7 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.updateRoutine)?.(undefined, 35, {
       name: 'Inspect delivery weekly'
     })).toMatchObject({ name: 'Inspect delivery weekly' })
-    expect(await handlers.get(IPC_CHANNELS.attestRoutineRunItem)?.(undefined, 91, {
+    expect(await handlers.get(IPC_CHANNELS.attestRoutineCellItem)?.(undefined, 91, {
       resolution: 'attested'
     })).toMatchObject({ currentRun: { progress: { complete: 1, required: 2 } } })
     expect(await handlers.get(IPC_CHANNELS.deleteRoutine)?.(undefined, 35)).toBe(true)

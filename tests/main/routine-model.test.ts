@@ -74,7 +74,7 @@ describe('Routine Commitment model', () => {
     expect(first).toMatchObject({ status: 'yellow', overdueDays: 1 })
 
     const [firstItem, secondItem] = first.currentRun!.items
-    const partial = database!.domain.routines.attestRunItem(firstItem.id, {
+    const partial = database!.domain.routines.attestCellItem(firstItem.id, {
       resolution: 'attested',
       issueFound: true,
       issueDescription: 'Risk entry was stale',
@@ -89,7 +89,7 @@ describe('Routine Commitment model', () => {
       followUpType: 'update'
     })
 
-    const complete = database!.domain.routines.attestRunItem(secondItem.id, {
+    const complete = database!.domain.routines.attestCellItem(secondItem.id, {
       resolution: 'not_applicable'
     }, new Date('2026-01-02T13:00:00.000Z'))
     expect(complete).toMatchObject({
@@ -106,7 +106,7 @@ describe('Routine Commitment model', () => {
       checklist: [{ inspection: 'Verify the weekly report was inspected.' }]
     })
     const first = routine.snapshot('2026-01-01').currentRun!
-    const late = database!.domain.routines.attestRunItem(first.items[0].id, {
+    const late = database!.domain.routines.attestCellItem(first.items[0].id, {
       resolution: 'attested'
     }, new Date('2026-01-09T12:00:00.000Z'))
 
@@ -147,7 +147,13 @@ describe('Routine Commitment model', () => {
     const raw = new DatabaseSync(path)
     expect(() => raw.prepare(
       'UPDATE routine_review_run_items SET inspection = ? WHERE id = ?'
-    ).run('Rewritten', original.items[0].id)).toThrow(/immutable/)
+    ).run('Rewritten', original.items[0].runItemId)).toThrow(/immutable/)
+    expect(() => raw.prepare(
+      'UPDATE routine_review_cells SET subject_name = ? WHERE id = ?'
+    ).run('Rewritten Subject', original.cells[0].id)).toThrow(/immutable/)
+    expect(() => raw.prepare(
+      'DELETE FROM routine_review_cell_attestations WHERE id = ?'
+    ).run(original.cells[0].items[0].id)).toThrow(/immutable/)
     raw.close()
   })
 
@@ -158,6 +164,11 @@ describe('Routine Commitment model', () => {
       { name: 'North America' },
       new Date('2026-01-01T09:00:00.000Z')
     )
+    const twoSubjectScope = database!.domain.focusScopes.addSubject(
+      focus.id,
+      { name: 'Europe' },
+      new Date('2026-01-01T09:30:00.000Z')
+    )
     const routine = database!.domain.routines.create({
       parent: { type: 'focus', id: focus.id },
       name: 'Regional inspection',
@@ -167,10 +178,26 @@ describe('Routine Commitment model', () => {
       checklist: [{ inspection: 'Confirm the regional plan was inspected.' }]
     }, new Date('2026-01-01T12:00:00.000Z'))
     const run = routine.snapshot('2026-01-01').currentRun!
-    expect(run.scope).toMatchObject({
-      id: focusScope.scopeId,
-      subjects: [{ name: 'North America' }]
+    expect(run.scope?.id).toBe(focusScope.scopeId)
+    expect(run.scope?.subjects).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'Europe' }),
+      expect.objectContaining({ name: 'North America' })
+    ]))
+    expect(run.cells.map((cell) => cell.subject?.name)).toEqual(['Europe', 'North America'])
+
+    const firstSubjectComplete = database!.domain.routines.attestCellItem(
+      run.cells[0].items[0].id,
+      { resolution: 'attested', issueFound: true, issueDescription: 'Evidence was stale' },
+      new Date('2026-01-02T10:00:00.000Z')
+    )
+    expect(firstSubjectComplete.currentRun).toMatchObject({
+      completionDate: null,
+      progress: { complete: 1, required: 2 }
     })
+    expect(firstSubjectComplete.currentRun!.cells).toEqual(expect.arrayContaining([
+      expect.objectContaining({ subject: expect.objectContaining({ name: 'Europe' }), completionDate: '2026-01-02' }),
+      expect.objectContaining({ subject: expect.objectContaining({ name: 'North America' }), completionDate: null })
+    ]))
 
     database!.domain.focusScopes.removeSubject(
       focus.id,
@@ -178,9 +205,28 @@ describe('Routine Commitment model', () => {
       new Date('2026-01-02T12:00:00.000Z')
     )
     const afterScopeChange = routine.snapshot('2026-01-02')
-    expect(afterScopeChange.currentRun!.scope).toMatchObject({
-      subjects: [{ name: 'North America' }]
+    expect(afterScopeChange.currentRun!.scope?.subjects).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'Europe' }),
+      expect.objectContaining({ name: 'North America' })
+    ]))
+    expect(twoSubjectScope.scopeId).toBe(focusScope.scopeId)
+  })
+
+  it('excludes a Routine from attestation status without deleting immutable history', () => {
+    const { routine } = createRoutine()
+    const originalRunId = routine.snapshot('2026-01-02').currentRun!.id
+
+    const excluded = database!.domain.routines.update(routine.id, {
+      needsAttestation: false,
+      sensitive: true
+    }, new Date('2026-01-02T12:00:00.000Z'))
+
+    expect(excluded).toMatchObject({
+      needsAttestation: false,
+      sensitive: true,
+      status: 'green'
     })
+    expect(excluded.currentRun?.id).toBe(originalRunId)
   })
 
   it('validates parent, Scope, checklist, and attestation invariants', () => {
@@ -206,7 +252,7 @@ describe('Routine Commitment model', () => {
       type: 'routine',
       title: 'Wrong repository'
     } as never)).toThrow(/Routine repository/)
-    expect(() => database!.domain.routines.attestRunItem(9999, {
+    expect(() => database!.domain.routines.attestCellItem(9999, {
       resolution: 'attested'
     })).toThrow(ModelNotFoundError)
   })

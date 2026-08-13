@@ -25,6 +25,7 @@ interface RoutineRow {
   thread_id: number | null
   title: string
   sensitive: number
+  needs_attestation: number
   cadence_days: number
   anchor_on: string
   schedule_effective_on: string
@@ -59,8 +60,16 @@ interface RunRow {
   created_at: string
 }
 
+interface CellRow {
+  id: number
+  subject_id: number | null
+  subject_name: string | null
+  completed_at: string | null
+}
+
 interface RunItemRow {
   id: number
+  run_item_id: number
   position: number
   inspection: string
   required: number
@@ -78,6 +87,8 @@ interface CountRow {
 
 interface RunOwnerRow {
   routine_id: number
+  run_id: number
+  cell_id: number
   completed_at: string | null
 }
 
@@ -215,6 +226,9 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
     if (input.sensitive !== undefined && typeof input.sensitive !== 'boolean') {
       throw new ModelValidationError('Routine sensitive must be a boolean')
     }
+    if (input.needsAttestation !== undefined && typeof input.needsAttestation !== 'boolean') {
+      throw new ModelValidationError('Routine needs attestation must be a boolean')
+    }
     const createdAt = timestamp(now)
 
     const id = this.database.transaction(() => {
@@ -230,9 +244,18 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
       this.database.run(
         `INSERT INTO routine_definitions (
            commitment_id, cadence_days, anchor_on, schedule_effective_on, scope_id,
-           current_template_version, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
-        [routineId, cadenceDays, anchorDate, anchorDate, scopeId, createdAt, createdAt]
+           current_template_version, needs_attestation, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+        [
+          routineId,
+          cadenceDays,
+          anchorDate,
+          anchorDate,
+          scopeId,
+          input.needsAttestation === false ? 0 : 1,
+          createdAt,
+          createdAt
+        ]
       )
       this.insertTemplate(routineId, 1, checklist, createdAt)
       return routineId
@@ -281,6 +304,9 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
     if (input.sensitive !== undefined && typeof input.sensitive !== 'boolean') {
       throw new ModelValidationError('Routine sensitive must be a boolean')
     }
+    if (input.needsAttestation !== undefined && typeof input.needsAttestation !== 'boolean') {
+      throw new ModelValidationError('Routine needs attestation must be a boolean')
+    }
     const checklist = input.checklist === undefined ? null : normalizeChecklist(input.checklist)
     const changedAt = timestamp(now)
     const scheduleChanged = cadenceDays !== current.cadenceDays || anchorDate !== current.anchorDate
@@ -295,7 +321,7 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
       this.database.run(
         `UPDATE routine_definitions
          SET cadence_days = ?, anchor_on = ?, schedule_effective_on = ?, scope_id = ?,
-             current_template_version = ?, updated_at = ?
+             current_template_version = ?, needs_attestation = ?, updated_at = ?
          WHERE commitment_id = ?`,
         [
           cadenceDays,
@@ -303,6 +329,7 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
           scheduleChanged ? localDate(now) : row.schedule_effective_on,
           scopeId,
           nextVersion,
+          (input.needsAttestation ?? current.needsAttestation) ? 1 : 0,
           changedAt,
           id
         ]
@@ -312,12 +339,12 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
     return this.materialize(id, localDate(now))
   }
 
-  attestRunItem(
-    runItemId: number,
+  attestCellItem(
+    attestationId: number,
     input: AttestRoutineRunItemInput,
     now = new Date()
   ): RoutineSnapshot {
-    assertId(runItemId, 'Routine Run item')
+    assertId(attestationId, 'Routine Run cell attestation')
     if (!ROUTINE_RUN_ITEM_RESOLUTIONS.includes(input.resolution)) {
       throw new ModelValidationError(`unsupported Routine attestation: ${input.resolution}`)
     }
@@ -326,15 +353,17 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
       throw new ModelValidationError(`unsupported Routine issue follow-up: ${followUpType}`)
     }
     const owner = this.database.get<RunOwnerRow>(
-      `SELECT run.routine_id, run.completed_at
-       FROM routine_review_run_items item
-       JOIN routine_review_runs run ON run.id = item.run_id
-       WHERE item.id = ?`,
-      [runItemId]
+      `SELECT run.routine_id, run.id AS run_id, cell.id AS cell_id,
+              cell.completed_at
+       FROM routine_review_cell_attestations attestation
+       JOIN routine_review_cells cell ON cell.id = attestation.cell_id
+       JOIN routine_review_runs run ON run.id = cell.run_id
+       WHERE attestation.id = ?`,
+      [attestationId]
     )
-    if (!owner) throw new ModelNotFoundError('Routine Run item', runItemId)
+    if (!owner) throw new ModelNotFoundError('Routine Run cell attestation', attestationId)
     if (owner.completed_at !== null) {
-      throw new ModelValidationError('Completed Routine Runs cannot be changed')
+      throw new ModelValidationError('Completed Routine Run Subject cells cannot be changed')
     }
     if (input.issueFound !== true && followUpType !== 'none') {
       throw new ModelValidationError('Routine issue follow-up requires Issue found')
@@ -343,38 +372,51 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
 
     this.database.transaction(() => {
       this.database.run(
-        `UPDATE routine_review_run_items
+        `UPDATE routine_review_cell_attestations
          SET resolution = ?, attested_at = ?
          WHERE id = ?`,
-        [input.resolution, input.resolution === 'pending' ? null : changedAt, runItemId]
+        [input.resolution, input.resolution === 'pending' ? null : changedAt, attestationId]
       )
       if (input.issueFound === true) {
         this.database.run(
-          `INSERT INTO routine_run_issues (
-             run_item_id, description, follow_up_type, created_at, updated_at
+          `INSERT INTO routine_review_cell_issues (
+             attestation_id, description, follow_up_type, created_at, updated_at
            ) VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT (run_item_id) DO UPDATE SET
+           ON CONFLICT (attestation_id) DO UPDATE SET
              description = excluded.description,
              follow_up_type = excluded.follow_up_type,
              updated_at = excluded.updated_at`,
-          [runItemId, input.issueDescription?.trim() ?? '', followUpType, changedAt, changedAt]
+          [attestationId, input.issueDescription?.trim() ?? '', followUpType, changedAt, changedAt]
         )
       } else {
-        this.database.run('DELETE FROM routine_run_issues WHERE run_item_id = ?', [runItemId])
+        this.database.run(
+          'DELETE FROM routine_review_cell_issues WHERE attestation_id = ?',
+          [attestationId]
+        )
       }
-      const run = this.database.get<{ run_id: number }>(
-        'SELECT run_id FROM routine_review_run_items WHERE id = ?',
-        [runItemId]
-      ) as { run_id: number }
       const pendingRequired = Number(this.database.get<CountRow>(
-        `SELECT count(*) AS count FROM routine_review_run_items
-         WHERE run_id = ? AND required = 1 AND resolution = 'pending'`,
-        [run.run_id]
+        `SELECT count(*) AS count
+         FROM routine_review_cell_attestations attestation
+         JOIN routine_review_run_items item ON item.id = attestation.run_item_id
+         WHERE attestation.cell_id = ?
+           AND item.required = 1 AND attestation.resolution = 'pending'`,
+        [owner.cell_id]
       )?.count ?? 0)
       if (pendingRequired === 0) {
         this.database.run(
+          'UPDATE routine_review_cells SET completed_at = ? WHERE id = ? AND completed_at IS NULL',
+          [changedAt, owner.cell_id]
+        )
+      }
+      const incompleteCells = Number(this.database.get<CountRow>(
+        `SELECT count(*) AS count FROM routine_review_cells
+         WHERE run_id = ? AND completed_at IS NULL`,
+        [owner.run_id]
+      )?.count ?? 0)
+      if (incompleteCells === 0) {
+        this.database.run(
           'UPDATE routine_review_runs SET completed_at = ? WHERE id = ? AND completed_at IS NULL',
-          [changedAt, run.run_id]
+          [changedAt, owner.run_id]
         )
       }
       this.database.run(
@@ -420,11 +462,13 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
       type: 'routine',
       name: row.title,
       sensitive: Boolean(row.sensitive),
+      needsAttestation: Boolean(row.needs_attestation),
       cadenceDays: Number(row.cadence_days),
       anchorDate: row.anchor_on,
       scope: this.currentScope(row.scope_id, asOf),
       status,
       nextReviewDate,
+      nextScheduledDate: this.nextScheduledDate(row, asOf),
       overdueDays:
         currentRun?.completionDate === null ? daysBetween(currentRun.scheduledDate, asOf) : 0,
       template,
@@ -438,7 +482,7 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
   private row(id: number): RoutineRow | null {
     return this.database.get<RoutineRow>(
       `SELECT commitment.id, commitment.focus_id, commitment.thread_id, commitment.title,
-              commitment.sensitive, routine.cadence_days, routine.anchor_on,
+              commitment.sensitive, routine.needs_attestation, routine.cadence_days, routine.anchor_on,
               routine.schedule_effective_on, routine.scope_id,
               routine.current_template_version, commitment.created_at, commitment.updated_at
        FROM commitments commitment
@@ -499,7 +543,6 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
   }
 
   private ensureScheduledRuns(row: RoutineRow, asOf: string): void {
-    if (row.anchor_on > asOf) return
     let scheduled = row.anchor_on
     let iterations = 0
     while (scheduled < row.schedule_effective_on) {
@@ -559,31 +602,76 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
          WHERE template_version_id = ? ORDER BY position`,
         [templateVersion.id]
       )
+      const runItemIds: number[] = []
       for (const item of items) {
-        this.database.run(
+        const runItem = this.database.run(
           `INSERT INTO routine_review_run_items (
              run_id, template_item_id, position, inspection, required, resolution, attested_at
            ) VALUES (?, ?, ?, ?, ?, 'pending', NULL)`,
           [inserted.lastInsertRowid, item.id, item.position, item.inspection, item.required]
         )
+        runItemIds.push(runItem.lastInsertRowid)
+      }
+      const subjects = scope?.subjects.length ? scope.subjects : [null]
+      for (const subject of subjects) {
+        const cell = this.database.run(
+          `INSERT INTO routine_review_cells (
+             run_id, subject_id, subject_name, completed_at, created_at
+           ) VALUES (?, ?, ?, NULL, ?)`,
+          [inserted.lastInsertRowid, subject?.id ?? null, subject?.name ?? null, createdAt]
+        )
+        for (const runItemId of runItemIds) {
+          this.database.run(
+            `INSERT INTO routine_review_cell_attestations (
+               cell_id, run_item_id, resolution, attested_at
+             ) VALUES (?, ?, 'pending', NULL)`,
+            [cell.lastInsertRowid, runItemId]
+          )
+        }
       }
     })
   }
 
   private runSnapshot(row: RunRow): RoutineReviewRunSnapshot {
-    const items = this.database.all<RunItemRow>(
-      `SELECT item.id, item.position, item.inspection, item.required, item.resolution,
-              item.attested_at, issue.id AS issue_id,
+    const cells = this.database.all<CellRow>(
+      `SELECT id, subject_id, subject_name, completed_at
+       FROM routine_review_cells WHERE run_id = ?
+       ORDER BY subject_name COLLATE NOCASE, id`,
+      [row.id]
+    ).map((cell) => {
+      const items = this.database.all<RunItemRow>(
+        `SELECT attestation.id, item.id AS run_item_id, item.position, item.inspection,
+              item.required, attestation.resolution, attestation.attested_at,
+              issue.id AS issue_id,
               issue.description AS issue_description,
               issue.follow_up_type AS issue_follow_up_type,
               issue.created_at AS issue_created_at
-       FROM routine_review_run_items item
-       LEFT JOIN routine_run_issues issue ON issue.run_item_id = item.id
-       WHERE item.run_id = ? ORDER BY item.position`,
-      [row.id]
-    ).map((item) => this.runItemSnapshot(item))
+         FROM routine_review_cell_attestations attestation
+         JOIN routine_review_run_items item ON item.id = attestation.run_item_id
+         LEFT JOIN routine_review_cell_issues issue
+           ON issue.attestation_id = attestation.id
+         WHERE attestation.cell_id = ? ORDER BY item.position`,
+        [cell.id]
+      ).map((item) => this.runItemSnapshot(item))
+      const required = items.filter((item) => item.required)
+      return {
+        id: Number(cell.id),
+        subject: cell.subject_id === null
+          ? null
+          : { id: Number(cell.subject_id), name: cell.subject_name as string },
+        completionDate: cell.completed_at?.slice(0, 10) ?? null,
+        completedLate:
+          cell.completed_at !== null && cell.completed_at.slice(0, 10) >= row.review_window_ends_on,
+        progress: {
+          complete: required.filter(({ resolution }) => resolution !== 'pending').length,
+          required: required.length
+        },
+        items
+      }
+    })
     const scopeSubjects = JSON.parse(row.scope_snapshot_json) as Array<{ id: number; name: string }>
-    const required = items.filter((item) => item.required)
+    const required = cells.reduce((total, cell) => total + cell.progress.required, 0)
+    const complete = cells.reduce((total, cell) => total + cell.progress.complete, 0)
     return {
       id: Number(row.id),
       scheduledDate: row.scheduled_on,
@@ -596,16 +684,18 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
         ? null
         : { id: Number(row.scope_id), name: row.scope_name, subjects: scopeSubjects },
       progress: {
-        complete: required.filter(({ resolution }) => resolution !== 'pending').length,
-        required: required.length
+        complete,
+        required
       },
-      items
+      cells,
+      items: cells[0]?.items ?? []
     }
   }
 
   private runItemSnapshot(row: RunItemRow): RoutineRunItemSnapshot {
     return {
       id: Number(row.id),
+      runItemId: Number(row.run_item_id),
       position: Number(row.position),
       inspection: row.inspection,
       required: Boolean(row.required),
@@ -639,6 +729,7 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
     latestCompleted: RoutineReviewRunSnapshot | null,
     asOf: string
   ): RoutineStatus {
+    if (!row.needs_attestation) return 'green'
     if (currentRun === null || currentRun.completionDate !== null) return 'green'
     const lapsedBaseline = latestCompleted?.scheduledDate ?? row.anchor_on
     if (asOf >= addDays(lapsedBaseline, Number(row.cadence_days) * 2)) return 'red'

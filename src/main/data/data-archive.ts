@@ -30,6 +30,9 @@ export const DATA_ARCHIVE_TABLES = [
   'routine_template_items',
   'routine_review_runs',
   'routine_review_run_items',
+  'routine_review_cells',
+  'routine_review_cell_attestations',
+  'routine_review_cell_issues',
   'routine_run_issues',
   'thread_review_cell_pokes',
   'commitment_review_cell_pokes',
@@ -334,6 +337,15 @@ function normalizeRow(
     if (row.resolution === 'pending') row.attested_at = null
     else setFallback(row, 'attested_at', timestamp)
   }
+  if (table === 'routine_review_cell_attestations') {
+    setFallback(row, 'resolution', 'pending')
+    if (row.resolution === 'pending') row.attested_at = null
+    else setFallback(row, 'attested_at', timestamp)
+  }
+  if (table === 'routine_review_cell_issues') {
+    setFallback(row, 'description', '')
+    setFallback(row, 'follow_up_type', 'none')
+  }
   if (table === 'routine_run_issues') {
     setFallback(row, 'description', '')
     setFallback(row, 'follow_up_type', 'none')
@@ -356,14 +368,14 @@ function normalizeRow(
     }
   }
   if (
-    table === 'routine_review_run_items' &&
+    (table === 'routine_review_run_items' || table === 'routine_review_cell_attestations') &&
     !['pending', 'attested', 'not_applicable'].includes(String(row.resolution))
   ) {
     row.resolution = 'pending'
     row.attested_at = null
   }
   if (
-    table === 'routine_run_issues' &&
+    (table === 'routine_run_issues' || table === 'routine_review_cell_issues') &&
     !['none', 'update', 'commitment', 'move'].includes(String(row.follow_up_type))
   ) {
     row.follow_up_type = 'none'
@@ -762,6 +774,63 @@ function repairRequiredRecords(database: SqliteAdapter, now: Date): number {
   return repaired
 }
 
+/** Backfills migration-27 aggregate Runs when an older portable archive has no cell tables. */
+function repairRoutineAttestationCells(database: SqliteAdapter): number {
+  let repaired = 0
+  repaired += database.run(
+    `INSERT INTO routine_review_cells (
+       run_id, subject_id, subject_name, completed_at, created_at
+     )
+     SELECT run.id,
+            CAST(json_extract(subject.value, '$.id') AS INTEGER),
+            CAST(json_extract(subject.value, '$.name') AS TEXT),
+            run.completed_at,
+            run.created_at
+     FROM routine_review_runs run, json_each(run.scope_snapshot_json) subject
+     WHERE json_array_length(run.scope_snapshot_json) > 0
+       AND NOT EXISTS (
+         SELECT 1 FROM routine_review_cells cell WHERE cell.run_id = run.id
+       )`
+  ).changes
+  repaired += database.run(
+    `INSERT INTO routine_review_cells (
+       run_id, subject_id, subject_name, completed_at, created_at
+     )
+     SELECT run.id, NULL, NULL, run.completed_at, run.created_at
+     FROM routine_review_runs run
+     WHERE json_array_length(run.scope_snapshot_json) = 0
+       AND NOT EXISTS (
+         SELECT 1 FROM routine_review_cells cell WHERE cell.run_id = run.id
+       )`
+  ).changes
+  repaired += database.run(
+    `INSERT INTO routine_review_cell_attestations (
+       cell_id, run_item_id, resolution, attested_at
+     )
+     SELECT cell.id, item.id, item.resolution, item.attested_at
+     FROM routine_review_cells cell
+     JOIN routine_review_run_items item ON item.run_id = cell.run_id
+     WHERE NOT EXISTS (
+       SELECT 1 FROM routine_review_cell_attestations attestation
+       WHERE attestation.cell_id = cell.id AND attestation.run_item_id = item.id
+     )`
+  ).changes
+  repaired += database.run(
+    `INSERT INTO routine_review_cell_issues (
+       attestation_id, description, follow_up_type, created_at, updated_at
+     )
+     SELECT attestation.id, issue.description, issue.follow_up_type,
+            issue.created_at, issue.updated_at
+     FROM routine_review_cell_attestations attestation
+     JOIN routine_run_issues issue ON issue.run_item_id = attestation.run_item_id
+     WHERE NOT EXISTS (
+       SELECT 1 FROM routine_review_cell_issues cell_issue
+       WHERE cell_issue.attestation_id = attestation.id
+     )`
+  ).changes
+  return repaired
+}
+
 export class DataArchiveRepository {
   constructor(private readonly database: SqliteAdapter) {}
 
@@ -864,6 +933,7 @@ export class DataArchiveRepository {
         throw new Error('None of the records in this archive could be imported safely.')
       }
 
+      repairedRows += repairRoutineAttestationCells(this.database)
       restoreTriggers(this.database, triggers)
       repairedRows += repairRequiredRecords(this.database, now)
       const remainingViolations = this.database.all<ForeignKeyViolation>('PRAGMA foreign_key_check')

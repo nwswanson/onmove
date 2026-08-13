@@ -50,7 +50,7 @@ describe('DataArchiveRepository', () => {
       ]
     }, new Date('2026-08-09T08:00:00.000Z'))
     const routineRun = routine.snapshot('2026-08-09').currentRun!
-    source.domain.routines.attestRunItem(routineRun.items[0].id, {
+    source.domain.routines.attestCellItem(routineRun.items[0].id, {
       resolution: 'attested',
       issueFound: true,
       issueDescription: 'Approval evidence was incomplete',
@@ -147,6 +147,56 @@ describe('DataArchiveRepository', () => {
     expect(importedRoutine.currentRun!.items).toEqual(expect.arrayContaining([
       expect.objectContaining({ issue: expect.objectContaining({ followUpType: 'commitment' }) })
     ]))
+  })
+
+  it('upgrades aggregate Routine Runs from a pre-cell portable archive', () => {
+    const source = createDatabase('archive-routine-v27-source')
+    const focus = source.domain.focuses.create({ title: 'Older Routine focus' })
+    const routine = source.domain.routines.create({
+      parent: { type: 'focus', id: focus.id },
+      name: 'Inspect older evidence',
+      cadenceDays: 7,
+      anchorDate: '2026-08-09',
+      checklist: [{ inspection: 'Verify the evidence was inspected.' }]
+    }, new Date('2026-08-09T08:00:00.000Z'))
+    const run = routine.snapshot('2026-08-09').currentRun!
+    const archive = source.dataArchive.export('1.0.0', new Date('2026-08-09T09:00:00.000Z'))
+
+    archive.schemaVersion = 27
+    archive.tables.routine_review_run_items[0].resolution = 'attested'
+    archive.tables.routine_review_run_items[0].attested_at = '2026-08-09T09:00:00.000Z'
+    archive.tables.routine_review_runs[0].completed_at = '2026-08-09T09:00:00.000Z'
+    archive.tables.routine_run_issues.push({
+      id: 1,
+      run_item_id: run.items[0].runItemId,
+      description: 'Older issue evidence',
+      follow_up_type: 'update',
+      created_at: '2026-08-09T09:00:00.000Z',
+      updated_at: '2026-08-09T09:00:00.000Z'
+    })
+    const tables = archive.tables as unknown as Record<string, unknown>
+    delete tables.routine_review_cells
+    delete tables.routine_review_cell_attestations
+    delete tables.routine_review_cell_issues
+
+    const target = createDatabase('archive-routine-v27-target')
+    const summary = target.dataArchive.import(archive, new Date('2026-08-09T10:00:00.000Z'))
+    const imported = target.domain.routines.list('2026-08-09')[0]
+
+    expect(summary.issues).toEqual([])
+    expect(summary.repairedRows).toBeGreaterThan(0)
+    expect(imported.currentRun).toMatchObject({
+      completionDate: '2026-08-09',
+      progress: { complete: 1, required: 1 },
+      cells: [{
+        subject: null,
+        progress: { complete: 1, required: 1 },
+        items: [{
+          resolution: 'attested',
+          issue: { description: 'Older issue evidence', followUpType: 'update' }
+        }]
+      }]
+    })
   })
 
   it('exports rescued Updates and merges them with Updates archived by replacement import', () => {

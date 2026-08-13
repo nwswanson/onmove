@@ -258,6 +258,15 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - A Routine has no lifecycle status selector and never generates Todos. Render its derived Current,
   Overdue, or Lapsed state through the shared semantic state-label receiver. Current Run checklist
   text is read-only; template edits create a future version instead of mutating materialized Runs.
+- Create Routines only from the owning Focus Overall or Thread screen, beside `Add commitment`.
+  Do not put creation in the global Routines destination. A scoped scheduled occurrence snapshots
+  one independently completable attestation cell per effective Subject; never collapse multiple
+  Subjects into a shared checklist resolution.
+- Build the global Routines destination with the shared contextual sidebar. Flatten it to one row
+  per actionable `Routine × Subject` (or one unscoped Routine), grouped as Past due, Today, This
+  week, and Upcoming. Selecting a row renders only that cell's checklist. Describe Routine
+  inspectors with `ContextDrawerAdapter`; include name, cadence, `needsAttestation`, sensitivity,
+  future template editing, and deletion without composing a domain-specific drawer shell.
 - Treat due-date presence as the only user-facing Commitment mode. Do not expose an independent
   `ongoing` / `action` selector or label. The generic Commitment type remains `tracking` regardless
   of due date; mirror undated/due-dated compatibility values only inside the private
@@ -437,8 +446,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
   as the Commitment's type or use it to branch application behavior.
 - Keep Routine recurrence anchored to `anchor_on`; late completion never moves future dates. Every
   materialized Run stores its template version, inspection text/order/required flags, review window,
-  and Scope/Subject-name snapshot. Run snapshot fields and completed Runs are immutable. Only full
-  resolution of required entries refreshes the practice; issue evidence never changes Routine color.
+  and Scope/Subject-name snapshot. Materialize one immutable attestation cell per effective Subject,
+  or one unscoped cell when no Subject applies. Run snapshot fields and completed cells/Runs are
+  immutable. Only full resolution of every required cell refreshes the practice; issue evidence never
+  changes Routine color. Keep `needsAttestation` as a queue-inclusion flag independent of status.
 - Persist nullable, calendar-validated due dates independently on Focus, Thread, and Commitment.
   Parent dates are advisory planning boundaries, not database constraints: descendants may extend
   beyond them and the renderer owns the direct-parent warning.

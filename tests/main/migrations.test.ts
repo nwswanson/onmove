@@ -185,6 +185,11 @@ describe('database migrations', () => {
 
     const previous = new DatabaseSync(databasePath)
     previous.exec(`
+      DROP TABLE routine_review_cell_issues;
+      DROP TABLE routine_review_cell_attestations;
+      DROP TABLE routine_review_cells;
+      ALTER TABLE routine_definitions DROP COLUMN needs_attestation;
+      DELETE FROM schema_migrations WHERE version = 28;
       DROP TABLE routine_run_issues;
       DROP TABLE routine_review_run_items;
       DROP TABLE routine_review_runs;

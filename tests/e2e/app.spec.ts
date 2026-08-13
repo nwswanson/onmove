@@ -98,19 +98,18 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
     })
     const window = await application.firstWindow()
 
-    await window.getByRole('button', { name: 'Routines', exact: true }).click()
-    await expect(window.getByRole('heading', { name: 'Routines', exact: true })).toBeVisible()
-    await window.getByRole('button', { name: 'New Routine' }).click()
-    const editor = window.getByRole('dialog', { name: 'New Routine' })
+    await window.getByRole('button', { name: 'Routine portfolio', exact: true }).click()
+    await window.getByRole('button', { name: 'Sprint execution', exact: true }).click()
+    await window.getByRole('button', { name: 'Add Routine' }).click()
+    const editor = window.getByRole('dialog', { name: 'Add Routine' })
     await editor.getByLabel('Routine name').fill('Weekly delivery inspection')
-    await editor.getByLabel('Focus or Thread').selectOption({
-      label: 'Routine portfolio / Sprint execution'
-    })
-    await editor.getByRole('button', { name: 'Create Routine' }).click()
+    await editor.getByRole('button', { name: 'Add Routine' }).click()
 
-    await expect(window.getByText('Weekly delivery inspection')).toBeVisible()
+    await window.getByRole('button', { name: 'Routines', exact: true }).click()
+    await expect(window.getByRole('heading', { name: 'Weekly delivery inspection' })).toBeVisible()
+
     await expect(window.getByText('0 of 2 attested')).toBeVisible()
-    await expect(window.getByText('Current', { exact: true })).toBeVisible()
+    await expect(window.getByRole('main').getByText('Current', { exact: true })).toBeVisible()
 
     await window.getByRole('checkbox', {
       name: 'Attest: Verify delivery risks are represented in the weekly update.'
@@ -127,16 +126,21 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
     await secondInspection.getByRole('checkbox', {
       name: 'Attest: Confirm scope changes received approval.'
     }).click()
-    await expect(window.getByText('2 of 2 attested')).toBeVisible()
+    await expect(window.getByText('0 of 2 attested')).toBeVisible()
 
-    await window.getByRole('button', { name: 'Edit Weekly delivery inspection' }).click()
-    const edit = window.getByRole('dialog', { name: 'Edit Routine' })
+    await window.getByRole('button', { name: 'Toggle context drawer' }).click()
+    const drawer = window.getByRole('complementary', {
+      name: 'Weekly delivery inspection Routine context drawer'
+    })
+    await expect(drawer.getByRole('checkbox', { name: 'Needs attestation' })).toBeChecked()
+    await drawer.getByRole('button', { name: 'Edit future checklist' }).click()
+    const edit = window.getByRole('dialog', { name: 'Edit Routine template' })
     await edit.getByRole('button', { name: 'Add inspection' }).click()
     await edit.getByRole('textbox', { name: 'Inspection 3' })
       .fill('Verify the retrospective was reviewed.')
     await edit.getByRole('button', { name: 'Save future template' }).click()
     await expect(window.getByText('Template v1')).toBeVisible()
-    await expect(window.getByText('Verify the retrospective was reviewed.')).toHaveCount(0)
+    await expect(window.getByText('Verify the retrospective was reviewed.')).toBeVisible()
 
     const stored = new DatabaseSync(databasePath, { readOnly: true })
     try {
@@ -152,11 +156,11 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
         'SELECT current_template_version FROM routine_definitions'
       ).get()).toMatchObject({ current_template_version: 2 })
       expect(stored.prepare(
-        `SELECT count(*) AS count FROM routine_review_run_items
+        `SELECT count(*) AS count FROM routine_review_cell_attestations
          WHERE resolution <> 'pending'`
       ).get()).toMatchObject({ count: 2 })
       expect(stored.prepare(
-        'SELECT description, follow_up_type FROM routine_run_issues'
+        'SELECT description, follow_up_type FROM routine_review_cell_issues'
       ).get()).toMatchObject({
         description: 'Approval record was missing',
         follow_up_type: 'commitment'
@@ -174,9 +178,11 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
     })
     const reloaded = await application.firstWindow()
     await reloaded.getByRole('button', { name: 'Routines', exact: true }).click()
-    await expect(reloaded.getByText('Weekly delivery inspection')).toBeVisible()
-    await expect(reloaded.getByText('2 of 2 attested')).toBeVisible()
-    await expect(reloaded.getByText('Template v1')).toBeVisible()
+    await expect(reloaded.getByRole('heading', {
+      name: 'Weekly delivery inspection'
+    })).toBeVisible()
+    await expect(reloaded.getByText('0 of 3 attested')).toBeVisible()
+    await expect(reloaded.getByText('Template v2')).toBeVisible()
   } finally {
     await application?.close().catch(() => undefined)
     rmSync(userDataDirectory, { recursive: true, force: true })

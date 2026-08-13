@@ -203,11 +203,13 @@ function routine(overrides: Partial<RoutineSnapshot> = {}): RoutineSnapshot {
     type: 'routine',
     name: 'Weekly delivery inspection',
     sensitive: false,
+    needsAttestation: true,
     cadenceDays: 7,
     anchorDate: '2026-08-10',
     scope: null,
     status: 'yellow',
     nextReviewDate: '2026-08-10',
+    nextScheduledDate: '2026-08-17',
     overdueDays: 2,
     template: {
       version: 1,
@@ -229,6 +231,7 @@ function routine(overrides: Partial<RoutineSnapshot> = {}): RoutineSnapshot {
       items: [
         {
           id: 601,
+          runItemId: 701,
           position: 0,
           inspection: 'Verify delivery risks were represented.',
           required: true,
@@ -238,12 +241,44 @@ function routine(overrides: Partial<RoutineSnapshot> = {}): RoutineSnapshot {
         },
         {
           id: 602,
+          runItemId: 702,
           position: 1,
           inspection: 'Confirm scope changes received approval.',
           required: true,
           resolution: 'pending',
           attestedAt: null,
           issue: null
+        }
+      ],
+      cells: [
+        {
+          id: 551,
+          subject: null,
+          completionDate: null,
+          completedLate: false,
+          progress: { complete: 0, required: 2 },
+          items: [
+            {
+              id: 601,
+              runItemId: 701,
+              position: 0,
+              inspection: 'Verify delivery risks were represented.',
+              required: true,
+              resolution: 'pending',
+              attestedAt: null,
+              issue: null
+            },
+            {
+              id: 602,
+              runItemId: 702,
+              position: 1,
+              inspection: 'Confirm scope changes received approval.',
+              required: true,
+              resolution: 'pending',
+              attestedAt: null,
+              issue: null
+            }
+          ]
         }
       ]
     },
@@ -340,7 +375,7 @@ function installApi(
     createRoutine: vi.fn(),
     updateRoutine: vi.fn(),
     deleteRoutine: vi.fn(),
-    attestRoutineRunItem: vi.fn(),
+    attestRoutineCellItem: vi.fn(),
     listUpdates: vi.fn().mockResolvedValue([]),
     createUpdate: vi.fn(),
     updateUpdate: vi.fn(),
@@ -484,10 +519,17 @@ describe('App', () => {
         progress: { complete: 1, required: 2 },
         items: currentRoutine.currentRun!.items.map((item, index) => index === 0
           ? { ...item, resolution: 'attested', attestedAt: '2026-08-12T12:00:00.000Z' }
-          : item)
+          : item),
+        cells: currentRoutine.currentRun!.cells.map((cell) => ({
+          ...cell,
+          progress: { complete: 1, required: 2 },
+          items: cell.items.map((item, index) => index === 0
+            ? { ...item, resolution: 'attested', attestedAt: '2026-08-12T12:00:00.000Z' }
+            : item)
+        }))
       }
     })
-    const attestRoutineRunItem = vi.fn().mockResolvedValue(attested)
+    const attestRoutineCellItem = vi.fn().mockResolvedValue(attested)
     const updateRoutine = vi.fn().mockImplementation(async (_id, input) => routine({
       name: input.name ?? currentRoutine.name,
       template: {
@@ -505,29 +547,39 @@ describe('App', () => {
       listFocuses: vi.fn().mockResolvedValue([currentFocus]),
       listThreads: vi.fn().mockResolvedValue([currentThread]),
       listRoutines: vi.fn().mockResolvedValue([currentRoutine]),
-      attestRoutineRunItem,
+      attestRoutineCellItem,
       updateRoutine
     })
     const user = userEvent.setup()
     render(<App />)
 
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
+    expect(screen.getByRole('button', { name: 'Add Routine' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Add commitment' })).toBeVisible()
     await user.click(await screen.findByRole('button', { name: 'Routines' }))
-    expect(screen.getByRole('heading', { name: 'Routines' })).toBeVisible()
-    expect(screen.getByText('Weekly delivery inspection')).toBeVisible()
-    expect(screen.getByText('Overdue')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'New Routine' })).not.toBeInTheDocument()
+    expect(screen.getByText('Past due')).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Weekly delivery inspection' })).toBeVisible()
+    expect(within(screen.getByRole('main')).getByText('Overdue')).toBeVisible()
     expect(screen.getByText('0 of 2 attested')).toBeVisible()
     expect(screen.getByRole('button', { name: /Project Atlas \/ Sprint execution/ })).toBeVisible()
 
     await user.click(screen.getByRole('checkbox', {
       name: 'Attest: Verify delivery risks were represented.'
     }))
-    expect(attestRoutineRunItem).toHaveBeenCalledWith(601, expect.objectContaining({
+    expect(attestRoutineCellItem).toHaveBeenCalledWith(601, expect.objectContaining({
       resolution: 'attested'
     }))
     expect(await screen.findByText('1 of 2 attested')).toBeVisible()
 
-    await user.click(screen.getByRole('button', { name: 'Edit Weekly delivery inspection' }))
-    const dialog = screen.getByRole('dialog', { name: 'Edit Routine' })
+    await user.click(screen.getByRole('button', { name: 'Toggle context drawer' }))
+    const drawer = screen.getByRole('complementary', {
+      name: 'Weekly delivery inspection Routine context drawer'
+    })
+    expect(within(drawer).getByRole('checkbox', { name: 'Needs attestation' })).toBeChecked()
+    await user.click(within(drawer).getByRole('button', { name: 'Edit future checklist' }))
+    const dialog = screen.getByRole('dialog', { name: 'Edit Routine template' })
     const name = within(dialog).getByLabelText('Routine name')
     await user.clear(name)
     await user.type(name, 'Weekly evidence inspection')
@@ -539,6 +591,76 @@ describe('App', () => {
         expect.objectContaining({ inspection: 'Confirm scope changes received approval.' })
       ]
     }))
+  })
+
+  it('lists scoped Routines as independent Subject cells in the contextual queue', async () => {
+    const base = routine()
+    const firstItems = base.currentRun!.items.map((item, index) => ({
+      ...item,
+      id: 610 + index,
+      runItemId: 710 + index
+    }))
+    const secondItems = base.currentRun!.items.map((item, index) => ({
+      ...item,
+      id: 620 + index,
+      runItemId: 710 + index
+    }))
+    const scoped = routine({
+      scope: {
+        id: 81,
+        name: 'Delivery regions',
+        subjects: [{ id: 91, name: 'Europe' }, { id: 92, name: 'North America' }]
+      },
+      currentRun: {
+        ...base.currentRun!,
+        scope: {
+          id: 81,
+          name: 'Delivery regions',
+          subjects: [{ id: 91, name: 'Europe' }, { id: 92, name: 'North America' }]
+        },
+        progress: { complete: 0, required: 4 },
+        items: firstItems,
+        cells: [
+          {
+            id: 551,
+            subject: { id: 91, name: 'Europe' },
+            completionDate: null,
+            completedLate: false,
+            progress: { complete: 0, required: 2 },
+            items: firstItems
+          },
+          {
+            id: 552,
+            subject: { id: 92, name: 'North America' },
+            completionDate: null,
+            completedLate: false,
+            progress: { complete: 0, required: 2 },
+            items: secondItems
+          }
+        ]
+      }
+    })
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([focus({ id: 1, title: 'Project Atlas' })]),
+      listThreads: vi.fn().mockResolvedValue([thread({ id: 21, focusId: 1, title: 'Sprint execution' })]),
+      listRoutines: vi.fn().mockResolvedValue([scoped])
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Routines' }))
+    expect(screen.getByRole('button', {
+      name: 'Weekly delivery inspection — Europe'
+    })).toBeVisible()
+    expect(screen.getByRole('button', {
+      name: 'Weekly delivery inspection — North America'
+    })).toBeVisible()
+
+    await user.click(screen.getByRole('button', {
+      name: 'Weekly delivery inspection — North America'
+    }))
+    expect(within(screen.getByRole('main')).getByText('North America')).toBeVisible()
+    expect(within(screen.getByRole('main')).getByText('0 of 2 attested')).toBeVisible()
   })
 
   it('shows retained Updates read-only and permanently deletes one or all from Archive', async () => {

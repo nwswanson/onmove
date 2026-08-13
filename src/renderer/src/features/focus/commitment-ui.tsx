@@ -158,6 +158,7 @@ interface CommitmentCollectionProps {
   statusError: { id: number; message: string } | null
   onOpenCollection?: () => void
   onCreate?: () => void
+  onCreateRoutine?: () => void
   onOpen: (commitmentId: number) => void
   onPin: (commitmentId: number) => void
   onComplete: (commitmentId: number) => void
@@ -172,6 +173,7 @@ export function CommitmentCollection({
   statusError,
   onOpenCollection,
   onCreate,
+  onCreateRoutine,
   onOpen,
   onPin,
   onComplete
@@ -265,11 +267,21 @@ export function CommitmentCollection({
             <p className="mt-0.5 text-xs text-muted-foreground">{contextLabel}</p>
           )}
         </div>
-        {onCreate && (
-          <Button type="button" variant="outline" size="sm" onClick={onCreate}>
-            <Plus aria-hidden="true" />
-            Add commitment
-          </Button>
+        {(onCreate || onCreateRoutine) && (
+          <div className="flex items-center gap-2">
+            {onCreate && (
+              <Button type="button" variant="outline" size="sm" onClick={onCreate}>
+                <Plus aria-hidden="true" />
+                Add commitment
+              </Button>
+            )}
+            {onCreateRoutine && (
+              <Button type="button" variant="outline" size="sm" onClick={onCreateRoutine}>
+                <Plus aria-hidden="true" />
+                Add Routine
+              </Button>
+            )}
+          </div>
         )}
       </div>
 

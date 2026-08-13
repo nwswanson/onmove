@@ -4,9 +4,11 @@ import type {
   CommitmentMovePlanSnapshot,
   CommitmentSnapshot,
   CreateCommitmentInput,
+  CreateRoutineInput,
   CreateThreadInput,
   FocusSnapshot,
   FocusScopeSnapshot,
+  RoutineSnapshot,
   MoveCommitmentInput,
   MoveThreadInput,
   ThreadSnapshot,
@@ -70,6 +72,7 @@ export interface FocusWorkspaceModel {
     subjectId: number
   ) => Promise<ThreadScopeSnapshot>
   createCommitment: (input: CreateCommitmentInput) => Promise<CommitmentSnapshot>
+  createRoutine: (input: CreateRoutineInput) => Promise<RoutineSnapshot>
   updateCommitment: (id: number, input: UpdateCommitmentInput) => Promise<CommitmentSnapshot>
   planCommitmentMove: (
     id: number,
@@ -435,6 +438,10 @@ export function useFocusWorkspaceModel({
     return created
   }
 
+  function createRoutine(input: CreateRoutineInput): Promise<RoutineSnapshot> {
+    return window.onmove.domain.createRoutine(input)
+  }
+
   async function updateCommitment(
     id: number,
     input: UpdateCommitmentInput
@@ -588,6 +595,7 @@ export function useFocusWorkspaceModel({
     addThreadScopeSubject,
     removeThreadScopeSubject,
     createCommitment,
+    createRoutine,
     updateCommitment,
     planCommitmentMove,
     moveCommitment,

@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type {
   AttestRoutineRunItemInput,
   CommitmentParent,
-  CreateRoutineInput,
   FocusSnapshot,
   RoutineSnapshot,
   ThreadSnapshot,
@@ -25,10 +24,9 @@ export interface RoutinesModel {
   loading: boolean
   saving: boolean
   error: string | null
-  create: (input: CreateRoutineInput) => Promise<boolean>
-  update: (id: number, input: UpdateRoutineInput) => Promise<boolean>
+  update: (id: number, input: UpdateRoutineInput) => Promise<RoutineSnapshot | null>
   remove: (id: number) => Promise<boolean>
-  attest: (runItemId: number, input: AttestRoutineRunItemInput) => Promise<boolean>
+  attest: (attestationId: number, input: AttestRoutineRunItemInput) => Promise<RoutineSnapshot | null>
   parentFor: (routine: RoutineSnapshot) => RoutineParentOption | null
 }
 
@@ -107,6 +105,10 @@ export function useRoutinesModel(): RoutinesModel {
     () => new Map(parents.map((parent) => [parent.key, parent])),
     [parents]
   )
+  const parentFor = useCallback(
+    (routine: RoutineSnapshot) => parentMap.get(parentKey(routine.parent)) ?? null,
+    [parentMap]
+  )
 
   function replace(next: RoutineSnapshot): void {
     setRoutines((current) => current
@@ -114,31 +116,16 @@ export function useRoutinesModel(): RoutinesModel {
       .sort((left, right) => left.name.localeCompare(right.name) || left.id - right.id))
   }
 
-  async function create(input: CreateRoutineInput): Promise<boolean> {
+  async function update(id: number, input: UpdateRoutineInput): Promise<RoutineSnapshot | null> {
     setSaving(true)
     setError(null)
     try {
-      const created = await window.onmove.domain.createRoutine(input)
-      setRoutines((current) => [...current, created]
-        .sort((left, right) => left.name.localeCompare(right.name) || left.id - right.id))
-      return true
-    } catch {
-      setError('The Routine could not be created.')
-      return false
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function update(id: number, input: UpdateRoutineInput): Promise<boolean> {
-    setSaving(true)
-    setError(null)
-    try {
-      replace(await window.onmove.domain.updateRoutine(id, input))
-      return true
+      const updated = await window.onmove.domain.updateRoutine(id, input)
+      replace(updated)
+      return updated
     } catch {
       setError('The Routine could not be updated.')
-      return false
+      return null
     } finally {
       setSaving(false)
     }
@@ -160,17 +147,18 @@ export function useRoutinesModel(): RoutinesModel {
   }
 
   async function attest(
-    runItemId: number,
+    attestationId: number,
     input: AttestRoutineRunItemInput
-  ): Promise<boolean> {
+  ): Promise<RoutineSnapshot | null> {
     setSaving(true)
     setError(null)
     try {
-      replace(await window.onmove.domain.attestRoutineRunItem(runItemId, input))
-      return true
+      const updated = await window.onmove.domain.attestRoutineCellItem(attestationId, input)
+      replace(updated)
+      return updated
     } catch {
       setError('The attestation could not be saved.')
-      return false
+      return null
     } finally {
       setSaving(false)
     }
@@ -182,10 +170,9 @@ export function useRoutinesModel(): RoutinesModel {
     loading,
     saving,
     error,
-    create,
     update,
     remove,
     attest,
-    parentFor: (routine) => parentMap.get(parentKey(routine.parent)) ?? null
+    parentFor
   }
 }

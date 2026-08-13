@@ -212,9 +212,11 @@ owned by tracking Commitments. The former due-derived `action`/`ongoing` value r
 Routine definitions reuse the base Commitment's exclusive Focus-or-Thread ownership, title,
 sensitivity, parent-transition history, and cascade boundary. Dedicated tables own their positive
 cadence, schedule anchor, optional same-Focus Scope, immutable template versions, scheduled Review
-Runs, snapshotted checklist items, attestations, and recorded issues. Routine status has no writable
-lifecycle selector: it is projected solely from full required-item attestation against the anchored
-schedule. Full semantics are in [`routine-attestations.md`](routine-attestations.md).
+Runs, snapshotted checklist items, per-Subject attestation cells, and recorded issues. Migration 28
+adds `needs_attestation` and independently completable cells: one cell per effective Subject at the
+scheduled boundary, or one unscoped cell. Routine status has no writable lifecycle selector: it is
+projected solely from full required-cell attestation against the anchored schedule. Full semantics
+are in [`routine-attestations.md`](routine-attestations.md).
 
 ## Subjects, Scopes, and exact Update cells
 

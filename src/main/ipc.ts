@@ -227,9 +227,9 @@ export function registerAppIpc(
     mutation(() => database.domain.routines.delete(id))
   )
   ipcMain.handle(
-    IPC_CHANNELS.attestRoutineRunItem,
-    (_event, runItemId: number, input: AttestRoutineRunItemInput) =>
-      mutation(() => database.domain.routines.attestRunItem(runItemId, input))
+    IPC_CHANNELS.attestRoutineCellItem,
+    (_event, attestationId: number, input: AttestRoutineRunItemInput) =>
+      mutation(() => database.domain.routines.attestCellItem(attestationId, input))
   )
   ipcMain.handle(IPC_CHANNELS.listUpdates, (_event, parent: UpdateParent) => {
     if (parent.type === 'focus') return database.domain.updates.listForFocus(parent.id)
