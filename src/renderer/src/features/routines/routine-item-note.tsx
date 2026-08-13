@@ -49,7 +49,7 @@ export const RoutineItemNote = forwardRef<RoutineItemNoteHandle, {
   }), [autosave])
 
   return (
-    <div className="ml-7 mt-2">
+    <div className="mt-3">
       <RichTextEditor
         id={`routine-item-note-${itemId}`}
         value={draft}

@@ -698,8 +698,13 @@ describe('App', () => {
       note: expect.stringContaining('Evidence checked in parent context.')
     }), { timeout: 2_000 })
     expect(screen.getByRole('button', { name: 'Finalize check-in' })).toBeDisabled()
-    await user.click(screen.getByRole('checkbox', {
-      name: 'Attest: Verify delivery risks were represented.'
+    const firstResolution = screen.getByRole('radiogroup', {
+      name: 'Resolution for Verify delivery risks were represented.'
+    })
+    expect(within(firstResolution).getByRole('radio', { name: /^Check:/ })).toBeVisible()
+    expect(within(firstResolution).getByRole('radio', { name: /^Ignore:/ })).toBeVisible()
+    await user.click(screen.getByRole('radio', {
+      name: 'Check: Verify delivery risks were represented.'
     }))
     expect(await screen.findByText('1 of 2 attested')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Edit' }))
@@ -745,11 +750,11 @@ describe('App', () => {
       note: expect.stringContaining('Approval evidence reviewed.')
     }), { timeout: 2_000 })
 
-    await user.click(screen.getByRole('checkbox', {
-      name: 'Attest: Confirm scope changes received approval.'
+    await user.click(screen.getByRole('radio', {
+      name: 'Ignore: Confirm scope changes received approval.'
     }))
     expect(attestRoutineCellItem).toHaveBeenCalledWith(602, expect.objectContaining({
-      resolution: 'attested'
+      resolution: 'not_applicable'
     }))
     expect(await screen.findByText('2 of 2 attested')).toBeVisible()
     const finalize = screen.getByRole('button', { name: 'Finalize check-in' })
@@ -769,6 +774,7 @@ describe('App', () => {
     expect(screen.getByLabelText(
       'Recorded note for Confirm scope changes received approval.'
     )).toHaveTextContent('Approval evidence reviewed.')
+    expect(screen.getByText('Ignored')).toBeVisible()
 
     await user.click(screen.getByRole('button', { name: 'Toggle context drawer' }))
     const drawer = screen.getByRole('complementary', {

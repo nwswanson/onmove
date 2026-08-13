@@ -128,8 +128,8 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
     await expect(window.getByText('Verify the retrospective was reviewed.')).toHaveCount(0)
     await expect(window.getByRole('main').getByText('Current', { exact: true })).toBeVisible()
 
-    await window.getByRole('checkbox', {
-      name: 'Attest: Verify delivery risks are represented in the weekly update.'
+    await window.getByRole('radio', {
+      name: 'Check: Verify delivery risks are represented in the weekly update.'
     }).click()
     await expect(window.getByText('1 of 2 attested')).toBeVisible()
 
@@ -138,8 +138,8 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
     ).fill('Approval record was reviewed')
     await window.getByRole('heading', { name: 'Weekly delivery inspection' }).click()
     await window.waitForTimeout(900)
-    await window.getByRole('checkbox', {
-      name: 'Attest: Confirm scope changes received approval.'
+    await window.getByRole('radio', {
+      name: 'Check: Confirm scope changes received approval.'
     }).click()
     await expect(window.getByText('2 of 2 attested')).toBeVisible()
     await window.getByRole('button', { name: 'Finalize check-in' }).click()

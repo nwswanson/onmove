@@ -62,41 +62,56 @@ export function RoutineCellChecklist({
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-background/70">
-      <ul className="divide-y divide-border" aria-label={`${cell.subjectLabel} checklist`}>
+    <div>
+      <ul
+        className="divide-y divide-border/60 border-y border-border/70"
+        aria-label={`${cell.subjectLabel} checklist`}
+      >
         {cell.items.map((item) => (
-          <li key={item.id} className="px-4 py-3">
+          <li key={item.id} className="py-4">
             {editable ? (
               <>
-                <div className="flex items-start gap-3">
-                  <label className="flex min-w-0 flex-1 items-start gap-3 text-sm leading-6">
-                    <input
-                      type="checkbox"
-                      className="mt-1.5"
-                      aria-label={`Attest: ${item.inspection}`}
-                      checked={item.resolution === 'attested'}
-                      disabled={saving || finalizing}
-                      onChange={(event) => void onMutateItem(item.id, {
-                        resolution: event.target.checked ? 'attested' : 'pending'
-                      })}
-                    />
-                    <span className={cn(item.resolution !== 'pending' && 'text-muted-foreground')}>
-                      <TaggedText value={item.inspection} />
-                    </span>
-                  </label>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={item.resolution === 'not_applicable' ? 'default' : 'outline'}
-                    disabled={saving || finalizing}
-                    onClick={() => void onMutateItem(item.id, {
-                      resolution: item.resolution === 'not_applicable'
-                        ? 'pending'
-                        : 'not_applicable'
-                    })}
-                  >
-                    N/A
-                  </Button>
+                <h3
+                  className={cn(
+                    'text-sm font-medium leading-6',
+                    item.resolution === 'not_applicable' && 'text-muted-foreground'
+                  )}
+                >
+                  <TaggedText value={item.inspection} />
+                </h3>
+                <div
+                  role="radiogroup"
+                  aria-label={`Resolution for ${item.inspection}`}
+                  className="mt-2 inline-flex rounded-md bg-muted/55 p-0.5"
+                >
+                  {([
+                    { value: 'attested', label: 'Check' },
+                    { value: 'not_applicable', label: 'Ignore' }
+                  ] as const).map((option) => {
+                    const checked = item.resolution === option.value
+                    return (
+                      <label
+                        key={option.value}
+                        className={cn(
+                          'inline-flex cursor-pointer items-center gap-1.5 rounded-[0.3rem] px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors',
+                          'has-focus-visible:ring-2 has-focus-visible:ring-ring/45',
+                          checked && 'bg-background text-foreground shadow-sm'
+                        )}
+                      >
+                        <input
+                          type="radio"
+                          name={`routine-item-resolution-${item.id}`}
+                          value={option.value}
+                          className="size-3 accent-primary"
+                          aria-label={`${option.label}: ${item.inspection}`}
+                          checked={checked}
+                          disabled={saving || finalizing}
+                          onChange={() => void onMutateItem(item.id, { resolution: option.value })}
+                        />
+                        {option.label}
+                      </label>
+                    )
+                  })}
                 </div>
                 <RoutineItemNote
                   ref={(handle) => {
@@ -114,27 +129,29 @@ export function RoutineCellChecklist({
               </>
             ) : (
               <div>
-                <div className="flex items-start gap-2.5 text-sm">
-                  {item.resolution === 'attested' ? (
-                    <Check className="mt-0.5 size-4 shrink-0 text-success" aria-hidden="true" />
-                  ) : (
-                    <Minus className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                  )}
-                  <span className="min-w-0 flex-1"><TaggedText value={item.inspection} /></span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
+                <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
+                  <h3 className="min-w-0 flex-1 text-sm font-medium leading-6">
+                    <TaggedText value={item.inspection} />
+                  </h3>
+                  <span className="inline-flex shrink-0 items-center gap-1.5 pt-1 text-xs text-muted-foreground">
+                    {item.resolution === 'attested' ? (
+                      <Check className="size-3.5 text-success" aria-hidden="true" />
+                    ) : (
+                      <Minus className="size-3.5" aria-hidden="true" />
+                    )}
                     {item.resolution === 'attested'
-                      ? 'Attested'
+                      ? 'Checked'
                       : item.resolution === 'not_applicable'
-                        ? 'Not applicable'
+                        ? 'Ignored'
                         : 'Pending'}
                   </span>
                 </div>
                 {item.attestedAt && (
-                  <p className="mt-1 pl-6 text-xs text-muted-foreground">Recorded {item.attestedAt}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Recorded {item.attestedAt}</p>
                 )}
                 {richTextPlainText(item.note ?? '').trim() && (
                   <div
-                    className="mt-2 ml-6 rounded-lg border border-border/70 bg-muted/25 px-3 py-2"
+                    className="mt-3 border-l-2 border-border/70 pl-3 text-sm"
                     aria-label={`Note for ${item.inspection}`}
                   >
                     <RichTextContent value={item.note} ariaLabel={`Recorded note for ${item.inspection}`} />
@@ -146,7 +163,7 @@ export function RoutineCellChecklist({
         ))}
       </ul>
       {editable && onFinalize && (
-        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/20 px-4 py-3">
+        <footer className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-muted-foreground">
             {readyToFinalize
               ? 'All required inspections are resolved.'

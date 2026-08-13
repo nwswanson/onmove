@@ -85,11 +85,11 @@ export function RoutineHistory({
             No check-ins yet.
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="divide-y divide-border/70 border-y border-border/70">
             {model.checkIns.map((checkIn, index) => (
               <details
                 key={checkIn.id}
-                className="overflow-hidden rounded-xl border border-border bg-card/45"
+                className="group"
                 open={index === 0}
               >
                 <summary className="cursor-pointer list-none px-4 py-3 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/45">
@@ -106,21 +106,19 @@ export function RoutineHistory({
                     </span>
                   </div>
                 </summary>
-                <div className="space-y-3 border-t border-border bg-background/55 p-3">
+                <div className="divide-y divide-border/60 border-t border-border/70">
                   {checkIn.cells.map((cell) => (
-                    <section key={cell.id} className="overflow-hidden rounded-lg border border-border/75 bg-background/70">
-                      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border/70 bg-muted/25 px-3 py-2 text-xs">
+                    <section key={cell.id} className="py-4">
+                      <header className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                         <h3 className="font-semibold">{cell.subjectLabel}</h3>
                         <span className="text-muted-foreground">{cell.completionLabel}</span>
                         <span className="ml-auto tabular-nums text-muted-foreground">{cell.progressLabel}</span>
                       </header>
-                      <div className="p-3">
-                        <RoutineCellChecklist
-                          cell={cell.checklist}
-                          onMutateItem={onMutateItem}
-                          onFinalize={onFinalizeCell}
-                        />
-                      </div>
+                      <RoutineCellChecklist
+                        cell={cell.checklist}
+                        onMutateItem={onMutateItem}
+                        onFinalize={onFinalizeCell}
+                      />
                     </section>
                   ))}
                 </div>

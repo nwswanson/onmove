@@ -271,7 +271,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
   shared throttled autosave path while its Subject cell is open. Resolving every required item only
   enables an explicit `Finalize check-in` action; it does not stamp completion automatically.
   Finalization flushes pending notes, stamps cell completion, and freezes every item resolution,
-  attestation timestamp, and note in that cell.
+  attestation timestamp, and note in that cell. Present each live inspection as a section title with
+  one horizontal `Check` / `Ignore` radio group beneath it; do not split those resolutions into
+  unrelated checkbox and button controls. Keep Run history visually flat: use simple separators for
+  Subject cells and inspection rows instead of nesting a card around every level.
 - Create and manage Routines only from the owning Focus Overall or Thread screen. Put `Add Routine`
   beside `Add commitment`, render the parent's Routine definitions directly beneath its Commitment
   collection, and open the shared definition modal when a Routine row is selected. The modal owns
