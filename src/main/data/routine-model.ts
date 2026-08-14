@@ -68,6 +68,14 @@ interface RunRow {
   created_at: string
 }
 
+interface RunScopeRow {
+  id: number
+  scheduled_on: string
+  scope_id: number | null
+  scope_name: string | null
+  scope_snapshot_json: string
+}
+
 interface CellRow {
   id: number
   subject_id: number | null
@@ -580,6 +588,7 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
     assertId(id, 'Routine')
     const row = this.row(id)
     if (!row) return null
+    this.reconcileUnstartedRunScopes(row, asOf)
     this.ensureScheduledRuns(row, asOf)
     const template = this.template(id, row.current_template_version)
     const runs = this.database.all<RunRow>(
@@ -745,6 +754,68 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
     )) this.ensureRun(row, nextScheduled)
   }
 
+  private reconcileUnstartedRunScopes(row: RoutineRow, asOf: string): void {
+    const candidates = this.database.all<RunScopeRow>(
+      `SELECT run.id, run.scheduled_on, run.scope_id, run.scope_name, run.scope_snapshot_json
+       FROM routine_review_runs run
+       WHERE run.routine_id = ?
+         AND run.scheduled_on >= ?
+         AND run.completed_at IS NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM routine_review_run_items item
+           WHERE item.run_id = run.id
+             AND (item.resolution <> 'pending' OR item.attested_at IS NOT NULL)
+         )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM routine_review_run_items item
+           JOIN routine_run_issues issue ON issue.run_item_id = item.id
+           WHERE item.run_id = run.id
+         )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM routine_review_cells cell
+           LEFT JOIN routine_review_cell_attestations attestation
+             ON attestation.cell_id = cell.id
+           LEFT JOIN routine_review_cell_issues issue
+             ON issue.attestation_id = attestation.id
+           WHERE cell.run_id = run.id
+             AND (
+               cell.completed_at IS NOT NULL OR
+               attestation.resolution <> 'pending' OR
+               attestation.attested_at IS NOT NULL OR
+               attestation.note <> '' OR
+               issue.id IS NOT NULL
+             )
+         )
+       ORDER BY run.scheduled_on, run.id`,
+      [row.id, asOf]
+    )
+    for (const run of candidates) {
+      const scope = this.currentScope(row.scope_id, run.scheduled_on)
+      const priorScope = run.scope_id === null ? null : this.scopes.find(Number(run.scope_id))
+      const nextScope = scope === null ? null : this.scopes.find(scope.id)
+      if (
+        priorScope !== null &&
+        nextScope !== null &&
+        priorScope.focusId !== nextScope.focusId
+      ) continue
+      const scopeSubjects = JSON.stringify(scope?.subjects ?? [])
+      if (
+        run.scope_id === (scope?.id ?? null) &&
+        run.scope_name === (scope?.name ?? null) &&
+        run.scope_snapshot_json === scopeSubjects
+      ) continue
+      this.database.transaction(() => {
+        const deleted = this.database.run(
+          'DELETE FROM routine_review_runs WHERE id = ?',
+          [run.id]
+        )
+        if (deleted.changes > 0) this.ensureRun(row, run.scheduled_on)
+      })
+    }
+  }
+
   private ensureRun(row: RoutineRow, scheduledDate: string): void {
     if (this.database.get<{ id: number }>(
       'SELECT id FROM routine_review_runs WHERE routine_id = ? AND scheduled_on = ?',
@@ -797,7 +868,7 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
         )
         runItemIds.push(runItem.lastInsertRowid)
       }
-      const subjects = scope?.subjects.length ? scope.subjects : [null]
+      const subjects = scope === null ? [null] : scope.subjects
       for (const subject of subjects) {
         const cell = this.database.run(
           `INSERT INTO routine_review_cells (

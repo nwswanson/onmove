@@ -3091,6 +3091,57 @@ const migrations: readonly Migration[] = [
         )
       }
     }
+  },
+  {
+    version: 32,
+    name: 'routine_unstarted_run_scope_reconciliation',
+    up(database) {
+      const exists = database.get<{ found: number }>(
+        "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = 'routine_review_runs'"
+      )
+      if (!exists) return
+      database.exec(`
+        DROP TRIGGER IF EXISTS routine_runs_delete_only_with_routine;
+
+        CREATE TRIGGER routine_runs_delete_only_with_routine
+        BEFORE DELETE ON routine_review_runs
+        WHEN EXISTS (
+          SELECT 1 FROM routine_definitions WHERE commitment_id = OLD.routine_id
+        ) AND (
+          OLD.completed_at IS NOT NULL OR
+          EXISTS (
+            SELECT 1 FROM routine_review_run_items item
+            WHERE item.run_id = OLD.id
+              AND (item.resolution <> 'pending' OR item.attested_at IS NOT NULL)
+          ) OR
+          EXISTS (
+            SELECT 1
+            FROM routine_review_run_items item
+            JOIN routine_run_issues issue ON issue.run_item_id = item.id
+            WHERE item.run_id = OLD.id
+          ) OR
+          EXISTS (
+            SELECT 1
+            FROM routine_review_cells cell
+            LEFT JOIN routine_review_cell_attestations attestation
+              ON attestation.cell_id = cell.id
+            LEFT JOIN routine_review_cell_issues issue
+              ON issue.attestation_id = attestation.id
+            WHERE cell.run_id = OLD.id
+              AND (
+                cell.completed_at IS NOT NULL OR
+                attestation.resolution <> 'pending' OR
+                attestation.attested_at IS NOT NULL OR
+                attestation.note <> '' OR
+                issue.id IS NOT NULL
+              )
+          )
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'Routine Run snapshots are immutable after attestation begins');
+        END;
+      `)
+    }
   }
 ]
 

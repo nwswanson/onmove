@@ -281,7 +281,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - Render the Routine's current actionable check-in above the `Check-in history` section on its
   owning Focus/Thread screen. History contains prior completed Runs; when several weekday
   occurrences are unfinished, expose the oldest one as current and advance to the next only after
-  explicit finalization.
+  explicit finalization. For a scoped Run, expose receiver-owned tabs for concrete Subjects only,
+  retain a valid selected Subject or default to the first available Subject, and filter
+  current/history cells to that Subject. Never add an aggregate `All subjects` Routine tab.
 - Create and manage Routines only from the owning Focus Overall or Thread screen. Put `Add Routine`
   beside `Add commitment`, render the parent's Routine definitions directly beneath its Commitment
   collection, and open the Routine's history when a Routine row is selected. Keep the creation form
@@ -487,8 +489,13 @@ foreground colors and do not rely on color alone to communicate selection or sta
   of schedule; it becomes eligible when the projection date reaches the completed occurrence. Every
   materialized Run stores its template version, inspection text/order/required flags, review window,
   and Scope/Subject-name snapshot. Materialize one independently editable attestation cell per
-  effective Subject, or one unscoped cell when no Subject applies. Run snapshot fields and finalized
-  cells/Runs are immutable. Only explicit finalization after full resolution of every required item
+  effective Subject. Use one unscoped cell only for a Routine with no applied Scope; an applied Scope
+  with no effective Subjects has no aggregate fallback cell. Before any resolution, note, issue, or
+  finalization is recorded, reconcile today's or the next Run when its same-Focus Scope membership
+  changes. Once attestation begins, preserve that Run's complete Scope/Subject snapshot. A scoped
+  Thread Routine follows its parent when inherited/custom Thread Scope changes replace the effective
+  Scope id; cross-Focus Thread moves continue preserving existing Run attribution. Run checklist
+  snapshots and evidence-bearing/finalized cells/Runs are immutable. Only explicit finalization after full resolution of every required item
   refreshes the practice; optional item-note evidence never changes Routine color. Keep
   the stored attestation preference independent of status. Legacy `cadence_days` and `anchor_on`
   columns remain import compatibility storage after migration 31 and must not drive recurrence.

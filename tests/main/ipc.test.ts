@@ -352,6 +352,7 @@ describe('registerAppIpc', () => {
     }
     const shell = { showItemInFolder: vi.fn(), openPath: vi.fn().mockResolvedValue('') }
     const invalidateNavigationBadges = vi.fn()
+    const notifyRoutinesChanged = vi.fn()
 
     const cleanup = registerAppIpc(
       ipcMain as never,
@@ -359,7 +360,8 @@ describe('registerAppIpc', () => {
       shell as never,
       () => true,
       undefined,
-      invalidateNavigationBadges
+      invalidateNavigationBadges,
+      notifyRoutinesChanged
     )
 
     expect(ipcMain.handle).toHaveBeenCalledTimes(Object.keys(IPC_CHANNELS).length)
@@ -455,6 +457,7 @@ describe('registerAppIpc', () => {
       undefined,
       21
     )).toMatchObject({ mode: 'inherited', scopeId: 51 })
+    expect(notifyRoutinesChanged).toHaveBeenCalledTimes(6)
     expect(await handlers.get(IPC_CHANNELS.listThreads)?.(undefined, 12)).toMatchObject([
       { id: 21, title: 'Sprint execution' }
     ])

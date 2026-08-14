@@ -81,7 +81,8 @@ import { RoutineManagementList } from '@/features/routines/routine-management-li
 import {
   routineDrawerAdapter,
   routineHistoryModel,
-  routineManagementListModel
+  routineManagementListModel,
+  routineWorkingContextModel
 } from '@/features/routines/routine-presenters'
 
 const CONTEXTUAL_SIDEBAR_MIN = 220
@@ -894,6 +895,33 @@ export function FocusWorkspace({
   const commitmentContextTabs = commitmentWorkingContext.snapshot
     ? commitmentWorkingContextModel(commitmentWorkingContext.snapshot)
     : null
+  const routineSubjectCells = useMemo(
+    () => (selectedRoutine?.currentRun?.cells ?? []).filter((cell) => cell.subject !== null),
+    [selectedRoutine]
+  )
+  const selectedRoutineSubjectCell = routineSubjectCells.find(
+    (cell) => cell.subject?.id === selectedSubjectId
+  ) ?? null
+  const selectedRoutineSubjectId = selectedRoutineSubjectCell?.subject?.id ?? null
+  const routineContextTabs = selectedRoutine
+    ? routineWorkingContextModel(selectedRoutine)
+    : null
+
+  useEffect(() => {
+    if (!selectedRoutine) return
+    const firstSubjectId = routineSubjectCells[0]?.subject?.id ?? null
+    if (firstSubjectId === null) {
+      if (selectedSubjectId !== null) onSelectedSubjectChange(null)
+      return
+    }
+    if (selectedRoutineSubjectCell === null) onSelectedSubjectChange(firstSubjectId)
+  }, [
+    onSelectedSubjectChange,
+    routineSubjectCells,
+    selectedRoutine,
+    selectedRoutineSubjectCell,
+    selectedSubjectId
+  ])
 
   useEffect(() => {
     if (selectedSubjectId === null) return
@@ -955,6 +983,15 @@ export function FocusWorkspace({
     ) {
       onSelectedSubjectChange(subjectId)
     }
+  }
+
+  function selectRoutineContext(tabId: string): void {
+    if (!selectedRoutine || !tabId.startsWith('subject:')) return
+    const subjectId = Number(tabId.slice('subject:'.length))
+    if (
+      Number.isInteger(subjectId) &&
+      routineSubjectCells.some((cell) => cell.subject?.id === subjectId)
+    ) onSelectedSubjectChange(subjectId)
   }
 
   useEffect(() => {
@@ -1399,7 +1436,10 @@ export function FocusWorkspace({
           />
         ) : selectedRoutine ? (
           <RoutineHistory
-            model={routineHistoryModel(selectedRoutine)}
+            model={routineHistoryModel(
+              selectedRoutine,
+              selectedRoutineSubjectId ?? undefined
+            )}
             onEdit={() => setEditingRoutineId(selectedRoutine.id)}
             onMutateItem={async (itemId, input) => {
               await model.updateRoutineRunItem(itemId, input)
@@ -1879,7 +1919,16 @@ export function FocusWorkspace({
           direction: 1,
           onChange: setContextualSidebarWidth
         }}
-        tabBar={selectedCommitment && commitmentContextTabs &&
+        tabBar={selectedRoutine && routineContextTabs &&
+          routineContextTabs.items.length > 1 ? (
+          <WorkspaceTabBar
+            model={routineContextTabs}
+            selectedId={selectedRoutineSubjectId !== null
+              ? `subject:${selectedRoutineSubjectId}`
+              : routineContextTabs.items[0].id}
+            onSelect={selectRoutineContext}
+          />
+        ) : selectedCommitment && commitmentContextTabs &&
           commitmentContextTabs.items.length > 1 ? (
           <WorkspaceTabBar
             model={commitmentContextTabs}

@@ -61,6 +61,10 @@ Legacy `cadence_days` and `anchor_on` fields remain on the definition only for o
 compatibility and no longer drive new Run generation. Existing Routines migrate to their legacy
 anchor weekday; weekend anchors become Monday.
 
+Migration 32 permits the repository to replace only a completely untouched Run when its live
+same-Focus Scope population changes. The database continues rejecting direct deletion after any
+resolution, note, issue, Subject-cell finalization, or Run completion exists.
+
 Routine creation validates all of the following in one transaction:
 
 - parent id exists and is either a Focus or Thread;
@@ -93,14 +97,25 @@ copies:
 - Scope id and name; and
 - the then-effective Subject ids and names as JSON snapshot data.
 
-The repository then creates one independently editable attestation cell per copied Subject. An open Routine, or
-a scoped Routine whose effective population is empty, receives one explicitly unscoped cell. Two
-Subjects therefore mean two independently completable copies of the same Run checklist. The Run is
-complete only after both Subject cells are complete.
+The repository then creates one independently editable attestation cell per copied Subject. An open
+Routine receives one explicitly unscoped cell. A scoped Routine with an empty effective population
+receives no cell; it never invents an `All subjects` attestation. Two Subjects therefore mean two
+independently completable copies of the same Run checklist. The Run is complete only after both
+Subject cells are complete.
 
-Changing the template, Scope membership, Scope application, or current Scope name can therefore
-never rewrite an existing Run. Scope deletion clears only the live definition reference through
-`SET NULL`; the Run's scalar Scope id plus copied name and Subject population remain readable.
+Template/checklist snapshots never change. Scope applicability is provisional only until attestation
+begins: a current or future same-Focus Run whose cells are entirely untouched is safely regenerated
+when its applied Scope membership changes. This lets a newly added or removed Subject immediately
+gain or lose its own check-in without leaving an aggregate fallback behind. The first resolution,
+note, issue, cell finalization, or Run completion freezes the complete Scope/Subject population so
+recorded evidence cannot be discarded. Scope deletion clears only the live definition reference
+through `SET NULL`; frozen Runs retain their scalar Scope id plus copied name and Subject population.
+
+A scoped Thread Routine follows the Thread's effective parent Scope. When Thread customization,
+Subject edits, or returning to inherited Scope replaces that Scope id, live Routine definitions that
+were using the prior parent Scope are retargeted in the same transaction. Cross-Focus Thread moves
+still preserve historical Run attribution, even though the live definition is remapped to the cloned
+destination Scope.
 
 Run schedule and checklist snapshot columns have SQLite immutability triggers. A finalized Subject
 cell can no longer change resolution, attestation time, completion time, note, or legacy issue
@@ -211,7 +226,10 @@ Routine rows carry a checklist icon and derived status and use the same receiver
 as Commitments. Dropping one on Overall or a sibling Thread moves the complete Routine aggregate and
 keeps it selected at its destination; no confirmation is needed because no Scope or history is changed.
 Selecting one preserves the top-level hierarchy and renders the current check-in above check-in
-history in the main canvas. History includes prior completed immutable Runs, per-Subject progress,
+history in the main canvas. A scoped check-in uses tabs for its concrete Subjects only, automatically
+retains a valid Subject selection or defaults to the first available one, and filters both current
+and historical cells to that Subject;
+there is no aggregate `All subjects` Routine tab. History includes prior completed immutable Runs, per-Subject progress,
 scheduled and completion dates, lateness, template versions, resolutions, and item notes. The current cell uses
 the same live checklist receiver as the global Routines workspace, including resolution controls,
 autosaving notes, and explicit finalization. Finalized cells render their notes as read-only blocks.

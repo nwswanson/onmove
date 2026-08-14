@@ -443,6 +443,123 @@ describe('Routine Commitment model', () => {
     expect(twoSubjectScope.scopeId).toBe(focusScope.scopeId)
   })
 
+  it('reconciles an untouched Focus Routine Run when its applied Scope membership changes', () => {
+    const focus = database!.domain.focuses.create({ title: 'Changing regions' })
+    const originalScope = database!.domain.focusScopes.addSubject(
+      focus.id,
+      { name: 'North America' },
+      new Date('2026-01-01T09:00:00.000Z')
+    )
+    const routine = database!.domain.routines.create({
+      parent: { type: 'focus', id: focus.id },
+      name: 'Regional evidence inspection',
+      scheduleWeekdays: ['thursday'],
+      scopeId: originalScope.scopeId,
+      checklist: [{ inspection: 'Verify the regional evidence was inspected.' }]
+    }, new Date('2026-01-01T10:00:00.000Z'))
+
+    expect(routine.snapshot('2026-01-01').currentRun!.cells.map((cell) =>
+      cell.subject?.name ?? 'unscoped'
+    )).toEqual(['North America'])
+
+    database!.domain.focusScopes.addSubject(
+      focus.id,
+      { name: 'Europe' },
+      new Date('2026-01-01T11:00:00.000Z')
+    )
+    expect(routine.snapshot('2026-01-01').currentRun!.cells.map((cell) =>
+      cell.subject?.name ?? 'unscoped'
+    )).toEqual(['Europe', 'North America'])
+
+    database!.domain.focusScopes.removeSubject(
+      focus.id,
+      originalScope.subjects[0].id,
+      new Date('2026-01-01T12:00:00.000Z')
+    )
+    expect(routine.snapshot('2026-01-01').currentRun!.cells.map((cell) =>
+      cell.subject?.name ?? 'unscoped'
+    )).toEqual(['Europe'])
+
+    const started = routine.snapshot('2026-01-01').currentRun!
+    database!.domain.routines.attestCellItem(started.cells[0].items[0].id, {
+      resolution: 'attested',
+      note: 'Existing evidence must not be discarded.'
+    }, new Date('2026-01-01T12:30:00.000Z'))
+    database!.domain.focusScopes.addSubject(
+      focus.id,
+      { name: 'Asia Pacific' },
+      new Date('2026-01-01T13:00:00.000Z')
+    )
+    const frozen = routine.snapshot('2026-01-01').currentRun!
+    expect(frozen.cells.map((cell) => cell.subject?.name ?? 'unscoped')).toEqual(['Europe'])
+    expect(frozen.cells[0].items[0]).toMatchObject({
+      resolution: 'attested',
+      note: 'Existing evidence must not be discarded.'
+    })
+  })
+
+  it('keeps an applied Thread Routine aligned when the parent Scope becomes custom', () => {
+    const focus = database!.domain.focuses.create({ title: 'Thread regions' })
+    const focusScope = database!.domain.focusScopes.addSubject(
+      focus.id,
+      { name: 'North America' },
+      new Date('2026-01-01T09:00:00.000Z')
+    )
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Regional delivery',
+      reviewFrequencyDays: 7
+    }, new Date('2026-01-01T09:30:00.000Z'))
+    const routine = database!.domain.routines.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Thread evidence inspection',
+      scheduleWeekdays: ['thursday'],
+      scopeId: focusScope.scopeId,
+      checklist: [{ inspection: 'Verify the Thread evidence was inspected.' }]
+    }, new Date('2026-01-01T10:00:00.000Z'))
+
+    const custom = database!.domain.threadScopes.addSubject(
+      thread.id,
+      { name: 'Europe' },
+      new Date('2026-01-01T11:00:00.000Z')
+    )
+    const refreshed = routine.snapshot('2026-01-01')
+
+    expect(custom.mode).toBe('explicit')
+    expect(refreshed.scope?.id).toBe(custom.scopeId)
+    expect(refreshed.currentRun!.cells.map((cell) =>
+      cell.subject?.name ?? 'unscoped'
+    )).toEqual(['Europe', 'North America'])
+  })
+
+  it('does not create an aggregate unscoped cell for an applied Scope with no Subjects', () => {
+    const focus = database!.domain.focuses.create({ title: 'Empty matrix' })
+    const scope = database!.domain.focusScopes.addSubject(
+      focus.id,
+      { name: 'Temporary region' },
+      new Date('2026-01-01T09:00:00.000Z')
+    )
+    const routine = database!.domain.routines.create({
+      parent: { type: 'focus', id: focus.id },
+      name: 'Scoped inspection',
+      scheduleWeekdays: ['thursday'],
+      scopeId: scope.scopeId,
+      checklist: [{ inspection: 'Verify scoped evidence.' }]
+    }, new Date('2026-01-01T10:00:00.000Z'))
+
+    database!.domain.focusScopes.removeSubject(
+      focus.id,
+      scope.subjects[0].id,
+      new Date('2026-01-01T11:00:00.000Z')
+    )
+
+    expect(routine.snapshot('2026-01-01').currentRun).toMatchObject({
+      scope: { id: scope.scopeId, subjects: [] },
+      progress: { complete: 0, required: 0 },
+      cells: []
+    })
+  })
+
   it('excludes a Routine from attestation status without deleting immutable history', () => {
     const { routine } = createRoutine()
     const originalRunId = routine.snapshot('2026-01-02').currentRun!.id

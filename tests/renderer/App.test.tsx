@@ -881,6 +881,78 @@ describe('App', () => {
     expect(within(screen.getByRole('main')).getByText('0 of 2 attested')).toBeVisible()
   })
 
+  it('switches an owned scoped Routine between Subject-only tabs without an aggregate tab', async () => {
+    const base = routine()
+    const europeItems = base.currentRun!.items.map((item, index) => ({
+      ...item,
+      id: 630 + index
+    }))
+    const northAmericaItems = base.currentRun!.items.map((item, index) => ({
+      ...item,
+      id: 640 + index
+    }))
+    const scoped = routine({
+      parent: { type: 'focus', id: 1 },
+      scope: {
+        id: 81,
+        name: 'Delivery regions',
+        subjects: [{ id: 91, name: 'Europe' }, { id: 92, name: 'North America' }]
+      },
+      currentRun: {
+        ...base.currentRun!,
+        scope: {
+          id: 81,
+          name: 'Delivery regions',
+          subjects: [{ id: 91, name: 'Europe' }, { id: 92, name: 'North America' }]
+        },
+        progress: { complete: 0, required: 4 },
+        cells: [
+          {
+            id: 553,
+            subject: { id: 91, name: 'Europe' },
+            completionDate: null,
+            completedLate: false,
+            progress: { complete: 0, required: 2 },
+            items: europeItems
+          },
+          {
+            id: 554,
+            subject: { id: 92, name: 'North America' },
+            completionDate: null,
+            completedLate: false,
+            progress: { complete: 0, required: 2 },
+            items: northAmericaItems
+          }
+        ]
+      }
+    })
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([focus({ id: 1, title: 'Project Atlas' })]),
+      listRoutines: vi.fn().mockResolvedValue([scoped])
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    await user.click(within(screen.getByLabelText('Contextual sidebar')).getByRole('button', {
+      name: 'Open Overall Routine Weekly delivery inspection'
+    }))
+
+    const tabs = await screen.findByRole('tablist', { name: 'Routine attestation context' })
+    expect(within(tabs).queryByRole('tab', { name: /All subjects/i })).not.toBeInTheDocument()
+    expect(within(tabs).getByRole('tab', {
+      name: 'Attest Weekly delivery inspection for Europe'
+    })).toHaveAttribute('aria-selected', 'true')
+    expect(within(screen.getByRole('main')).getByText('Europe')).toBeVisible()
+    expect(within(screen.getByRole('main')).queryByText('North America')).not.toBeInTheDocument()
+
+    await user.click(within(tabs).getByRole('tab', {
+      name: 'Attest Weekly delivery inspection for North America'
+    }))
+    expect(within(screen.getByRole('main')).getByText('North America')).toBeVisible()
+    expect(within(screen.getByRole('main')).queryByText('Europe')).not.toBeInTheDocument()
+  })
+
   it('shows retained Updates read-only and permanently deletes one or all from Archive', async () => {
     const retained = [
       {

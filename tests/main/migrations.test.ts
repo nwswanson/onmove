@@ -185,11 +185,12 @@ describe('database migrations', () => {
 
     const previous = new DatabaseSync(databasePath)
     previous.exec(`
+      DROP TRIGGER routine_runs_delete_only_with_routine;
       DROP TABLE routine_review_cell_issues;
       DROP TABLE routine_review_cell_attestations;
       DROP TABLE routine_review_cells;
       ALTER TABLE routine_definitions DROP COLUMN needs_attestation;
-      DELETE FROM schema_migrations WHERE version = 28;
+      DELETE FROM schema_migrations WHERE version IN (28, 29, 30, 32);
       DROP TABLE routine_run_issues;
       DROP TABLE routine_review_run_items;
       DROP TABLE routine_review_runs;
@@ -267,6 +268,29 @@ describe('database migrations', () => {
     expect(() => raw.prepare(
       "UPDATE routine_review_cell_attestations SET resolution = 'pending', attested_at = NULL WHERE id = ?"
     ).run(item.id)).toThrow(/Finalized.*immutable/)
+    raw.close()
+  })
+
+  it('rejects replacing a Routine Run after attestation evidence begins', () => {
+    const database = new AppDatabase(databasePath)
+    const focus = database.domain.focuses.create({ title: 'Protected Routine evidence' })
+    const routine = database.domain.routines.create({
+      parent: { type: 'focus', id: focus.id },
+      name: 'Protected inspection',
+      scheduleWeekdays: ['thursday'],
+      checklist: [{ inspection: 'Verify protected evidence.' }]
+    }, new Date('2026-08-13T10:00:00.000Z'))
+    const run = routine.snapshot('2026-08-13').currentRun!
+    database.domain.routines.attestCellItem(run.items[0].id, {
+      resolution: 'pending',
+      note: 'This draft is durable evidence.'
+    }, new Date('2026-08-13T11:00:00.000Z'))
+    database.close()
+
+    const raw = new DatabaseSync(databasePath)
+    expect(() => raw.prepare(
+      'DELETE FROM routine_review_runs WHERE id = ?'
+    ).run(run.id)).toThrow(/immutable after attestation begins/)
     raw.close()
   })
 

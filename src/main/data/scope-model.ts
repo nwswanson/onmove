@@ -1284,6 +1284,7 @@ export class ThreadScopeRepository {
         { mode: 'explicit', scopeId: scope.id },
         now
       )
+      this.retargetAppliedRoutines(threadId, current.scopeId, scope.id, now)
       return this.get(threadId, on)
     })
   }
@@ -1325,6 +1326,7 @@ export class ThreadScopeRepository {
         { mode: 'explicit', scopeId: scope.id },
         now
       )
+      this.retargetAppliedRoutines(threadId, current.scopeId, scope.id, now)
       return this.get(threadId, on)
     })
   }
@@ -1351,6 +1353,7 @@ export class ThreadScopeRepository {
         { mode: 'explicit', scopeId: scope.id },
         now
       )
+      this.retargetAppliedRoutines(threadId, current.scopeId, scope.id, now)
       return this.get(threadId, on)
     })
   }
@@ -1367,6 +1370,7 @@ export class ThreadScopeRepository {
         { mode: 'explicit', scopeId: scope.id },
         now
       )
+      this.retargetAppliedRoutines(threadId, current.scopeId, scope.id, now)
       return this.get(threadId, on)
     })
   }
@@ -1374,13 +1378,42 @@ export class ThreadScopeRepository {
   followFocus(threadId: number, now = new Date()): ThreadScopeSnapshot {
     return this.database.transaction(() => {
       this.requireThread(threadId)
+      const current = this.get(threadId, today(now))
       this.applications.set(
         { type: 'thread', id: threadId },
         { mode: 'inherited' },
         now
       )
-      return this.get(threadId, today(now))
+      const next = this.get(threadId, today(now))
+      this.retargetAppliedRoutines(threadId, current.scopeId, next.scopeId, now)
+      return next
     })
+  }
+
+  private retargetAppliedRoutines(
+    threadId: number,
+    fromScopeId: number | null,
+    toScopeId: number | null,
+    now: Date
+  ): void {
+    if (fromScopeId === null || fromScopeId === toScopeId) return
+    const changedAt = timestamp(now)
+    this.database.run(
+      `UPDATE commitments SET updated_at = ?
+       WHERE thread_id = ? AND behavior_type = 'routine'
+         AND id IN (
+           SELECT commitment_id FROM routine_definitions WHERE scope_id = ?
+         )`,
+      [changedAt, threadId, fromScopeId]
+    )
+    this.database.run(
+      `UPDATE routine_definitions SET scope_id = ?, updated_at = ?
+       WHERE scope_id = ? AND commitment_id IN (
+         SELECT id FROM commitments
+         WHERE thread_id = ? AND behavior_type = 'routine'
+       )`,
+      [toScopeId, changedAt, fromScopeId, threadId]
+    )
   }
 
   private createOverlay(

@@ -134,12 +134,12 @@ export function registerAppIpc(
   ipcMain.handle(
     IPC_CHANNELS.addFocusScopeSubject,
     (_event, focusId: number, input: AddFocusScopeSubjectInput) =>
-      mutation(() => database.domain.focusScopes.addSubject(focusId, input))
+      routineMutation(() => database.domain.focusScopes.addSubject(focusId, input))
   )
   ipcMain.handle(
     IPC_CHANNELS.removeFocusScopeSubject,
     (_event, focusId: number, subjectId: number) =>
-      mutation(() => database.domain.focusScopes.removeSubject(focusId, subjectId))
+      routineMutation(() => database.domain.focusScopes.removeSubject(focusId, subjectId))
   )
   ipcMain.handle(IPC_CHANNELS.getThreadScope, (_event, threadId: number) =>
     database.domain.threadScopes.get(threadId)
@@ -148,20 +148,20 @@ export function registerAppIpc(
     database.domain.threads.subjectMatrix(threadId)
   )
   ipcMain.handle(IPC_CHANNELS.customizeThreadScope, (_event, threadId: number) =>
-    mutation(() => database.domain.threadScopes.customize(threadId))
+    routineMutation(() => database.domain.threadScopes.customize(threadId))
   )
   ipcMain.handle(
     IPC_CHANNELS.addThreadScopeSubject,
     (_event, threadId: number, input: AddFocusScopeSubjectInput) =>
-      mutation(() => database.domain.threadScopes.addSubject(threadId, input))
+      routineMutation(() => database.domain.threadScopes.addSubject(threadId, input))
   )
   ipcMain.handle(
     IPC_CHANNELS.removeThreadScopeSubject,
     (_event, threadId: number, subjectId: number) =>
-      mutation(() => database.domain.threadScopes.removeSubject(threadId, subjectId))
+      routineMutation(() => database.domain.threadScopes.removeSubject(threadId, subjectId))
   )
   ipcMain.handle(IPC_CHANNELS.followFocusThreadScope, (_event, threadId: number) =>
-    mutation(() => database.domain.threadScopes.followFocus(threadId))
+    routineMutation(() => database.domain.threadScopes.followFocus(threadId))
   )
   ipcMain.handle(IPC_CHANNELS.listThreads, (_event, focusId: number) =>
     database.domain.threads.listForFocus(focusId)

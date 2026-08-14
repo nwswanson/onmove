@@ -5,7 +5,8 @@ import type {
 } from '../../src/shared/contracts'
 import {
   routineDrawerAdapter,
-  routineHistoryModel
+  routineHistoryModel,
+  routineWorkingContextModel
 } from '../../src/renderer/src/features/routines/routine-presenters'
 
 function run({
@@ -152,6 +153,34 @@ describe('Routine presentation adapters', () => {
         })
       })]
     })
+  })
+
+  it('projects only concrete Subject tabs and filters history to the selected Subject', () => {
+    const scoped = routine()
+    const europe = scoped.currentRun!.cells[0]
+    scoped.currentRun!.cells = [
+      europe,
+      {
+        ...structuredClone(europe),
+        id: 22,
+        subject: { id: 10, name: 'North America' },
+        items: europe.items.map((item) => ({ ...structuredClone(item), id: item.id + 1 }))
+      }
+    ]
+
+    expect(routineWorkingContextModel(scoped)).toEqual({
+      ariaLabel: 'Routine attestation context',
+      items: [
+        expect.objectContaining({ id: 'subject:9', label: 'Europe' }),
+        expect.objectContaining({ id: 'subject:10', label: 'North America' })
+      ]
+    })
+    expect(routineWorkingContextModel(scoped).items.some(({ id }) => id === 'all')).toBe(false)
+
+    const history = routineHistoryModel(scoped, 10)
+    expect(history.currentCheckIn?.cells).toEqual([
+      expect.objectContaining({ subjectLabel: 'North America' })
+    ])
   })
 
   it('presents an empty schedule as excluded without erasing the stored preference', () => {

@@ -61,7 +61,11 @@ function RoutineCheckInContents({
         </span>
       </div>
       <div className="divide-y divide-border/60 border-t border-border/70">
-        {checkIn.cells.map((cell) => (
+        {checkIn.cells.length === 0 ? (
+          <p className="py-5 text-sm text-muted-foreground">
+            No Subject check-in is available in this context.
+          </p>
+        ) : checkIn.cells.map((cell) => (
           <section key={cell.id} className="py-4">
             <header className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
               <h3 className="font-semibold">{cell.subjectLabel}</h3>

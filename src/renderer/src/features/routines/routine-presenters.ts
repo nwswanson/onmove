@@ -1,6 +1,7 @@
 import type { RoutineSnapshot } from '../../../../shared/contracts'
 import type { ContextDrawerAdapter } from '@/components/ui/context-drawer'
 import type { StateLabelModel } from '@/components/ui/state-label'
+import type { WorkspaceTabBarModel } from '@/components/ui/workspace-tab-bar'
 import type { RoutineHistoryModel } from '@/features/routines/routine-history'
 import type { RoutineManagementListModel } from '@/features/routines/routine-management-list'
 import type { RoutineCellChecklistModel } from '@/features/routines/routine-cell-checklist'
@@ -44,26 +45,52 @@ function statusModel(status: RoutineSnapshot['status']): StateLabelModel {
   return { label: 'Lapsed', tone: 'danger' }
 }
 
-export function routineHistoryModel(routine: RoutineSnapshot): RoutineHistoryModel {
-  const projectRun = (run: NonNullable<RoutineSnapshot['currentRun']>) => ({
-    id: String(run.id),
-    scheduledLabel: `Scheduled ${run.scheduledDate}`,
-    completionLabel: run.completionDate
-      ? `Completed ${run.completionDate}`
-      : 'Incomplete',
-    progressLabel: `${run.progress.complete} of ${run.progress.required} attested`,
-    templateLabel: `Template v${run.templateVersion}`,
-    late: run.completedLate,
-    cells: run.cells.map((cell) => ({
-      id: String(cell.id),
-      subjectLabel: cell.subject?.name ?? 'No scope',
-      progressLabel: `${cell.progress.complete} of ${cell.progress.required} attested`,
-      completionLabel: cell.completionDate
-        ? `Completed ${cell.completionDate}${cell.completedLate ? ' · late' : ''}`
+export function routineWorkingContextModel(routine: RoutineSnapshot): WorkspaceTabBarModel {
+  return {
+    ariaLabel: 'Routine attestation context',
+    items: (routine.currentRun?.cells ?? [])
+      .flatMap((cell) => cell.subject === null ? [] : [{
+        id: `subject:${cell.subject.id}`,
+        label: cell.subject.name,
+        accessibleLabel: `Attest ${routine.name} for ${cell.subject.name}`,
+        meta: `${cell.progress.complete} of ${cell.progress.required} attested`
+      }])
+  }
+}
+
+export function routineHistoryModel(
+  routine: RoutineSnapshot,
+  subjectId?: number
+): RoutineHistoryModel {
+  const projectRun = (run: NonNullable<RoutineSnapshot['currentRun']>) => {
+    const cells = run.cells
+      .filter((cell) => subjectId === undefined || cell.subject?.id === subjectId)
+    const progress = subjectId === undefined
+      ? run.progress
+      : cells.reduce((total, cell) => ({
+          complete: total.complete + cell.progress.complete,
+          required: total.required + cell.progress.required
+        }), { complete: 0, required: 0 })
+    return {
+      id: String(run.id),
+      scheduledLabel: `Scheduled ${run.scheduledDate}`,
+      completionLabel: run.completionDate
+        ? `Completed ${run.completionDate}`
         : 'Incomplete',
-      checklist: routineCellChecklistModel(cell)
-    }))
-  })
+      progressLabel: `${progress.complete} of ${progress.required} attested`,
+      templateLabel: `Template v${run.templateVersion}`,
+      late: run.completedLate,
+      cells: cells.map((cell) => ({
+        id: String(cell.id),
+        subjectLabel: cell.subject?.name ?? 'No scope',
+        progressLabel: `${cell.progress.complete} of ${cell.progress.required} attested`,
+        completionLabel: cell.completionDate
+          ? `Completed ${cell.completionDate}${cell.completedLate ? ' · late' : ''}`
+          : 'Incomplete',
+        checklist: routineCellChecklistModel(cell)
+      }))
+    }
+  }
   const checkIns = routine.previousRuns
     .filter((run, index, runs) => runs.findIndex(({ id }) => id === run.id) === index)
     .sort((left, right) => right.scheduledDate.localeCompare(left.scheduledDate))
