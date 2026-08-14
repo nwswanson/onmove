@@ -22,10 +22,12 @@ import {
   type ReviewItemModel
 } from '@/features/review/review-presenters'
 import {
+  loadReviewNotePaneCollapsed,
   loadReviewPrimaryPanePercent,
   REVIEW_PRIMARY_PANE_MAX_PERCENT,
   REVIEW_PRIMARY_PANE_MIN_PERCENT,
   reviewSplitPreferenceStorage,
+  saveReviewNotePaneCollapsed,
   saveReviewPrimaryPanePercent
 } from '@/features/review/review-split-preference'
 import { useReviewModel } from '@/features/review/use-review-model'
@@ -161,6 +163,8 @@ export function ReviewWorkspace({
   const [splitPreferenceStorage] = useState(reviewSplitPreferenceStorage)
   const [primaryPanePercent] = useState(() =>
     loadReviewPrimaryPanePercent(splitPreferenceStorage))
+  const [notePaneCollapsed] = useState(() =>
+    loadReviewNotePaneCollapsed(splitPreferenceStorage))
   const visibleItems = review.overview?.items.filter((item) =>
     reviewItemIsVisible(item, hideSensitiveContent)) ?? []
   const remainingItems = visibleItems.filter(({ key }) => !review.dismissedKeys.has(key))
@@ -195,10 +199,16 @@ export function ReviewWorkspace({
               <VerticalSplitPane
                 separatorLabel="Resize review and note panes"
                 initialPrimaryPercent={primaryPanePercent}
+                initialSecondaryCollapsed={notePaneCollapsed}
                 minPrimaryPercent={REVIEW_PRIMARY_PANE_MIN_PERCENT}
                 maxPrimaryPercent={REVIEW_PRIMARY_PANE_MAX_PERCENT}
+                secondaryLabel="Default note"
+                collapseSecondaryLabel="Collapse default note"
+                expandSecondaryLabel="Expand default note"
                 onPrimaryPercentChange={(value) =>
                   saveReviewPrimaryPanePercent(splitPreferenceStorage, value)}
+                onSecondaryCollapsedChange={(collapsed) =>
+                  saveReviewNotePaneCollapsed(splitPreferenceStorage, collapsed)}
                 primary={(
                   <article
                     aria-label={`${currentModel.kindLabel} review: ${currentModel.title}`}

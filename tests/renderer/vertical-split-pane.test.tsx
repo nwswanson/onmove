@@ -62,4 +62,55 @@ describe('vertical split pane', () => {
     expect(separator).toHaveAttribute('aria-valuenow', '78')
     fireEvent(window, new MouseEvent('pointerup', { bubbles: true }))
   })
+
+  it('collapses beyond the lower-pane threshold and restores through the control bar', () => {
+    const onSecondaryCollapsedChange = vi.fn()
+    const { container } = render(
+      <VerticalSplitPane
+        separatorLabel="Resize working regions"
+        secondaryLabel="Working notes"
+        collapseSecondaryLabel="Collapse working notes"
+        expandSecondaryLabel="Expand working notes"
+        primary={<section>Primary work</section>}
+        secondary={<section>Secondary work</section>}
+        onSecondaryCollapsedChange={onSecondaryCollapsedChange}
+      />
+    )
+    const root = container.querySelector('[data-slot="vertical-split-pane"]') as HTMLElement
+    vi.spyOn(root, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 800,
+      bottom: 500,
+      width: 800,
+      height: 500,
+      toJSON: () => ({})
+    })
+    const separator = screen.getByRole('separator', { name: 'Resize working regions' })
+    const control = container.querySelector('[data-slot="vertical-split-pane-control"]')
+    const secondary = container.querySelector('[data-slot="vertical-split-pane-secondary"]')
+
+    fireEvent(separator, new MouseEvent('pointerdown', {
+      bubbles: true,
+      button: 0,
+      clientY: 300
+    }))
+    fireEvent(window, new MouseEvent('pointermove', { bubbles: true, clientY: 450 }))
+    expect(control).toHaveAttribute('data-collapse-ready', 'true')
+    expect(separator).toHaveAttribute('aria-valuenow', '78')
+    fireEvent(window, new MouseEvent('pointerup', { bubbles: true }))
+
+    expect(control).toHaveAttribute('data-collapsed', 'true')
+    expect(secondary).not.toBeVisible()
+    expect(onSecondaryCollapsedChange).toHaveBeenLastCalledWith(true)
+    const expand = screen.getByRole('button', { name: 'Expand working notes' })
+    expect(expand).toHaveAttribute('aria-expanded', 'false')
+
+    fireEvent.click(expand)
+    expect(control).toHaveAttribute('data-collapsed', 'false')
+    expect(secondary).toBeVisible()
+    expect(onSecondaryCollapsedChange).toHaveBeenLastCalledWith(false)
+  })
 })

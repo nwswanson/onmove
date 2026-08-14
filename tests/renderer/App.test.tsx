@@ -1604,6 +1604,17 @@ describe('App', () => {
       name: 'Resize review and note panes'
     })).toHaveAttribute('aria-valuenow', '67')
 
+    await user.click(screen.getByRole('button', { name: 'Collapse default note' }))
+    expect(screen.queryByRole('region', { name: 'Focus default note' })).not.toBeInTheDocument()
+    expect(screen.getByText('Default note', { selector: 'span' })).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: 'Todos' }))
+    await user.click(screen.getByRole('button', { name: 'Review' }))
+    const expandNote = screen.getByRole('button', { name: 'Expand default note' })
+    expect(expandNote).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('region', { name: 'Focus default note' })).not.toBeInTheDocument()
+    await user.click(expandNote)
+
     const restoredNotePane = screen.getByRole('region', { name: 'Focus default note' })
     const restoredReviewArticle = screen.getByRole('article', {
       name: 'Focus review: Launch board'

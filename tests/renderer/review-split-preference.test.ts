@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   clearReviewPrimaryPanePreference,
+  loadReviewNotePaneCollapsed,
   loadReviewPrimaryPanePercent,
   reviewSplitPreferenceStorage,
+  saveReviewNotePaneCollapsed,
   saveReviewPrimaryPanePercent
 } from '../../src/renderer/src/features/review/review-split-preference'
 
@@ -31,5 +33,20 @@ describe('review split preference', () => {
     })
     expect(inaccessible).toBe(missing)
     expect(loadReviewPrimaryPanePercent(inaccessible)).toBe(67)
+  })
+
+  it('persists and clears the Review screen collapsed state independently of height', () => {
+    expect(loadReviewNotePaneCollapsed({ getItem: () => null })).toBe(false)
+    expect(loadReviewNotePaneCollapsed({ getItem: () => 'true' })).toBe(true)
+    expect(loadReviewNotePaneCollapsed({ getItem: () => 'false' })).toBe(false)
+
+    const setItem = vi.fn()
+    saveReviewNotePaneCollapsed({ setItem }, true)
+    expect(setItem).toHaveBeenCalledWith('onmove.review.note-pane-collapsed', 'true')
+
+    const removeItem = vi.fn()
+    clearReviewPrimaryPanePreference({ getItem: vi.fn(), setItem: vi.fn(), removeItem })
+    expect(removeItem).toHaveBeenCalledWith('onmove.review.primary-pane-percent')
+    expect(removeItem).toHaveBeenCalledWith('onmove.review.note-pane-collapsed')
   })
 })

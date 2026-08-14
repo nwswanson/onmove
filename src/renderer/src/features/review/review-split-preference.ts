@@ -3,6 +3,7 @@ export const REVIEW_PRIMARY_PANE_MIN_PERCENT = 30
 export const REVIEW_PRIMARY_PANE_MAX_PERCENT = 78
 
 const REVIEW_SPLIT_STORAGE_KEY = 'onmove.review.primary-pane-percent'
+const REVIEW_COLLAPSED_STORAGE_KEY = 'onmove.review.note-pane-collapsed'
 
 export type ReviewSplitPreferenceStorage = Pick<
   Storage,
@@ -57,8 +58,20 @@ export function saveReviewPrimaryPanePercent(
   storage.setItem(REVIEW_SPLIT_STORAGE_KEY, String(clamp(value)))
 }
 
+export function loadReviewNotePaneCollapsed(storage: Pick<Storage, 'getItem'>): boolean {
+  return storage.getItem(REVIEW_COLLAPSED_STORAGE_KEY) === 'true'
+}
+
+export function saveReviewNotePaneCollapsed(
+  storage: Pick<Storage, 'setItem'>,
+  collapsed: boolean
+): void {
+  storage.setItem(REVIEW_COLLAPSED_STORAGE_KEY, String(collapsed))
+}
+
 export function clearReviewPrimaryPanePreference(
   storage = reviewSplitPreferenceStorage()
 ): void {
   storage.removeItem(REVIEW_SPLIT_STORAGE_KEY)
+  storage.removeItem(REVIEW_COLLAPSED_STORAGE_KEY)
 }
