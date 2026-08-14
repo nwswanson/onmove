@@ -297,7 +297,8 @@ foreground colors and do not rely on color alone to communicate selection or sta
   Thread-owned definitions in a parent screen. Do not put definition creation or mutation in the
   global Routines destination. A scoped scheduled occurrence snapshots one independently
   completable attestation cell per effective Subject; never collapse multiple Subjects into a
-  shared checklist resolution.
+  shared checklist resolution. When the parent already has an effective Scope, default a new
+  Routine to applying that Scope; the user may explicitly uncheck it to create an open Routine.
 - Build the global Routines destination with the shared contextual sidebar. Flatten it to one row
   per actionable `Routine × Subject` (or one unscoped Routine), grouped as Past due, Today, This
   week, and Upcoming. Selecting a row renders only that cell's checklist. Keep this destination an

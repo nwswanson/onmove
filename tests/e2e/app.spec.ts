@@ -300,6 +300,27 @@ test('applies a later Thread Scope to an existing Routine with Subject-only tabs
     await expect(northAmerica).toHaveAttribute('aria-selected', 'true')
     await expect(window.getByRole('main').getByText('North America')).toBeVisible()
     await expect(window.getByRole('main').getByText('Europe')).toHaveCount(0)
+
+    await contextualSidebar.getByRole('button', { name: 'Late Scope Thread', exact: true }).click()
+    await contextualSidebar.getByRole('button', {
+      name: 'Add Routine to Late Scope Thread'
+    }).click()
+    const scopedRoutineDialog = window.getByRole('dialog', { name: 'Add Routine' })
+    await expect(scopedRoutineDialog.getByRole('checkbox', {
+      name: 'Apply Thread scope'
+    })).toBeChecked()
+    await scopedRoutineDialog.getByLabel('Routine name').fill('Scope-first inspection')
+    await scopedRoutineDialog.getByRole('button', { name: 'Add Routine' }).click()
+    await contextualSidebar.getByRole('button', {
+      name: 'Open Late Scope Thread Routine Scope-first inspection'
+    }).click()
+    const scopeFirstTabs = window.getByRole('tablist', { name: 'Routine attestation context' })
+    await expect(scopeFirstTabs.getByRole('tab', { name: 'All subjects' })).toHaveCount(0)
+    const scopeFirstEurope = scopeFirstTabs.getByRole('tab', {
+      name: 'Attest Scope-first inspection for Europe'
+    })
+    await scopeFirstEurope.click()
+    await expect(scopeFirstEurope).toHaveAttribute('aria-selected', 'true')
   } finally {
     await application?.close().catch(() => undefined)
     rmSync(userDataDirectory, { recursive: true, force: true })

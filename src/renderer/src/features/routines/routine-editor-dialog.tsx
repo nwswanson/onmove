@@ -63,7 +63,9 @@ export function RoutineEditor({
   const [scheduleWeekdays, setScheduleWeekdays] = useState<RoutineWeekday[]>(
     routine?.scheduleWeekdays ?? defaultScheduleWeekdays()
   )
-  const [useScope, setUseScope] = useState(routine?.scope !== null && routine?.scope !== undefined)
+  const [useScope, setUseScope] = useState(
+    routine === undefined ? parent.scope !== null : routine.scope !== null
+  )
   const [sensitive, setSensitive] = useState(routine?.sensitive ?? false)
   const [needsAttestation, setNeedsAttestation] = useState(
     routine?.attestationRequested ?? true

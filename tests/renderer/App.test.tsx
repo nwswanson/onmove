@@ -953,6 +953,52 @@ describe('App', () => {
     expect(within(screen.getByRole('main')).queryByText('Europe')).not.toBeInTheDocument()
   })
 
+  it('applies an existing Thread custom Scope by default when creating a Routine', async () => {
+    const currentFocus = focus({ id: 1, title: 'Project Atlas' })
+    const currentThread = thread({ id: 21, focusId: 1, title: 'Sprint execution' })
+    const europe = subject(91, 'Europe')
+    const northAmerica = subject(92, 'North America')
+    const createRoutine = vi.fn().mockResolvedValue(routine({
+      name: 'Scoped inspection',
+      scope: {
+        id: 81,
+        name: 'Sprint execution subjects',
+        subjects: [europe, northAmerica]
+      }
+    }))
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([currentFocus]),
+      listThreads: vi.fn().mockResolvedValue([currentThread]),
+      getThreadScope: vi.fn().mockResolvedValue({
+        threadId: currentThread.id,
+        focusId: currentFocus.id,
+        mode: 'explicit',
+        scopeId: 81,
+        subjects: [europe, northAmerica],
+        focusSubjects: []
+      }),
+      createRoutine
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
+    await user.click(within(screen.getByLabelText('Contextual sidebar')).getByRole('button', {
+      name: 'Add Routine to Sprint execution'
+    }))
+    const dialog = screen.getByRole('dialog', { name: 'Add Routine' })
+    expect(within(dialog).getByRole('checkbox', { name: 'Apply Thread scope' })).toBeChecked()
+    await user.type(within(dialog).getByLabelText('Routine name'), 'Scoped inspection')
+    await user.click(within(dialog).getByRole('button', { name: 'Add Routine' }))
+
+    expect(createRoutine).toHaveBeenCalledWith(expect.objectContaining({
+      parent: { type: 'thread', id: currentThread.id },
+      name: 'Scoped inspection',
+      scopeId: 81
+    }))
+  })
+
   it('never falls back to the parent Thread All-subjects tabs for an unscoped Routine', async () => {
     const currentFocus = focus({ id: 1, title: 'Project Atlas' })
     const currentThread = thread({ id: 21, focusId: 1, title: 'Sprint execution' })

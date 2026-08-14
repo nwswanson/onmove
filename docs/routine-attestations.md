@@ -246,7 +246,9 @@ canvas; it never opens an Edit Routine dialog.
 
 The embedded editor owns the name, Monday–Friday schedule, optional parent Scope,
 `needsAttestation`, sensitivity, and checklist versioning. Clearing `needsAttestation` removes the
-Routine's cells from the queue without deleting immutable history. Editing the checklist appends a
+Routine's cells from the queue without deleting immutable history. New Routines default to the
+parent's effective Scope when one already exists; clearing `Apply … scope` is the explicit opt-out
+that creates an open Routine. Editing the checklist appends a
 future template version and never binds editable controls to a Run's copied inspection text.
 Permanent deletion is a confirmed destructive action in the Routine's context drawer; successful
 deletion invalidates a pinned Routine and returns the main selection to its owning Focus or Thread.
