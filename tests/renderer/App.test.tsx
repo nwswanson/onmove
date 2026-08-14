@@ -499,6 +499,7 @@ describe('App', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     clearDueHidePausedPreference()
+    clearNoteSplitPreference('focus')
     clearNoteSplitPreference('thread')
     clearNoteSplitPreference('commitment')
   })
@@ -2521,8 +2522,11 @@ describe('App', () => {
     )
   })
 
-  it('uses the shared persistent note split on Thread and Commitment screens', async () => {
-    const current = focus({ title: 'Project Atlas' })
+  it('uses the shared persistent note split on Focus, Thread, and Commitment screens', async () => {
+    const current = focus({
+      title: 'Project Atlas',
+      notes: [note({ id: 40, parent: { type: 'focus', id: 1 } })]
+    })
     const sprint = thread({
       notes: [note({ id: 41, parent: { type: 'thread', id: 10 } })]
     })
@@ -2541,6 +2545,14 @@ describe('App', () => {
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    expect(await screen.findByRole('region', { name: 'Focus default note' })).toBeVisible()
+    const focusDivider = screen.getByRole('separator', {
+      name: 'Resize focus and note panes'
+    })
+    fireEvent.keyDown(focusDivider, { key: 'ArrowDown' })
+    fireEvent.keyDown(focusDivider, { key: 'ArrowDown' })
+    expect(focusDivider).toHaveAttribute('aria-valuenow', '72')
+
     await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
 
     const threadNote = await screen.findByRole('region', { name: 'Thread default note' })
@@ -2594,6 +2606,12 @@ describe('App', () => {
     expect(screen.getByRole('separator', {
       name: 'Resize thread and note panes'
     })).toHaveAttribute('aria-valuenow', '67')
+
+    await user.click(screen.getByRole('button', { name: 'Overall' }))
+    expect(screen.getByRole('region', { name: 'Focus default note' })).toBeVisible()
+    expect(screen.getByRole('separator', {
+      name: 'Resize focus and note panes'
+    })).toHaveAttribute('aria-valuenow', '72')
   })
 
   it('edits and clears hierarchical due dates while warning when children exceed parents', async () => {

@@ -71,7 +71,6 @@ export function NoteSplitWorkspace({
             <NoteEditor
               key={note.id}
               note={note}
-              fillHeight
               onContentChange={onNoteContentChange}
             />
           ) : (

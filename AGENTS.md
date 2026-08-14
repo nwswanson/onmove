@@ -399,10 +399,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
   session and refreshes the owning Focus projection; it is not a Save button. A same-day queue
   refresh must retain passed and updated item keys while offering ignored items again; do not
   present a completed item as fresh work through a replay-style `Review again` action.
-- Keep the current Review target and the Thread and Commitment detail screens paired with their
-  Default note through the shared `NoteSplitWorkspace`; feature screens supply only primary content,
+- Keep the current Review target and the Focus, Thread, and Commitment detail screens paired with
+  their Default note through the shared `NoteSplitWorkspace`; feature screens supply only primary content,
   a note model, and optional mutation notification. Persist the last expanded height and collapsed
-  state per screen kind (`review`, `thread`, or `commitment`) as presentation preferences, never per
+  state per screen kind (`review`, `focus`, `thread`, or `commitment`) as presentation preferences, never per
   domain record. The receiver owns a substantial draggable divider, snaps the note into a labeled
   bottom bar when dragged beyond its minimum-height threshold, and exposes an accessible
   collapse/expand button. Expanding restores the prior height; navigation between records must not

@@ -70,7 +70,6 @@ import { visibleSensitiveRecords } from '@/features/shared/sensitivity'
 import { SensitivityToggle } from '@/features/shared/sensitivity-toggle'
 import { DirectTodos } from '@/features/todos/direct-todos'
 import { DirectUpdates } from '@/features/updates/direct-updates'
-import { DirectNotes } from '@/features/notes/direct-notes'
 import { NoteSplitWorkspace } from '@/features/notes/note-split-workspace'
 import {
   RoutineEditor,
@@ -1765,7 +1764,12 @@ export function FocusWorkspace({
             )}
           />
         ) : (
-          <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="focus-heading">
+          <NoteSplitWorkspace
+            preferenceId="focus"
+            workspaceLabel="Focus"
+            note={defaultNote(focus.notes)}
+            primary={(
+              <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="focus-heading">
             <div className="flex flex-wrap items-start gap-3 border-b border-border/70 pb-6">
               <div className="min-w-0 flex-1">
                 <h1 id="focus-heading" className="truncate text-2xl font-semibold tracking-[-0.025em]">
@@ -1901,8 +1905,6 @@ export function FocusWorkspace({
 
             <DirectTodos context={{ type: 'focus', id: focus.id }} />
 
-            <DirectNotes notes={focus.notes} />
-
             <DirectUpdates
               key={`focus-updates:${focus.id}`}
               parent={{ type: 'focus', id: focus.id }}
@@ -1912,7 +1914,9 @@ export function FocusWorkspace({
             />
 
             {model.loadError && <p role="alert" className="mt-5 text-sm text-destructive">{model.loadError}</p>}
-          </section>
+              </section>
+            )}
+          />
         )}
     </main>
   )
