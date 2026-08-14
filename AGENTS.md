@@ -284,6 +284,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
   explicit finalization. For a scoped Run, expose receiver-owned tabs for concrete Subjects only,
   retain a valid selected Subject or default to the first available Subject, and filter
   current/history cells to that Subject. Never add an aggregate `All subjects` Routine tab.
+  A selected Routine owns the tab-bar slot completely: if its current Run has no concrete Subject
+  cells, render no Routine tab bar and never fall through to its parent Thread's working-context
+  tabs.
 - Create and manage Routines only from the owning Focus Overall or Thread screen. Put `Add Routine`
   beside `Add commitment`, render the parent's Routine definitions directly beneath its Commitment
   collection, and open the Routine's history when a Routine row is selected. Keep the creation form
@@ -494,7 +497,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
   finalization is recorded, reconcile today's or the next Run when its same-Focus Scope membership
   changes. Once attestation begins, preserve that Run's complete Scope/Subject snapshot. A scoped
   Thread Routine follows its parent when inherited/custom Thread Scope changes replace the effective
-  Scope id; cross-Focus Thread moves continue preserving existing Run attribution. Run checklist
+  Scope id. When a parent establishes its first Scope, Routines created while that parent was Open
+  adopt it; a Routine explicitly left unscoped after a parent Scope already exists remains open.
+  Cross-Focus Thread moves continue preserving existing Run attribution. Run checklist
   snapshots and evidence-bearing/finalized cells/Runs are immutable. Only explicit finalization after full resolution of every required item
   refreshes the practice; optional item-note evidence never changes Routine color. Keep
   the stored attestation preference independent of status. Legacy `cadence_days` and `anchor_on`

@@ -953,6 +953,40 @@ describe('App', () => {
     expect(within(screen.getByRole('main')).queryByText('Europe')).not.toBeInTheDocument()
   })
 
+  it('never falls back to the parent Thread All-subjects tabs for an unscoped Routine', async () => {
+    const currentFocus = focus({ id: 1, title: 'Project Atlas' })
+    const currentThread = thread({ id: 21, focusId: 1, title: 'Sprint execution' })
+    const europe = subject(91, 'Europe')
+    const northAmerica = subject(92, 'North America')
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([currentFocus]),
+      listThreads: vi.fn().mockResolvedValue([currentThread]),
+      listRoutines: vi.fn().mockResolvedValue([routine()]),
+      getThreadScope: vi.fn().mockResolvedValue({
+        threadId: currentThread.id,
+        focusId: currentFocus.id,
+        mode: 'explicit',
+        scopeId: 81,
+        subjects: [europe, northAmerica],
+        focusSubjects: []
+      })
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
+    expect(await screen.findByRole('tab', { name: 'All subjects' })).toBeVisible()
+
+    await user.click(within(screen.getByLabelText('Contextual sidebar')).getByRole('button', {
+      name: 'Open Sprint execution Routine Weekly delivery inspection'
+    }))
+
+    expect(screen.queryByRole('tab', { name: 'All subjects' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tablist', { name: 'Thread working context' })).not.toBeInTheDocument()
+    expect(within(screen.getByRole('main')).getAllByText('No scope')).not.toHaveLength(0)
+  })
+
   it('shows retained Updates read-only and permanently deletes one or all from Archive', async () => {
     const retained = [
       {

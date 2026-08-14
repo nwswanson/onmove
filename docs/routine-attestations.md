@@ -103,6 +103,12 @@ receives no cell; it never invents an `All subjects` attestation. Two Subjects t
 independently completable copies of the same Run checklist. The Run is complete only after both
 Subject cells are complete.
 
+If a Routine is created while its Focus or Thread is Open, it cannot select a Scope that does not
+exist yet. Establishing that parent's first Scope therefore applies it to those pre-existing open
+Routine definitions and regenerates untouched Runs as concrete Subject cells. This is narrowly a
+null-to-first-Scope transition: a Routine explicitly left unscoped after the parent already has a
+Scope stays open when that Scope's membership changes.
+
 Template/checklist snapshots never change. Scope applicability is provisional only until attestation
 begins: a current or future same-Focus Run whose cells are entirely untouched is safely regenerated
 when its applied Scope membership changes. This lets a newly added or removed Subject immediately
@@ -229,7 +235,9 @@ Selecting one preserves the top-level hierarchy and renders the current check-in
 history in the main canvas. A scoped check-in uses tabs for its concrete Subjects only, automatically
 retains a valid Subject selection or defaults to the first available one, and filters both current
 and historical cells to that Subject;
-there is no aggregate `All subjects` Routine tab. History includes prior completed immutable Runs, per-Subject progress,
+there is no aggregate `All subjects` Routine tab. The selected Routine owns this tab-bar slot, so an
+unscoped or temporarily cell-less Routine shows no tabs instead of leaking its parent Thread's
+working-context bar. History includes prior completed immutable Runs, per-Subject progress,
 scheduled and completion dates, lateness, template versions, resolutions, and item notes. The current cell uses
 the same live checklist receiver as the global Routines workspace, including resolution controls,
 autosaving notes, and explicit finalization. Finalized cells render their notes as read-only blocks.

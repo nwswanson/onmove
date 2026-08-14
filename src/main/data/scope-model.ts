@@ -1073,6 +1073,7 @@ export class FocusScopeRepository {
           { mode: 'explicit', scopeId },
           now
         )
+        this.retargetRoutinesForNewFocusScope(focusId, scopeId, now)
       } else if (!this.scopes.isEffectiveMember(scopeId, subject.id, on)) {
         this.restoreSubject(scopeId, subject.id, on, now)
       }
@@ -1116,6 +1117,7 @@ export class FocusScopeRepository {
           { mode: 'explicit', scopeId },
           now
         )
+        this.retargetRoutinesForNewFocusScope(focusId, scopeId, now)
       }
       return this.get(focusId, on)
     })
@@ -1219,6 +1221,50 @@ export class FocusScopeRepository {
         `Subject removal would invalidate scoped Update history on ${invalidUpdate.recorded_on}`
       )
     }
+  }
+
+  /**
+   * A Routine created while its parent is Open cannot opt into a Scope that
+   * does not exist yet. When a Focus establishes its first Scope, treat those
+   * existing Routines as following that new parent Scope. Routines explicitly
+   * left unscoped after the Focus already has a Scope are not affected.
+   */
+  private retargetRoutinesForNewFocusScope(
+    focusId: number,
+    scopeId: number,
+    now: Date
+  ): void {
+    const changedAt = timestamp(now)
+    this.database.run(
+      `UPDATE commitments SET updated_at = ?
+       WHERE behavior_type = 'routine' AND (
+         (focus_id = ? AND thread_id IS NULL) OR
+         thread_id IN (
+           SELECT application.thread_id
+           FROM thread_scope_applications application
+           JOIN threads thread ON thread.id = application.thread_id
+           WHERE thread.focus_id = ? AND application.mode = 'inherited'
+         )
+       ) AND id IN (
+         SELECT commitment_id FROM routine_definitions WHERE scope_id IS NULL
+       )`,
+      [changedAt, focusId, focusId]
+    )
+    this.database.run(
+      `UPDATE routine_definitions SET scope_id = ?, updated_at = ?
+       WHERE scope_id IS NULL AND commitment_id IN (
+         SELECT commitment.id
+         FROM commitments commitment
+         LEFT JOIN thread_scope_applications application
+           ON application.thread_id = commitment.thread_id
+         LEFT JOIN threads thread ON thread.id = commitment.thread_id
+         WHERE commitment.behavior_type = 'routine' AND (
+           (commitment.focus_id = ? AND commitment.thread_id IS NULL) OR
+           (thread.focus_id = ? AND application.mode = 'inherited')
+         )
+       )`,
+      [scopeId, changedAt, focusId, focusId]
+    )
   }
 }
 
@@ -1396,23 +1442,25 @@ export class ThreadScopeRepository {
     toScopeId: number | null,
     now: Date
   ): void {
-    if (fromScopeId === null || fromScopeId === toScopeId) return
+    if (fromScopeId === toScopeId) return
     const changedAt = timestamp(now)
+    const sourcePredicate = fromScopeId === null ? 'scope_id IS NULL' : 'scope_id = ?'
+    const sourceParameters = fromScopeId === null ? [] : [fromScopeId]
     this.database.run(
       `UPDATE commitments SET updated_at = ?
        WHERE thread_id = ? AND behavior_type = 'routine'
          AND id IN (
-           SELECT commitment_id FROM routine_definitions WHERE scope_id = ?
+           SELECT commitment_id FROM routine_definitions WHERE ${sourcePredicate}
          )`,
-      [changedAt, threadId, fromScopeId]
+      [changedAt, threadId, ...sourceParameters]
     )
     this.database.run(
       `UPDATE routine_definitions SET scope_id = ?, updated_at = ?
-       WHERE scope_id = ? AND commitment_id IN (
+       WHERE ${sourcePredicate} AND commitment_id IN (
          SELECT id FROM commitments
          WHERE thread_id = ? AND behavior_type = 'routine'
        )`,
-      [toScopeId, changedAt, fromScopeId, threadId]
+      [toScopeId, changedAt, ...sourceParameters, threadId]
     )
   }
 

@@ -242,6 +242,70 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
   }
 })
 
+test('applies a later Thread Scope to an existing Routine with Subject-only tabs', async () => {
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-routine-late-scope-e2e-'))
+  let application: ElectronApplication | undefined
+
+  try {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    const window = await application.firstWindow()
+
+    await window.getByRole('button', { name: 'New focus' }).click()
+    await window.getByLabel(/^Title/).fill('Late Scope Focus')
+    await window.getByRole('button', { name: 'Create focus' }).click()
+    await window.getByRole('button', { name: 'New thread' }).click()
+    const threadDialog = window.getByRole('dialog', { name: 'New thread' })
+    await threadDialog.getByLabel(/^Title/).fill('Late Scope Thread')
+    await threadDialog.getByRole('button', { name: 'Create thread' }).click()
+    await window.getByRole('button', { name: 'Late Scope Thread', exact: true }).click()
+
+    const contextualSidebar = window.getByLabel('Contextual sidebar')
+    await contextualSidebar.getByRole('button', {
+      name: 'Add Routine to Late Scope Thread'
+    }).click()
+    const routineDialog = window.getByRole('dialog', { name: 'Add Routine' })
+    await routineDialog.getByLabel('Routine name').fill('Late scoped inspection')
+    await routineDialog.getByRole('button', { name: 'Add Routine' }).click()
+
+    const drawerToggle = window.getByRole('button', { name: 'Toggle context drawer' })
+    if (await drawerToggle.getAttribute('aria-pressed') === 'false') await drawerToggle.click()
+    const threadDrawer = window.getByRole('complementary', { name: 'Thread context drawer' })
+    await expect(threadDrawer.getByRole('radio', { name: 'Custom scope' })).toBeChecked()
+    const subjectInput = threadDrawer.getByLabel('Add a Subject to custom scope')
+    for (const subject of ['Europe', 'North America']) {
+      await subjectInput.fill(subject)
+      await subjectInput.press('Enter')
+      await expect(threadDrawer.getByRole('button', { name: `Remove ${subject}` })).toBeVisible()
+    }
+
+    await contextualSidebar.getByRole('button', {
+      name: 'Open Late Scope Thread Routine Late scoped inspection'
+    }).click()
+    const tabs = window.getByRole('tablist', { name: 'Routine attestation context' })
+    await expect(tabs).toBeVisible()
+    await expect(tabs.getByRole('tab', { name: 'All subjects' })).toHaveCount(0)
+    const europe = tabs.getByRole('tab', {
+      name: 'Attest Late scoped inspection for Europe'
+    })
+    const northAmerica = tabs.getByRole('tab', {
+      name: 'Attest Late scoped inspection for North America'
+    })
+    await expect(europe).toHaveAttribute('aria-selected', 'true')
+    await northAmerica.click()
+    await expect(northAmerica).toHaveAttribute('aria-selected', 'true')
+    await expect(window.getByRole('main').getByText('North America')).toBeVisible()
+    await expect(window.getByRole('main').getByText('Europe')).toHaveCount(0)
+  } finally {
+    await application?.close().catch(() => undefined)
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
 test('drags a Routine between Threads without rewriting its attestation aggregate', async () => {
   const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-routine-move-e2e-'))
   const databasePath = join(userDataDirectory, 'onmove.sqlite3')

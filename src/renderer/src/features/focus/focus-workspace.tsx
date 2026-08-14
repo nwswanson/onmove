@@ -1919,15 +1919,16 @@ export function FocusWorkspace({
           direction: 1,
           onChange: setContextualSidebarWidth
         }}
-        tabBar={selectedRoutine && routineContextTabs &&
-          routineContextTabs.items.length > 1 ? (
-          <WorkspaceTabBar
-            model={routineContextTabs}
-            selectedId={selectedRoutineSubjectId !== null
-              ? `subject:${selectedRoutineSubjectId}`
-              : routineContextTabs.items[0].id}
-            onSelect={selectRoutineContext}
-          />
+        tabBar={selectedRoutine ? (
+          routineContextTabs && routineContextTabs.items.length > 1 ? (
+            <WorkspaceTabBar
+              model={routineContextTabs}
+              selectedId={selectedRoutineSubjectId !== null
+                ? `subject:${selectedRoutineSubjectId}`
+                : routineContextTabs.items[0].id}
+              onSelect={selectRoutineContext}
+            />
+          ) : undefined
         ) : selectedCommitment && commitmentContextTabs &&
           commitmentContextTabs.items.length > 1 ? (
           <WorkspaceTabBar

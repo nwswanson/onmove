@@ -532,6 +532,98 @@ describe('Routine Commitment model', () => {
     )).toEqual(['Europe', 'North America'])
   })
 
+  it('adopts a Thread Scope created after the Routine and materializes one cell per Subject', () => {
+    const focus = database!.domain.focuses.create({ title: 'Late Thread scope' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Scope established later',
+      reviewFrequencyDays: 7
+    }, new Date('2026-01-01T09:00:00.000Z'))
+    const routine = database!.domain.routines.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Existing inspection',
+      scheduleWeekdays: ['thursday'],
+      checklist: [{ inspection: 'Verify each Subject independently.' }]
+    }, new Date('2026-01-01T10:00:00.000Z'))
+
+    expect(routine.snapshot('2026-01-01')).toMatchObject({
+      scope: null,
+      currentRun: {
+        cells: [expect.objectContaining({ subject: null })]
+      }
+    })
+
+    database!.domain.threadScopes.addSubject(
+      thread.id,
+      { name: 'Europe' },
+      new Date('2026-01-01T11:00:00.000Z')
+    )
+    const scope = database!.domain.threadScopes.addSubject(
+      thread.id,
+      { name: 'North America' },
+      new Date('2026-01-01T12:00:00.000Z')
+    )
+    const refreshed = routine.snapshot('2026-01-01')
+
+    expect(refreshed.scope?.id).toBe(scope.scopeId)
+    expect(refreshed.currentRun!.cells.map((cell) => cell.subject?.name)).toEqual([
+      'Europe',
+      'North America'
+    ])
+    expect(refreshed.currentRun!.cells.some((cell) => cell.subject === null)).toBe(false)
+  })
+
+  it('adopts a Focus Scope created after an Overall Routine', () => {
+    const focus = database!.domain.focuses.create({ title: 'Late Focus scope' })
+    const overallRoutine = database!.domain.routines.create({
+      parent: { type: 'focus', id: focus.id },
+      name: 'Overall inspection',
+      scheduleWeekdays: ['thursday'],
+      checklist: [{ inspection: 'Verify Overall evidence.' }]
+    }, new Date('2026-01-01T09:30:00.000Z'))
+
+    const scope = database!.domain.focusScopes.addSubject(
+      focus.id,
+      { name: 'Platform' },
+      new Date('2026-01-01T11:00:00.000Z')
+    )
+
+    const overallRefreshed = overallRoutine.snapshot('2026-01-01')
+    expect(overallRefreshed.scope?.id).toBe(scope.scopeId)
+    expect(overallRefreshed.currentRun!.cells).toEqual([
+      expect.objectContaining({ subject: expect.objectContaining({ name: 'Platform' }) })
+    ])
+  })
+
+  it('keeps an explicitly unscoped Routine open when its parent Scope already exists', () => {
+    const focus = database!.domain.focuses.create({ title: 'Optional scope' })
+    database!.domain.focusScopes.addSubject(
+      focus.id,
+      { name: 'Europe' },
+      new Date('2026-01-01T09:00:00.000Z')
+    )
+    const routine = database!.domain.routines.create({
+      parent: { type: 'focus', id: focus.id },
+      name: 'Deliberately open inspection',
+      scheduleWeekdays: ['thursday'],
+      scopeId: null,
+      checklist: [{ inspection: 'Verify shared evidence.' }]
+    }, new Date('2026-01-01T10:00:00.000Z'))
+
+    database!.domain.focusScopes.addSubject(
+      focus.id,
+      { name: 'North America' },
+      new Date('2026-01-01T11:00:00.000Z')
+    )
+
+    expect(routine.snapshot('2026-01-01')).toMatchObject({
+      scope: null,
+      currentRun: {
+        cells: [expect.objectContaining({ subject: null })]
+      }
+    })
+  })
+
   it('does not create an aggregate unscoped cell for an applied Scope with no Subjects', () => {
     const focus = database!.domain.focuses.create({ title: 'Empty matrix' })
     const scope = database!.domain.focusScopes.addSubject(
