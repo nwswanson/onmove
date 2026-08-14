@@ -71,6 +71,7 @@ import { SensitivityToggle } from '@/features/shared/sensitivity-toggle'
 import { DirectTodos } from '@/features/todos/direct-todos'
 import { DirectUpdates } from '@/features/updates/direct-updates'
 import { DirectNotes } from '@/features/notes/direct-notes'
+import { NoteSplitWorkspace } from '@/features/notes/note-split-workspace'
 import {
   RoutineEditor,
   RoutineEditorDialog,
@@ -90,6 +91,10 @@ const CONTEXTUAL_SIDEBAR_MAX = 320
 
 function contextItemIdForCommitmentParent(parent: CommitmentParent): string {
   return parent.type === 'focus' ? 'overall' : threadSidebarItemId(parent.id)
+}
+
+function defaultNote(notes: FocusSnapshot['notes']): FocusSnapshot['notes'][number] | null {
+  return notes.find(({ title }) => title === 'Default') ?? null
 }
 
 function commitmentParentForContextItem(
@@ -1449,9 +1454,13 @@ export function FocusWorkspace({
             }}
           />
         ) : activeCommitmentParent && !commitmentRouteHidden ? (
-          <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="commitment-heading">
-            {selectedCommitment ? (
-              <>
+          selectedCommitment ? (
+            <NoteSplitWorkspace
+              preferenceId="commitment"
+              workspaceLabel="Commitment"
+              note={defaultNote(selectedCommitment.notes)}
+              primary={(
+                <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="commitment-heading">
                 <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border/70 pb-5">
                   <div className="min-w-0 flex-1">
                     <p className="mb-2 text-[0.6875rem] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
@@ -1532,7 +1541,6 @@ export function FocusWorkspace({
                         subjectName: cell.subject.name
                       }))}
                     />
-                    <DirectNotes notes={selectedCommitment.notes} />
                     <DirectUpdates
                       key={`${selectedCommitment.id}:${commitmentWorkingContext.snapshot.scopeId ?? 'open'}:${selectedCommitmentCell?.subjectId ?? 'all'}`}
                       parent={{ type: 'commitment', id: selectedCommitment.id }}
@@ -1570,18 +1578,24 @@ export function FocusWorkspace({
                     />
                   </>
                 ) : null}
-              </>
-            ) : (
-              <>
+                </section>
+              )}
+            />
+          ) : (
+            <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="commitment-heading">
                 <h1 id="commitment-heading" className="text-2xl font-semibold tracking-[-0.025em]">
                   Commitments
                 </h1>
                 <p className="mt-2 text-sm text-muted-foreground">No commitments yet.</p>
-              </>
-            )}
-          </section>
+            </section>
+          )
         ) : displayedThread ? (
-          <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="thread-heading">
+          <NoteSplitWorkspace
+            preferenceId="thread"
+            workspaceLabel="Thread"
+            note={defaultNote(displayedThread.notes)}
+            primary={(
+              <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="thread-heading">
             <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border/70 pb-5">
               <div className="min-w-0 flex-1">
                 <h1 id="thread-heading" className="text-2xl font-semibold tracking-[-0.025em]">
@@ -1736,7 +1750,6 @@ export function FocusWorkspace({
                         subjectName: cell.subject.name
                       }))}
                     />
-                    <DirectNotes notes={displayedThread.notes} />
                     <DirectUpdates
                       key={`thread-updates:${displayedThread.id}:${scope.scopeId ?? 'open'}:${selectedSubject?.id ?? 'all'}`}
                       parent={{ type: 'thread', id: displayedThread.id }}
@@ -1748,7 +1761,9 @@ export function FocusWorkspace({
                   </>
                 )
               })()}
-          </section>
+              </section>
+            )}
+          />
         ) : (
           <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="focus-heading">
             <div className="flex flex-wrap items-start gap-3 border-b border-border/70 pb-6">

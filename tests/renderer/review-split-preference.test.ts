@@ -33,6 +33,11 @@ describe('review split preference', () => {
     })
     expect(inaccessible).toBe(missing)
     expect(loadReviewPrimaryPanePercent(inaccessible)).toBe(67)
+
+    const incomplete = reviewSplitPreferenceStorage({
+      localStorage: { getItem: () => null } as unknown as Storage
+    })
+    expect(incomplete).toBe(missing)
   })
 
   it('persists and clears the Review screen collapsed state independently of height', () => {

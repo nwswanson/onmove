@@ -27,6 +27,7 @@ import {
 } from '../../src/renderer/src/components/ui/rich-text-editor'
 import { clearReviewPrimaryPanePreference } from '../../src/renderer/src/features/review/review-split-preference'
 import { clearDueHidePausedPreference } from '../../src/renderer/src/features/due/due-filter-preference'
+import { clearNoteSplitPreference } from '../../src/renderer/src/features/notes/note-split-preference'
 
 const initialState: AppState = {
   greeting: 'Hello, world.',
@@ -498,6 +499,8 @@ describe('App', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     clearDueHidePausedPreference()
+    clearNoteSplitPreference('thread')
+    clearNoteSplitPreference('commitment')
   })
 
   it('shows the toolbar and sidebar while SQLite and focuses load', () => {
@@ -2516,6 +2519,64 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Sprint execution, paused' })).toHaveClass(
       'opacity-55'
     )
+  })
+
+  it('uses the shared persistent note split on Thread and Commitment screens', async () => {
+    const current = focus({ title: 'Project Atlas' })
+    const sprint = thread({
+      notes: [note({ id: 41, parent: { type: 'thread', id: 10 } })]
+    })
+    const scopedCommitment = commitment({
+      parent: { type: 'thread', id: sprint.id },
+      notes: [note({ id: 42, parent: { type: 'commitment', id: 20 } })]
+    })
+    const api = installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listThreads: vi.fn().mockResolvedValue([sprint]),
+      listCommitments: vi.fn(async (parent) =>
+        parent.type === 'thread' ? [scopedCommitment] : []
+      )
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
+
+    const threadNote = await screen.findByRole('region', { name: 'Thread default note' })
+    const threadNoteEditor = within(threadNote).getByRole('textbox', { name: 'Default note' })
+    expect(threadNoteEditor).toBeVisible()
+    await user.click(threadNoteEditor)
+    await user.keyboard(' confirmed')
+    await waitFor(() => expect(api.richText.saveDocument).toHaveBeenCalledWith(
+      { type: 'note', id: 41, field: 'content' },
+      expect.any(String)
+    ))
+    const threadDivider = screen.getByRole('separator', {
+      name: 'Resize thread and note panes'
+    })
+    fireEvent.keyDown(threadDivider, { key: 'ArrowDown' })
+    expect(threadDivider).toHaveAttribute('aria-valuenow', '67')
+    await user.click(screen.getByRole('button', { name: 'Collapse default note' }))
+    expect(screen.queryByRole('region', { name: 'Thread default note' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', {
+      name: 'Open commitment Keep sponsors aligned'
+    }))
+    expect(await screen.findByRole('heading', { name: 'Keep sponsors aligned' })).toBeVisible()
+    expect(screen.getByRole('region', { name: 'Commitment default note' })).toBeVisible()
+    expect(screen.getByRole('separator', {
+      name: 'Resize commitment and note panes'
+    })).toHaveAttribute('aria-valuenow', '62')
+
+    await user.click(screen.getByRole('button', { name: 'Sprint execution' }))
+    const expandThreadNote = screen.getByRole('button', { name: 'Expand default note' })
+    expect(expandThreadNote).toHaveAttribute('aria-expanded', 'false')
+    await user.click(expandThreadNote)
+    expect(screen.getByRole('region', { name: 'Thread default note' })).toBeVisible()
+    expect(screen.getByRole('separator', {
+      name: 'Resize thread and note panes'
+    })).toHaveAttribute('aria-valuenow', '67')
   })
 
   it('edits and clears hierarchical due dates while warning when children exceed parents', async () => {

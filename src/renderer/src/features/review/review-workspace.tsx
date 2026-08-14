@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { ArrowRight, Check, ChevronRight, MessageSquarePlus, SkipForward } from 'lucide-react'
 import type {
   ReviewQueueItemSnapshot,
@@ -13,23 +12,13 @@ import { LifecycleStatusLabel } from '@/components/ui/lifecycle-status'
 import { RichTextContent } from '@/components/ui/rich-text-editor'
 import { StateLabel } from '@/components/ui/state-label'
 import { TaggedText } from '@/components/ui/tagged-text'
-import { VerticalSplitPane } from '@/components/ui/vertical-split-pane'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
-import { NoteEditor } from '@/features/notes/direct-notes'
+import { NoteSplitWorkspace } from '@/features/notes/note-split-workspace'
 import {
   reviewItemIsVisible,
   reviewItemModel,
   type ReviewItemModel
 } from '@/features/review/review-presenters'
-import {
-  loadReviewNotePaneCollapsed,
-  loadReviewPrimaryPanePercent,
-  REVIEW_PRIMARY_PANE_MAX_PERCENT,
-  REVIEW_PRIMARY_PANE_MIN_PERCENT,
-  reviewSplitPreferenceStorage,
-  saveReviewNotePaneCollapsed,
-  saveReviewPrimaryPanePercent
-} from '@/features/review/review-split-preference'
 import { useReviewModel } from '@/features/review/use-review-model'
 import { WorkKindIcon } from '@/features/shared/work-kind-icon'
 import { DirectTodos } from '@/features/todos/direct-todos'
@@ -160,11 +149,6 @@ export function ReviewWorkspace({
 }: ReviewWorkspaceProps): React.JSX.Element {
   const review = useReviewModel({ onReviewChanged })
   const updateComposer = useUpdateComposer()
-  const [splitPreferenceStorage] = useState(reviewSplitPreferenceStorage)
-  const [primaryPanePercent] = useState(() =>
-    loadReviewPrimaryPanePercent(splitPreferenceStorage))
-  const [notePaneCollapsed] = useState(() =>
-    loadReviewNotePaneCollapsed(splitPreferenceStorage))
   const visibleItems = review.overview?.items.filter((item) =>
     reviewItemIsVisible(item, hideSensitiveContent)) ?? []
   const remainingItems = visibleItems.filter(({ key }) => !review.dismissedKeys.has(key))
@@ -196,19 +180,13 @@ export function ReviewWorkspace({
                 </Button>
               </div>
             ) : current && currentModel ? (
-              <VerticalSplitPane
-                separatorLabel="Resize review and note panes"
-                initialPrimaryPercent={primaryPanePercent}
-                initialSecondaryCollapsed={notePaneCollapsed}
-                minPrimaryPercent={REVIEW_PRIMARY_PANE_MIN_PERCENT}
-                maxPrimaryPercent={REVIEW_PRIMARY_PANE_MAX_PERCENT}
-                secondaryLabel="Default note"
-                collapseSecondaryLabel="Collapse default note"
-                expandSecondaryLabel="Expand default note"
-                onPrimaryPercentChange={(value) =>
-                  saveReviewPrimaryPanePercent(splitPreferenceStorage, value)}
-                onSecondaryCollapsedChange={(collapsed) =>
-                  saveReviewNotePaneCollapsed(splitPreferenceStorage, collapsed)}
+              <NoteSplitWorkspace
+                preferenceId="review"
+                workspaceLabel="Review"
+                noteOwnerLabel={currentModel.kindLabel}
+                note={currentModel.defaultNote}
+                notePaneClassName="px-0 pb-0 sm:px-0"
+                onNoteContentChange={() => void review.recordNoteMutation(current)}
                 primary={(
                   <article
                     aria-label={`${currentModel.kindLabel} review: ${currentModel.title}`}
@@ -352,27 +330,6 @@ export function ReviewWorkspace({
                 <ReviewUpdates model={currentModel} />
                 <ReviewSupportingDetails model={currentModel} />
                   </article>
-                )}
-                secondary={(
-                  <section
-                    aria-label={`${currentModel.kindLabel} default note`}
-                    className="h-full min-h-0 pt-2"
-                  >
-                    {currentModel.defaultNote ? (
-                      <NoteEditor
-                        key={currentModel.defaultNote.id}
-                        note={currentModel.defaultNote}
-                        fillHeight
-                        onContentChange={() => void review.recordNoteMutation(current)}
-                      />
-                    ) : (
-                      <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-border/80 bg-muted/10 px-5 text-center">
-                        <p className="text-sm text-muted-foreground">
-                          This item does not have a Default note.
-                        </p>
-                      </div>
-                    )}
-                  </section>
                 )}
               />
             ) : (

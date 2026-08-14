@@ -399,12 +399,15 @@ foreground colors and do not rely on color alone to communicate selection or sta
   session and refreshes the owning Focus projection; it is not a Save button. A same-day queue
   refresh must retain passed and updated item keys while offering ignored items again; do not
   present a completed item as fresh work through a replay-style `Review again` action.
-- Keep the current Review target and its Default note in the shared top/bottom split pane. Persist
-  the last expanded height and collapsed state as Review-screen presentation preferences, not per
+- Keep the current Review target and the Thread and Commitment detail screens paired with their
+  Default note through the shared `NoteSplitWorkspace`; feature screens supply only primary content,
+  a note model, and optional mutation notification. Persist the last expanded height and collapsed
+  state per screen kind (`review`, `thread`, or `commitment`) as presentation preferences, never per
   domain record. The receiver owns a substantial draggable divider, snaps the note into a labeled
   bottom bar when dragged beyond its minimum-height threshold, and exposes an accessible
-  collapse/expand button. Expanding restores the prior height; navigation must not reset either
-  preference.
+  collapse/expand button. Expanding restores the prior height; navigation between records must not
+  reset either preference. Keep local preference access tolerant of missing, incomplete, or throwing
+  `localStorage` implementations.
 - Build Due as a full-width aggregate worklist with no contextual sidebar. Load it through one named
   main-process projection that returns every Focus, Thread, and Commitment with an explicit due date,
   including done and cancelled records; never issue a renderer-side hierarchy fan-out. Group rows as
