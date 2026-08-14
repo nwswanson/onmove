@@ -563,7 +563,7 @@ function RichTextToolbar({ compact, onOpenInWindow }: RichTextToolbarProps): Rea
   }
 
   return (
-    <div>
+    <div className="shrink-0">
       <div
         role="toolbar"
         aria-label="Text formatting"
@@ -842,7 +842,7 @@ function RichTextEditor({
         <RichTextToolbar compact={compact} onOpenInWindow={onOpenInWindow} />
         <div
           data-slot="rich-text-editor-document"
-          className={cn('relative', fillHeight && 'min-h-0 flex-1')}
+          className={cn('relative', fillHeight && 'min-h-0 flex-1 overflow-hidden')}
         >
           <RichTextPlugin
             contentEditable={
@@ -853,7 +853,7 @@ function RichTextEditor({
                 className={cn(
                   'w-full resize-y overflow-auto px-3 py-2 text-sm leading-6 outline-none select-text',
                   compact ? 'min-h-20' : 'min-h-24',
-                  fillHeight && 'h-full resize-none'
+                  fillHeight && 'h-full min-h-0 resize-none overscroll-contain'
                 )}
               />
             }

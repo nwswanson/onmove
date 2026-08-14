@@ -185,7 +185,6 @@ export function ReviewWorkspace({
                 workspaceLabel="Review"
                 noteOwnerLabel={currentModel.kindLabel}
                 note={currentModel.defaultNote}
-                notePaneClassName="px-0 pb-0 sm:px-0"
                 onNoteContentChange={() => void review.recordNoteMutation(current)}
                 primary={(
                   <article

@@ -2546,6 +2546,23 @@ describe('App', () => {
     const threadNote = await screen.findByRole('region', { name: 'Thread default note' })
     const threadNoteEditor = within(threadNote).getByRole('textbox', { name: 'Default note' })
     expect(threadNoteEditor).toBeVisible()
+    expect(threadNote).toHaveClass('overflow-hidden')
+    expect(threadNote.querySelector('article')).not.toHaveClass(
+      'rounded-xl',
+      'border',
+      'p-3'
+    )
+    expect(threadNote.querySelector('[data-slot="rich-text-editor"]')).toHaveClass(
+      'rounded-none',
+      'border-0',
+      'shadow-none'
+    )
+    expect(threadNote.querySelector('[data-slot="rich-text-editor-document"]')).toHaveClass(
+      'min-h-0',
+      'overflow-hidden'
+    )
+    expect(threadNoteEditor).toHaveClass('h-full', 'min-h-0', 'overflow-auto')
+    expect(within(threadNote).queryByText('Saved as you type')).not.toBeInTheDocument()
     await user.click(threadNoteEditor)
     await user.keyboard(' confirmed')
     await waitFor(() => expect(api.richText.saveDocument).toHaveBeenCalledWith(

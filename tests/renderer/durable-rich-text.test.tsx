@@ -44,9 +44,9 @@ describe('useDurableRichText', () => {
     expect(container.querySelector('[data-slot="rich-text-editor"]'))
       .toHaveClass('flex', 'min-h-0', 'flex-1', 'flex-col')
     expect(container.querySelector('[data-slot="rich-text-editor-document"]'))
-      .toHaveClass('min-h-0', 'flex-1')
+      .toHaveClass('min-h-0', 'flex-1', 'overflow-hidden')
     expect(container.querySelector('[contenteditable="true"]'))
-      .toHaveClass('h-full', 'resize-none')
+      .toHaveClass('h-full', 'min-h-0', 'resize-none', 'overflow-auto')
   })
 
   it('commits inline, opens a dedicated window, and applies revision broadcasts', async () => {

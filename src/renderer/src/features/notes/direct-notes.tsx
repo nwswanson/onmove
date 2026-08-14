@@ -35,16 +35,21 @@ export function NoteEditor({
 
   return (
     <article className={cn(
-      'rounded-xl border border-border/80 bg-card/55 p-3 shadow-xs',
-      fillHeight && 'flex h-full min-h-0 flex-col',
+      fillHeight
+        ? 'flex h-full min-h-0 flex-col overflow-hidden bg-background'
+        : 'rounded-xl border border-border/80 bg-card/55 p-3 shadow-xs',
       className
     )}>
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <h3 className="text-xs font-semibold">{note.title}</h3>
-        <span className="text-[0.6875rem] text-muted-foreground">Saved as you type</span>
-      </div>
+      {!fillHeight && (
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h3 className="text-xs font-semibold">{note.title}</h3>
+          <span className="text-[0.6875rem] text-muted-foreground">Saved as you type</span>
+        </div>
+      )}
       <RichTextEditor
-        className={cn(fillHeight && 'min-h-0 flex-1')}
+        className={cn(
+          fillHeight && 'min-h-0 flex-1 rounded-none border-0 bg-background shadow-none'
+        )}
         ariaLabel={`${note.title} note`}
         placeholder="Write a note…"
         value={document.value}
@@ -66,7 +71,10 @@ export function NoteEditor({
         onOpenInWindow={document.openInWindow}
       />
       {document.error ? (
-        <p role="alert" className="mt-2 text-xs text-destructive">{document.error}</p>
+        <p role="alert" className={cn(
+          'text-xs text-destructive',
+          fillHeight ? 'shrink-0 px-3 py-2' : 'mt-2'
+        )}>{document.error}</p>
       ) : null}
     </article>
   )

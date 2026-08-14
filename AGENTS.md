@@ -407,7 +407,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
   bottom bar when dragged beyond its minimum-height threshold, and exposes an accessible
   collapse/expand button. Expanding restores the prior height; navigation between records must not
   reset either preference. Keep local preference access tolerant of missing, incomplete, or throwing
-  `localStorage` implementations.
+  `localStorage` implementations. The expanded note is the full-width lower-pane surface, not a
+  nested card: keep its formatting toolbar fixed and make the bounded editor document the scroll
+  owner so long notes remain usable at every split height.
 - Build Due as a full-width aggregate worklist with no contextual sidebar. Load it through one named
   main-process projection that returns every Focus, Thread, and Commitment with an explicit due date,
   including done and cancelled records; never issue a renderer-side hierarchy fan-out. Group rows as

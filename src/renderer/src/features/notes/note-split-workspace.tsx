@@ -22,7 +22,6 @@ interface NoteSplitWorkspaceProps {
   note: NoteEditorModel | null
   onNoteContentChange?: () => void
   emptyNoteMessage?: string
-  notePaneClassName?: string
   className?: string
 }
 
@@ -39,7 +38,6 @@ export function NoteSplitWorkspace({
   note,
   onNoteContentChange,
   emptyNoteMessage = 'This item does not have a Default note.',
-  notePaneClassName,
   className
 }: NoteSplitWorkspaceProps): React.JSX.Element {
   const [storage] = useState(noteSplitPreferenceStorage)
@@ -67,10 +65,7 @@ export function NoteSplitWorkspace({
       secondary={(
         <section
           aria-label={`${noteOwnerLabel} default note`}
-          className={cn(
-            'h-full min-h-0 px-8 pt-2 pb-8 sm:px-10',
-            notePaneClassName
-          )}
+          className="h-full min-h-0 overflow-hidden bg-background"
         >
           {note ? (
             <NoteEditor
@@ -80,7 +75,7 @@ export function NoteSplitWorkspace({
               onContentChange={onNoteContentChange}
             />
           ) : (
-            <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-border/80 bg-muted/10 px-5 text-center">
+            <div className="flex h-full items-center justify-center px-5 text-center">
               <p className="text-sm text-muted-foreground">{emptyNoteMessage}</p>
             </div>
           )}
