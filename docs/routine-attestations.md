@@ -79,7 +79,12 @@ set of template items. Older versions are never edited. SQLite rejects updates t
 and template item rows.
 
 Scheduled Runs are materialized idempotently when the Routine projection catches its schedule up to
-the requested date. The unique `(routine_id, scheduled_on)` key makes repeated reads safe. A Run
+the requested date. When no due Run is unfinished, it also materializes exactly the next calendar
+occurrence, making that immutable checklist actionable before its scheduled day. Completing this
+one future occurrence early does not
+unlock a second future occurrence on the same projection date; advancing the projection through the
+completed occurrence makes the following occurrence actionable. The unique
+`(routine_id, scheduled_on)` key makes repeated reads safe. A Run
 copies:
 
 - scheduled date and the next anchored review-window boundary;
@@ -222,8 +227,9 @@ deletion invalidates a pinned Routine and returns the main selection to its owni
 
 The top-level Routines workspace is execution-only. It uses the shared contextual sidebar, flattens
 the actionable projection to one row per `Routine × Subject` (or one unscoped row), groups rows into
-Past due, Today, This week, and Upcoming, and presents one immutable checklist at a time. Upcoming
-rows preview the template that will be snapshotted when that anchored occurrence becomes due. Its
+Past due, Today, This week, and Upcoming, and presents one immutable checklist at a time. The next
+Upcoming occurrence is already an immutable Run and remains fully editable, allowing (for example)
+a Friday check-in to be completed on Thursday. Later occurrences remain previews until their turn. Its
 generic context drawer receives a data-only, read-only Routine adapter so definition mutations stay
 with the owning parent. The shared `StateLabel` receiver owns color/label markup, while the feature
 model replaces snapshots after every cell resolution or note save. Completed Run resolution

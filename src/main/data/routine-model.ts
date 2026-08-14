@@ -723,6 +723,26 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
         throw new ModelValidationError('Routine schedule exceeds the supported history')
       }
     }
+    const unfinishedDueRun = this.database.get<{ id: number }>(
+      `SELECT id FROM routine_review_runs
+       WHERE routine_id = ? AND scheduled_on <= ? AND completed_at IS NULL
+       LIMIT 1`,
+      [row.id, asOf]
+    )
+    if (unfinishedDueRun) return
+
+    // Keep the next calendar occurrence materialized so its immutable
+    // checklist can be attested before the scheduled day. A completed future
+    // Run still occupies this one-ahead boundary; advancing `asOf` through it
+    // will expose the following occurrence without allowing an unlimited
+    // chain of early Runs.
+    const nextScheduled = this.nextScheduleAfter(row, asOf)
+    if (nextScheduled !== null && !this.database.get<{ id: number }>(
+      `SELECT id FROM routine_review_runs
+       WHERE routine_id = ? AND scheduled_on > ?
+       LIMIT 1`,
+      [row.id, asOf]
+    )) this.ensureRun(row, nextScheduled)
   }
 
   private ensureRun(row: RoutineRow, scheduledDate: string): void {
@@ -908,7 +928,20 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
   }
 
   private nextScheduledDate(row: RoutineRow, asOf: string): string | null {
-    return this.nextScheduleAfter(row, asOf)
+    let next = this.nextScheduleAfter(row, asOf)
+    for (let iterations = 0; next !== null && iterations < 10_000; iterations += 1) {
+      const run = this.database.get<{ completed_at: string | null }>(
+        `SELECT completed_at FROM routine_review_runs
+         WHERE routine_id = ? AND scheduled_on = ?`,
+        [row.id, next]
+      )
+      if (run?.completed_at === null || run === undefined) return next
+      next = this.nextScheduleAfter(row, next)
+    }
+    if (next !== null) {
+      throw new ModelValidationError('Routine schedule exceeds the supported future')
+    }
+    return null
   }
 
   private nextScheduleAfter(row: RoutineRow, date: string): string | null {

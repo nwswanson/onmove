@@ -184,10 +184,17 @@ describe('DataArchiveRepository', () => {
     const target = createDatabase('archive-routine-v27-target')
     const summary = target.dataArchive.import(archive, new Date('2026-08-10T10:00:00.000Z'))
     const imported = target.domain.routines.list('2026-08-10')[0]
+    const migratedRun = imported.previousRuns.find(
+      ({ scheduledDate }) => scheduledDate === '2026-08-10'
+    )
 
     expect(summary.issues).toEqual([])
     expect(summary.repairedRows).toBeGreaterThan(0)
     expect(imported.currentRun).toMatchObject({
+      scheduledDate: '2026-08-17',
+      completionDate: null
+    })
+    expect(migratedRun).toMatchObject({
       completionDate: '2026-08-10',
       progress: { complete: 1, required: 1 },
       cells: [{

@@ -167,7 +167,7 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
     )).toContainText('Approval record was reviewed')
     await expect(window.getByLabel(
       'Optional note for Confirm scope changes received approval.'
-    )).toHaveCount(0)
+    )).toHaveCount(1)
 
     const stored = new DatabaseSync(databasePath, { readOnly: true })
     try {

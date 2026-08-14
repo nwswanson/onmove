@@ -110,8 +110,19 @@ describe('Routine Commitment model', () => {
     expect(complete).toMatchObject({
       status: 'green',
       nextReviewDate: '2026-01-08',
-      currentRun: { completionDate: '2026-01-02', progress: { complete: 2, required: 2 } }
+      currentRun: {
+        scheduledDate: '2026-01-08',
+        completionDate: null,
+        progress: { complete: 0, required: 2 }
+      }
     })
+    expect(complete.previousRuns).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        scheduledDate: '2026-01-01',
+        completionDate: '2026-01-02',
+        progress: { complete: 2, required: 2 }
+      })
+    ]))
 
     expect(routine.snapshot('2026-01-15').status).toBe('red')
   })
@@ -166,6 +177,48 @@ describe('Routine Commitment model', () => {
       { scheduled_on: '2026-01-07', review_window_ends_on: '2026-01-09' },
       { scheduled_on: '2026-01-09', review_window_ends_on: '2026-01-12' }
     ])
+    raw.close()
+  })
+
+  it('allows the next scheduled Run to be attested one occurrence early', () => {
+    const focus = database!.domain.focuses.create({ title: 'Friday readiness' })
+    const routine = database!.domain.routines.create({
+      parent: { type: 'focus', id: focus.id },
+      name: 'Friday inspection',
+      scheduleWeekdays: ['friday'],
+      checklist: [{ inspection: 'Verify Friday readiness.' }]
+    }, new Date('2026-08-13T12:00:00.000Z'))
+
+    const thursday = routine.snapshot('2026-08-13')
+    expect(thursday.currentRun).toMatchObject({
+      scheduledDate: '2026-08-14',
+      completionDate: null,
+      progress: { complete: 0, required: 1 }
+    })
+
+    const attested = database!.domain.routines.attestCellItem(
+      thursday.currentRun!.items[0].id,
+      { resolution: 'attested' },
+      new Date('2026-08-13T13:00:00.000Z')
+    )
+    const finalized = database!.domain.routines.finalizeCell(
+      attested.currentRun!.cells[0].id,
+      new Date('2026-08-13T13:05:00.000Z')
+    )
+
+    expect(finalized.currentRun).toMatchObject({
+      scheduledDate: '2026-08-14',
+      completionDate: '2026-08-13',
+      completedLate: false,
+      progress: { complete: 1, required: 1 }
+    })
+    expect(finalized.status).toBe('green')
+    expect(finalized.nextReviewDate).toBe('2026-08-21')
+
+    const raw = new DatabaseSync(path, { readOnly: true })
+    expect(raw.prepare(
+      'SELECT count(*) AS count FROM routine_review_runs WHERE routine_id = ?'
+    ).get(routine.id)).toEqual({ count: 1 })
     raw.close()
   })
 
@@ -237,7 +290,13 @@ describe('Routine Commitment model', () => {
       revised.currentRun!.cells[0].id,
       new Date('2026-01-02T12:05:00.000Z')
     )
-    expect(finalized.currentRun).toMatchObject({ completionDate: '2026-01-02' })
+    expect(finalized.currentRun).toMatchObject({
+      scheduledDate: '2026-01-08',
+      completionDate: null
+    })
+    expect(finalized.previousRuns).toEqual(expect.arrayContaining([
+      expect.objectContaining({ scheduledDate: '2026-01-01', completionDate: '2026-01-02' })
+    ]))
     expect(() => database!.domain.routines.attestCellItem(item.id, {
       resolution: 'attested',
       note: 'Finalized notes should fail.'
@@ -275,9 +334,10 @@ describe('Routine Commitment model', () => {
     const next = routine.snapshot('2026-01-08')
 
     expect(next.template).toMatchObject({ version: 2 })
-    expect(next.currentRun).toMatchObject({ templateVersion: 2, scheduledDate: '2026-01-08' })
+    expect(next.currentRun).toMatchObject({ templateVersion: 1, scheduledDate: '2026-01-08' })
     expect(next.currentRun!.items.map(({ inspection }) => inspection)).toEqual([
-      'Verify the replacement inspection was performed.'
+      'Verify delivery risks are represented in the weekly update.',
+      'Confirm scope changes received approval.'
     ])
     expect(next.previousRuns.find(({ id }) => id === original.id)).toMatchObject({
       templateVersion: 1,
@@ -286,6 +346,25 @@ describe('Routine Commitment model', () => {
         { inspection: 'Confirm scope changes received approval.' }
       ]
     })
+
+    for (const item of next.currentRun!.items) {
+      database!.domain.routines.attestCellItem(
+        item.id,
+        { resolution: 'attested' },
+        new Date('2026-01-08T12:30:00.000Z')
+      )
+    }
+    const advanced = database!.domain.routines.finalizeCell(
+      next.currentRun!.cells[0].id,
+      new Date('2026-01-08T13:00:00.000Z')
+    )
+    expect(advanced.currentRun).toMatchObject({
+      templateVersion: 2,
+      scheduledDate: '2026-01-15'
+    })
+    expect(advanced.currentRun!.items.map(({ inspection }) => inspection)).toEqual([
+      'Verify the replacement inspection was performed.'
+    ])
 
     const raw = new DatabaseSync(path)
     expect(() => raw.prepare(

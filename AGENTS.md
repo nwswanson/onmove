@@ -481,7 +481,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
   creates an anchored occurrence, and late completion never moves future dates. An empty schedule
   creates no Runs. Derive effective `needsAttestation` as the stored queue-inclusion preference AND
   a nonempty weekday schedule; never overwrite the stored preference merely because the schedule is
-  temporarily empty. Every
+  temporarily empty. Materialize every due occurrence; when none is unfinished, also materialize
+  exactly the next calendar occurrence so its immutable checklist can be completed early. Do not
+  materialize a second future occurrence merely because that next occurrence was completed ahead
+  of schedule; it becomes eligible when the projection date reaches the completed occurrence. Every
   materialized Run stores its template version, inspection text/order/required flags, review window,
   and Scope/Subject-name snapshot. Materialize one independently editable attestation cell per
   effective Subject, or one unscoped cell when no Subject applies. Run snapshot fields and finalized
