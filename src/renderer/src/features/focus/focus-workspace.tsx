@@ -55,6 +55,7 @@ import {
   commitmentDrawerAdapter,
   commitmentWorkingContextModel,
   dateOrNeverLabel,
+  archivedThreadItems,
   focusContextSidebarItems,
   focusDrawerAdapter,
   focusScopeEditorModel,
@@ -62,6 +63,8 @@ import {
   threadWorkingContextModel,
   threadSidebarItemId
 } from '@/features/focus/focus-presenters'
+import { isVisibleThread } from '@/features/focus/focus-utils'
+import { ThreadArchiveDialog } from '@/features/focus/thread-archive-dialog'
 import { useCommitmentWorkingContextModel } from '@/features/focus/use-commitment-working-context-model'
 import { useFocusWorkspaceModel } from '@/features/focus/use-focus-workspace-model'
 import { WorkStatusSelect } from '@/features/shared/work-status-select'
@@ -246,6 +249,9 @@ export function FocusWorkspace({
     key: string
     message: string
   } | null>(null)
+  const [threadArchiveOpen, setThreadArchiveOpen] = useState(false)
+  const [restoringThreadId, setRestoringThreadId] = useState<number | null>(null)
+  const [threadArchiveError, setThreadArchiveError] = useState<string | null>(null)
   const [pendingCommitmentMove, setPendingCommitmentMove] = useState<{
     plan: CommitmentMovePlanSnapshot
     commitmentTitle: string
@@ -317,7 +323,17 @@ export function FocusWorkspace({
         newItem: {
           label: 'New thread',
           onCreate: () => setNewThreadOpen(true)
-        }
+        },
+        footerActions: [{
+          id: 'archive',
+          label: 'Archive',
+          ariaLabel: 'Open archived threads',
+          icon: 'archive',
+          onInvoke: () => {
+            setThreadArchiveError(null)
+            setThreadArchiveOpen(true)
+          }
+        }]
       })
   )
 
@@ -349,10 +365,18 @@ export function FocusWorkspace({
 
   const visibleThreadRecords = useMemo<readonly ThreadSnapshot[]>(
     () => visibleSensitiveRecords(
-      model.threads,
+      model.threads.filter(isVisibleThread),
       hideSensitiveContent,
       focus.sensitive
     ),
+    [focus.sensitive, hideSensitiveContent, model.threads]
+  )
+  const archivedThreads = useMemo(
+    () => archivedThreadItems(visibleSensitiveRecords(
+      model.threads.filter((thread) => !isVisibleThread(thread)),
+      hideSensitiveContent,
+      focus.sensitive
+    )),
     [focus.sensitive, hideSensitiveContent, model.threads]
   )
   const visibleFocusCommitments = useMemo(
@@ -1321,6 +1345,16 @@ export function FocusWorkspace({
     }
   }
 
+  async function restoreArchivedThread(threadId: number): Promise<void> {
+    setRestoringThreadId(threadId)
+    setThreadArchiveError(null)
+    const restored = await updateThreadDetails(threadId, { status: 'active' })
+    if (!restored) {
+      setThreadArchiveError('The Thread could not be restored. Please try again.')
+    }
+    setRestoringThreadId(null)
+  }
+
   async function updateCommitmentDetails(
     commitmentId: number,
     input: UpdateCommitmentInput
@@ -1972,6 +2006,19 @@ export function FocusWorkspace({
           focusId={focus.id}
           onClose={() => setNewThreadOpen(false)}
           onCreate={createThread}
+        />
+      )}
+      {threadArchiveOpen && (
+        <ThreadArchiveDialog
+          items={archivedThreads}
+          restoringId={restoringThreadId}
+          error={threadArchiveError}
+          onRestore={(threadId) => void restoreArchivedThread(threadId)}
+          onClose={() => {
+            if (restoringThreadId !== null) return
+            setThreadArchiveError(null)
+            setThreadArchiveOpen(false)
+          }}
         />
       )}
       {newCommitmentParent && (

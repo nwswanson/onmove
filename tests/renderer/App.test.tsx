@@ -2522,6 +2522,81 @@ describe('App', () => {
     )
   })
 
+  it('archives closed Threads outside navigation and restores them as active', async () => {
+    const current = focus({ title: 'Project Atlas' })
+    const activeThread = thread({ id: 10, title: 'Sprint execution', status: 'active' })
+    const doneThread = thread({
+      id: 11,
+      title: 'Historical planning',
+      status: 'done',
+      lastReviewDate: '2026-08-01'
+    })
+    const cancelledThread = thread({
+      id: 12,
+      title: 'Abandoned experiment',
+      status: 'cancelled',
+      dueDate: '2026-08-15'
+    })
+    let threadRecords = [activeThread, doneThread, cancelledThread]
+    const updateThread = vi.fn(async (
+      id: number,
+      input: Parameters<DomainApi['updateThread']>[1]
+    ) => {
+      const existing = threadRecords.find((candidate) => candidate.id === id)
+      if (!existing) throw new Error('Missing Thread')
+      const updated = thread({ ...existing, ...input })
+      threadRecords = threadRecords.map((candidate) => candidate.id === id ? updated : candidate)
+      return updated
+    })
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listThreads: vi.fn().mockResolvedValue(threadRecords),
+      updateThread
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    expect(await screen.findByRole('button', { name: 'Sprint execution' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Historical planning' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Abandoned experiment' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Open archived threads' }))
+    const archive = screen.getByRole('dialog', { name: 'Archived threads' })
+    const archivedList = within(archive).getByRole('list', { name: 'Archived threads' })
+    expect(archivedList).toHaveTextContent(
+      'Abandoned experimentCancelled · Last reviewed Never · Due 2026-08-15'
+    )
+    expect(archivedList).toHaveTextContent(
+      'Historical planningDone · Last reviewed 2026-08-01'
+    )
+
+    await user.click(within(archive).getByRole('button', {
+      name: 'Restore Thread Historical planning'
+    }))
+    await waitFor(() => expect(updateThread).toHaveBeenCalledWith(11, { status: 'active' }))
+    expect(await screen.findByRole('button', { name: 'Historical planning' })).toBeVisible()
+    expect(within(archive).queryByText('Historical planning')).not.toBeInTheDocument()
+    expect(within(archive).getByText('Abandoned experiment')).toBeVisible()
+
+    await user.click(within(archive).getByRole('button', { name: 'Close dialog' }))
+    await user.click(screen.getByRole('button', { name: 'Sprint execution' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Thread status' }), 'done')
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Sprint execution' })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Overall' })).toHaveAttribute(
+        'aria-current',
+        'page'
+      )
+    })
+    expect(screen.getByRole('heading', { name: 'Project Atlas' })).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: 'Open archived threads' }))
+    expect(screen.getByRole('dialog', { name: 'Archived threads' })).toHaveTextContent(
+      'Sprint executionDone'
+    )
+  })
+
   it('uses the shared persistent note split on Focus, Thread, and Commitment screens', async () => {
     const current = focus({
       title: 'Project Atlas',

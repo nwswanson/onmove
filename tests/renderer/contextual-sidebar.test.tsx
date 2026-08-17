@@ -14,6 +14,7 @@ import {
   useContextualSidebarNavigation
 } from '../../src/renderer/src/components/ui/contextual-sidebar'
 import type { StateLabelModel } from '../../src/renderer/src/components/ui/state-label'
+import type { SidebarFooterActionModel } from '../../src/renderer/src/components/ui/sidebar'
 
 interface TestItem {
   id: string
@@ -50,6 +51,7 @@ function level(
     onMoveItem?: (move: ContextualSidebarItemMove) => void
     getItemGroup?: (item: TestItem) => { id: string; label: string } | null
     newItem?: ContextualSidebarNewItemAction
+    footerActions?: readonly SidebarFooterActionModel[]
   } = {}
 ): ContextualSidebarLevel {
   const resolveItems = (): TestItem[] => {
@@ -67,6 +69,7 @@ function level(
     parentItemId: options.parentItemId,
     items: typeof items === 'function' ? resolveItems : resolveItems(),
     newItem: options.newItem,
+    footerActions: options.footerActions,
     onSelect: options.onSelect,
     onSelectChild: options.onSelectChild,
     onChildCollectionAction: options.onChildCollectionAction,
@@ -138,6 +141,37 @@ describe('ContextualSidebarNavigation', () => {
     expect(screen.getByText('Threads', { selector: '[data-slot="sidebar-group-label"]' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'New thread' }))
     expect(onNewThread).toHaveBeenCalledOnce()
+  })
+
+  it('places generic archive actions beside a level new-item action', async () => {
+    const onNewThread = vi.fn()
+    const onArchive = vi.fn()
+    const root = level(
+      'focus:1',
+      'Focus',
+      [{ id: 'overall', label: 'Overall' }],
+      {
+        newItem: { label: 'New thread', onCreate: onNewThread },
+        footerActions: [{
+          id: 'archive',
+          label: 'Archive',
+          ariaLabel: 'Open archived threads',
+          icon: 'archive',
+          onInvoke: onArchive
+        }]
+      }
+    )
+    render(<ContextualSidebar navigation={new ContextualSidebarNavigation(root)} />)
+    const actions = screen.getByRole('button', { name: 'New thread' })
+      .closest('[data-slot="sidebar-action-row"]')
+
+    expect(actions).toContainElement(screen.getByRole('button', {
+      name: 'Open archived threads'
+    }))
+    await userEvent.setup().click(screen.getByRole('button', {
+      name: 'Open archived threads'
+    }))
+    expect(onArchive).toHaveBeenCalledOnce()
   })
 
   it('renders an item state through the sidebar-owned state-label receiver', () => {

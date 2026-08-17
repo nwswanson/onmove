@@ -9,6 +9,7 @@ describe('SidebarNavigation', () => {
   it('renders only its receiver-owned row contract and reports selected ids', async () => {
     const onSelect = vi.fn()
     const onAdd = vi.fn()
+    const onArchive = vi.fn()
     const user = userEvent.setup()
     render(
       <SidebarNavigation
@@ -36,7 +37,10 @@ describe('SidebarNavigation', () => {
         ]}
         selectedItemId="1"
         onSelect={onSelect}
-        action={{ id: 'new', label: 'New focus', icon: 'add', onInvoke: onAdd }}
+        actions={[
+          { id: 'new', label: 'New focus', icon: 'add', onInvoke: onAdd },
+          { id: 'archive', label: 'Archive', icon: 'archive', onInvoke: onArchive }
+        ]}
       />
     )
 
@@ -64,8 +68,12 @@ describe('SidebarNavigation', () => {
       .getByText('3')).toBeVisible()
     await user.click(paused)
     await user.click(screen.getByRole('button', { name: 'New focus' }))
+    await user.click(screen.getByRole('button', { name: 'Archive' }))
     expect(onSelect).toHaveBeenCalledWith('2')
     expect(onAdd).toHaveBeenCalledOnce()
+    expect(onArchive).toHaveBeenCalledOnce()
+    expect(screen.getByRole('button', { name: 'Archive' }).querySelector('.lucide-archive'))
+      .toBeInTheDocument()
   })
 
   it('owns the empty representation', () => {

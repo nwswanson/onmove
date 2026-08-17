@@ -1,5 +1,15 @@
 import * as React from 'react'
+import { Archive, Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
+
+interface SidebarFooterActionModel {
+  id: string
+  label: string
+  ariaLabel?: string
+  icon?: 'add' | 'archive'
+  disabled?: boolean | (() => boolean)
+  onInvoke: () => void
+}
 
 function Sidebar({ className, ...props }: React.ComponentProps<'aside'>): React.JSX.Element {
   return (
@@ -124,8 +134,56 @@ function SidebarMenuSubButton({
   )
 }
 
+function SidebarActionRow({
+  actions,
+  className
+}: {
+  actions: readonly SidebarFooterActionModel[]
+  className?: string
+}): React.JSX.Element | null {
+  if (actions.length === 0) return null
+  const ids = new Set<string>()
+  for (const action of actions) {
+    const id = action.id.trim()
+    if (!id || ids.has(id) || !action.label.trim()) {
+      throw new Error(`Sidebar contains an invalid footer action "${action.id}".`)
+    }
+    ids.add(id)
+  }
+
+  return (
+    <SidebarMenuItem
+      data-slot="sidebar-action-row"
+      className={cn('mt-1 border-t border-sidebar-border pt-1', className)}
+    >
+      <div className="flex min-w-0 gap-1">
+        {actions.map((action) => {
+          const disabled = typeof action.disabled === 'function'
+            ? action.disabled()
+            : action.disabled
+          return (
+            <SidebarMenuButton
+              key={action.id}
+              type="button"
+              className="min-w-0 flex-1"
+              aria-label={action.ariaLabel ?? action.label}
+              disabled={disabled}
+              onClick={action.onInvoke}
+            >
+              {action.icon === 'add' && <Plus aria-hidden="true" />}
+              {action.icon === 'archive' && <Archive aria-hidden="true" />}
+              <span className="truncate">{action.label}</span>
+            </SidebarMenuButton>
+          )
+        })}
+      </div>
+    </SidebarMenuItem>
+  )
+}
+
 export {
   Sidebar,
+  SidebarActionRow,
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
@@ -136,5 +194,6 @@ export {
   SidebarMenuItem,
   SidebarMenuSub,
   SidebarMenuSubButton,
-  SidebarMenuSubItem
+  SidebarMenuSubItem,
+  type SidebarFooterActionModel
 }

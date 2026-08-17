@@ -3,6 +3,7 @@ import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { ChevronLeft, ChevronRight, Layers3, ListChecks, PauseCircle, Plus } from 'lucide-react'
 import {
   Sidebar,
+  SidebarActionRow,
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
@@ -10,7 +11,8 @@ import {
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
-  SidebarMenuItem
+  SidebarMenuItem,
+  type SidebarFooterActionModel
 } from '@/components/ui/sidebar'
 import {
   StateDot,
@@ -98,6 +100,9 @@ export interface ContextualSidebarLevelBaseOptions {
   newItem?:
     | ContextualSidebarNewItemAction
     | (() => ContextualSidebarNewItemAction | null)
+  footerActions?:
+    | readonly SidebarFooterActionModel[]
+    | (() => readonly SidebarFooterActionModel[])
   initialSelectedItemId?: string | null
   selectFirstItem?: boolean
 }
@@ -153,6 +158,7 @@ export abstract class ContextualSidebarLevelBase {
   readonly initialSelectedItemId: string | null | undefined
   readonly selectFirstItem: boolean
   private readonly resolveNewItem: () => ContextualSidebarNewItemAction | null
+  private readonly resolveFooterActions: () => readonly SidebarFooterActionModel[]
 
   protected constructor({
     id,
@@ -162,6 +168,7 @@ export abstract class ContextualSidebarLevelBase {
     parentItemId,
     emptyState = 'No items',
     newItem,
+    footerActions,
     initialSelectedItemId,
     selectFirstItem = true
   }: ContextualSidebarLevelBaseOptions) {
@@ -196,6 +203,9 @@ export abstract class ContextualSidebarLevelBase {
     this.parentItemId = normalizedParentItemId
     this.emptyState = emptyState
     this.resolveNewItem = typeof newItem === 'function' ? newItem : () => newItem ?? null
+    this.resolveFooterActions = typeof footerActions === 'function'
+      ? footerActions
+      : () => footerActions ?? []
     this.initialSelectedItemId = initialSelectedItemId
     this.selectFirstItem = selectFirstItem
   }
@@ -240,6 +250,38 @@ export abstract class ContextualSidebarLevelBase {
     }
     const ariaLabel = action.ariaLabel?.trim() || label
     return { ...action, label, ariaLabel }
+  }
+
+  getFooterActions(): readonly SidebarFooterActionModel[] {
+    const newItem = this.getNewItem()
+    const actions: SidebarFooterActionModel[] = [
+      ...(newItem ? [{
+        id: '__new-item',
+        label: newItem.label,
+        ariaLabel: newItem.ariaLabel,
+        icon: 'add' as const,
+        disabled: newItem.disabled,
+        onInvoke: newItem.onCreate
+      }] : []),
+      ...this.resolveFooterActions()
+    ]
+    const ids = new Set<string>()
+    return actions.map((action) => {
+      const id = action.id.trim()
+      const label = action.label.trim()
+      if (!id || ids.has(id) || !label) {
+        throw new Error(
+          `Contextual sidebar level "${this.id}" has an invalid footer action "${action.id}".`
+        )
+      }
+      ids.add(id)
+      return {
+        ...action,
+        id,
+        label,
+        ariaLabel: action.ariaLabel?.trim() || label
+      }
+    })
   }
 }
 
@@ -1024,9 +1066,7 @@ function ContextualSidebarContent({
     },
     []
   )
-  const newItem = level.getNewItem()
-  const newItemDisabled =
-    typeof newItem?.disabled === 'function' ? newItem.disabled() : newItem?.disabled
+  const footerActions = level.getFooterActions()
   const dragEnabled = itemIds.some((itemId) => {
     const collection = level.getItem(itemId)?.childCollection
     return collection?.items.some((child) =>
@@ -1162,21 +1202,13 @@ function ContextualSidebarContent({
           )}
         </nav>
       </SidebarContent>
-      {newItem && (
+      {footerActions.length > 0 && (
         <SidebarFooter className="border-t border-sidebar-border p-2">
           <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                type="button"
-                aria-label={newItem.ariaLabel}
-                disabled={newItemDisabled}
-                className="text-sidebar-foreground/72"
-                onClick={newItem.onCreate}
-              >
-                <Plus aria-hidden="true" />
-                <span className="truncate">{newItem.label}</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
+            <SidebarActionRow
+              actions={footerActions}
+              className="mt-0 border-t-0 pt-0"
+            />
           </SidebarMenu>
         </SidebarFooter>
       )}

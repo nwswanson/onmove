@@ -205,6 +205,31 @@ export function threadSidebarItemId(threadId: number): string {
   return `thread:${threadId}`
 }
 
+export interface ArchivedThreadItemModel {
+  id: number
+  title: string
+  statusLabel: 'Done' | 'Cancelled'
+  lastReviewedLabel: string
+  dueDateLabel: string | null
+}
+
+export function archivedThreadItems(
+  threads: readonly ThreadSnapshot[]
+): ArchivedThreadItemModel[] {
+  return threads
+    .filter((thread) => thread.status === 'done' || thread.status === 'cancelled')
+    .sort((left, right) => left.title.localeCompare(right.title, undefined, {
+      sensitivity: 'base'
+    }))
+    .map((thread) => ({
+      id: thread.id,
+      title: thread.title,
+      statusLabel: thread.status === 'done' ? 'Done' : 'Cancelled',
+      lastReviewedLabel: dateOrNeverLabel(thread.lastReviewDate),
+      dueDateLabel: thread.dueDate
+    }))
+}
+
 export type CommitmentsByContextItemId = Readonly<
   Record<string, readonly CommitmentSnapshot[] | undefined>
 >

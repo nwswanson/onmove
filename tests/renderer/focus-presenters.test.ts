@@ -9,6 +9,7 @@ import type {
   ThreadSnapshot
 } from '../../src/shared/contracts'
 import {
+  archivedThreadItems,
   commitmentCollectionModel,
   commitmentContextSidebarItems,
   commitmentDrawerAdapter,
@@ -105,6 +106,35 @@ const platformTeam: SubjectSnapshot = {
 }
 
 describe('Focus presentation adapters', () => {
+  it('projects only closed Threads into an alphabetical archive list', () => {
+    expect(archivedThreadItems([
+      { ...thread, id: 12, title: 'Zeta history', status: 'done', dueDate: '2026-02-01' },
+      { ...thread, id: 10, title: 'Current work', status: 'active' },
+      {
+        ...thread,
+        id: 11,
+        title: 'Abandoned plan',
+        status: 'cancelled',
+        lastReviewDate: '2026-01-05'
+      }
+    ])).toEqual([
+      {
+        id: 11,
+        title: 'Abandoned plan',
+        statusLabel: 'Cancelled',
+        lastReviewedLabel: '2026-01-05',
+        dueDateLabel: null
+      },
+      {
+        id: 12,
+        title: 'Zeta history',
+        statusLabel: 'Done',
+        lastReviewedLabel: 'Never',
+        dueDateLabel: '2026-02-01'
+      }
+    ])
+  })
+
   it('formats missing and effective review dates for every UI receiver', () => {
     expect(dateOrNeverLabel(null)).toBe('Never')
     expect(dateOrNeverLabel('2026-01-06')).toBe('2026-01-06')

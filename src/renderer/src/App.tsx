@@ -242,13 +242,13 @@ function AppSidebar({
             selectedItemId={selectedFocusId}
             emptyLabel="No focuses yet"
             onSelect={onSelectFocus}
-            action={{
+            actions={[{
               id: 'new-focus',
               label: 'New focus',
               icon: 'add',
               disabled: !enabled,
               onInvoke: onNewFocus
-            }}
+            }]}
           />
         </SidebarGroup>
       </SidebarContent>

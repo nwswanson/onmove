@@ -76,6 +76,84 @@ test('badges actionable navigation and decrements Review after persistence', asy
   }
 })
 
+test('hides closed Threads in context and restores them from its footer archive', async () => {
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-thread-archive-e2e-'))
+  const databasePath = join(userDataDirectory, 'onmove.sqlite3')
+  const seeded = new AppDatabase(databasePath)
+  const focus = seeded.domain.focuses.create({ title: 'Thread archive' })
+  seeded.domain.threads.create({
+    focusId: focus.id,
+    title: 'Current delivery',
+    reviewFrequencyDays: 7
+  })
+  const completed = seeded.domain.threads.create({
+    focusId: focus.id,
+    title: 'Completed delivery',
+    status: 'done',
+    reviewFrequencyDays: 7
+  })
+  seeded.domain.threads.create({
+    focusId: focus.id,
+    title: 'Cancelled delivery',
+    status: 'cancelled',
+    reviewFrequencyDays: 7
+  })
+  seeded.close()
+  let application: ElectronApplication | undefined
+
+  try {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    const window = await application.firstWindow()
+
+    await window.getByRole('button', { name: 'Thread archive', exact: true }).click()
+    const contextualSidebar = window.getByLabel('Contextual sidebar')
+    await expect(contextualSidebar.getByRole('button', {
+      name: 'Current delivery',
+      exact: true
+    })).toBeVisible()
+    await expect(contextualSidebar.getByRole('button', {
+      name: 'Completed delivery',
+      exact: true
+    })).toHaveCount(0)
+    await expect(contextualSidebar.getByRole('button', {
+      name: 'Cancelled delivery',
+      exact: true
+    })).toHaveCount(0)
+
+    await contextualSidebar.getByRole('button', { name: 'Open archived threads' }).click()
+    const archive = window.getByRole('dialog', { name: 'Archived threads' })
+    await expect(archive.getByText('Completed delivery')).toBeVisible()
+    await expect(archive.getByText('Cancelled delivery')).toBeVisible()
+    await archive.getByRole('button', {
+      name: 'Restore Thread Completed delivery'
+    }).click()
+
+    await expect(contextualSidebar.getByRole('button', {
+      name: 'Completed delivery',
+      exact: true
+    })).toBeVisible()
+    await expect(archive.getByText('Completed delivery')).toHaveCount(0)
+
+    await expect.poll(() => {
+      const stored = new DatabaseSync(databasePath, { readOnly: true })
+      try {
+        return stored.prepare('SELECT status FROM threads WHERE id = ?')
+          .get(completed.id) as { status: string }
+      } finally {
+        stored.close()
+      }
+    }).toEqual({ status: 'active' })
+  } finally {
+    await application?.close().catch(() => undefined)
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
 test('creates, attests, versions, and reloads a recurring Routine Run', async () => {
   const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-routine-e2e-'))
   const databasePath = join(userDataDirectory, 'onmove.sqlite3')

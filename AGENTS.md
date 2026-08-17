@@ -55,6 +55,17 @@
   owns Back navigation and restores the selection previously held by each parent level.
 - Declare ordinary level-local creation through a contextual level's optional `newItem` action;
   do not hard-code New Thread or New Commitment footer markup in domain adapters.
+- Render adjacent bottom-of-sidebar controls through the shared receiver-owned footer-action
+  contract in both primary and contextual sidebars. Callers supply data-only ids, labels, semantic
+  icons, disabled state, and invocation handlers; the sidebar receiver owns the compact row layout.
+  Keep `newItem` as the contextual level's creation declaration and let the receiver merge it with
+  optional peer actions such as Archive instead of composing feature-specific footer markup.
+- Keep Done and Cancelled Threads in the Focus model and SQLite history, but omit them from the
+  active top-level contextual hierarchy. Expose them through the Focus level's Archive footer
+  action, subject the archive list to the normal sensitive-ancestor visibility boundary, and restore
+  them by submitting an audited `active` status transition through the typed Thread mutation. If a
+  selected Thread becomes closed, refresh navigation to the Focus Overall item; restoring a Thread
+  makes it available again without selecting it or changing contextual depth.
 - Give each Focus and Thread its own parent-asserting Commitment level. Opening Commitments from the
   parent screen's collection heading replaces the contextual sidebar, selects the first owned
   Commitment, and returns through the shared Back behavior; never mix Focus-owned Commitments into

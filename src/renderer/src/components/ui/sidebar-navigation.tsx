@@ -4,15 +4,16 @@ import {
   ClipboardCheck,
   ListChecks,
   PauseCircle,
-  Plus,
   Repeat2,
   Tags
 } from 'lucide-react'
 import { useDroppable } from '@dnd-kit/core'
 import {
+  SidebarActionRow,
   SidebarMenu,
   SidebarMenuButton,
-  SidebarMenuItem
+  SidebarMenuItem,
+  type SidebarFooterActionModel
 } from '@/components/ui/sidebar'
 import { cn } from '@/lib/utils'
 import { SemanticSunflower, type SemanticSunflowerModel } from '@/components/ui/sunflower'
@@ -38,20 +39,13 @@ export interface SidebarNavigationItemModel {
   }
 }
 
-export interface SidebarNavigationActionModel {
-  id: string
-  label: string
-  ariaLabel?: string
-  icon?: 'add'
-  disabled?: boolean
-  onInvoke: () => void
-}
+export type SidebarNavigationActionModel = SidebarFooterActionModel
 
 export interface SidebarNavigationProps {
   items: readonly SidebarNavigationItemModel[]
   selectedItemId: string | null
   emptyLabel?: string
-  action?: SidebarNavigationActionModel
+  actions?: readonly SidebarNavigationActionModel[]
   onSelect: (itemId: string) => void
 }
 
@@ -138,7 +132,7 @@ function SidebarNavigationContent({
   items,
   selectedItemId,
   emptyLabel = 'No items',
-  action,
+  actions = [],
   onSelect
 }: SidebarNavigationProps): React.JSX.Element {
   const itemIds = new Set<string>()
@@ -159,10 +153,6 @@ function SidebarNavigationContent({
     }
     itemIds.add(id)
   }
-  if (action && (!action.id.trim() || !action.label.trim())) {
-    throw new Error('Primary sidebar action requires an id and label.')
-  }
-
   return (
     <SidebarMenu>
       {items.length === 0 ? (
@@ -178,19 +168,7 @@ function SidebarNavigationContent({
           />
         })
       )}
-      {action && (
-        <SidebarMenuItem className="mt-1 border-t border-sidebar-border pt-1">
-          <SidebarMenuButton
-            type="button"
-            aria-label={action.ariaLabel ?? action.label}
-            disabled={action.disabled}
-            onClick={action.onInvoke}
-          >
-            {action.icon === 'add' && <Plus aria-hidden="true" />}
-            <span>{action.label}</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      )}
+      <SidebarActionRow actions={actions} />
     </SidebarMenu>
   )
 }
