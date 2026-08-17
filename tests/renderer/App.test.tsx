@@ -550,9 +550,8 @@ describe('App', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
     const contextualSidebar = screen.getByLabelText('Contextual sidebar')
-    expect(within(contextualSidebar).getByRole('button', {
-      name: 'Add Routine to Overall'
-    })).toBeVisible()
+    expect(within(contextualSidebar).queryByText('No commitments or Routines'))
+      .not.toBeInTheDocument()
     expect(within(contextualSidebar).getByRole('button', {
       name: 'Open Overall Routine Portfolio evidence inspection'
     })).toBeVisible()
@@ -585,9 +584,9 @@ describe('App', () => {
     })).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Sprint execution' }))
-    expect(within(contextualSidebar).getByRole('button', {
+    expect(within(contextualSidebar).queryByRole('button', {
       name: 'Add Routine to Sprint execution'
-    })).toBeVisible()
+    })).not.toBeInTheDocument()
     expect(within(contextualSidebar).getByRole('button', {
       name: 'Open Sprint execution Routine Weekly delivery inspection'
     })).toBeVisible()
@@ -597,9 +596,12 @@ describe('App', () => {
     expect(screen.queryByRole('button', {
       name: 'Open Routine Portfolio evidence inspection'
     })).not.toBeInTheDocument()
-    await user.click(within(contextualSidebar).getByRole('button', {
-      name: 'Add Routine to Sprint execution'
+    fireEvent.contextMenu(within(contextualSidebar).getByRole('button', {
+      name: 'Sprint execution'
     }))
+    await user.click(within(screen.getByRole('menu', {
+      name: 'Sprint execution actions'
+    })).getByRole('menuitem', { name: 'Add Routine' }))
     expect(screen.getByRole('dialog', { name: 'Add Routine' })).toBeVisible()
   })
 
@@ -988,9 +990,12 @@ describe('App', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
     await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
-    await user.click(within(screen.getByLabelText('Contextual sidebar')).getByRole('button', {
-      name: 'Add Routine to Sprint execution'
+    fireEvent.contextMenu(within(screen.getByLabelText('Contextual sidebar')).getByRole('button', {
+      name: 'Sprint execution'
     }))
+    await user.click(within(screen.getByRole('menu', {
+      name: 'Sprint execution actions'
+    })).getByRole('menuitem', { name: 'Add Routine' }))
     const dialog = screen.getByRole('dialog', { name: 'Add Routine' })
     expect(within(dialog).getByRole('checkbox', { name: 'Apply Thread scope' })).toBeChecked()
     await user.type(within(dialog).getByLabelText('Routine name'), 'Scoped inspection')
@@ -2520,6 +2525,69 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Sprint execution, paused' })).toHaveClass(
       'opacity-55'
     )
+  })
+
+  it('executes Thread actions from its generic contextual-sidebar menu', async () => {
+    const current = focus({ title: 'Project Atlas' })
+    let sprint = thread({ title: 'Sprint execution', sensitive: false })
+    const updateThread = vi.fn(async (
+      id: number,
+      input: Parameters<DomainApi['updateThread']>[1]
+    ) => {
+      sprint = thread({ ...sprint, ...input })
+      return sprint
+    })
+    const deleteThread = vi.fn().mockResolvedValue(true)
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([current]),
+      listThreads: vi.fn().mockResolvedValue([sprint]),
+      updateThread,
+      deleteThread
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    const contextualSidebar = screen.getByLabelText('Contextual sidebar')
+    const threadTarget = await within(contextualSidebar).findByRole('button', {
+      name: 'Sprint execution'
+    })
+    expect(within(contextualSidebar).queryByRole('button', { name: 'Add commitment' }))
+      .not.toBeInTheDocument()
+    expect(within(contextualSidebar).queryByRole('button', { name: 'Add Routine' }))
+      .not.toBeInTheDocument()
+    expect(within(contextualSidebar).queryByText('No commitments or Routines'))
+      .not.toBeInTheDocument()
+
+    fireEvent.contextMenu(threadTarget)
+    let menu = screen.getByRole('menu', { name: 'Sprint execution actions' })
+    await user.click(within(menu).getByRole('menuitem', { name: 'Add commitment' }))
+    expect(screen.getByRole('dialog', { name: 'New commitment' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Close dialog' }))
+
+    fireEvent.contextMenu(threadTarget)
+    menu = screen.getByRole('menu', { name: 'Sprint execution actions' })
+    await user.click(within(menu).getByRole('menuitem', { name: 'Add Routine' }))
+    expect(screen.getByRole('dialog', { name: 'Add Routine' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Close dialog' }))
+
+    fireEvent.contextMenu(threadTarget)
+    menu = screen.getByRole('menu', { name: 'Sprint execution actions' })
+    await user.click(within(menu).getByRole('menuitemcheckbox', { name: 'Sensitive' }))
+    await waitFor(() => expect(updateThread).toHaveBeenCalledWith(sprint.id, {
+      sensitive: true
+    }))
+
+    fireEvent.contextMenu(threadTarget)
+    menu = screen.getByRole('menu', { name: 'Sprint execution actions' })
+    await user.click(within(menu).getByRole('menuitem', { name: 'Delete Thread' }))
+    const confirmation = screen.getByRole('dialog', { name: 'Delete thread?' })
+    expect(deleteThread).not.toHaveBeenCalled()
+    await user.click(within(confirmation).getByRole('button', { name: 'Delete thread' }))
+
+    expect(deleteThread).toHaveBeenCalledWith(sprint.id)
+    expect(within(contextualSidebar).queryByRole('button', { name: 'Sprint execution' }))
+      .not.toBeInTheDocument()
   })
 
   it('archives closed Threads outside navigation and restores them as active', async () => {
@@ -4212,9 +4280,7 @@ describe('App', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Quarterly plan' }))
     expect(screen.getByRole('navigation', { name: 'Focus sections' })).toBeInTheDocument()
-    await user.click(
-      screen.getByRole('button', { name: 'Add commitment to Overall' })
-    )
+    await user.click(screen.getByRole('button', { name: 'Add commitment' }))
     const dialog = screen.getByRole('dialog', { name: 'New commitment' })
     expect(within(dialog).queryByLabelText('Type')).not.toBeInTheDocument()
     await user.type(within(dialog).getByLabelText(/^Title/), 'Publish the launch boundary')

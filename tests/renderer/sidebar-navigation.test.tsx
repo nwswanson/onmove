@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { SidebarNavigation } from '../../src/renderer/src/components/ui/sidebar-navigation'
@@ -87,5 +87,45 @@ describe('SidebarNavigation', () => {
     )
 
     expect(screen.getByText('No focuses yet')).toBeInTheDocument()
+  })
+
+  it('reads a generic context menu from its target item', async () => {
+    const onContextMenuAction = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <SidebarNavigation
+        items={[{
+          id: 'focus:1',
+          label: 'Project Atlas',
+          contextMenu: {
+            ariaLabel: 'Project Atlas actions',
+            items: [
+              { kind: 'checkbox', id: 'sensitive', label: 'Sensitive', checked: false },
+              {
+                kind: 'action',
+                id: 'delete',
+                label: 'Delete Focus',
+                tone: 'destructive',
+                separatorBefore: true
+              }
+            ]
+          }
+        }]}
+        selectedItemId="focus:1"
+        onSelect={vi.fn()}
+        onContextMenuAction={onContextMenuAction}
+      />
+    )
+
+    const target = screen.getByRole('button', { name: 'Project Atlas' })
+    fireEvent.contextMenu(target)
+    let menu = await screen.findByRole('menu', { name: 'Project Atlas actions' })
+    await user.click(within(menu).getByRole('menuitemcheckbox', { name: 'Sensitive' }))
+    expect(onContextMenuAction).toHaveBeenCalledWith('focus:1', 'sensitive', true)
+
+    fireEvent.contextMenu(target)
+    menu = await screen.findByRole('menu', { name: 'Project Atlas actions' })
+    await user.click(within(menu).getByRole('menuitem', { name: 'Delete Focus' }))
+    expect(onContextMenuAction).toHaveBeenLastCalledWith('focus:1', 'delete', undefined)
   })
 })

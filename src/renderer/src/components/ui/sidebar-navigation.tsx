@@ -19,6 +19,10 @@ import { cn } from '@/lib/utils'
 import { SemanticSunflower, type SemanticSunflowerModel } from '@/components/ui/sunflower'
 import { TaggedText } from '@/components/ui/tagged-text'
 import {
+  SidebarItemContextMenu,
+  type SidebarContextMenuModel
+} from '@/components/ui/sidebar-context-menu'
+import {
   SidebarDndBoundary,
   type SidebarTransferTargetData
 } from '@/components/ui/sidebar-dnd'
@@ -37,6 +41,7 @@ export interface SidebarNavigationItemModel {
     value: number
     label: string
   }
+  contextMenu?: SidebarContextMenuModel
 }
 
 export type SidebarNavigationActionModel = SidebarFooterActionModel
@@ -47,6 +52,7 @@ export interface SidebarNavigationProps {
   emptyLabel?: string
   actions?: readonly SidebarNavigationActionModel[]
   onSelect: (itemId: string) => void
+  onContextMenuAction?: (itemId: string, actionId: string, checked?: boolean) => void
 }
 
 /** Owns primary-navigation row markup, interaction, focus, and selection semantics. */
@@ -63,11 +69,13 @@ export function SidebarNavigation({
 function SidebarNavigationRow({
   item,
   selected,
-  onSelect
+  onSelect,
+  onContextMenuAction
 }: {
   item: SidebarNavigationItemModel
   selected: boolean
   onSelect: (itemId: string) => void
+  onContextMenuAction?: SidebarNavigationProps['onContextMenuAction']
 }): React.JSX.Element {
   const { isOver, setNodeRef } = useDroppable({
     id: `primary-navigation-target:${item.dropTarget?.type ?? 'none'}:${item.id}`,
@@ -85,45 +93,51 @@ function SidebarNavigationRow({
       data-drop-target={isOver ? 'active' : 'inactive'}
       className={cn(isOver && 'rounded-lg ring-2 ring-primary/55')}
     >
-      <SidebarMenuButton
-        type="button"
-        isActive={selected}
-        aria-current={selected ? 'page' : undefined}
-        aria-label={`${item.ariaLabel ?? item.label}${
-          item.badge ? `, ${item.badge.label}` : ''
-        }`}
-        title={item.sunflower?.ariaLabel}
-        className={cn(item.tone === 'muted' && 'text-muted-foreground opacity-55')}
-        disabled={item.disabled}
-        onClick={() => onSelect(item.id)}
+      <SidebarItemContextMenu
+        model={item.contextMenu}
+        onAction={(actionId, checked) =>
+          onContextMenuAction?.(item.id, actionId, checked)}
       >
-        {item.icon === 'todos' ? (
-          <ListChecks aria-hidden="true" />
-        ) : item.icon === 'tags' ? (
-          <Tags aria-hidden="true" />
-        ) : item.icon === 'review' ? (
-          <ClipboardCheck aria-hidden="true" />
-        ) : item.icon === 'routines' ? (
-          <Repeat2 aria-hidden="true" />
-        ) : item.icon === 'due' ? (
-          <CalendarClock aria-hidden="true" />
-        ) : item.icon === 'archive' ? (
-          <Archive aria-hidden="true" />
-        ) : item.icon === 'paused' ? (
-          <PauseCircle aria-hidden="true" />
-        ) : item.icon === 'sunflower' && item.sunflower ? (
-          <SemanticSunflower className="!size-6" model={item.sunflower} />
-        ) : null}
-        <span className="truncate"><TaggedText value={item.label} /></span>
-        {item.badge && (
-          <span
-            aria-hidden="true"
-            className="ml-auto min-w-5 shrink-0 rounded-full bg-sidebar-accent px-1.5 py-0.5 text-center text-[0.6875rem] font-semibold tabular-nums text-sidebar-accent-foreground group-data-[active=true]/menu-button:bg-primary/45"
-          >
-            {item.badge.value}
-          </span>
-        )}
-      </SidebarMenuButton>
+        <SidebarMenuButton
+          type="button"
+          isActive={selected}
+          aria-current={selected ? 'page' : undefined}
+          aria-label={`${item.ariaLabel ?? item.label}${
+            item.badge ? `, ${item.badge.label}` : ''
+          }`}
+          title={item.sunflower?.ariaLabel}
+          className={cn(item.tone === 'muted' && 'text-muted-foreground opacity-55')}
+          disabled={item.disabled}
+          onClick={() => onSelect(item.id)}
+        >
+          {item.icon === 'todos' ? (
+            <ListChecks aria-hidden="true" />
+          ) : item.icon === 'tags' ? (
+            <Tags aria-hidden="true" />
+          ) : item.icon === 'review' ? (
+            <ClipboardCheck aria-hidden="true" />
+          ) : item.icon === 'routines' ? (
+            <Repeat2 aria-hidden="true" />
+          ) : item.icon === 'due' ? (
+            <CalendarClock aria-hidden="true" />
+          ) : item.icon === 'archive' ? (
+            <Archive aria-hidden="true" />
+          ) : item.icon === 'paused' ? (
+            <PauseCircle aria-hidden="true" />
+          ) : item.icon === 'sunflower' && item.sunflower ? (
+            <SemanticSunflower className="!size-6" model={item.sunflower} />
+          ) : null}
+          <span className="truncate"><TaggedText value={item.label} /></span>
+          {item.badge && (
+            <span
+              aria-hidden="true"
+              className="ml-auto min-w-5 shrink-0 rounded-full bg-sidebar-accent px-1.5 py-0.5 text-center text-[0.6875rem] font-semibold tabular-nums text-sidebar-accent-foreground group-data-[active=true]/menu-button:bg-primary/45"
+            >
+              {item.badge.value}
+            </span>
+          )}
+        </SidebarMenuButton>
+      </SidebarItemContextMenu>
     </SidebarMenuItem>
   )
 }
@@ -133,7 +147,8 @@ function SidebarNavigationContent({
   selectedItemId,
   emptyLabel = 'No items',
   actions = [],
-  onSelect
+  onSelect,
+  onContextMenuAction
 }: SidebarNavigationProps): React.JSX.Element {
   const itemIds = new Set<string>()
   for (const item of items) {
@@ -153,6 +168,9 @@ function SidebarNavigationContent({
     }
     itemIds.add(id)
   }
+  if (!onContextMenuAction && items.some((item) => item.contextMenu)) {
+    throw new Error('Primary sidebar context-menu items require an action receiver.')
+  }
   return (
     <SidebarMenu>
       {items.length === 0 ? (
@@ -165,6 +183,7 @@ function SidebarNavigationContent({
             item={item}
             selected={selected}
             onSelect={onSelect}
+            onContextMenuAction={onContextMenuAction}
           />
         })
       )}

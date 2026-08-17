@@ -252,6 +252,12 @@ export function FocusWorkspace({
   const [threadArchiveOpen, setThreadArchiveOpen] = useState(false)
   const [restoringThreadId, setRestoringThreadId] = useState<number | null>(null)
   const [threadArchiveError, setThreadArchiveError] = useState<string | null>(null)
+  const [pendingThreadDelete, setPendingThreadDelete] = useState<{
+    id: number
+    title: string
+  } | null>(null)
+  const [threadDeleteSaving, setThreadDeleteSaving] = useState(false)
+  const [threadDeleteError, setThreadDeleteError] = useState<string | null>(null)
   const [pendingCommitmentMove, setPendingCommitmentMove] = useState<{
     plan: CommitmentMovePlanSnapshot
     commitmentTitle: string
@@ -277,6 +283,11 @@ export function FocusWorkspace({
   const childMoveRequest = useRef<(move: ContextualSidebarChildMove) => void>(
     () => undefined
   )
+  const threadContextMenuRequest = useRef<(
+    itemId: string,
+    actionId: string,
+    checked?: boolean
+  ) => void>(() => undefined)
   const commitmentMoveExecution = useRef<(
     plan: CommitmentMovePlanSnapshot,
     confirmedScopeSubjectIds?: readonly number[]
@@ -306,13 +317,8 @@ export function FocusWorkspace({
         ),
         onSelect: () => setStandaloneCommitmentRoute(null),
         onSelectChild: () => setStandaloneCommitmentRoute(null),
-        onChildCollectionAction: (parentItemId, collectionId, actionId) => {
-          if (collectionId !== 'commitments') return
-          const parent = commitmentParentForContextItem(parentItemId, focus.id)
-          if (!parent) return
-          if (actionId === 'add-commitment') setNewCommitmentParent(parent)
-          if (actionId === 'add-routine') setNewRoutineParent(parent)
-        },
+        onContextMenuAction: (itemId, actionId, checked) =>
+          threadContextMenuRequest.current(itemId, actionId, checked),
         canMoveChild: ({ sourceCollectionId, targetCollectionId }) =>
           sourceCollectionId === 'commitments' && targetCollectionId === 'commitments',
         onMoveChild: (move) => childMoveRequest.current(move),
@@ -528,6 +534,28 @@ export function FocusWorkspace({
     void requestCommitmentMove(move)
   }
 
+  function requestThreadContextMenuAction(
+    itemId: string,
+    actionId: string,
+    checked?: boolean
+  ): void {
+    if (!itemId.startsWith('thread:')) return
+    const threadId = Number(itemId.slice('thread:'.length))
+    const thread = model.threads.find((candidate) => candidate.id === threadId)
+    if (!thread) return
+    const parent: CommitmentParent = { type: 'thread', id: thread.id }
+    if (actionId === 'add-commitment') {
+      setNewCommitmentParent(parent)
+    } else if (actionId === 'add-routine') {
+      setNewRoutineParent(parent)
+    } else if (actionId === 'sensitive' && typeof checked === 'boolean') {
+      void updateThreadDetails(thread.id, { sensitive: checked })
+    } else if (actionId === 'delete') {
+      setThreadDeleteError(null)
+      setPendingThreadDelete({ id: thread.id, title: thread.title })
+    }
+  }
+
   async function requestThreadMove(move: ContextualSidebarItemMove): Promise<void> {
     if (!move.itemId.startsWith('thread:') || move.targetType !== 'focus') return
     const threadId = Number(move.itemId.slice('thread:'.length))
@@ -646,6 +674,7 @@ export function FocusWorkspace({
     childMoveRequest.current = requestChildMove
     commitmentMoveExecution.current = executeCommitmentMove
     threadMoveRequest.current = (move) => void requestThreadMove(move)
+    threadContextMenuRequest.current = requestThreadContextMenuAction
   })
 
   function commitmentsLevelFor(parent: CommitmentParent): ContextualSidebarLevel {
@@ -1173,6 +1202,20 @@ export function FocusWorkspace({
     } catch {
       // The record is already deleted and local collections are authoritative;
       // a later refresh can repair a stale aggregate summary.
+    }
+  }
+
+  async function confirmThreadContextDelete(): Promise<void> {
+    if (!pendingThreadDelete || threadDeleteSaving) return
+    setThreadDeleteSaving(true)
+    setThreadDeleteError(null)
+    try {
+      await deleteThreadFromDrawer(pendingThreadDelete.id)
+      setPendingThreadDelete(null)
+    } catch {
+      setThreadDeleteError('The Thread could not be deleted. Please try again.')
+    } finally {
+      setThreadDeleteSaving(false)
     }
   }
 
@@ -2020,6 +2063,48 @@ export function FocusWorkspace({
             setThreadArchiveOpen(false)
           }}
         />
+      )}
+      {pendingThreadDelete && (
+        <Dialog
+          open
+          title="Delete thread?"
+          description={`“${pendingThreadDelete.title}” and everything beneath it will be permanently deleted.`}
+          onClose={() => {
+            if (threadDeleteSaving) return
+            setThreadDeleteError(null)
+            setPendingThreadDelete(null)
+          }}
+          footer={
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={threadDeleteSaving}
+                onClick={() => setPendingThreadDelete(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={threadDeleteSaving}
+                onClick={() => void confirmThreadContextDelete()}
+              >
+                {threadDeleteSaving ? 'Deleting…' : 'Delete thread'}
+              </Button>
+            </>
+          }
+        >
+          <p className="text-sm leading-6">
+            This includes its Commitments, Routines, Updates, Scope application, and history.
+            This action cannot be undone.
+          </p>
+          {threadDeleteError && (
+            <p role="alert" className="mt-3 text-xs text-destructive">
+              {threadDeleteError}
+            </p>
+          )}
+        </Dialog>
       )}
       {newCommitmentParent && (
         <NewCommitmentDialog

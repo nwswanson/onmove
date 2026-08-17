@@ -269,6 +269,39 @@ describe('Focus presentation adapters', () => {
         sunflower,
         tone: 'default',
         movable: true,
+        contextMenu: {
+          ariaLabel: 'Sprint execution actions',
+          items: [
+            {
+              kind: 'action',
+              id: 'add-commitment',
+              label: 'Add commitment',
+              icon: 'add'
+            },
+            {
+              kind: 'action',
+              id: 'add-routine',
+              label: 'Add Routine',
+              icon: 'checklist'
+            },
+            {
+              kind: 'checkbox',
+              id: 'sensitive',
+              label: 'Sensitive',
+              icon: 'sensitive',
+              checked: false,
+              separatorBefore: true
+            },
+            {
+              kind: 'action',
+              id: 'delete',
+              label: 'Delete Thread',
+              icon: 'delete',
+              tone: 'destructive',
+              separatorBefore: true
+            }
+          ]
+        },
         group: { id: 'threads', label: 'Threads' }
       }
     ])
@@ -412,19 +445,6 @@ describe('Focus presentation adapters', () => {
     expect(items[0]?.childCollection).toEqual({
       id: 'commitments',
       label: 'Commitments and Routines',
-      emptyState: 'No commitments or Routines',
-      actions: [
-        {
-          id: 'add-commitment',
-          label: 'Add commitment',
-          ariaLabel: 'Add commitment to Overall'
-        },
-        {
-          id: 'add-routine',
-          label: 'Add Routine',
-          ariaLabel: 'Add Routine to Overall'
-        }
-      ],
       items: [
         {
           id: '20',
@@ -438,19 +458,6 @@ describe('Focus presentation adapters', () => {
     expect(items[1]?.childCollection).toEqual({
       id: 'commitments',
       label: 'Commitments and Routines',
-      emptyState: 'No commitments or Routines',
-      actions: [
-        {
-          id: 'add-commitment',
-          label: 'Add commitment',
-          ariaLabel: 'Add commitment to Sprint execution'
-        },
-        {
-          id: 'add-routine',
-          label: 'Add Routine',
-          ariaLabel: 'Add Routine to Sprint execution'
-        }
-      ],
       items: [
         {
           id: '21',
@@ -458,6 +465,39 @@ describe('Focus presentation adapters', () => {
           ariaLabel: 'Open Sprint execution commitment Improve ticket quality',
           state: { label: 'Yellow', tone: 'warning' },
           tone: 'muted'
+        }
+      ]
+    })
+    expect(items[1]?.contextMenu).toEqual({
+      ariaLabel: 'Sprint execution actions',
+      items: [
+        {
+          kind: 'action',
+          id: 'add-commitment',
+          label: 'Add commitment',
+          icon: 'add'
+        },
+        {
+          kind: 'action',
+          id: 'add-routine',
+          label: 'Add Routine',
+          icon: 'checklist'
+        },
+        {
+          kind: 'checkbox',
+          id: 'sensitive',
+          label: 'Sensitive',
+          icon: 'sensitive',
+          checked: false,
+          separatorBefore: true
+        },
+        {
+          kind: 'action',
+          id: 'delete',
+          label: 'Delete Thread',
+          icon: 'delete',
+          tone: 'destructive',
+          separatorBefore: true
         }
       ]
     })

@@ -61,6 +61,17 @@
   vertical layout so creation and Archive remain separate, easy-to-target rows.
   Keep `newItem` as the contextual level's creation declaration and let the receiver merge it with
   optional peer actions such as Archive instead of composing feature-specific footer markup.
+- Declare right-click actions on primary and contextual sidebar item models through the shared
+  `SidebarContextMenuModel`; never attach domain-specific menu JSX or per-item callbacks. The
+  shadcn/Radix receiver owns pointer and keyboard opening, focus, dismissal, semantic icons,
+  checkbox state, separators, and destructive styling. Sidebar owners receive only the target item
+  id, declared action id, and optional checked value, then translate those into typed feature
+  mutations.
+- Give every active Thread row contextual actions for Add commitment, Add Routine, Sensitive, and
+  Delete Thread. Creation targets that exact Thread, sensitivity uses the typed Thread update, and
+  deletion must open a confirmation before invoking the existing cascade-safe Thread deletion.
+  Do not render Add commitment / Add Routine controls beneath nested child collections, and render
+  no placeholder or empty collection chrome when a Thread or Overall has no visible children.
 - Keep Done and Cancelled Threads in the Focus model and SQLite history, but omit them from the
   active top-level contextual hierarchy. Expose them through the Focus level's Archive footer
   action, subject the archive list to the normal sensitive-ancestor visibility boundary, and restore
@@ -73,8 +84,7 @@
   a Thread level.
 - At the top level, render each Focus Overall or Thread item's direct Commitments as a nested tree.
   Nested Commitment rows use the receiver-owned semantic state dot, never a Sunflower. Selecting a
-  nested Commitment changes the main route while preserving the top-level sidebar. Give every tree
-  scope ordered generic child-collection actions for `Add commitment` followed by `Add Routine`.
+  nested Commitment changes the main route while preserving the top-level sidebar.
   Render its direct Routine definitions after its direct Commitments with a checklist icon and
   derived status dot. Routine rows are draggable between Overall and sibling Threads through the
   same generic child-move boundary as Commitments. A Routine move changes ownership only: retain

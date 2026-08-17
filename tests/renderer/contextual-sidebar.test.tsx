@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -15,6 +15,7 @@ import {
 } from '../../src/renderer/src/components/ui/contextual-sidebar'
 import type { StateLabelModel } from '../../src/renderer/src/components/ui/state-label'
 import type { SidebarFooterActionModel } from '../../src/renderer/src/components/ui/sidebar'
+import type { SidebarContextMenuModel } from '../../src/renderer/src/components/ui/sidebar-context-menu'
 
 interface TestItem {
   id: string
@@ -24,6 +25,7 @@ interface TestItem {
   movable?: boolean
   stateLabel?: StateLabelModel
   childCollection?: ContextualSidebarChildCollectionModel
+  contextMenu?: SidebarContextMenuModel
 }
 
 function level(
@@ -44,6 +46,7 @@ function level(
       collectionId: string,
       actionId: string
     ) => void
+    onContextMenuAction?: (itemId: string, actionId: string, checked?: boolean) => void
     canMoveChild?: (move: ContextualSidebarChildMove) => boolean
     onMoveChild?: (move: ContextualSidebarChildMove) => void
     itemMoveTargetType?: string
@@ -73,6 +76,7 @@ function level(
     onSelect: options.onSelect,
     onSelectChild: options.onSelectChild,
     onChildCollectionAction: options.onChildCollectionAction,
+    onContextMenuAction: options.onContextMenuAction,
     canMoveChild: options.canMoveChild,
     onMoveChild: options.onMoveChild,
     itemMoveTargetType: options.itemMoveTargetType,
@@ -173,6 +177,40 @@ describe('ContextualSidebarNavigation', () => {
       name: 'Open archived threads'
     }))
     expect(onArchive).toHaveBeenCalledOnce()
+  })
+
+  it('reads context-menu actions from the targeted contextual item', async () => {
+    const onContextMenuAction = vi.fn()
+    const root = level('focus:1', 'Focus', [{
+      id: 'thread:10',
+      label: 'Sprint execution',
+      contextMenu: {
+        ariaLabel: 'Sprint execution actions',
+        items: [
+          { kind: 'action', id: 'add-commitment', label: 'Add commitment', icon: 'add' },
+          {
+            kind: 'action',
+            id: 'delete',
+            label: 'Delete Thread',
+            icon: 'delete',
+            tone: 'destructive',
+            separatorBefore: true
+          }
+        ]
+      }
+    }], { onContextMenuAction })
+    const user = userEvent.setup()
+    render(<ContextualSidebar navigation={new ContextualSidebarNavigation(root)} />)
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Sprint execution' }))
+    const menu = await screen.findByRole('menu', { name: 'Sprint execution actions' })
+    await user.click(within(menu).getByRole('menuitem', { name: 'Add commitment' }))
+
+    expect(onContextMenuAction).toHaveBeenCalledWith(
+      'thread:10',
+      'add-commitment',
+      undefined
+    )
   })
 
   it('renders an item state through the sidebar-owned state-label receiver', () => {

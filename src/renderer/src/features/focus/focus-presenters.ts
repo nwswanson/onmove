@@ -246,19 +246,6 @@ function contextWorkChildCollection(
   return {
     id: 'commitments',
     label: 'Commitments and Routines',
-    emptyState: 'No commitments or Routines',
-    actions: [
-      {
-        id: 'add-commitment',
-        label: 'Add commitment',
-        ariaLabel: `Add commitment to ${ownerLabel}`
-      },
-      {
-        id: 'add-routine',
-        label: 'Add Routine',
-        ariaLabel: `Add Routine to ${ownerLabel}`
-      }
-    ],
     items: [
       ...buildCommitmentListModel(commitments).current.map((commitment) => ({
         id: String(commitment.id),
@@ -335,6 +322,39 @@ export function focusContextSidebarItems(
           : {}),
         tone: paused ? ('muted' as const) : ('default' as const),
         movable: true,
+        contextMenu: {
+          ariaLabel: `${label} actions`,
+          items: [
+            {
+              kind: 'action' as const,
+              id: 'add-commitment',
+              label: 'Add commitment',
+              icon: 'add' as const
+            },
+            {
+              kind: 'action' as const,
+              id: 'add-routine',
+              label: 'Add Routine',
+              icon: 'checklist' as const
+            },
+            {
+              kind: 'checkbox' as const,
+              id: 'sensitive',
+              label: 'Sensitive',
+              icon: 'sensitive' as const,
+              checked: thread.sensitive,
+              separatorBefore: true
+            },
+            {
+              kind: 'action' as const,
+              id: 'delete',
+              label: 'Delete Thread',
+              icon: 'delete' as const,
+              tone: 'destructive' as const,
+              separatorBefore: true
+            }
+          ]
+        },
         group: { id: 'threads', label: 'Threads' }
       }
       })

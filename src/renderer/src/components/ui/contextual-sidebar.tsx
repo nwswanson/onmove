@@ -22,6 +22,10 @@ import {
 import { SemanticSunflower, type SemanticSunflowerModel } from '@/components/ui/sunflower'
 import { TaggedText } from '@/components/ui/tagged-text'
 import {
+  SidebarItemContextMenu,
+  type SidebarContextMenuModel
+} from '@/components/ui/sidebar-context-menu'
+import {
   SidebarDndBoundary,
   type SidebarTransferSourceData,
   type SidebarTransferTargetData
@@ -81,6 +85,7 @@ export interface ContextualSidebarItemModel {
   disabled?: boolean
   movable?: boolean
   childCollection?: ContextualSidebarChildCollectionModel
+  contextMenu?: SidebarContextMenuModel
 }
 
 export interface ContextualSidebarNewItemAction {
@@ -121,6 +126,11 @@ export interface ContextualSidebarLevelOptions extends ContextualSidebarLevelBas
     parentItemId: string,
     collectionId: string,
     actionId: string
+  ) => void
+  onContextMenuAction?: (
+    itemId: string,
+    actionId: string,
+    checked?: boolean
   ) => void
   canMoveChild?: (move: ContextualSidebarChildMove) => boolean
   onMoveChild?: (move: ContextualSidebarChildMove) => void
@@ -239,6 +249,7 @@ export abstract class ContextualSidebarLevelBase {
   abstract canDragItem(itemId: string): boolean
   abstract getItemMoveTargetType(): string | null
   abstract notifyItemMove(move: ContextualSidebarItemMove): void
+  abstract notifyContextMenuAction(itemId: string, actionId: string, checked?: boolean): void
 
   getNewItem(): ContextualSidebarNewItemAction | null {
     const action = this.resolveNewItem()
@@ -294,6 +305,7 @@ export class ContextualSidebarLevel extends ContextualSidebarLevelBase {
   private readonly onItemSelect?: ContextualSidebarLevelOptions['onSelect']
   private readonly onChildItemSelect?: ContextualSidebarLevelOptions['onSelectChild']
   private readonly onCollectionAction?: ContextualSidebarLevelOptions['onChildCollectionAction']
+  private readonly onItemContextMenuAction?: ContextualSidebarLevelOptions['onContextMenuAction']
   private readonly allowChildMove?: ContextualSidebarLevelOptions['canMoveChild']
   private readonly onChildMove?: ContextualSidebarLevelOptions['onMoveChild']
   private readonly itemMoveTargetType?: string
@@ -306,6 +318,7 @@ export class ContextualSidebarLevel extends ContextualSidebarLevelBase {
     this.onItemSelect = options.onSelect
     this.onChildItemSelect = options.onSelectChild
     this.onCollectionAction = options.onChildCollectionAction
+    this.onItemContextMenuAction = options.onContextMenuAction
     this.allowChildMove = options.canMoveChild
     this.onChildMove = options.onMoveChild
     this.itemMoveTargetType = options.itemMoveTargetType?.trim()
@@ -454,6 +467,14 @@ export class ContextualSidebarLevel extends ContextualSidebarLevelBase {
       !this.allowItemMove?.(move)
     ) return
     this.onItemMove?.(move)
+  }
+
+  notifyContextMenuAction(itemId: string, actionId: string, checked?: boolean): void {
+    const item = this.requireItem(itemId)
+    const action = item.contextMenu?.items.find((candidate) => candidate.id === actionId)
+    if (!action || action.disabled || !this.onItemContextMenuAction) return
+    if (action.kind === 'checkbox' && typeof checked !== 'boolean') return
+    this.onItemContextMenuAction(itemId, actionId, checked)
   }
 
   private readEntries(): Array<{ id: string; item: ContextualSidebarItemModel }> {
@@ -971,56 +992,62 @@ function ContextualSidebarItemButton({
   })
 
   return (
-    <SidebarMenuButton
-      ref={setNodeRef}
-      type="button"
-      {...(draggable ? attributes : {})}
-      {...(draggable ? listeners : {})}
-      isActive={selected}
-      aria-current={selected && !selectedChildBelongsToItem ? 'page' : undefined}
-      aria-label={item.ariaLabel ?? item.label}
-      title={item.sunflower?.ariaLabel}
-      disabled={item.disabled}
-      data-dragging={isDragging ? 'true' : 'false'}
-      className={cn(
-        item.tone === 'muted' && 'text-muted-foreground opacity-55',
-        item.lines === 2 && 'h-auto min-h-9 py-2',
-        draggable && 'touch-none',
-        isDragging && 'opacity-35'
-      )}
-      onClick={() => navigation.select(item.id)}
+    <SidebarItemContextMenu
+      model={item.contextMenu}
+      onAction={(actionId, checked) =>
+        level.notifyContextMenuAction(item.id, actionId, checked)}
     >
-      {item.icon === 'overview' ? (
-        <Layers3 aria-hidden="true" />
-      ) : item.icon === 'paused' ? (
-        <PauseCircle aria-hidden="true" />
-      ) : item.icon === 'sunflower' && item.sunflower ? (
-        <SemanticSunflower className="!size-6" model={item.sunflower} />
-      ) : null}
-      <span className="min-w-0 flex-1">
-        <span
-          className={cn(
-            'block',
-            item.description
-              ? 'truncate'
-              : item.lines === 2
-                ? 'line-clamp-2'
-                : 'truncate'
-          )}
-        >
-          <TaggedText value={item.label} />
-        </span>
-        {item.description && (
-          <span className="mt-0.5 block truncate text-[0.6875rem] text-muted-foreground">
-            {item.description}
-          </span>
+      <SidebarMenuButton
+        ref={setNodeRef}
+        type="button"
+        {...(draggable ? attributes : {})}
+        {...(draggable ? listeners : {})}
+        isActive={selected}
+        aria-current={selected && !selectedChildBelongsToItem ? 'page' : undefined}
+        aria-label={item.ariaLabel ?? item.label}
+        title={item.sunflower?.ariaLabel}
+        disabled={item.disabled}
+        data-dragging={isDragging ? 'true' : 'false'}
+        className={cn(
+          item.tone === 'muted' && 'text-muted-foreground opacity-55',
+          item.lines === 2 && 'h-auto min-h-9 py-2',
+          draggable && 'touch-none',
+          isDragging && 'opacity-35'
         )}
-      </span>
-      {item.stateLabel && <StateLabel model={item.stateLabel} size="compact" />}
-      {item.accessory === 'disclosure' && (
-        <ChevronRight className="ml-auto" aria-hidden="true" />
-      )}
-    </SidebarMenuButton>
+        onClick={() => navigation.select(item.id)}
+      >
+        {item.icon === 'overview' ? (
+          <Layers3 aria-hidden="true" />
+        ) : item.icon === 'paused' ? (
+          <PauseCircle aria-hidden="true" />
+        ) : item.icon === 'sunflower' && item.sunflower ? (
+          <SemanticSunflower className="!size-6" model={item.sunflower} />
+        ) : null}
+        <span className="min-w-0 flex-1">
+          <span
+            className={cn(
+              'block',
+              item.description
+                ? 'truncate'
+                : item.lines === 2
+                  ? 'line-clamp-2'
+                  : 'truncate'
+            )}
+          >
+            <TaggedText value={item.label} />
+          </span>
+          {item.description && (
+            <span className="mt-0.5 block truncate text-[0.6875rem] text-muted-foreground">
+              {item.description}
+            </span>
+          )}
+        </span>
+        {item.stateLabel && <StateLabel model={item.stateLabel} size="compact" />}
+        {item.accessory === 'disclosure' && (
+          <ChevronRight className="ml-auto" aria-hidden="true" />
+        )}
+      </SidebarMenuButton>
+    </SidebarItemContextMenu>
   )
 }
 
@@ -1134,6 +1161,8 @@ function ContextualSidebarContent({
                         selectedChildBelongsToItem={selectedChildBelongsToItem}
                       />
                       {childCollection && (
+                        childCollectionActions.length > 0 || childCollection.items.length > 0
+                      ) && (
                         <div
                           className="ml-4 border-l border-sidebar-border/80 pl-2"
                           data-child-collection-id={childCollection.id}

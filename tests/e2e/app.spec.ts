@@ -31,6 +31,18 @@ function localDate(now = new Date()): string {
   return `${year}-${month}-${day}`
 }
 
+async function openContextualItemMenu(
+  window: Awaited<ReturnType<ElectronApplication['firstWindow']>>,
+  itemLabel: string
+): Promise<Locator> {
+  await window.getByLabel('Contextual sidebar').getByRole('button', {
+    name: itemLabel,
+    exact: true
+  }).click({ button: 'right' })
+  const menuItemLabel = itemLabel.replace(/, paused$/, '')
+  return window.getByRole('menu', { name: `${menuItemLabel} actions` })
+}
+
 test('badges actionable navigation and decrements Review after persistence', async () => {
   const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-navigation-badges-e2e-'))
   const databasePath = join(userDataDirectory, 'onmove.sqlite3')
@@ -179,9 +191,9 @@ test('creates, attests, versions, and reloads a recurring Routine Run', async ()
     await window.getByRole('button', { name: 'Routine portfolio', exact: true }).click()
     await window.getByRole('button', { name: 'Sprint execution', exact: true }).click()
     const contextualSidebar = window.getByLabel('Contextual sidebar')
-    await contextualSidebar.getByRole('button', {
-      name: 'Add Routine to Sprint execution'
-    }).click()
+    await (await openContextualItemMenu(window, 'Sprint execution'))
+      .getByRole('menuitem', { name: 'Add Routine' })
+      .click()
     const editor = window.getByRole('dialog', { name: 'Add Routine' })
     await editor.getByLabel('Routine name').fill('Weekly delivery inspection')
     await editor.getByRole('button', { name: 'Add Routine' }).click()
@@ -343,9 +355,9 @@ test('applies a later Thread Scope to an existing Routine with Subject-only tabs
     await window.getByRole('button', { name: 'Late Scope Thread', exact: true }).click()
 
     const contextualSidebar = window.getByLabel('Contextual sidebar')
-    await contextualSidebar.getByRole('button', {
-      name: 'Add Routine to Late Scope Thread'
-    }).click()
+    await (await openContextualItemMenu(window, 'Late Scope Thread'))
+      .getByRole('menuitem', { name: 'Add Routine' })
+      .click()
     const routineDialog = window.getByRole('dialog', { name: 'Add Routine' })
     await routineDialog.getByLabel('Routine name').fill('Late scoped inspection')
     await routineDialog.getByRole('button', { name: 'Add Routine' }).click()
@@ -380,9 +392,9 @@ test('applies a later Thread Scope to an existing Routine with Subject-only tabs
     await expect(window.getByRole('main').getByText('Europe')).toHaveCount(0)
 
     await contextualSidebar.getByRole('button', { name: 'Late Scope Thread', exact: true }).click()
-    await contextualSidebar.getByRole('button', {
-      name: 'Add Routine to Late Scope Thread'
-    }).click()
+    await (await openContextualItemMenu(window, 'Late Scope Thread'))
+      .getByRole('menuitem', { name: 'Add Routine' })
+      .click()
     const scopedRoutineDialog = window.getByRole('dialog', { name: 'Add Routine' })
     await expect(scopedRoutineDialog.getByRole('checkbox', {
       name: 'Apply Thread scope'
@@ -527,8 +539,9 @@ test('drags a Routine between Threads without rewriting its attestation aggregat
 
     await expect(window.getByRole('list', { name: 'Target Thread Commitments and Routines' }))
       .toContainText('Portable audit')
-    await expect(window.getByRole('list', { name: 'Source Thread Commitments and Routines' }))
-      .not.toContainText('Portable audit')
+    await expect(window.getByRole('list', {
+      name: 'Source Thread Commitments and Routines'
+    })).toHaveCount(0)
     await expect(window.getByRole('heading', { name: 'Portable audit' })).toBeVisible()
     await expect.poll(storedRoutine).toEqual({
       parentTitle: 'Target Thread',
@@ -1963,8 +1976,8 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(window.getByLabel('Thread last reviewed')).toContainText(
       `Last reviewed · ${threadUpdateDate}`
     )
-    await window
-      .getByRole('button', { name: 'Add commitment to Sprint execution' })
+    await (await openContextualItemMenu(window, 'Sprint execution, paused'))
+      .getByRole('menuitem', { name: 'Add commitment' })
       .click()
     const newThreadCommitmentDialog = window.getByRole('dialog', {
       name: 'New commitment'
@@ -2378,8 +2391,8 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       .getByRole('button', { name: 'Sprint execution, paused', exact: true })
       .click()
 
-    await window
-      .getByRole('button', { name: 'Add commitment to Sprint execution' })
+    await (await openContextualItemMenu(window, 'Sprint execution, paused'))
+      .getByRole('menuitem', { name: 'Add commitment' })
       .click()
     const scopedCommitmentDialog = window.getByRole('dialog', { name: 'New commitment' })
     await scopedCommitmentDialog.getByLabel(/^Title/).fill('Scoped ticket quality')
@@ -2780,7 +2793,9 @@ test('drags a Commitment between Threads and confirms required Scope widening', 
     await subjectInput.press('Enter')
     await expect(sourceDrawer.getByRole('button', { name: 'Remove Partner Team' })).toBeVisible()
 
-    await window.getByRole('button', { name: 'Add commitment to Source Thread' }).click()
+    await (await openContextualItemMenu(window, 'Source Thread'))
+      .getByRole('menuitem', { name: 'Add commitment' })
+      .click()
     const commitmentDialog = window.getByRole('dialog', { name: 'New commitment' })
     await commitmentDialog.getByLabel(/^Title/).fill('Portable commitment')
     await commitmentDialog.getByRole('button', { name: 'Create commitment' }).click()
@@ -2832,7 +2847,7 @@ test('drags a Commitment between Threads and confirms required Scope widening', 
     await expect(window.getByRole('list', { name: 'Target Thread Commitments' }))
       .toContainText('Portable commitment')
     await expect(window.getByRole('list', { name: 'Source Thread Commitments' }))
-      .not.toContainText('Portable commitment')
+      .toHaveCount(0)
     await expect(window.getByRole('heading', { name: 'Portable commitment' })).toBeVisible()
     await expect.poll(storedMove).toEqual({
       parentTitle: 'Target Thread',
@@ -3128,7 +3143,9 @@ test('applies a custom Thread Scope to Commitments created before that Scope', a
     await window.getByRole('button', { name: 'Sprint execution', exact: true }).click()
 
     for (const title of ['Improve ticket quality', 'Keep refinement healthy']) {
-      await window.getByRole('button', { name: 'Add commitment to Sprint execution' }).click()
+      await (await openContextualItemMenu(window, 'Sprint execution'))
+        .getByRole('menuitem', { name: 'Add commitment' })
+        .click()
       const commitmentDialog = window.getByRole('dialog', { name: 'New commitment' })
       await commitmentDialog.getByLabel(/^Title/).fill(title)
       await commitmentDialog.getByRole('button', { name: 'Create commitment' }).click()
@@ -3322,7 +3339,9 @@ test('sorts and preserves contextual Todos through Scope changes', async () => {
     await window.getByLabel('New Todo name').fill('Coordinate platform owner')
     await window.getByLabel('New Todo context').selectOption({ label: 'Platform Team' })
     await window.getByRole('button', { name: 'Add Todo' }).click()
-    await window.getByRole('button', { name: 'Add commitment to Scoped delivery' }).click()
+    await (await openContextualItemMenu(window, 'Scoped delivery'))
+      .getByRole('menuitem', { name: 'Add commitment' })
+      .click()
     const commitmentDialog = window.getByRole('dialog', { name: 'New commitment' })
     await commitmentDialog.getByLabel(/^Title/).fill('Improve ticket quality')
     await commitmentDialog.getByRole('button', { name: 'Create commitment' }).click()
