@@ -143,7 +143,7 @@ describe('ContextualSidebarNavigation', () => {
     expect(onNewThread).toHaveBeenCalledOnce()
   })
 
-  it('places generic archive actions beside a level new-item action', async () => {
+  it('stacks generic archive actions below a level new-item action', async () => {
     const onNewThread = vi.fn()
     const onArchive = vi.fn()
     const root = level(
@@ -165,6 +165,7 @@ describe('ContextualSidebarNavigation', () => {
     const actions = screen.getByRole('button', { name: 'New thread' })
       .closest('[data-slot="sidebar-action-row"]')
 
+    expect(actions?.firstElementChild).toHaveClass('flex-col')
     expect(actions).toContainElement(screen.getByRole('button', {
       name: 'Open archived threads'
     }))

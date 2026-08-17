@@ -57,7 +57,8 @@
   do not hard-code New Thread or New Commitment footer markup in domain adapters.
 - Render adjacent bottom-of-sidebar controls through the shared receiver-owned footer-action
   contract in both primary and contextual sidebars. Callers supply data-only ids, labels, semantic
-  icons, disabled state, and invocation handlers; the sidebar receiver owns the compact row layout.
+  icons, disabled state, and invocation handlers; the sidebar receiver owns the compact full-width
+  vertical layout so creation and Archive remain separate, easy-to-target rows.
   Keep `newItem` as the contextual level's creation declaration and let the receiver merge it with
   optional peer actions such as Archive instead of composing feature-specific footer markup.
 - Keep Done and Cancelled Threads in the Focus model and SQLite history, but omit them from the

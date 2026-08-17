@@ -156,7 +156,7 @@ function SidebarActionRow({
       data-slot="sidebar-action-row"
       className={cn('mt-1 border-t border-sidebar-border pt-1', className)}
     >
-      <div className="flex min-w-0 gap-1">
+      <div className="flex min-w-0 flex-col gap-1">
         {actions.map((action) => {
           const disabled = typeof action.disabled === 'function'
             ? action.disabled()
@@ -165,7 +165,7 @@ function SidebarActionRow({
             <SidebarMenuButton
               key={action.id}
               type="button"
-              className="min-w-0 flex-1"
+              className="w-full min-w-0"
               aria-label={action.ariaLabel ?? action.label}
               disabled={disabled}
               onClick={action.onInvoke}
