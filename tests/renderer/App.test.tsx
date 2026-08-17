@@ -2527,9 +2527,16 @@ describe('App', () => {
     )
   })
 
-  it('executes Thread actions from its generic contextual-sidebar menu', async () => {
-    const current = focus({ title: 'Project Atlas' })
+  it('executes Overall and Thread actions from generic contextual-sidebar menus', async () => {
+    let current = focus({ title: 'Project Atlas', sensitive: false })
     let sprint = thread({ title: 'Sprint execution', sensitive: false })
+    const updateFocus = vi.fn(async (
+      _id: number,
+      input: Parameters<DomainApi['updateFocus']>[1]
+    ) => {
+      current = focus({ ...current, ...input })
+      return current
+    })
     const updateThread = vi.fn(async (
       id: number,
       input: Parameters<DomainApi['updateThread']>[1]
@@ -2541,6 +2548,7 @@ describe('App', () => {
     installApi({
       listFocuses: vi.fn().mockResolvedValue([current]),
       listThreads: vi.fn().mockResolvedValue([sprint]),
+      updateFocus,
       updateThread,
       deleteThread
     })
@@ -2559,8 +2567,30 @@ describe('App', () => {
     expect(within(contextualSidebar).queryByText('No commitments or Routines'))
       .not.toBeInTheDocument()
 
+    const overallTarget = within(contextualSidebar).getByRole('button', { name: 'Overall' })
+    fireEvent.contextMenu(overallTarget)
+    let menu = screen.getByRole('menu', { name: 'Overall actions' })
+    expect(within(menu).queryByRole('menuitem', { name: 'Delete Thread' }))
+      .not.toBeInTheDocument()
+    await user.click(within(menu).getByRole('menuitem', { name: 'Add commitment' }))
+    expect(screen.getByRole('dialog', { name: 'New commitment' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Close dialog' }))
+
+    fireEvent.contextMenu(overallTarget)
+    menu = screen.getByRole('menu', { name: 'Overall actions' })
+    await user.click(within(menu).getByRole('menuitem', { name: 'Add Routine' }))
+    expect(screen.getByRole('dialog', { name: 'Add Routine' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Close dialog' }))
+
+    fireEvent.contextMenu(overallTarget)
+    menu = screen.getByRole('menu', { name: 'Overall actions' })
+    await user.click(within(menu).getByRole('menuitemcheckbox', { name: 'Sensitive' }))
+    await waitFor(() => expect(updateFocus).toHaveBeenCalledWith(current.id, {
+      sensitive: true
+    }))
+
     fireEvent.contextMenu(threadTarget)
-    let menu = screen.getByRole('menu', { name: 'Sprint execution actions' })
+    menu = screen.getByRole('menu', { name: 'Sprint execution actions' })
     await user.click(within(menu).getByRole('menuitem', { name: 'Add commitment' }))
     expect(screen.getByRole('dialog', { name: 'New commitment' })).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Close dialog' }))

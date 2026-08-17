@@ -48,11 +48,12 @@ function validateModel(model: SidebarContextMenuModel): void {
 }
 
 function MenuIcon({ icon }: { icon: SidebarContextMenuItemModel['icon'] }): React.JSX.Element {
-  if (icon === 'add') return <Plus aria-hidden="true" />
-  if (icon === 'checklist') return <ListChecks aria-hidden="true" />
-  if (icon === 'sensitive') return <Shield aria-hidden="true" />
-  if (icon === 'delete') return <Trash2 aria-hidden="true" />
-  return <span aria-hidden="true" className="size-4" />
+  const className = 'size-3.5 shrink-0'
+  if (icon === 'add') return <Plus aria-hidden="true" className={className} />
+  if (icon === 'checklist') return <ListChecks aria-hidden="true" className={className} />
+  if (icon === 'sensitive') return <Shield aria-hidden="true" className={className} />
+  if (icon === 'delete') return <Trash2 aria-hidden="true" className={className} />
+  return <span aria-hidden="true" className={className} />
 }
 
 /**
@@ -96,8 +97,8 @@ export function SidebarItemContextMenu({
                 >
                   <MenuIcon icon={item.icon} />
                   <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                  <ContextMenuPrimitive.ItemIndicator className="absolute right-2 inline-flex size-4 items-center justify-center">
-                    <Check aria-hidden="true" className="size-3.5" />
+                  <ContextMenuPrimitive.ItemIndicator className="absolute right-2 inline-flex size-3.5 items-center justify-center">
+                    <Check aria-hidden="true" className="size-3" />
                   </ContextMenuPrimitive.ItemIndicator>
                 </ContextMenuPrimitive.CheckboxItem>
               ) : (

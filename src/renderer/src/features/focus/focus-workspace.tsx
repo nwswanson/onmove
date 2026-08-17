@@ -283,7 +283,7 @@ export function FocusWorkspace({
   const childMoveRequest = useRef<(move: ContextualSidebarChildMove) => void>(
     () => undefined
   )
-  const threadContextMenuRequest = useRef<(
+  const contextMenuRequest = useRef<(
     itemId: string,
     actionId: string,
     checked?: boolean
@@ -313,12 +313,13 @@ export function FocusWorkspace({
           {},
           false,
           { overall: [] },
-          { overall: [] }
+          { overall: [] },
+          focus.sensitive
         ),
         onSelect: () => setStandaloneCommitmentRoute(null),
         onSelectChild: () => setStandaloneCommitmentRoute(null),
         onContextMenuAction: (itemId, actionId, checked) =>
-          threadContextMenuRequest.current(itemId, actionId, checked),
+          contextMenuRequest.current(itemId, actionId, checked),
         canMoveChild: ({ sourceCollectionId, targetCollectionId }) =>
           sourceCollectionId === 'commitments' && targetCollectionId === 'commitments',
         onMoveChild: (move) => childMoveRequest.current(move),
@@ -534,23 +535,26 @@ export function FocusWorkspace({
     void requestCommitmentMove(move)
   }
 
-  function requestThreadContextMenuAction(
+  function requestContextMenuAction(
     itemId: string,
     actionId: string,
     checked?: boolean
   ): void {
-    if (!itemId.startsWith('thread:')) return
-    const threadId = Number(itemId.slice('thread:'.length))
-    const thread = model.threads.find((candidate) => candidate.id === threadId)
-    if (!thread) return
-    const parent: CommitmentParent = { type: 'thread', id: thread.id }
+    const parent = commitmentParentForContextItem(itemId, focus.id)
+    if (!parent) return
     if (actionId === 'add-commitment') {
       setNewCommitmentParent(parent)
     } else if (actionId === 'add-routine') {
       setNewRoutineParent(parent)
     } else if (actionId === 'sensitive' && typeof checked === 'boolean') {
-      void updateThreadDetails(thread.id, { sensitive: checked })
-    } else if (actionId === 'delete') {
+      if (parent.type === 'focus') {
+        void updateFocusDetails({ sensitive: checked })
+      } else {
+        void updateThreadDetails(parent.id, { sensitive: checked })
+      }
+    } else if (actionId === 'delete' && parent.type === 'thread') {
+      const thread = model.threads.find((candidate) => candidate.id === parent.id)
+      if (!thread) return
       setThreadDeleteError(null)
       setPendingThreadDelete({ id: thread.id, title: thread.title })
     }
@@ -615,7 +619,8 @@ export function FocusWorkspace({
       model.threadStatusSummaries,
       hideSensitiveContent,
       nextByContext,
-      routinesByContextItemId
+      routinesByContextItemId,
+      focus.sensitive
     ))
     navigation.refresh()
     navigation.selectChild(targetItemId, 'commitments', String(moved.id))
@@ -635,7 +640,8 @@ export function FocusWorkspace({
       model.threadStatusSummaries,
       hideSensitiveContent,
       commitmentsByContextItemId,
-      nextByContext
+      nextByContext,
+      focus.sensitive
     ))
     navigation.refresh()
     navigation.selectChild(targetItemId, 'commitments', `routine:${moved.id}`)
@@ -674,7 +680,7 @@ export function FocusWorkspace({
     childMoveRequest.current = requestChildMove
     commitmentMoveExecution.current = executeCommitmentMove
     threadMoveRequest.current = (move) => void requestThreadMove(move)
-    threadContextMenuRequest.current = requestThreadContextMenuAction
+    contextMenuRequest.current = requestContextMenuAction
   })
 
   function commitmentsLevelFor(parent: CommitmentParent): ContextualSidebarLevel {
@@ -717,7 +723,8 @@ export function FocusWorkspace({
         model.threadStatusSummaries,
         hideSensitiveContent,
         commitmentsByContextItemId,
-        routinesByContextItemId
+        routinesByContextItemId,
+        focus.sensitive
       )
     )
     focusCommitmentsLevel.setItems(
@@ -736,6 +743,7 @@ export function FocusWorkspace({
   }, [
     focusCommitmentsLevel,
     focusLevel,
+    focus.sensitive,
     model.commitments,
     model.threadCommitments,
     model.threads,
@@ -1331,7 +1339,8 @@ export function FocusWorkspace({
           ...commitmentsByContextItemId,
           [contextItemIdForCommitmentParent(created.parent)]: nextCommitments
         },
-        routinesByContextItemId
+        routinesByContextItemId,
+        focus.sensitive
       )
     )
     if (navigation.getSnapshot().level === level) {

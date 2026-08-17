@@ -70,6 +70,8 @@
 - Give every active Thread row contextual actions for Add commitment, Add Routine, Sensitive, and
   Delete Thread. Creation targets that exact Thread, sensitivity uses the typed Thread update, and
   deletion must open a confirmation before invoking the existing cascade-safe Thread deletion.
+  Give the Focus Overall row the same creation and Sensitive actions, targeting the Focus itself,
+  but never expose Delete Thread there because Overall is not a Thread.
   Do not render Add commitment / Add Routine controls beneath nested child collections, and render
   no placeholder or empty collection chrome when a Thread or Overall has no visible children.
 - Keep Done and Cancelled Threads in the Focus model and SQLite history, but omit them from the

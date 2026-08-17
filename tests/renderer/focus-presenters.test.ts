@@ -259,6 +259,31 @@ describe('Focus presentation adapters', () => {
         id: 'overall',
         label: 'Overall',
         icon: 'overview',
+        contextMenu: {
+          ariaLabel: 'Overall actions',
+          items: [
+            {
+              kind: 'action',
+              id: 'add-commitment',
+              label: 'Add commitment',
+              icon: 'add'
+            },
+            {
+              kind: 'action',
+              id: 'add-routine',
+              label: 'Add Routine',
+              icon: 'checklist'
+            },
+            {
+              kind: 'checkbox',
+              id: 'sensitive',
+              label: 'Sensitive',
+              icon: 'sensitive',
+              checked: false,
+              separatorBefore: true
+            }
+          ]
+        },
         group: { id: 'focus', label: 'Focus' }
       },
       {

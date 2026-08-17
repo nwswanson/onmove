@@ -123,6 +123,16 @@ test('hides closed Threads in context and restores them from its footer archive'
     const window = await application.firstWindow()
 
     await window.getByRole('button', { name: 'Thread archive', exact: true }).click()
+    const overallMenu = await openContextualItemMenu(window, 'Overall')
+    await expect(overallMenu.getByRole('menuitem', { name: 'Add commitment' })).toBeVisible()
+    await expect(overallMenu.getByRole('menuitem', { name: 'Add Routine' })).toBeVisible()
+    await expect(overallMenu.getByRole('menuitemcheckbox', { name: 'Sensitive' })).toBeVisible()
+    await expect(overallMenu.getByRole('menuitem', { name: 'Delete Thread' })).toHaveCount(0)
+    await overallMenu.getByRole('menuitem', { name: 'Add commitment' }).click()
+    const commitmentDialog = window.getByRole('dialog', { name: 'New commitment' })
+    await expect(commitmentDialog).toContainText('Add a Focus-level commitment.')
+    await commitmentDialog.getByRole('button', { name: 'Close dialog' }).click()
+
     const contextualSidebar = window.getByLabel('Contextual sidebar')
     await expect(contextualSidebar.getByRole('button', {
       name: 'Current delivery',

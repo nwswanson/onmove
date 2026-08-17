@@ -204,7 +204,9 @@ describe('ContextualSidebarNavigation', () => {
 
     fireEvent.contextMenu(screen.getByRole('button', { name: 'Sprint execution' }))
     const menu = await screen.findByRole('menu', { name: 'Sprint execution actions' })
-    await user.click(within(menu).getByRole('menuitem', { name: 'Add commitment' }))
+    const addCommitment = within(menu).getByRole('menuitem', { name: 'Add commitment' })
+    expect(addCommitment.querySelector('.lucide-plus')).toHaveClass('size-3.5')
+    await user.click(addCommitment)
 
     expect(onContextMenuAction).toHaveBeenCalledWith(
       'thread:10',

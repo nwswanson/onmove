@@ -23,6 +23,7 @@ import type {
   ContextualSidebarItemModel
 } from '@/components/ui/contextual-sidebar'
 import type { SidebarNavigationItemModel } from '@/components/ui/sidebar-navigation'
+import type { SidebarContextMenuItemModel } from '@/components/ui/sidebar-context-menu'
 import type {
   SemanticSunflowerModel,
   SemanticSunflowerTone
@@ -238,6 +239,42 @@ export type RoutinesByContextItemId = Readonly<
   Record<string, readonly RoutineSnapshot[] | undefined>
 >
 
+function workContextMenuItems(
+  sensitive: boolean,
+  includeDelete: boolean
+): SidebarContextMenuItemModel[] {
+  return [
+    {
+      kind: 'action',
+      id: 'add-commitment',
+      label: 'Add commitment',
+      icon: 'add'
+    },
+    {
+      kind: 'action',
+      id: 'add-routine',
+      label: 'Add Routine',
+      icon: 'checklist'
+    },
+    {
+      kind: 'checkbox',
+      id: 'sensitive',
+      label: 'Sensitive',
+      icon: 'sensitive',
+      checked: sensitive,
+      separatorBefore: true
+    },
+    ...(includeDelete ? [{
+      kind: 'action' as const,
+      id: 'delete',
+      label: 'Delete Thread',
+      icon: 'delete' as const,
+      tone: 'destructive' as const,
+      separatorBefore: true
+    }] : [])
+  ]
+}
+
 function contextWorkChildCollection(
   ownerLabel: string,
   commitments: readonly CommitmentSnapshot[],
@@ -276,13 +313,18 @@ export function focusContextSidebarItems(
   summaries: StatusSummariesById = {},
   hideSensitiveContent = false,
   commitmentsByItemId?: CommitmentsByContextItemId,
-  routinesByItemId?: RoutinesByContextItemId
+  routinesByItemId?: RoutinesByContextItemId,
+  focusSensitive = false
 ): ContextualSidebarItemModel[] {
   return [
     {
       id: 'overall',
       label: 'Overall',
       icon: 'overview',
+      contextMenu: {
+        ariaLabel: 'Overall actions',
+        items: workContextMenuItems(focusSensitive, false)
+      },
       ...(commitmentsByItemId || routinesByItemId
         ? {
             childCollection: contextWorkChildCollection(
@@ -324,36 +366,7 @@ export function focusContextSidebarItems(
         movable: true,
         contextMenu: {
           ariaLabel: `${label} actions`,
-          items: [
-            {
-              kind: 'action' as const,
-              id: 'add-commitment',
-              label: 'Add commitment',
-              icon: 'add' as const
-            },
-            {
-              kind: 'action' as const,
-              id: 'add-routine',
-              label: 'Add Routine',
-              icon: 'checklist' as const
-            },
-            {
-              kind: 'checkbox' as const,
-              id: 'sensitive',
-              label: 'Sensitive',
-              icon: 'sensitive' as const,
-              checked: thread.sensitive,
-              separatorBefore: true
-            },
-            {
-              kind: 'action' as const,
-              id: 'delete',
-              label: 'Delete Thread',
-              icon: 'delete' as const,
-              tone: 'destructive' as const,
-              separatorBefore: true
-            }
-          ]
+          items: workContextMenuItems(thread.sensitive, true)
         },
         group: { id: 'threads', label: 'Threads' }
       }
