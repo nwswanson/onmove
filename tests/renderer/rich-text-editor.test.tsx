@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createRef, useState } from 'react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
@@ -185,6 +185,7 @@ describe('RichTextEditor', () => {
     await waitFor(() => {
       serialized = onChange.mock.calls.at(-1)?.[0] as string
       expect(serialized).toContain('"type":"quote"')
+      expect(serialized).toContain('"shadowRoot":true')
     })
 
     await user.click(quoteButton)
@@ -195,6 +196,103 @@ describe('RichTextEditor', () => {
     render(<RichTextContent value={serialized} ariaLabel="Rendered quote" />)
     expect(screen.getByLabelText('Rendered quote').querySelector('blockquote'))
       .toHaveTextContent('A decision worth preserving')
+  })
+
+  it('upgrades saved legacy inline quotes without losing their text', async () => {
+    const onChange = vi.fn()
+    const legacyQuote = 'onmove-rich-text:1:{"root":{"children":[{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"Legacy quote","type":"text","version":1}],"direction":null,"format":"","indent":0,"type":"quote","version":1}],"direction":null,"format":"","indent":0,"type":"root","version":1}}'
+    render(<RichTextEditor value={legacyQuote} ariaLabel="Notes" onChange={onChange} />)
+
+    const editor = screen.getByRole('textbox', { name: 'Notes' })
+    await waitFor(() => {
+      expect(editor.querySelector('blockquote p')).toHaveTextContent('Legacy quote')
+    })
+    await waitFor(() => {
+      const serialized = onChange.mock.calls.at(-1)?.[0] as string
+      expect(serialized).toContain('"shadowRoot":true')
+      expect(richTextPlainText(serialized)).toBe('Legacy quote')
+    })
+  })
+
+  it.each([
+    ['bulleted', 'Bulleted list', 'ul', 'bullet'],
+    ['numbered', 'Numbered list', 'ol', 'number']
+  ])('preserves a %s list when wrapping and unwrapping it in a quote', async (
+    _,
+    listButton,
+    listTag,
+    listType
+  ) => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <RichTextEditor value={'First item\nSecond item'} ariaLabel="Notes" onChange={onChange} />
+    )
+
+    const editor = screen.getByRole('textbox', { name: 'Notes' })
+    await user.click(editor)
+    await user.keyboard('{Control>}a{/Control}')
+    await user.click(screen.getByRole('button', { name: listButton }))
+    expect(editor.querySelectorAll(`${listTag} > li`)).toHaveLength(2)
+
+    await user.click(editor)
+    await user.keyboard('{Control>}a{/Control}')
+    await user.click(screen.getByRole('button', { name: 'Quote block' }))
+
+    const quote = editor.querySelector('blockquote')
+    const quotedList = quote?.querySelector(listTag)
+    expect(quotedList?.parentElement).toBe(quote)
+    expect(quotedList?.querySelectorAll(':scope > li')).toHaveLength(2)
+    expect(quotedList).toHaveTextContent('First item')
+    expect(quotedList).toHaveTextContent('Second item')
+    await waitFor(() => {
+      const serialized = onChange.mock.calls.at(-1)?.[0] as string
+      expect(serialized).toContain('"shadowRoot":true')
+      expect(serialized).toContain(`"listType":"${listType}"`)
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Quote block' }))
+    expect(editor.querySelector('blockquote')).toBeNull()
+    expect(editor.querySelectorAll(`${listTag} > li`)).toHaveLength(2)
+  })
+
+  it('keeps pasted bulleted and numbered lists inside a multi-block quote', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    render(<RichTextEditor value="Context" ariaLabel="Notes" onChange={onChange} />)
+
+    const editor = screen.getByRole('textbox', { name: 'Notes' })
+    await user.click(editor)
+    await user.keyboard('{Control>}a{/Control}')
+    await user.click(screen.getByRole('button', { name: 'Quote block' }))
+    await user.click(editor)
+    selectText(editor, 7, 7)
+
+    fireEvent.paste(editor, {
+      clipboardData: {
+        files: [],
+        getData: (type: string) => type === 'text/html'
+          ? '<ul><li>Bullet one</li><li>Bullet two</li></ul><ol><li>Number one</li></ol>'
+          : type === 'text/plain'
+            ? 'Bullet one\nBullet two\nNumber one'
+            : '',
+        types: ['text/html', 'text/plain']
+      }
+    })
+
+    const quote = editor.querySelector('blockquote')
+    await waitFor(() => {
+      expect(quote?.querySelectorAll('ul > li')).toHaveLength(2)
+      expect(quote?.querySelectorAll('ol > li')).toHaveLength(1)
+    })
+    expect(quote?.querySelector('ul')?.parentElement).toBe(quote)
+    expect(quote?.querySelector('ol')?.parentElement).toBe(quote)
+    await waitFor(() => {
+      const serialized = onChange.mock.calls.at(-1)?.[0] as string
+      expect(serialized).toContain('"shadowRoot":true')
+      expect(serialized).toContain('"listType":"bullet"')
+      expect(serialized).toContain('"listType":"number"')
+    })
   })
 
   it('applies one color to every text node in a mixed selection while preserving formats', async () => {

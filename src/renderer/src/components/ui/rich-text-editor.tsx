@@ -28,8 +28,7 @@ import { LexicalErrorBoundary } from '@lexical/react/LexicalErrorBoundary'
 import { useLexicalTextEntity } from '@lexical/react/useLexicalTextEntity'
 import {
   $getSelectionStyleValueForProperty,
-  $patchStyleText,
-  $setBlocksType
+  $patchStyleText
 } from '@lexical/selection'
 import { $createQuoteNode, $isQuoteNode, QuoteNode } from '@lexical/rich-text'
 import {
@@ -38,6 +37,7 @@ import {
   $applyNodeReplacement,
   $getRoot,
   $getSelection,
+  $nodesOfType,
   $isRootNode,
   $isRangeSelection,
   CAN_REDO_COMMAND,
@@ -57,6 +57,7 @@ import {
   TextNode,
   type EditorConfig,
   type EditorState,
+  type LexicalNode,
   type PasteCommandType,
   type RangeSelection,
   type TextFormatType
@@ -188,6 +189,78 @@ function createTagNode(source: TextNode): TagNode {
 function TextTagsPlugin(): null {
   useLexicalTextEntity(textTagMatch, TagNode, createTagNode)
   return null
+}
+
+/**
+ * Quotes created before Lexical supported multi-block quote regions stored
+ * inline children directly in the QuoteNode. Upgrade them in memory so old
+ * documents can gain paragraphs and lists without flattening their content.
+ */
+function $upgradeLegacyQuote(quote: QuoteNode): QuoteNode {
+  if (quote.isShadowRoot()) return quote
+
+  const multiBlockQuote = $createQuoteNode({ shadowRoot: true })
+    .updateFromJSON(quote.exportJSON())
+    .setIsShadowRoot(true)
+  quote.insertBefore(multiBlockQuote)
+
+  let inlineParagraph: ReturnType<typeof $createParagraphNode> | null = null
+  for (const child of quote.getChildren()) {
+    if (child.isInline()) {
+      if (!inlineParagraph) {
+        inlineParagraph = $createParagraphNode()
+        multiBlockQuote.append(inlineParagraph)
+      }
+      inlineParagraph.append(child)
+      continue
+    }
+
+    inlineParagraph = null
+    multiBlockQuote.append(child)
+  }
+
+  if (multiBlockQuote.isEmpty()) multiBlockQuote.append($createParagraphNode())
+  quote.remove()
+  return multiBlockQuote
+}
+
+/** Keeps every editable quote on the multi-block representation. */
+function MultiBlockQuotePlugin(): null {
+  const [editor] = useLexicalComposerContext()
+
+  useEffect(() => {
+    const unregister = editor.registerNodeTransform(QuoteNode, $upgradeLegacyQuote)
+    editor.update(() => {
+      for (const quote of $nodesOfType(QuoteNode)) $upgradeLegacyQuote(quote)
+    }, { tag: 'quote-normalization' })
+    return unregister
+  }, [editor])
+
+  return null
+}
+
+function $containingQuote(node: LexicalNode | null | undefined): QuoteNode | null {
+  if (!node) return null
+  return $isQuoteNode(node) ? node : $findMatchingParent(node, $isQuoteNode)
+}
+
+function $unwrapQuote(quote: QuoteNode): void {
+  const multiBlockQuote = $upgradeLegacyQuote(quote)
+  for (const child of multiBlockQuote.getChildren()) multiBlockQuote.insertBefore(child)
+  multiBlockQuote.remove()
+}
+
+/**
+ * Return complete root blocks touched by the selection. A list is one block,
+ * so quoting even one of its items preserves the ListNode and its nesting.
+ */
+function $selectedRootBlocks(selection: RangeSelection): LexicalNode[] {
+  const root = $getRoot()
+  const selectedNodes = selection.getNodes()
+  if (selectedNodes.some($isRootNode)) return root.getChildren()
+  return root.getChildren().filter((block) =>
+    selectedNodes.some((node) => block.is(node) || block.isParentOf(node))
+  )
 }
 
 function normalizeLinkUrl(value: string): string | null {
@@ -408,7 +481,7 @@ function RichTextToolbar({ compact, onOpenInWindow }: RichTextToolbarProps): Rea
         ? nextListType
         : null
     )
-    setQuote($isQuoteNode(topLevel))
+    setQuote($containingQuote(anchorNode) !== null)
     const linkNode = $isLinkNode(anchorNode)
       ? anchorNode
       : $findMatchingParent(anchorNode, $isLinkNode)
@@ -520,16 +593,19 @@ function RichTextToolbar({ compact, onOpenInWindow }: RichTextToolbarProps): Rea
     editor.update(() => {
       const selection = restoreRangeSelection()
       if (!selection) return
-      const anchorNode = selection.anchor.getNode()
-      const topLevel = $isRootNode(anchorNode)
-        ? null
-        : anchorNode.getTopLevelElementOrThrow()
-      $setBlocksType(
-        selection,
-        () => topLevel && $isQuoteNode(topLevel)
-          ? $createParagraphNode()
-          : $createQuoteNode()
-      )
+      const containingQuote = $containingQuote(selection.anchor.getNode())
+      if (containingQuote) {
+        $unwrapQuote(containingQuote)
+        return
+      }
+
+      const blocks = $selectedRootBlocks(selection)
+      const firstBlock = blocks[0]
+      if (!firstBlock) return
+
+      const quote = $createQuoteNode({ shadowRoot: true })
+      firstBlock.insertBefore(quote)
+      for (const block of blocks) quote.append(block)
     })
     editor.focus()
   }
@@ -872,6 +948,7 @@ function RichTextEditor({
           <LinkPastePlugin />
           <ClickableLinkPlugin newTab />
           <TextTagsPlugin />
+          <MultiBlockQuotePlugin />
           <FormattingShortcutsPlugin />
           <ListTabIndentationPlugin />
           <RichTextEditorHandlePlugin editorRef={forwardedRef} />
