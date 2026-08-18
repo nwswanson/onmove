@@ -92,7 +92,10 @@
   Render one read-only graphical timeline beneath that metadata: include every child Thread
   regardless of lifecycle status and keep its continuous vertical rail in a tightly spaced center
   rail group. Give the timeline the complete main-canvas width rather than the metadata column's
-  maximum width. Place every compact, truncated direct-Thread or descendant-Commitment Update bubble
+  maximum width. Bind SVG measurement to the mounted timeline element—not a one-shot screen mount—
+  because Threads arrive asynchronously and Focus navigation can remove and recreate the canvas;
+  keep it hidden until the live width is measured and never stretch SVG text with a mismatched
+  fallback viewBox. Place every compact, truncated direct-Thread or descendant-Commitment Update bubble
   in the left evidence lane and draw an SVG connector to its dated rail point. Order latest at the
   top and oldest at the bottom; each rail interval still represents the state in effect between its
   chronological changes. Title direct bubbles with the Thread and nested bubbles with

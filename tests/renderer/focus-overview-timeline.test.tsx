@@ -51,6 +51,39 @@ const model: FocusOverviewTimelineModel = {
 }
 
 describe('FocusOverviewTimeline', () => {
+  it('measures the timeline when async Threads first mount instead of stretching its fallback SVG', () => {
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 720,
+      bottom: 500,
+      width: 720,
+      height: 500,
+      toJSON: () => ({})
+    })
+    try {
+      const { rerender } = render(
+        <FocusOverviewTimeline model={{ threads: [], updates: [] }} onOpenThread={vi.fn()} />
+      )
+
+      rerender(<FocusOverviewTimeline model={model} onOpenThread={vi.fn()} />)
+      const timeline = screen.getByTestId('focus-thread-timeline')
+      const svg = screen.getByRole('img', { name: 'Thread update timeline' })
+      expect(timeline).not.toHaveClass('invisible')
+      expect(svg.getAttribute('viewBox')?.split(' ')[2]).toBe('720')
+      expect(svg).not.toHaveAttribute('preserveAspectRatio', 'none')
+
+      rerender(<FocusOverviewTimeline model={{ threads: [], updates: [] }} onOpenThread={vi.fn()} />)
+      rerender(<FocusOverviewTimeline model={model} onOpenThread={vi.fn()} />)
+      expect(screen.getByRole('img', { name: 'Thread update timeline' })
+        .getAttribute('viewBox')?.split(' ')[2]).toBe('720')
+    } finally {
+      rect.mockRestore()
+    }
+  })
+
   it('keeps close parallel rails sticky, colors state intervals, and puts every bubble left', () => {
     render(<FocusOverviewTimeline model={model} onOpenThread={vi.fn()} />)
     const firstThreadRails = screen.getAllByTestId('thread-rail-1')

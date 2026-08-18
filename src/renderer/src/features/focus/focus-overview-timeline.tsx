@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
 import { RichTextContent } from '@/components/ui/rich-text-editor'
@@ -77,8 +77,6 @@ interface TimelineLayout {
 const BUBBLE_HEIGHT = 88
 const BUBBLE_GAP = 14
 const MAX_RAIL_GAP = 46
-const SIDE_PADDING = 28
-const CONNECTOR_GAP = 112
 const DATE_GROUP_GAP = 64
 const DEFAULT_TIMELINE_WIDTH = 960
 const NEUTRAL_STATE: FocusOverviewTimelineUpdateModel['state'] = {
@@ -123,18 +121,20 @@ function buildFocusTimelineLayout(
   model: FocusOverviewTimelineModel,
   availableWidth: number
 ): TimelineLayout {
-  const width = Math.max(640, Math.floor(availableWidth))
-  const bubbleWidth = Math.min(320, Math.max(224, width * 0.34))
-  const bubbleX = SIDE_PADDING
-  const minimumRailX = bubbleX + bubbleWidth + CONNECTOR_GAP
-  const availableRailWidth = Math.max(0, width - minimumRailX - SIDE_PADDING)
+  const width = Math.max(1, Math.floor(availableWidth))
+  const sidePadding = Math.min(28, Math.max(12, width * 0.035))
+  const connectorGap = Math.min(112, Math.max(48, width * 0.16))
+  const bubbleWidth = Math.min(320, Math.max(180, width * 0.34))
+  const bubbleX = sidePadding
+  const minimumRailX = bubbleX + bubbleWidth + connectorGap
+  const availableRailWidth = Math.max(0, width - minimumRailX - sidePadding)
   const railGap = model.threads.length <= 1
     ? 0
     : Math.min(MAX_RAIL_GAP, availableRailWidth / (model.threads.length - 1))
   const railSpan = Math.max(0, (model.threads.length - 1) * railGap)
   const desiredRailCenter = width * 0.64
   const firstRailX = Math.min(
-    width - SIDE_PADDING - railSpan,
+    width - sidePadding - railSpan,
     Math.max(minimumRailX, desiredRailCenter - railSpan / 2)
   )
   const railXs = new Map(model.threads.map((thread, index) => [
@@ -290,15 +290,18 @@ export function FocusOverviewTimeline({
   model: FocusOverviewTimelineModel
   onOpenThread: (threadId: number) => void
 }): React.JSX.Element {
-  const timelineRef = useRef<HTMLDivElement>(null)
-  const [timelineWidth, setTimelineWidth] = useState(DEFAULT_TIMELINE_WIDTH)
+  const [timelineElement, setTimelineElement] = useState<HTMLDivElement | null>(null)
+  const [timelineWidth, setTimelineWidth] = useState<number | null>(null)
   const [selectedUpdateId, setSelectedUpdateId] = useState<number | null>(null)
+  const setTimelineRef = useCallback((element: HTMLDivElement | null): void => {
+    setTimelineElement(element)
+    if (!element) setTimelineWidth(null)
+  }, [])
 
   useLayoutEffect(() => {
-    const element = timelineRef.current
-    if (!element) return
+    if (!timelineElement) return
     const measure = (): void => {
-      const nextWidth = Math.floor(element.getBoundingClientRect().width)
+      const nextWidth = Math.floor(timelineElement.getBoundingClientRect().width)
       if (nextWidth > 0) setTimelineWidth((current) => current === nextWidth ? current : nextWidth)
     }
     measure()
@@ -307,9 +310,9 @@ export function FocusOverviewTimeline({
       return () => window.removeEventListener('resize', measure)
     }
     const observer = new ResizeObserver(measure)
-    observer.observe(element)
+    observer.observe(timelineElement)
     return () => observer.disconnect()
-  }, [])
+  }, [timelineElement])
 
   if (model.threads.length === 0) {
     return (
@@ -320,7 +323,7 @@ export function FocusOverviewTimeline({
     )
   }
 
-  const layout = buildFocusTimelineLayout(model, timelineWidth)
+  const layout = buildFocusTimelineLayout(model, timelineWidth ?? DEFAULT_TIMELINE_WIDTH)
   const selectedUpdate = model.updates.find(({ id }) => id === selectedUpdateId) ?? null
   const selectedThread = selectedUpdate
     ? model.threads.find(({ id }) => id === selectedUpdate.threadId) ?? null
@@ -333,8 +336,11 @@ export function FocusOverviewTimeline({
         <p className="text-xs text-muted-foreground">Latest at top · earlier below</p>
       </div>
       <div
-        ref={timelineRef}
-        className="relative mt-4 w-full border-y border-border/65 bg-muted/10"
+        ref={setTimelineRef}
+        className={cn(
+          'relative mt-4 w-full border-y border-border/65 bg-muted/10',
+          timelineWidth === null && 'invisible'
+        )}
         data-testid="focus-thread-timeline"
       >
         <div
@@ -373,7 +379,6 @@ export function FocusOverviewTimeline({
           <svg
             className="absolute inset-0 size-full overflow-visible"
             viewBox={`0 0 ${layout.width} ${layout.height}`}
-            preserveAspectRatio="none"
             role="img"
             aria-label="Thread update timeline"
           >

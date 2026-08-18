@@ -241,6 +241,11 @@ test('renders a read-only Focus timeline and opens active or archived Threads', 
 
     await window.getByRole('button', { name: 'Timeline portfolio', exact: true }).click()
     const timeline = window.getByTestId('focus-thread-timeline')
+    await expect.poll(async () => timeline.evaluate((element) => {
+      const svg = element.querySelector('svg')
+      const viewBoxWidth = Number(svg?.getAttribute('viewBox')?.split(' ')[2] ?? 0)
+      return Math.abs(viewBoxWidth - element.getBoundingClientRect().width)
+    })).toBeLessThan(1)
     await expect(timeline).toContainText('Direct launch evidence')
     await expect(timeline).toContainText('Nested launch evidence')
     await expect(timeline).toContainText('Discovery was closed cleanly')
@@ -291,6 +296,11 @@ test('renders a read-only Focus timeline and opens active or archived Threads', 
     ).toHaveCount(0)
 
     await window.getByRole('button', { name: 'Overall', exact: true }).click()
+    await expect.poll(async () => timeline.evaluate((element) => {
+      const svg = element.querySelector('svg')
+      const viewBoxWidth = Number(svg?.getAttribute('viewBox')?.split(' ')[2] ?? 0)
+      return Math.abs(viewBoxWidth - element.getBoundingClientRect().width)
+    })).toBeLessThan(1)
     await window.getByRole('button', { name: 'Open Thread Current delivery' }).click()
     await expect(window.getByRole('heading', { name: 'Current delivery' })).toBeVisible()
     await expect(window.getByRole('button', { name: 'Current delivery', exact: true }))
