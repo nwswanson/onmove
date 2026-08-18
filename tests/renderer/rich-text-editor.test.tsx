@@ -474,6 +474,43 @@ describe('RichTextEditor', () => {
     expect(plainEditor.querySelector('a')).toBeNull()
   })
 
+  it('applies a pasted URL to selected text without replacing its text or formatting', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    const rendered = render(
+      <RichTextEditor value="Read the handbook today" ariaLabel="Notes" onChange={onChange} />
+    )
+
+    const editor = screen.getByRole('textbox', { name: 'Notes' })
+    await user.click(editor)
+    selectText(editor, 5, 17)
+    await user.click(screen.getByRole('button', { name: 'Bold' }))
+    selectText(editor, 5, 17)
+    await user.paste('https://handbook.example.com/current')
+
+    expect(editor).toHaveTextContent('Read the handbook today')
+    expect(editor).not.toHaveTextContent('https://handbook.example.com/current')
+    const link = editor.querySelector('a')
+    expect(link).toHaveTextContent('the handbook')
+    expect(link).toHaveAttribute('href', 'https://handbook.example.com/current')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+    expect(link?.querySelector('strong')).toHaveTextContent('the handbook')
+
+    let serialized = ''
+    await waitFor(() => {
+      serialized = onChange.mock.calls.at(-1)?.[0] as string
+      expect(serialized).toContain('https://handbook.example.com/current')
+      expect(richTextPlainText(serialized)).toBe('Read the handbook today')
+    })
+
+    rendered.unmount()
+    render(<RichTextContent value={serialized} ariaLabel="Rendered selected link" />)
+    const renderedLink = screen.getByRole('link', { name: 'the handbook' })
+    expect(renderedLink).toHaveAttribute('href', 'https://handbook.example.com/current')
+    expect(renderedLink.querySelector('strong')).toHaveTextContent('the handbook')
+  })
+
   it('pastes unsafe URL schemes as plain text instead of executable links', async () => {
     const user = userEvent.setup()
     render(<RichTextEditor value="" ariaLabel="Notes" onChange={vi.fn()} />)

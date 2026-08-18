@@ -418,6 +418,11 @@ function LinkPastePlugin(): null {
         if (!$isRangeSelection(selection)) return false
 
         event.preventDefault()
+        if (!selection.isCollapsed()) {
+          $toggleLink({ url: normalizedUrl, ...LINK_ATTRIBUTES })
+          return true
+        }
+
         const link = $createLinkNode(normalizedUrl, LINK_ATTRIBUTES)
         link.append($createTextNode(pastedText.trim()))
         selection.insertNodes([link])

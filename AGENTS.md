@@ -201,11 +201,12 @@ foreground colors and do not rely on color alone to communicate selection or sta
   toolbar controls. Color changes must restore the complete pre-toolbar selection and replace the
   color across mixed-style text without removing its other formats. Link creation accepts only
   `http`, `https`, and `mailto` destinations, and link clicks must leave Electron through the
-  main-process external-link policy. Within any list, Tab nests the selected item and Shift+Tab
-  outdents it; outside lists, preserve normal keyboard focus navigation. Represent blockquotes as
-  Lexical multi-block (shadow-root) QuoteNodes so paragraphs, bulleted lists, numbered lists, and
-  checklists remain structurally nested inside the quote. Upgrade legacy inline QuoteNodes in
-  memory without flattening their content.
+  main-process external-link policy. Pasting a safe URL over selected text must retain that text and
+  its inline formatting while using the URL only as the link target. Within any list, Tab nests the
+  selected item and Shift+Tab outdents it; outside lists, preserve normal keyboard focus navigation.
+  Represent blockquotes as Lexical multi-block (shadow-root) QuoteNodes so paragraphs, bulleted
+  lists, numbered lists, and checklists remain structurally nested inside the quote. Upgrade legacy
+  inline QuoteNodes in memory without flattening their content.
 - Persist rich text as the versioned `onmove-rich-text:1:` Lexical JSON envelope in the existing
   text fields. Continue accepting legacy plain text and render it through the same component; do
   not require a destructive content migration.
