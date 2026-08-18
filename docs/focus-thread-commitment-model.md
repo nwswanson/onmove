@@ -92,8 +92,10 @@ Commitment, Routine, Todo, Todo list, or direct Update. Its read-only timeline i
 Threads, including done/cancelled Threads, and projects direct Thread plus descendant Commitment
 Updates onto centered vertical Thread rails without changing ownership. Compact evidence bubbles
 occupy one left lane and connect to dated rail points; state-colored rail intervals remain in effect
-until the next chronological Update state change. Sticky rail titles retain context while scrolling,
-and selecting a bubble opens the full rich text read-only.
+until the next chronological Update state change even though the view orders newest first. Direct
+bubbles use the Thread title and icon; nested bubbles use `Thread › Commitment` and the Commitment
+icon. Done, cancelled, and deleted Commitment evidence is excluded. Sticky rail titles retain
+context while scrolling, and selecting a bubble opens the full rich text read-only.
 
 Every Focus owns zero or more named Scope definitions. Its Scope application may be `open`,
 `explicit`, or `derived`. A Focus cannot use `inherited` because it has no parent in this model.

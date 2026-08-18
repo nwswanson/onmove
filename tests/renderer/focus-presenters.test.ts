@@ -679,13 +679,15 @@ describe('Focus presentation adapters', () => {
         date: '2026-08-18',
         threadId: 11,
         id: 102,
-        sourceLabel: 'Ship safely',
+        sourceLabel: 'Completed launch › Ship safely',
+        sourceKind: 'commitment',
         preview: 'Nested evidence'
       }, {
         date: '2026-08-18',
         threadId: 10,
         id: 101,
-        sourceLabel: 'Thread update',
+        sourceLabel: 'Sprint execution',
+        sourceKind: 'thread',
         preview: 'Direct evidence'
       }]
     })

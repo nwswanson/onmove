@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -21,7 +21,8 @@ const model: FocusOverviewTimelineModel = {
       dateLabel: 'Aug 12, 2026',
       observation: 'Delivery was blocked.',
       preview: 'Delivery was blocked.',
-      sourceLabel: 'Thread update',
+      sourceLabel: 'Delivery',
+      sourceKind: 'thread',
       state: { label: 'Red', tone: 'danger' }
     },
     {
@@ -31,7 +32,8 @@ const model: FocusOverviewTimelineModel = {
       dateLabel: 'Aug 18, 2026',
       observation: 'The complete delivery update contains detail that belongs in the popup.',
       preview: 'The complete delivery update…',
-      sourceLabel: 'Thread update',
+      sourceLabel: 'Delivery',
+      sourceKind: 'thread',
       state: { label: 'Green', tone: 'success' }
     },
     {
@@ -41,7 +43,8 @@ const model: FocusOverviewTimelineModel = {
       dateLabel: 'Aug 18, 2026',
       observation: 'Discovery is complete.',
       preview: 'Discovery is complete.',
-      sourceLabel: 'Validate demand',
+      sourceLabel: 'Discovery › Validate demand',
+      sourceKind: 'commitment',
       state: { label: 'Yellow', tone: 'warning' }
     }
   ]
@@ -62,12 +65,13 @@ describe('FocusOverviewTimeline', () => {
       new Set(['left'])
     )
     expect(firstThreadRails.map((rail) => rail.getAttribute('data-state'))).toEqual([
-      'none',
+      'green',
       'red',
-      'green'
+      'none'
     ])
     expect(screen.getByTestId('timeline-sticky-thread-headers')).toHaveClass('sticky')
     expect(screen.getAllByText('Aug 18, 2026')).toHaveLength(1)
+    expect(bubbles.at(-1)).toHaveAccessibleName('Read Delivery update from Aug 12, 2026')
   })
 
   it('shows compact bubbles, opens the full update, and links to the owning Thread', async () => {
@@ -83,9 +87,15 @@ describe('FocusOverviewTimeline', () => {
       'The complete delivery update contains detail that belongs in the popup.'
     )).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', {
-      name: 'Read Thread update from Aug 18, 2026'
-    }))
+    const deliveryUpdate = screen.getByRole('button', {
+      name: 'Read Delivery update from Aug 18, 2026'
+    })
+    expect(within(deliveryUpdate).getByRole('img', { name: 'Thread type' })).toBeVisible()
+    expect(within(screen.getByRole('button', {
+      name: 'Read Discovery › Validate demand update from Aug 18, 2026'
+    })).getByRole('img', { name: 'Commitment type' })).toBeVisible()
+
+    await user.click(deliveryUpdate)
     expect(screen.getByRole('dialog')).toHaveTextContent(
       'The complete delivery update contains detail that belongs in the popup.'
     )

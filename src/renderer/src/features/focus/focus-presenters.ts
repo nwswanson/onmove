@@ -113,6 +113,7 @@ export function focusOverviewTimelineModel(
       closed: thread.status === 'done' || thread.status === 'cancelled'
     }))
   const visibleThreadIds = new Set(threads.map(({ id }) => id))
+  const threadTitles = new Map(threads.map(({ id, title }) => [id, title]))
   const updates = snapshot.updates.filter((update) =>
     visibleThreadIds.has(update.threadId) &&
     (!hideSensitiveContent || !update.effectiveSensitive)
@@ -130,8 +131,9 @@ export function focusOverviewTimelineModel(
         observation: update.observation,
         preview: timelinePreview(update.observation),
         sourceLabel: update.source.type === 'thread'
-          ? 'Thread update'
-          : update.source.title,
+          ? threadTitles.get(update.threadId) ?? update.source.title
+          : `${threadTitles.get(update.threadId) ?? 'Thread'} › ${update.source.title}`,
+        sourceKind: update.source.type,
         state: healthStateLabel(update.state)
       }))
   }

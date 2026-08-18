@@ -106,4 +106,59 @@ describe('Focus Overview timeline model', () => {
       updates: []
     })
   })
+
+  it('never projects Updates from closed or deleted Commitments', () => {
+    const focus = database!.domain.focuses.create({ title: 'Project Atlas' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Sprint execution',
+      reviewFrequencyDays: 7
+    })
+    const active = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'tracking',
+      title: 'Active evidence'
+    })
+    const done = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'tracking',
+      title: 'Completed evidence'
+    })
+    const cancelled = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'tracking',
+      title: 'Cancelled evidence'
+    })
+    const deleted = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'tracking',
+      title: 'Deleted evidence'
+    })
+    const visibleUpdate = database!.domain.updates.create({
+      parent: { type: 'commitment', id: active.id },
+      observation: 'Still current'
+    })
+    database!.domain.updates.create({
+      parent: { type: 'commitment', id: done.id },
+      observation: 'Already completed'
+    })
+    database!.domain.updates.create({
+      parent: { type: 'commitment', id: cancelled.id },
+      observation: 'No longer pursued'
+    })
+    database!.domain.updates.create({
+      parent: { type: 'commitment', id: deleted.id },
+      observation: 'Rescued into Update Archive'
+    })
+    database!.domain.commitments.update(done.id, { status: 'done' })
+    database!.domain.commitments.update(cancelled.id, { status: 'cancelled' })
+    expect(database!.domain.commitments.delete(deleted.id)).toBe(true)
+
+    expect(database!.domain.focusOverview.timeline(focus.id).updates).toEqual([
+      expect.objectContaining({
+        id: visibleUpdate.id,
+        source: { type: 'commitment', id: active.id, title: 'Active evidence' }
+      })
+    ])
+  })
 })

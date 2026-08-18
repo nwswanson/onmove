@@ -76,7 +76,9 @@ their original records; the projection is read-only. The renderer lays this proj
 vertical Thread rails, with compact left-lane bubbles connected to each recorded-date point and full
 rich text available only through the evidence popup. Rail intervals use the state established by
 each chronological Update until a later Update changes it; this is a view projection and does not
-persist a second state history.
+persist a second state history. The projection orders newest first and omits Updates whose
+Commitment is done or cancelled; deletion already moves an Update into Update Archive, outside the
+live projection.
 
 Focuses, Threads, and Commitments each store an optional calendar due date. The hierarchy does not
 enforce chronological containment: a child may be due after its direct parent. Main entity screens

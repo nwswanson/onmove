@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
 import { RichTextContent } from '@/components/ui/rich-text-editor'
+import { WorkKindIcon } from '@/features/shared/work-kind-icon'
 import { cn } from '@/lib/utils'
 
 export interface FocusOverviewTimelineUpdateModel {
@@ -12,6 +13,7 @@ export interface FocusOverviewTimelineUpdateModel {
   observation: string
   preview: string
   sourceLabel: string
+  sourceKind: 'thread' | 'commitment'
   state: {
     label: string
     tone: 'danger' | 'warning' | 'success' | 'neutral'
@@ -140,7 +142,7 @@ function buildFocusTimelineLayout(
     firstRailX + index * railGap
   ]))
   const threadIndexes = new Map(model.threads.map((thread, index) => [thread.id, index]))
-  const dates = [...new Set(model.updates.map(({ date }) => date))].sort()
+  const dates = [...new Set(model.updates.map(({ date }) => date))].sort().reverse()
   const positionedUpdates: PositionedUpdate[] = []
   const points: TimelinePoint[] = []
   const dateMarkers: TimelineDateMarker[] = []
@@ -151,7 +153,7 @@ function buildFocusTimelineLayout(
       .filter((update) => update.date === date)
       .sort((left, right) =>
         (threadIndexes.get(left.threadId) ?? 0) - (threadIndexes.get(right.threadId) ?? 0) ||
-        left.id - right.id)
+        right.id - left.id)
     const groupHeight = Math.max(
       BUBBLE_HEIGHT,
       dateUpdates.length * BUBBLE_HEIGHT + Math.max(0, dateUpdates.length - 1) * BUBBLE_GAP
@@ -176,7 +178,8 @@ function buildFocusTimelineLayout(
       ])
     })
     updatesByThread.forEach((threadUpdates, threadId) => {
-      const effectiveUpdate = threadUpdates.at(-1)
+      const effectiveUpdate = threadUpdates.reduce((latest, update) =>
+        update.id > latest.id ? update : latest)
       points.push({
         key: `${threadId}:${date}`,
         threadId,
@@ -214,21 +217,29 @@ function buildFocusTimelineLayout(
     }
     return [
       {
-        key: `${thread.id}:before`,
+        key: `${thread.id}:current`,
         threadId: thread.id,
         x,
         y1: 0,
         y2: threadPoints[0]?.y ?? 0,
-        state: NEUTRAL_STATE
+        state: threadPoints[0]?.state ?? NEUTRAL_STATE
       },
-      ...threadPoints.map((point, index) => ({
+      ...threadPoints.slice(0, -1).map((point, index) => ({
         key: `${thread.id}:${index}`,
         threadId: thread.id,
         x,
         y1: point.y,
-        y2: threadPoints[index + 1]?.y ?? height - 20,
-        state: point.state
-      }))
+        y2: threadPoints[index + 1]?.y ?? point.y,
+        state: threadPoints[index + 1]?.state ?? NEUTRAL_STATE
+      })),
+      {
+        key: `${thread.id}:before-first-update`,
+        threadId: thread.id,
+        x,
+        y1: threadPoints.at(-1)?.y ?? 0,
+        y2: height - 20,
+        state: NEUTRAL_STATE
+      }
     ]
   })
 
@@ -319,7 +330,7 @@ export function FocusOverviewTimeline({
     <section className="mt-8 w-full border-t border-border/70 pt-6" aria-labelledby="thread-timeline-heading">
       <div className="flex items-baseline justify-between gap-4 px-8">
         <h2 id="thread-timeline-heading" className="text-sm font-semibold">Thread timeline</h2>
-        <p className="text-xs text-muted-foreground">Earlier at top · latest at bottom</p>
+        <p className="text-xs text-muted-foreground">Latest at top · earlier below</p>
       </div>
       <div
         ref={timelineRef}
@@ -457,8 +468,14 @@ export function FocusOverviewTimeline({
               onClick={() => setSelectedUpdateId(update.id)}
             >
               <span className="flex items-center justify-between gap-2">
-                <span className="truncate text-[11px] font-medium text-primary">
-                  {update.sourceLabel}
+                <span className="flex min-w-0 items-center gap-1.5 text-primary">
+                  <WorkKindIcon
+                    kind={update.sourceKind}
+                    className="size-4 text-primary [&_svg]:size-3.5"
+                  />
+                  <span className="truncate text-[11px] font-medium">
+                    {update.sourceLabel}
+                  </span>
                 </span>
                 <StateDot state={update.state} />
               </span>

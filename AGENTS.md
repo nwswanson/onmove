@@ -93,13 +93,16 @@
   regardless of lifecycle status and keep its continuous vertical rail in a tightly spaced center
   rail group. Give the timeline the complete main-canvas width rather than the metadata column's
   maximum width. Place every compact, truncated direct-Thread or descendant-Commitment Update bubble
-  in the left evidence lane and draw an SVG connector to its dated rail point. Time runs from earlier
-  at the top to latest at the bottom; each rail interval takes the Update state color beginning at
-  that point and retains it until the next state change. Keep the angled Thread-title rail header
-  sticky while the timeline scrolls. Selecting a bubble opens the complete rich-text evidence in a
-  read-only popup; Thread headers and popup actions link to the owning Thread. A closed Thread opens
-  as a standalone route without restoring it or adding it to the active contextual sidebar; the
-  timeline never exposes Update editing or deletion controls.
+  in the left evidence lane and draw an SVG connector to its dated rail point. Order latest at the
+  top and oldest at the bottom; each rail interval still represents the state in effect between its
+  chronological changes. Title direct bubbles with the Thread and nested bubbles with
+  `Thread › Commitment`, accompanied by the shared Thread or Commitment work-kind icon. Exclude
+  evidence belonging to done, cancelled, or deleted Commitments; deleted evidence remains available
+  through Update Archive only. Keep the angled Thread-title rail header sticky while the timeline
+  scrolls. Selecting a bubble opens the complete rich-text evidence in a read-only popup; Thread
+  headers and popup actions link to the owning Thread. A closed Thread opens as a standalone route
+  without restoring it or adding it to the active contextual sidebar; the timeline never exposes
+  Update editing or deletion controls.
 - Give each Thread its own parent-asserting Commitment level. Opening Commitments from the Thread
   screen's collection heading replaces the contextual sidebar, selects the first owned Commitment,
   and returns through the shared Back behavior.

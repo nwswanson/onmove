@@ -71,6 +71,7 @@ export class FocusOverviewRepository {
        JOIN commitments commitment ON commitment.id = update_row.commitment_id
        JOIN threads thread ON thread.id = commitment.thread_id
        WHERE thread.focus_id = ?
+         AND commitment.status NOT IN ('done', 'cancelled')
        ORDER BY 3 DESC, 1 DESC`,
       [focusId, focusId]
     )

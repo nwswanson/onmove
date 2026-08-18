@@ -189,6 +189,16 @@ test('renders a read-only Focus timeline and opens active or archived Threads', 
     type: 'tracking',
     title: 'Stabilize the launch'
   })
+  const archivedCommitment = seeded.domain.commitments.create({
+    parent: { type: 'thread', id: active.id },
+    type: 'tracking',
+    title: 'Archived launch check'
+  })
+  const deletedCommitment = seeded.domain.commitments.create({
+    parent: { type: 'thread', id: active.id },
+    type: 'tracking',
+    title: 'Deleted launch check'
+  })
   for (const [parent, date, observation, state] of [
     [{ type: 'thread', id: active.id }, '2026-08-11', 'Delivery was blocked', 'red'],
     [{ type: 'thread', id: active.id }, '2026-08-18', 'Direct launch evidence', 'green'],
@@ -202,6 +212,20 @@ test('renders a read-only Focus timeline and opens active or archived Threads', 
       state
     })
   }
+  seeded.domain.updates.create({
+    parent: { type: 'commitment', id: archivedCommitment.id },
+    date: '2026-08-17',
+    observation: 'Archived evidence must stay out of the timeline',
+    state: 'green'
+  })
+  seeded.domain.updates.create({
+    parent: { type: 'commitment', id: deletedCommitment.id },
+    date: '2026-08-17',
+    observation: 'Deleted evidence must stay out of the timeline',
+    state: 'red'
+  })
+  seeded.domain.commitments.update(archivedCommitment.id, { status: 'done' })
+  seeded.domain.commitments.delete(deletedCommitment.id)
   seeded.domain.threads.update(completed.id, { status: 'done' })
   seeded.close()
   let application: ElectronApplication | undefined
@@ -220,6 +244,8 @@ test('renders a read-only Focus timeline and opens active or archived Threads', 
     await expect(timeline).toContainText('Direct launch evidence')
     await expect(timeline).toContainText('Nested launch evidence')
     await expect(timeline).toContainText('Discovery was closed cleanly')
+    await expect(timeline).not.toContainText('Archived evidence must stay out of the timeline')
+    await expect(timeline).not.toContainText('Deleted evidence must stay out of the timeline')
     await expect(timeline.locator('[data-side="left"]')).toHaveCount(4)
     await expect(timeline.getByTestId('timeline-sticky-thread-headers'))
       .toHaveCSS('position', 'sticky')
@@ -236,6 +262,21 @@ test('renders a read-only Focus timeline and opens active or archived Threads', 
       `[data-testid="thread-rail-${completed.id}"]`
     ).first().getAttribute('x1'))
     expect(completedRailX - activeRailX).toBeLessThanOrEqual(46)
+    const directBubble = timeline.getByRole('button', {
+      name: 'Read Current delivery update from Aug 18, 2026'
+    })
+    const nestedBubble = timeline.getByRole('button', {
+      name: 'Read Current delivery › Stabilize the launch update from Aug 18, 2026'
+    })
+    await expect(directBubble.getByRole('img', { name: 'Thread type' })).toBeVisible()
+    await expect(nestedBubble.getByRole('img', { name: 'Commitment type' })).toBeVisible()
+    const newestBubbleBox = await directBubble.boundingBox()
+    const oldestBubbleBox = await timeline.getByRole('button', {
+      name: 'Read Current delivery update from Aug 11, 2026'
+    }).boundingBox()
+    expect(newestBubbleBox).not.toBeNull()
+    expect(oldestBubbleBox).not.toBeNull()
+    expect(newestBubbleBox!.y).toBeLessThan(oldestBubbleBox!.y)
     await expect(window.getByLabel('Goal')).toHaveCount(0)
     await expect(window.getByRole('list', { name: 'Focus updates' })).toHaveCount(0)
     await expect(window.getByLabel('Update observation')).toHaveCount(0)
@@ -2443,7 +2484,8 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(timeline.getByRole('button', { name: 'Open Thread Sprint execution' }))
       .toBeVisible()
     await expect(timeline).toContainText('Sprint review completed')
-    await expect(timeline).toContainText('Sponsors confirmed the launch plan')
+    await expect(timeline).toContainText('Customer ticket quality is improving')
+    await expect(timeline).not.toContainText('Sponsors confirmed the launch plan')
     await expect(
       window.getByRole('button', { name: 'Sprint execution, paused', exact: true })
     ).toBeVisible()
