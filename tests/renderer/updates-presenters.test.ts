@@ -25,7 +25,6 @@ describe('Update presenters', () => {
         id: '8',
         date: '2026-08-07',
         observation: 'Ticket quality improved',
-        externalRevision: '2026-08-07T12:00:00.000Z',
         state: 'green',
         sensitive: false
       }
@@ -36,6 +35,25 @@ describe('Update presenters', () => {
       { value: 'green', label: 'Green', tone: 'success' },
       { value: 'none', label: 'None', tone: 'neutral' }
     ])
+  })
+
+  it('exposes only receiver-declared external observation revisions to the editor', () => {
+    const update: UpdateSnapshot = {
+      id: 8,
+      parent: { type: 'commitment', id: 3 },
+      date: '2026-08-07',
+      observation: 'Changed in another window',
+      state: 'green',
+      sensitive: false,
+      scope: null,
+      createdAt: '2026-08-07T12:00:00.000Z',
+      updatedAt: '2026-08-07T12:00:05.000Z'
+    }
+
+    expect(updateListProjection([update], {
+      subjectLabels: new Map(),
+      externalObservationRevisions: new Map([[8, 3]])
+    }).items[0]).toMatchObject({ externalRevision: 3 })
   })
 
   it('labels retained evidence from a former Scope without dropping the card', () => {

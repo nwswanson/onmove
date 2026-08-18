@@ -70,6 +70,7 @@ export function DirectUpdates({
     ),
     {
       subjectLabels: contextLabels,
+      externalObservationRevisions: model.externalObservationRevisions,
       ...(context.mode === 'scope-overview'
         ? { currentSubjectIds: new Set(context.subjects.map(({ id }) => id)) }
         : {})

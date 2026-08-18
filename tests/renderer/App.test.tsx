@@ -4524,6 +4524,79 @@ describe('App', () => {
     expect(deleteUpdate).toHaveBeenCalledWith(30)
   })
 
+  it('keeps an Update observation focused when a delayed document event follows local typing', async () => {
+    const current = focus()
+    const sprint = thread()
+    const focusCommitment = commitment()
+    const existingUpdate = update()
+    const documentListeners = new Set<Parameters<OnMoveApi['richText']['onDocumentChanged']>[0]>()
+    let revision = 4
+    const saveDocument = vi.fn((reference, value: string): RichTextDocumentSnapshot => ({
+      reference,
+      title: 'Keep sponsors aligned — Update',
+      contextPath: ['Quarterly plan', 'Sprint execution', 'Keep sponsors aligned'],
+      value,
+      revision: ++revision,
+      updatedAt: `2026-08-01T12:00:${String(revision).padStart(2, '0')}.000Z`
+    }))
+    installApi(
+      {
+        listFocuses: vi.fn().mockResolvedValue([current]),
+        listThreads: vi.fn().mockResolvedValue([sprint]),
+        listCommitments: vi.fn(async (parent) => parent.type === 'thread' ? [focusCommitment] : []),
+        listUpdates: vi.fn().mockResolvedValue([existingUpdate])
+      },
+      {
+        richText: {
+          getDocument: vi.fn(() => new Promise<RichTextDocumentSnapshot>(() => undefined)),
+          saveDocument,
+          openWindow: vi.fn().mockResolvedValue(undefined),
+          getWindowTarget: vi.fn().mockResolvedValue(null),
+          onDocumentChanged: vi.fn((listener) => {
+            documentListeners.add(listener)
+            return () => documentListeners.delete(listener)
+          })
+        }
+      }
+    )
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Quarterly plan' }))
+    await user.click(screen.getByRole('button', { name: 'Sprint execution' }))
+    await user.click(
+      await screen.findByRole('button', { name: 'Open commitment Keep sponsors aligned' })
+    )
+    const observation = await screen.findByLabelText('Update observation')
+    await user.click(observation)
+    await user.keyboard(' sustained typing')
+    const locallySavedValue = saveDocument.mock.calls.at(-1)?.[1] as string
+
+    act(() => {
+      for (const listener of documentListeners) {
+        listener({
+          document: {
+            reference: { type: 'update', id: existingUpdate.id, field: 'observation' },
+            title: 'Keep sponsors aligned — Update',
+            contextPath: ['Quarterly plan', 'Sprint execution', 'Keep sponsors aligned'],
+            value: existingUpdate.observation,
+            revision: 4,
+            updatedAt: '2026-08-01T12:00:30.000Z'
+          },
+          sourceWindowId: 1
+        })
+      }
+    })
+
+    expect(observation).toHaveFocus()
+    expect(richTextPlainText(locallySavedValue)).toContain('sustained typing')
+    expect(observation).toHaveTextContent('sustained typing')
+    await user.keyboard(' continues')
+    expect(richTextPlainText(saveDocument.mock.calls.at(-1)?.[1] as string)).toContain(
+      'continues'
+    )
+  })
+
   it('persists a blank Update immediately, then autosaves state and refreshes its Commitment row', async () => {
     const current = focus()
     const sprint = thread()

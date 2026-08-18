@@ -15,6 +15,8 @@ export const UPDATE_LIST_STATE_OPTIONS: readonly UpdateListStateOptionModel[] = 
 export interface UpdateListContextModel {
   subjectLabels: ReadonlyMap<number, string>
   currentSubjectIds?: ReadonlySet<number>
+  /** Changes only for observation commits made outside the mounted editor. */
+  externalObservationRevisions?: ReadonlyMap<number, number>
 }
 
 export interface UpdateListProjection {
@@ -47,9 +49,11 @@ export function updateListProjection(
       id: String(update.id),
       date: update.date,
       observation: update.observation,
-      externalRevision: update.updatedAt,
       state: update.state,
       sensitive: update.sensitive,
+      ...(context?.externalObservationRevisions?.has(update.id)
+        ? { externalRevision: context.externalObservationRevisions.get(update.id) }
+        : {}),
       ...(contextLabel ? { contextLabel } : {})
     }
     if (formerScope) projection.formerItems.push(item)

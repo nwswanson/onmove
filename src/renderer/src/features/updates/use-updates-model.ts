@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type {
   CreateUpdateInput,
   EditUpdateInput,
@@ -45,6 +45,13 @@ export function updatesForWorkingContext(
 
 export interface UpdatesModel {
   updates: UpdateSnapshot[]
+  /**
+   * Tokens for observations committed outside this model's editor. Local
+   * keystrokes intentionally do not enter this map: changing an editor's
+   * external revision while it owns the selection makes Lexical replace that
+   * selection as if another window had edited the document.
+   */
+  externalObservationRevisions: ReadonlyMap<number, number>
   loading: boolean
   loadError: string | null
   revealUpdateId: number | null
@@ -68,17 +75,24 @@ export function useUpdatesModel(
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [revealUpdateId, setRevealUpdateId] = useState<number | null>(null)
+  const [externalObservationRevisions, setExternalObservationRevisions] = useState<
+    ReadonlyMap<number, number>
+  >(() => new Map())
+  const latestObservationRevisionsRef = useRef(new Map<number, number>())
 
   useEffect(() => {
     let active = true
+    latestObservationRevisionsRef.current.clear()
     window.onmove.domain.listUpdates(updateParent(parentType, parentId)).then(
       (nextUpdates) => {
         if (!active) return
+        setExternalObservationRevisions(new Map())
         setUpdates(sortUpdates(nextUpdates))
         setLoading(false)
       },
       () => {
         if (!active) return
+        setExternalObservationRevisions(new Map())
         setLoadError('Updates could not be loaded.')
         setLoading(false)
       }
@@ -90,8 +104,21 @@ export function useUpdatesModel(
 
   useEffect(() => window.onmove.richText.onDocumentChanged(({ document }) => {
     if (document.reference.type !== 'update' || document.reference.field !== 'observation') return
+    const updateId = document.reference.id
+    const latestRevision = latestObservationRevisionsRef.current.get(updateId) ?? -1
+    // The synchronous local save is followed by an asynchronous broadcast to
+    // this renderer. Ignore that delayed echo (and any older queued event), or
+    // the active editor will interpret its own keystroke as an external edit.
+    if (document.revision <= latestRevision) return
+    latestObservationRevisionsRef.current.set(updateId, document.revision)
+    setExternalObservationRevisions((current) => {
+      if (current.get(updateId) === document.revision) return current
+      const next = new Map(current)
+      next.set(updateId, document.revision)
+      return next
+    })
     setUpdates((current) => sortUpdates(current.map((update) =>
-      update.id === document.reference.id
+      update.id === updateId
         ? { ...update, observation: document.value, updatedAt: document.updatedAt }
         : update
     )))
@@ -141,6 +168,7 @@ export function useUpdatesModel(
       { type: 'update', id, field: 'observation' },
       value
     )
+    latestObservationRevisionsRef.current.set(id, document.revision)
     setUpdates((current) => sortUpdates(current.map((update) => update.id === id
       ? { ...update, observation: document.value, updatedAt: document.updatedAt }
       : update
@@ -153,6 +181,7 @@ export function useUpdatesModel(
 
   return {
     updates: sortUpdates(updatesForWorkingContext(updates, workingContext)),
+    externalObservationRevisions,
     loading,
     loadError,
     revealUpdateId,
