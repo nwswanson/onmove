@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
 import { RichTextContent } from '@/components/ui/rich-text-editor'
@@ -30,10 +30,7 @@ export interface FocusOverviewTimelineModel {
   updates: FocusOverviewTimelineUpdateModel[]
 }
 
-type TimelineSide = 'left' | 'right'
-
 interface PositionedUpdate extends FocusOverviewTimelineUpdateModel {
-  side: TimelineSide
   bubbleX: number
   bubbleY: number
   pointX: number
@@ -43,29 +40,49 @@ interface PositionedUpdate extends FocusOverviewTimelineUpdateModel {
 interface TimelinePoint {
   key: string
   threadId: number
+  x: number
+  y: number
+  state: FocusOverviewTimelineUpdateModel['state']
+}
+
+interface TimelineDateMarker {
   date: string
   dateLabel: string
   x: number
   y: number
+}
+
+interface TimelineRailSegment {
+  key: string
+  threadId: number
+  x: number
+  y1: number
+  y2: number
   state: FocusOverviewTimelineUpdateModel['state']
 }
 
 interface TimelineLayout {
   width: number
   height: number
+  bubbleWidth: number
   railXs: Map<number, number>
   updates: PositionedUpdate[]
   points: TimelinePoint[]
+  dates: TimelineDateMarker[]
+  railSegments: TimelineRailSegment[]
 }
 
-const BUBBLE_WIDTH = 244
 const BUBBLE_HEIGHT = 88
 const BUBBLE_GAP = 14
-const RAIL_GAP = 116
-const HEADER_HEIGHT = 74
-const SIDE_PADDING = 20
-const SIDE_LANE_GAP = 64
+const MAX_RAIL_GAP = 46
+const SIDE_PADDING = 28
+const CONNECTOR_GAP = 112
 const DATE_GROUP_GAP = 64
+const DEFAULT_TIMELINE_WIDTH = 960
+const NEUTRAL_STATE: FocusOverviewTimelineUpdateModel['state'] = {
+  label: 'None',
+  tone: 'neutral'
+}
 
 function stateToneClass(
   tone: FocusOverviewTimelineUpdateModel['state']['tone'],
@@ -89,65 +106,64 @@ function stateToneClass(
   return 'stroke-muted-foreground/55'
 }
 
-function dayDistance(newerDate: string, olderDate: string): number {
-  const newer = new Date(`${newerDate}T00:00:00Z`).getTime()
-  const older = new Date(`${olderDate}T00:00:00Z`).getTime()
-  if (!Number.isFinite(newer) || !Number.isFinite(older)) return 1
-  return Math.max(1, Math.round(Math.abs(newer - older) / 86_400_000))
+function dayDistance(firstDate: string, secondDate: string): number {
+  const first = new Date(`${firstDate}T00:00:00Z`).getTime()
+  const second = new Date(`${secondDate}T00:00:00Z`).getTime()
+  if (!Number.isFinite(first) || !Number.isFinite(second)) return 1
+  return Math.max(1, Math.round(Math.abs(first - second) / 86_400_000))
 }
 
-function dateSpacing(newerDate: string, olderDate: string): number {
-  return Math.min(150, DATE_GROUP_GAP + Math.sqrt(dayDistance(newerDate, olderDate)) * 10)
+function dateSpacing(firstDate: string, secondDate: string): number {
+  return Math.min(150, DATE_GROUP_GAP + Math.sqrt(dayDistance(firstDate, secondDate)) * 10)
 }
 
-function buildFocusTimelineLayout(model: FocusOverviewTimelineModel): TimelineLayout {
-  const railSpan = Math.max(0, (model.threads.length - 1) * RAIL_GAP)
-  const centerWidth = Math.max(RAIL_GAP, railSpan)
-  const width = Math.max(
-    760,
-    BUBBLE_WIDTH * 2 + SIDE_PADDING * 2 + SIDE_LANE_GAP * 2 + centerWidth
+function buildFocusTimelineLayout(
+  model: FocusOverviewTimelineModel,
+  availableWidth: number
+): TimelineLayout {
+  const width = Math.max(640, Math.floor(availableWidth))
+  const bubbleWidth = Math.min(320, Math.max(224, width * 0.34))
+  const bubbleX = SIDE_PADDING
+  const minimumRailX = bubbleX + bubbleWidth + CONNECTOR_GAP
+  const availableRailWidth = Math.max(0, width - minimumRailX - SIDE_PADDING)
+  const railGap = model.threads.length <= 1
+    ? 0
+    : Math.min(MAX_RAIL_GAP, availableRailWidth / (model.threads.length - 1))
+  const railSpan = Math.max(0, (model.threads.length - 1) * railGap)
+  const desiredRailCenter = width * 0.64
+  const firstRailX = Math.min(
+    width - SIDE_PADDING - railSpan,
+    Math.max(minimumRailX, desiredRailCenter - railSpan / 2)
   )
-  const centerX = width / 2
-  const firstRailX = centerX - railSpan / 2
   const railXs = new Map(model.threads.map((thread, index) => [
     thread.id,
-    firstRailX + index * RAIL_GAP
+    firstRailX + index * railGap
   ]))
   const threadIndexes = new Map(model.threads.map((thread, index) => [thread.id, index]))
-  const dates = [...new Set(model.updates.map(({ date }) => date))].sort().reverse()
+  const dates = [...new Set(model.updates.map(({ date }) => date))].sort()
   const positionedUpdates: PositionedUpdate[] = []
   const points: TimelinePoint[] = []
-  let groupTop = HEADER_HEIGHT + 34
+  const dateMarkers: TimelineDateMarker[] = []
+  let groupTop = 34
 
   dates.forEach((date, dateIndex) => {
-    const dateUpdates = model.updates.filter((update) => update.date === date)
-    const sideCounts: Record<TimelineSide, number> = { left: 0, right: 0 }
-    const threadOccurrences = new Map<number, number>()
-    const assigned = dateUpdates.map((update, updateIndex) => {
-      const occurrence = threadOccurrences.get(update.threadId) ?? 0
-      threadOccurrences.set(update.threadId, occurrence + 1)
-      const threadIndex = threadIndexes.get(update.threadId) ?? updateIndex
-      const preferred: TimelineSide = (threadIndex + occurrence + dateIndex) % 2 === 0
-        ? 'left'
-        : 'right'
-      const alternate: TimelineSide = preferred === 'left' ? 'right' : 'left'
-      const side = sideCounts[preferred] <= sideCounts[alternate] + 1 ? preferred : alternate
-      const sideIndex = sideCounts[side]
-      sideCounts[side] += 1
-      return { update, side, sideIndex }
-    })
-    const rowCount = Math.max(1, sideCounts.left, sideCounts.right)
-    const groupHeight = rowCount * BUBBLE_HEIGHT + Math.max(0, rowCount - 1) * BUBBLE_GAP
+    const dateUpdates = model.updates
+      .filter((update) => update.date === date)
+      .sort((left, right) =>
+        (threadIndexes.get(left.threadId) ?? 0) - (threadIndexes.get(right.threadId) ?? 0) ||
+        left.id - right.id)
+    const groupHeight = Math.max(
+      BUBBLE_HEIGHT,
+      dateUpdates.length * BUBBLE_HEIGHT + Math.max(0, dateUpdates.length - 1) * BUBBLE_GAP
+    )
     const pointY = groupTop + groupHeight / 2
 
-    assigned.forEach(({ update, side, sideIndex }) => {
-      const pointX = railXs.get(update.threadId) ?? centerX
+    dateUpdates.forEach((update, updateIndex) => {
       positionedUpdates.push({
         ...update,
-        side,
-        bubbleX: side === 'left' ? SIDE_PADDING : width - SIDE_PADDING - BUBBLE_WIDTH,
-        bubbleY: groupTop + sideIndex * (BUBBLE_HEIGHT + BUBBLE_GAP),
-        pointX,
+        bubbleX,
+        bubbleY: groupTop + updateIndex * (BUBBLE_HEIGHT + BUBBLE_GAP),
+        pointX: railXs.get(update.threadId) ?? firstRailX,
         pointY
       })
     })
@@ -159,28 +175,72 @@ function buildFocusTimelineLayout(model: FocusOverviewTimelineModel): TimelineLa
         update
       ])
     })
-    updatesByThread.forEach((updates, threadId) => {
+    updatesByThread.forEach((threadUpdates, threadId) => {
+      const effectiveUpdate = threadUpdates.at(-1)
       points.push({
         key: `${threadId}:${date}`,
         threadId,
-        date,
-        dateLabel: updates[0]?.dateLabel ?? date,
-        x: railXs.get(threadId) ?? centerX,
+        x: railXs.get(threadId) ?? firstRailX,
         y: pointY,
-        state: updates[0]?.state ?? { label: 'None', tone: 'neutral' }
+        state: effectiveUpdate?.state ?? NEUTRAL_STATE
       })
+    })
+    dateMarkers.push({
+      date,
+      dateLabel: dateUpdates[0]?.dateLabel ?? date,
+      x: firstRailX + railSpan / 2,
+      y: pointY
     })
 
     const nextDate = dates[dateIndex + 1]
     groupTop += groupHeight + (nextDate ? dateSpacing(date, nextDate) : 0)
   })
 
+  const height = dates.length === 0 ? 240 : groupTop + 52
+  const railSegments = model.threads.flatMap((thread) => {
+    const x = railXs.get(thread.id) ?? firstRailX
+    const threadPoints = points
+      .filter((point) => point.threadId === thread.id)
+      .sort((left, right) => left.y - right.y)
+    if (threadPoints.length === 0) {
+      return [{
+        key: `${thread.id}:empty`,
+        threadId: thread.id,
+        x,
+        y1: 0,
+        y2: height - 20,
+        state: NEUTRAL_STATE
+      }]
+    }
+    return [
+      {
+        key: `${thread.id}:before`,
+        threadId: thread.id,
+        x,
+        y1: 0,
+        y2: threadPoints[0]?.y ?? 0,
+        state: NEUTRAL_STATE
+      },
+      ...threadPoints.map((point, index) => ({
+        key: `${thread.id}:${index}`,
+        threadId: thread.id,
+        x,
+        y1: point.y,
+        y2: threadPoints[index + 1]?.y ?? height - 20,
+        state: point.state
+      }))
+    ]
+  })
+
   return {
     width,
-    height: dates.length === 0 ? 280 : groupTop + 34,
+    height,
+    bubbleWidth,
     railXs,
     updates: positionedUpdates,
-    points
+    points,
+    dates: dateMarkers,
+    railSegments
   }
 }
 
@@ -200,13 +260,11 @@ function StateDot({
   )
 }
 
-function connectorPath(update: PositionedUpdate): string {
-  const startX = update.side === 'left'
-    ? update.bubbleX + BUBBLE_WIDTH
-    : update.bubbleX
+function connectorPath(update: PositionedUpdate, bubbleWidth: number): string {
+  const startX = update.bubbleX + bubbleWidth
   const startY = update.bubbleY + BUBBLE_HEIGHT / 2
   const bend = Math.max(30, Math.abs(update.pointX - startX) * 0.42)
-  const controlX = update.side === 'left' ? startX + bend : startX - bend
+  const controlX = startX + bend
   return `M ${startX} ${startY} C ${controlX} ${startY}, ${controlX} ${update.pointY}, ${update.pointX} ${update.pointY}`
 }
 
@@ -221,59 +279,108 @@ export function FocusOverviewTimeline({
   model: FocusOverviewTimelineModel
   onOpenThread: (threadId: number) => void
 }): React.JSX.Element {
+  const timelineRef = useRef<HTMLDivElement>(null)
+  const [timelineWidth, setTimelineWidth] = useState(DEFAULT_TIMELINE_WIDTH)
   const [selectedUpdateId, setSelectedUpdateId] = useState<number | null>(null)
+
+  useLayoutEffect(() => {
+    const element = timelineRef.current
+    if (!element) return
+    const measure = (): void => {
+      const nextWidth = Math.floor(element.getBoundingClientRect().width)
+      if (nextWidth > 0) setTimelineWidth((current) => current === nextWidth ? current : nextWidth)
+    }
+    measure()
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure)
+      return () => window.removeEventListener('resize', measure)
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
 
   if (model.threads.length === 0) {
     return (
-      <section className="mt-8 border-t border-border/70 pt-6" aria-labelledby="thread-timeline-heading">
+      <section className="mt-8 w-full border-t border-border/70 px-8 pt-6" aria-labelledby="thread-timeline-heading">
         <h2 id="thread-timeline-heading" className="text-sm font-semibold">Thread timeline</h2>
         <p className="mt-4 text-sm text-muted-foreground">No Threads yet.</p>
       </section>
     )
   }
 
-  const layout = buildFocusTimelineLayout(model)
+  const layout = buildFocusTimelineLayout(model, timelineWidth)
   const selectedUpdate = model.updates.find(({ id }) => id === selectedUpdateId) ?? null
   const selectedThread = selectedUpdate
     ? model.threads.find(({ id }) => id === selectedUpdate.threadId) ?? null
     : null
 
   return (
-    <section className="mt-8 border-t border-border/70 pt-6" aria-labelledby="thread-timeline-heading">
-      <div className="flex items-baseline justify-between gap-4">
+    <section className="mt-8 w-full border-t border-border/70 pt-6" aria-labelledby="thread-timeline-heading">
+      <div className="flex items-baseline justify-between gap-4 px-8">
         <h2 id="thread-timeline-heading" className="text-sm font-semibold">Thread timeline</h2>
-        <p className="text-xs text-muted-foreground">Select an update to read it</p>
+        <p className="text-xs text-muted-foreground">Earlier at top · latest at bottom</p>
       </div>
       <div
-        className="mt-4 overflow-x-auto rounded-xl border border-border/65 bg-muted/10 pb-2"
+        ref={timelineRef}
+        className="relative mt-4 w-full border-y border-border/65 bg-muted/10"
         data-testid="focus-thread-timeline"
       >
         <div
-          className="relative mx-auto"
-          style={{ width: layout.width, height: layout.height }}
+          className="sticky top-0 z-20 h-24 border-b border-border/70 bg-background/92 shadow-[0_1px_0_rgb(0_0_0/0.03)] backdrop-blur-xl"
+          data-testid="timeline-sticky-thread-headers"
         >
+          {model.threads.map((thread) => {
+            const x = layout.railXs.get(thread.id) ?? layout.width / 2
+            return (
+              <button
+                key={thread.id}
+                type="button"
+                className="absolute bottom-1 w-28 rounded-md px-1.5 py-1 text-left hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                style={{
+                  left: x,
+                  transform: 'rotate(-34deg)',
+                  transformOrigin: 'left bottom'
+                }}
+                title={`${thread.title} · ${thread.statusLabel}`}
+                onClick={() => onOpenThread(thread.id)}
+                aria-label={`Open Thread ${thread.title}`}
+              >
+                <span className="block truncate text-[11px] font-semibold">{thread.title}</span>
+                <span className={cn(
+                  'block truncate text-[10px] capitalize text-muted-foreground',
+                  thread.closed && 'italic'
+                )}>
+                  {thread.statusLabel}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+
+        <div className="relative w-full" style={{ height: layout.height }}>
           <svg
             className="absolute inset-0 size-full overflow-visible"
             viewBox={`0 0 ${layout.width} ${layout.height}`}
+            preserveAspectRatio="none"
             role="img"
             aria-label="Thread update timeline"
           >
-            <title>Thread updates arranged by date along parallel Thread timelines</title>
-            {model.threads.map((thread) => {
-              const x = layout.railXs.get(thread.id) ?? layout.width / 2
+            <title>Thread state intervals and updates arranged chronologically</title>
+            {layout.railSegments.map((segment) => {
+              const thread = model.threads.find(({ id }) => id === segment.threadId)
               return (
                 <line
-                  key={thread.id}
-                  data-testid={`thread-rail-${thread.id}`}
-                  x1={x}
-                  x2={x}
-                  y1={HEADER_HEIGHT - 4}
-                  y2={layout.height - 22}
-                  className={cn(
-                    'stroke-primary/60',
-                    thread.closed && 'stroke-muted-foreground/35'
-                  )}
-                  strokeWidth="2"
+                  key={segment.key}
+                  data-testid={`thread-rail-${segment.threadId}`}
+                  data-state={segment.state.label.toLowerCase()}
+                  x1={segment.x}
+                  x2={segment.x}
+                  y1={segment.y1}
+                  y2={segment.y2}
+                  className={stateToneClass(segment.state.tone, 'stroke')}
+                  strokeWidth="4"
+                  strokeOpacity={thread?.closed ? '0.42' : '0.9'}
                   strokeLinecap="round"
                 />
               )
@@ -282,72 +389,54 @@ export function FocusOverviewTimeline({
               <path
                 key={`connector:${update.id}`}
                 data-testid={`timeline-connector-${update.id}`}
-                d={connectorPath(update)}
+                d={connectorPath(update, layout.bubbleWidth)}
                 fill="none"
                 className={stateToneClass(update.state.tone, 'stroke')}
                 strokeWidth="1.5"
-                strokeOpacity="0.7"
+                strokeOpacity="0.65"
               />
             ))}
-            {layout.points.map((point) => (
-              <g key={point.key}>
+            {layout.dates.map((date) => (
+              <g key={date.date}>
                 <rect
-                  x={point.x - 39}
-                  y={point.y - 27}
+                  x={date.x - 39}
+                  y={date.y - 29}
                   width="78"
                   height="17"
                   rx="8.5"
                   className="fill-background stroke-border"
                 />
                 <text
-                  x={point.x}
-                  y={point.y - 15}
+                  x={date.x}
+                  y={date.y - 17}
                   textAnchor="middle"
                   className="fill-muted-foreground text-[9px] font-medium"
                 >
-                  {point.dateLabel}
+                  {date.dateLabel}
                 </text>
+              </g>
+            ))}
+            {layout.points.map((point) => (
+              <g key={point.key}>
                 <circle
                   cx={point.x}
                   cy={point.y}
                   r="6"
-                  className="fill-background stroke-primary"
+                  className="fill-background stroke-background"
                   strokeWidth="2"
                 />
                 <circle
                   cx={point.x}
                   cy={point.y}
-                  r="2.5"
+                  r="3.5"
                   className={stateToneClass(point.state.tone, 'fill')}
                 />
               </g>
             ))}
           </svg>
 
-          {model.threads.map((thread) => {
-            const x = layout.railXs.get(thread.id) ?? layout.width / 2
-            return (
-              <button
-                key={thread.id}
-                type="button"
-                className="absolute top-3 w-26 -translate-x-1/2 rounded-lg px-2 py-1.5 text-center hover:bg-muted/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                style={{ left: x }}
-                onClick={() => onOpenThread(thread.id)}
-                aria-label={`Open Thread ${thread.title}`}
-              >
-                <span className="block truncate text-[11px] font-semibold">{thread.title}</span>
-                <span className={cn(
-                  'block text-[10px] capitalize text-muted-foreground',
-                  thread.closed && 'italic'
-                )}>
-                  {thread.statusLabel}
-                </span>
-              </button>
-            )
-          })}
-
           {model.updates.length === 0 && (
-            <p className="absolute inset-x-0 top-34 text-center text-sm text-muted-foreground">
+            <p className="absolute top-20 left-8 text-sm text-muted-foreground">
               No updates yet.
             </p>
           )}
@@ -356,12 +445,12 @@ export function FocusOverviewTimeline({
             <button
               key={update.id}
               type="button"
-              data-side={update.side}
+              data-side="left"
               className="absolute overflow-hidden rounded-xl border border-border/75 bg-card px-3.5 py-3 text-left shadow-sm transition hover:-translate-y-px hover:border-primary/55 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               style={{
                 left: update.bubbleX,
                 top: update.bubbleY,
-                width: BUBBLE_WIDTH,
+                width: layout.bubbleWidth,
                 height: BUBBLE_HEIGHT
               }}
               aria-label={`Read ${updateTitle(update.sourceLabel)} from ${update.dateLabel}`}

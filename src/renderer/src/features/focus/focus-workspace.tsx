@@ -2028,7 +2028,8 @@ export function FocusWorkspace({
             workspaceLabel="Focus"
             note={defaultNote(focus.notes)}
             primary={(
-              <section className="mx-auto w-full max-w-5xl p-8 sm:p-10" aria-labelledby="focus-heading">
+              <section className="w-full" aria-labelledby="focus-heading">
+            <div className="mx-auto w-full max-w-5xl p-8 pb-0 sm:p-10 sm:pb-0">
             <div className="flex flex-wrap items-start gap-3 border-b border-border/70 pb-6">
               <div className="min-w-0 flex-1">
                 <h1 id="focus-heading" className="truncate text-2xl font-semibold tracking-[-0.025em]">
@@ -2093,6 +2094,7 @@ export function FocusWorkspace({
                 if (selectedSubjectId === subjectId) onSelectedSubjectChange(null)
               }}
             />
+            </div>
 
             <FocusOverviewTimeline
               model={focusOverviewTimelineModel(model.focusTimeline, hideSensitiveContent)}
@@ -2111,7 +2113,11 @@ export function FocusWorkspace({
               }}
             />
 
-            {model.loadError && <p role="alert" className="mt-5 text-sm text-destructive">{model.loadError}</p>}
+            {model.loadError && (
+              <p role="alert" className="mx-auto mt-5 w-full max-w-5xl px-8 text-sm text-destructive sm:px-10">
+                {model.loadError}
+              </p>
+            )}
               </section>
             )}
           />

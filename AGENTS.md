@@ -90,13 +90,16 @@
   screen contains Focus status, due date, description, Focus Scope administration, and the Default
   note. It must not render or create a Goal, Commitment, Routine, Todo, or direct Focus Update.
   Render one read-only graphical timeline beneath that metadata: include every child Thread
-  regardless of lifecycle status and keep its continuous vertical rail in the center rail group.
-  Place each direct-Thread or descendant-Commitment Update at its recorded date, balance compact
-  truncated bubbles into lanes on either side, and draw an SVG connector from every bubble to its
-  dated rail point. Selecting a bubble opens the complete rich-text evidence in a read-only popup;
-  Thread headers and popup actions link to the owning Thread. A closed Thread opens as a standalone
-  route without restoring it or adding it to the active contextual sidebar; the timeline never
-  exposes Update editing or deletion controls.
+  regardless of lifecycle status and keep its continuous vertical rail in a tightly spaced center
+  rail group. Give the timeline the complete main-canvas width rather than the metadata column's
+  maximum width. Place every compact, truncated direct-Thread or descendant-Commitment Update bubble
+  in the left evidence lane and draw an SVG connector to its dated rail point. Time runs from earlier
+  at the top to latest at the bottom; each rail interval takes the Update state color beginning at
+  that point and retains it until the next state change. Keep the angled Thread-title rail header
+  sticky while the timeline scrolls. Selecting a bubble opens the complete rich-text evidence in a
+  read-only popup; Thread headers and popup actions link to the owning Thread. A closed Thread opens
+  as a standalone route without restoring it or adding it to the active contextual sidebar; the
+  timeline never exposes Update editing or deletion controls.
 - Give each Thread its own parent-asserting Commitment level. Opening Commitments from the Thread
   screen's collection heading replaces the contextual sidebar, selects the first owned Commitment,
   and returns through the shared Back behavior.

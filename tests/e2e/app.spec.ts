@@ -189,14 +189,15 @@ test('renders a read-only Focus timeline and opens active or archived Threads', 
     type: 'tracking',
     title: 'Stabilize the launch'
   })
-  for (const [parent, observation, state] of [
-    [{ type: 'thread', id: active.id }, 'Direct launch evidence', 'green'],
-    [{ type: 'commitment', id: commitment.id }, 'Nested launch evidence', 'yellow'],
-    [{ type: 'thread', id: completed.id }, 'Discovery was closed cleanly', 'none']
+  for (const [parent, date, observation, state] of [
+    [{ type: 'thread', id: active.id }, '2026-08-11', 'Delivery was blocked', 'red'],
+    [{ type: 'thread', id: active.id }, '2026-08-18', 'Direct launch evidence', 'green'],
+    [{ type: 'commitment', id: commitment.id }, '2026-08-18', 'Nested launch evidence', 'yellow'],
+    [{ type: 'thread', id: completed.id }, '2026-08-18', 'Discovery was closed cleanly', 'none']
   ] as const) {
     seeded.domain.updates.create({
       parent,
-      date: '2026-08-18',
+      date,
       observation,
       state
     })
@@ -219,6 +220,22 @@ test('renders a read-only Focus timeline and opens active or archived Threads', 
     await expect(timeline).toContainText('Direct launch evidence')
     await expect(timeline).toContainText('Nested launch evidence')
     await expect(timeline).toContainText('Discovery was closed cleanly')
+    await expect(timeline.locator('[data-side="left"]')).toHaveCount(4)
+    await expect(timeline.getByTestId('timeline-sticky-thread-headers'))
+      .toHaveCSS('position', 'sticky')
+    await expect(timeline.locator(
+      `[data-testid="thread-rail-${active.id}"][data-state="red"]`
+    )).toHaveCount(1)
+    await expect(timeline.locator(
+      `[data-testid="thread-rail-${active.id}"][data-state="yellow"]`
+    )).toHaveCount(1)
+    const activeRailX = Number(await timeline.locator(
+      `[data-testid="thread-rail-${active.id}"]`
+    ).first().getAttribute('x1'))
+    const completedRailX = Number(await timeline.locator(
+      `[data-testid="thread-rail-${completed.id}"]`
+    ).first().getAttribute('x1'))
+    expect(completedRailX - activeRailX).toBeLessThanOrEqual(46)
     await expect(window.getByLabel('Goal')).toHaveCount(0)
     await expect(window.getByRole('list', { name: 'Focus updates' })).toHaveCount(0)
     await expect(window.getByLabel('Update observation')).toHaveCount(0)

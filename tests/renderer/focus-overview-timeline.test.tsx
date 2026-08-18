@@ -15,6 +15,16 @@ const model: FocusOverviewTimelineModel = {
   ],
   updates: [
     {
+      id: 9,
+      threadId: 1,
+      date: '2026-08-12',
+      dateLabel: 'Aug 12, 2026',
+      observation: 'Delivery was blocked.',
+      preview: 'Delivery was blocked.',
+      sourceLabel: 'Thread update',
+      state: { label: 'Red', tone: 'danger' }
+    },
+    {
       id: 10,
       threadId: 1,
       date: '2026-08-18',
@@ -38,17 +48,26 @@ const model: FocusOverviewTimelineModel = {
 }
 
 describe('FocusOverviewTimeline', () => {
-  it('places parallel rails centrally and balances same-day bubbles across both sides', () => {
+  it('keeps close parallel rails sticky, colors state intervals, and puts every bubble left', () => {
     render(<FocusOverviewTimeline model={model} onOpenThread={vi.fn()} />)
-    const firstRailX = Number(screen.getByTestId('thread-rail-1').getAttribute('x1'))
-    const secondRailX = Number(screen.getByTestId('thread-rail-2').getAttribute('x1'))
+    const firstThreadRails = screen.getAllByTestId('thread-rail-1')
+    const secondThreadRails = screen.getAllByTestId('thread-rail-2')
+    const firstRailX = Number(firstThreadRails[0]?.getAttribute('x1'))
+    const secondRailX = Number(secondThreadRails[0]?.getAttribute('x1'))
     const bubbles = screen.getAllByRole('button', { name: /^Read / })
 
     expect(firstRailX).toBeLessThan(secondRailX)
+    expect(secondRailX - firstRailX).toBeLessThanOrEqual(46)
     expect(new Set(bubbles.map((bubble) => bubble.getAttribute('data-side')))).toEqual(
-      new Set(['left', 'right'])
+      new Set(['left'])
     )
-    expect(screen.getAllByText('Aug 18, 2026')).toHaveLength(2)
+    expect(firstThreadRails.map((rail) => rail.getAttribute('data-state'))).toEqual([
+      'none',
+      'red',
+      'green'
+    ])
+    expect(screen.getByTestId('timeline-sticky-thread-headers')).toHaveClass('sticky')
+    expect(screen.getAllByText('Aug 18, 2026')).toHaveLength(1)
   })
 
   it('shows compact bubbles, opens the full update, and links to the owning Thread', async () => {
@@ -57,8 +76,8 @@ describe('FocusOverviewTimeline', () => {
     render(<FocusOverviewTimeline model={model} onOpenThread={onOpenThread} />)
 
     expect(screen.getByRole('img', { name: 'Thread update timeline' })).toBeVisible()
-    expect(screen.getByTestId('thread-rail-1')).toBeInTheDocument()
-    expect(screen.getByTestId('thread-rail-2')).toBeInTheDocument()
+    expect(screen.getAllByTestId('thread-rail-1').length).toBeGreaterThan(1)
+    expect(screen.getAllByTestId('thread-rail-2').length).toBeGreaterThan(1)
     expect(screen.getByText('The complete delivery update…')).toBeVisible()
     expect(screen.queryByText(
       'The complete delivery update contains detail that belongs in the popup.'

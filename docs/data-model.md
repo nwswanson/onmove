@@ -73,8 +73,10 @@ Routine, Todo, Todo list, or direct Update. It retains status, due date, descrip
 and Notes. `FocusOverviewRepository.timeline()` projects every child Thread—including done and
 cancelled Threads—alongside direct Thread and descendant Commitment Updates. Updates remain owned by
 their original records; the projection is read-only. The renderer lays this projection onto parallel
-vertical Thread rails, with compact side bubbles connected to each recorded-date point and full rich
-text available only through the evidence popup.
+vertical Thread rails, with compact left-lane bubbles connected to each recorded-date point and full
+rich text available only through the evidence popup. Rail intervals use the state established by
+each chronological Update until a later Update changes it; this is a view projection and does not
+persist a second state history.
 
 Focuses, Threads, and Commitments each store an optional calendar due date. The hierarchy does not
 enforce chronological containment: a child may be due after its direct parent. Main entity screens

@@ -91,8 +91,9 @@ Focus Overall retains status, due date, description, Focus Scope, and Notes. It 
 Commitment, Routine, Todo, Todo list, or direct Update. Its read-only timeline includes all child
 Threads, including done/cancelled Threads, and projects direct Thread plus descendant Commitment
 Updates onto centered vertical Thread rails without changing ownership. Compact evidence bubbles
-alternate between side lanes and connect to dated rail points; selecting one opens the full rich
-text read-only.
+occupy one left lane and connect to dated rail points; state-colored rail intervals remain in effect
+until the next chronological Update state change. Sticky rail titles retain context while scrolling,
+and selecting a bubble opens the full rich text read-only.
 
 Every Focus owns zero or more named Scope definitions. Its Scope application may be `open`,
 `explicit`, or `derived`. A Focus cannot use `inherited` because it has no parent in this model.
