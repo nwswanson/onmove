@@ -54,6 +54,7 @@ import {
   workStatusLabel
 } from '@/features/shared/work-status'
 import { sidebarIndicatorProps } from '@/features/shared/sidebar-indicator-presenters'
+import { richTextPlainText } from '../../../../shared/rich-text-value'
 
 function textValue(values: ContextDrawerValues, id: string): string {
   const value = values[id]
@@ -94,6 +95,11 @@ function timelineDateLabel(value: string): string {
   }).format(new Date(year, month - 1, day))
 }
 
+function timelinePreview(value: string): string {
+  const plainText = richTextPlainText(value).replace(/\s+/g, ' ').trim()
+  return plainText.length > 132 ? `${plainText.slice(0, 129).trimEnd()}…` : plainText
+}
+
 export function focusOverviewTimelineModel(
   snapshot: FocusOverviewTimelineSnapshot,
   hideSensitiveContent = false
@@ -111,27 +117,23 @@ export function focusOverviewTimelineModel(
     visibleThreadIds.has(update.threadId) &&
     (!hideSensitiveContent || !update.effectiveSensitive)
   )
-  const dates = [...new Set(updates.map(({ date }) => date))].sort().reverse()
 
   return {
     threads,
-    rows: dates.map((date) => ({
-      date,
-      dateLabel: timelineDateLabel(date),
-      cells: threads.map((thread) => ({
-        threadId: thread.id,
-        updates: updates
-          .filter((update) => update.threadId === thread.id && update.date === date)
-          .map((update) => ({
-            id: update.id,
-            observation: update.observation,
-            sourceLabel: update.source.type === 'thread'
-              ? 'Thread update'
-              : update.source.title,
-            state: healthStateLabel(update.state)
-          }))
+    updates: [...updates]
+      .sort((left, right) => right.date.localeCompare(left.date) || right.id - left.id)
+      .map((update) => ({
+        id: update.id,
+        threadId: update.threadId,
+        date: update.date,
+        dateLabel: timelineDateLabel(update.date),
+        observation: update.observation,
+        preview: timelinePreview(update.observation),
+        sourceLabel: update.source.type === 'thread'
+          ? 'Thread update'
+          : update.source.title,
+        state: healthStateLabel(update.state)
       }))
-    }))
   }
 }
 

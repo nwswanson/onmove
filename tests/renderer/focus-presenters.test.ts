@@ -639,7 +639,7 @@ describe('Focus presentation adapters', () => {
     ])
   })
 
-  it('groups Thread evidence by date and preserves closed Thread rails in the overview timeline', () => {
+  it('projects dated Thread evidence and preserves closed Thread rails in the overview timeline', () => {
     const snapshot: FocusOverviewTimelineSnapshot = {
       focusId: focus.id,
       threads: [
@@ -675,12 +675,18 @@ describe('Focus presentation adapters', () => {
         { id: 10, closed: false },
         { id: 11, closed: true }
       ],
-      rows: [{
+      updates: [{
         date: '2026-08-18',
-        cells: [
-          { threadId: 10, updates: [{ id: 101, sourceLabel: 'Thread update' }] },
-          { threadId: 11, updates: [{ id: 102, sourceLabel: 'Ship safely' }] }
-        ]
+        threadId: 11,
+        id: 102,
+        sourceLabel: 'Ship safely',
+        preview: 'Nested evidence'
+      }, {
+        date: '2026-08-18',
+        threadId: 10,
+        id: 101,
+        sourceLabel: 'Thread update',
+        preview: 'Direct evidence'
       }]
     })
   })
