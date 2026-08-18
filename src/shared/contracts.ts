@@ -783,6 +783,8 @@ export interface FocusOverviewTimelineThreadSnapshot {
   title: string
   status: ThreadStatus
   sensitive: boolean
+  /** Current effective Subjects; an empty list means Thread-wide applicability. */
+  subjects: Array<Pick<SubjectSnapshot, 'id' | 'name'>>
 }
 
 export interface FocusOverviewTimelineUpdateSnapshot {
@@ -794,6 +796,11 @@ export interface FocusOverviewTimelineUpdateSnapshot {
   sensitive: boolean
   /** Includes sensitivity inherited from the Focus, Thread, or Commitment. */
   effectiveSensitive: boolean
+  /** Exact historical cell. Null identifies Thread-wide evidence. */
+  scope: {
+    scopeId: number
+    subject: Pick<SubjectSnapshot, 'id' | 'name'>
+  } | null
   source: {
     type: 'thread' | 'commitment'
     id: number

@@ -643,8 +643,20 @@ describe('Focus presentation adapters', () => {
     const snapshot: FocusOverviewTimelineSnapshot = {
       focusId: focus.id,
       threads: [
-        { id: 10, title: 'Sprint execution', status: 'active', sensitive: false },
-        { id: 11, title: 'Completed launch', status: 'done', sensitive: false }
+        {
+          id: 10,
+          title: 'Sprint execution',
+          status: 'active',
+          sensitive: false,
+          subjects: [{ id: 50, name: 'North region' }]
+        },
+        {
+          id: 11,
+          title: 'Completed launch',
+          status: 'done',
+          sensitive: false,
+          subjects: []
+        }
       ],
       updates: [
         {
@@ -655,6 +667,7 @@ describe('Focus presentation adapters', () => {
           state: 'green',
           sensitive: false,
           effectiveSensitive: false,
+          scope: { scopeId: 4, subject: { id: 51, name: 'South region' } },
           source: { type: 'thread', id: 10, title: 'Sprint execution' }
         },
         {
@@ -665,6 +678,7 @@ describe('Focus presentation adapters', () => {
           state: 'yellow',
           sensitive: false,
           effectiveSensitive: false,
+          scope: null,
           source: { type: 'commitment', id: 20, title: 'Ship safely' }
         }
       ]
@@ -672,12 +686,20 @@ describe('Focus presentation adapters', () => {
 
     expect(focusOverviewTimelineModel(snapshot)).toMatchObject({
       threads: [
-        { id: 10, closed: false },
-        { id: 11, closed: true }
+        {
+          id: 10,
+          closed: false,
+          tracks: [
+            { subjectId: 50, name: 'North region' },
+            { subjectId: 51, name: 'South region' }
+          ]
+        },
+        { id: 11, closed: true, tracks: [{ subjectId: null, name: 'Thread-wide' }] }
       ],
       updates: [{
         date: '2026-08-18',
         threadId: 11,
+        subjectId: null,
         id: 102,
         sourceLabel: 'Completed launch › Ship safely',
         sourceKind: 'commitment',
@@ -685,6 +707,7 @@ describe('Focus presentation adapters', () => {
       }, {
         date: '2026-08-18',
         threadId: 10,
+        subjectId: 51,
         id: 101,
         sourceLabel: 'Sprint execution',
         sourceKind: 'thread',

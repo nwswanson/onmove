@@ -11,13 +11,30 @@ import { focusTimelineThreadColors } from '../../src/renderer/src/features/focus
 
 const model: FocusOverviewTimelineModel = {
   threads: [
-    { id: 1, title: 'Delivery', statusLabel: 'Active', closed: false },
-    { id: 2, title: 'Discovery', statusLabel: 'Done', closed: true }
+    {
+      id: 1,
+      title: 'Delivery',
+      statusLabel: 'Active',
+      closed: false,
+      tracks: [
+        { subjectId: 101, name: 'North region' },
+        { subjectId: 102, name: 'South region' }
+      ]
+    },
+    {
+      id: 2,
+      title: 'Discovery',
+      statusLabel: 'Done',
+      closed: true,
+      tracks: [{ subjectId: null, name: 'Thread-wide' }]
+    }
   ],
   updates: [
     {
       id: 9,
       threadId: 1,
+      subjectId: 101,
+      subjectName: 'North region',
       date: '2026-08-12',
       dateLabel: 'Aug 12, 2026',
       observation: 'Delivery was blocked.',
@@ -29,6 +46,8 @@ const model: FocusOverviewTimelineModel = {
     {
       id: 10,
       threadId: 1,
+      subjectId: 102,
+      subjectName: 'South region',
       date: '2026-08-18',
       dateLabel: 'Aug 18, 2026',
       observation: 'The complete delivery update contains detail that belongs in the popup.',
@@ -40,6 +59,8 @@ const model: FocusOverviewTimelineModel = {
     {
       id: 11,
       threadId: 2,
+      subjectId: null,
+      subjectName: 'Thread-wide',
       date: '2026-08-18',
       dateLabel: 'Aug 18, 2026',
       observation: 'Discovery is complete.',
@@ -57,7 +78,8 @@ describe('FocusOverviewTimeline', () => {
       id: index + 1,
       title: `Thread ${index + 1}`,
       statusLabel: 'Active',
-      closed: false
+      closed: false,
+      tracks: [{ subjectId: null, name: 'Thread-wide' }]
     }))
     const colors = focusTimelineThreadColors(threads)
     const reorderedColors = focusTimelineThreadColors([...threads].reverse())
@@ -105,20 +127,35 @@ describe('FocusOverviewTimeline', () => {
     render(<FocusOverviewTimeline model={model} onOpenThread={vi.fn()} />)
     const firstThreadRails = screen.getAllByTestId('thread-rail-1')
     const secondThreadRails = screen.getAllByTestId('thread-rail-2')
-    const firstRailX = Number(firstThreadRails[0]?.getAttribute('x1'))
+    const northRail = firstThreadRails.find((rail) => rail.dataset.subjectId === '101')!
+    const southRail = firstThreadRails.find((rail) => rail.dataset.subjectId === '102')!
+    const northRailX = Number(northRail.getAttribute('x1'))
+    const southRailX = Number(southRail.getAttribute('x1'))
     const secondRailX = Number(secondThreadRails[0]?.getAttribute('x1'))
     const bubbles = screen.getAllByRole('button', { name: /^Read / })
 
-    expect(firstRailX).toBeLessThan(secondRailX)
-    expect(secondRailX - firstRailX).toBeLessThanOrEqual(46)
+    expect(southRailX - northRailX).toBeGreaterThanOrEqual(3)
+    expect(southRailX - northRailX).toBeLessThanOrEqual(6)
+    expect(secondRailX - southRailX).toBeLessThanOrEqual(46)
     expect(new Set(bubbles.map((bubble) => bubble.getAttribute('data-side')))).toEqual(
       new Set(['left'])
     )
     expect(firstThreadRails.map((rail) => rail.getAttribute('data-state'))).toEqual([
-      'green',
       'red',
+      'none',
+      'green',
       'none'
     ])
+    expect(northRail.querySelector('title')).toHaveTextContent('North region')
+    expect(southRail.querySelector('title')).toHaveTextContent('South region')
+    expect(screen.queryByRole('button', { name: 'North region timeline rail' }))
+      .not.toBeInTheDocument()
+    expect(screen.getByRole('button', {
+      name: 'Read Delivery update from Aug 12, 2026'
+    })).toHaveAttribute('data-subject-id', '101')
+    expect(screen.getByRole('button', {
+      name: 'Read Delivery update from Aug 18, 2026'
+    })).toHaveAttribute('data-subject-id', '102')
     expect(screen.getByTestId('timeline-sticky-thread-headers')).toHaveClass('sticky')
     expect(screen.getAllByText('Aug 18, 2026')).toHaveLength(1)
     expect(bubbles.at(-1)).toHaveAccessibleName('Read Delivery update from Aug 12, 2026')
@@ -151,9 +188,11 @@ describe('FocusOverviewTimeline', () => {
     expect(screen.queryByText('Delivery was blocked.')).not.toBeInTheDocument()
     expect(screen.queryByText('The complete delivery update…')).not.toBeInTheDocument()
     expect(screen.getByText('Discovery is complete.')).toBeVisible()
-    expect(screen.getAllByTestId('thread-rail-1')).toHaveLength(1)
-    expect(screen.getByTestId('thread-rail-1')).toHaveAttribute('data-filtered', 'true')
-    expect(screen.getByTestId('thread-rail-1')).toHaveClass('stroke-muted-foreground/30')
+    expect(screen.getAllByTestId('thread-rail-1')).toHaveLength(2)
+    for (const rail of screen.getAllByTestId('thread-rail-1')) {
+      expect(rail).toHaveAttribute('data-filtered', 'true')
+      expect(rail).toHaveClass('stroke-muted-foreground/30')
+    }
 
     await user.click(deliveryFilter)
 

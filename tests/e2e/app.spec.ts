@@ -199,31 +199,58 @@ test('renders a read-only Focus timeline and opens active or archived Threads', 
     type: 'tracking',
     title: 'Deleted launch check'
   })
-  for (const [parent, date, observation, state] of [
-    [{ type: 'thread', id: active.id }, '2026-08-11', 'Delivery was blocked', 'red'],
-    [{ type: 'thread', id: active.id }, '2026-08-18', 'Direct launch evidence', 'green'],
-    [{ type: 'commitment', id: commitment.id }, '2026-08-18', 'Nested launch evidence', 'yellow'],
-    [{ type: 'thread', id: completed.id }, '2026-08-18', 'Discovery was closed cleanly', 'none']
-  ] as const) {
-    seeded.domain.updates.create({
-      parent,
-      date,
-      observation,
-      state
-    })
-  }
+  const scopeDate = new Date('2026-08-01T12:00:00.000Z')
+  seeded.domain.threadScopes.addSubject(active.id, { name: 'North region' }, scopeDate)
+  const regionalScope = seeded.domain.threadScopes.addSubject(
+    active.id,
+    { name: 'South region' },
+    scopeDate
+  )
+  const north = regionalScope.subjects.find(({ name }) => name === 'North region')!
+  const south = regionalScope.subjects.find(({ name }) => name === 'South region')!
+  const northCell = { scopeId: regionalScope.scopeId!, subjectId: north.id }
+  const southCell = { scopeId: regionalScope.scopeId!, subjectId: south.id }
+  seeded.domain.updates.create({
+    parent: { type: 'thread', id: active.id },
+    date: '2026-08-11',
+    observation: 'Delivery was blocked',
+    state: 'red',
+    scope: northCell
+  }, scopeDate)
+  seeded.domain.updates.create({
+    parent: { type: 'thread', id: active.id },
+    date: '2026-08-18',
+    observation: 'Direct launch evidence',
+    state: 'green',
+    scope: northCell
+  }, scopeDate)
+  seeded.domain.updates.create({
+    parent: { type: 'commitment', id: commitment.id },
+    date: '2026-08-18',
+    observation: 'Nested launch evidence',
+    state: 'yellow',
+    scope: southCell
+  }, scopeDate)
+  seeded.domain.updates.create({
+    parent: { type: 'thread', id: completed.id },
+    date: '2026-08-18',
+    observation: 'Discovery was closed cleanly',
+    state: 'none'
+  })
   seeded.domain.updates.create({
     parent: { type: 'commitment', id: archivedCommitment.id },
     date: '2026-08-17',
     observation: 'Archived evidence must stay out of the timeline',
-    state: 'green'
-  })
+    state: 'green',
+    scope: southCell
+  }, scopeDate)
   seeded.domain.updates.create({
     parent: { type: 'commitment', id: deletedCommitment.id },
     date: '2026-08-17',
     observation: 'Deleted evidence must stay out of the timeline',
-    state: 'red'
-  })
+    state: 'red',
+    scope: northCell
+  }, scopeDate)
   seeded.domain.commitments.update(archivedCommitment.id, { status: 'done' })
   seeded.domain.commitments.delete(deletedCommitment.id)
   seeded.domain.threads.update(completed.id, { status: 'done' })
@@ -263,7 +290,7 @@ test('renders a read-only Focus timeline and opens active or archived Threads', 
     await expect(timeline.getByText('Discovery was closed cleanly')).toBeVisible()
     await expect(timeline.locator(
       `[data-testid="thread-rail-${active.id}"][data-filtered="true"]`
-    )).toHaveCount(1)
+    )).toHaveCount(2)
     await activeRailFilter.click()
     await expect(activeRailFilter).toHaveAttribute('aria-pressed', 'true')
     await expect(timeline.getByText('Direct launch evidence')).toBeVisible()
@@ -274,6 +301,8 @@ test('renders a read-only Focus timeline and opens active or archived Threads', 
     }).getAttribute('data-thread-color')
     expect(activeThreadColor).toBeTruthy()
     expect(activeThreadColor).not.toBe(completedThreadColor)
+    await expect(window.getByRole('button', { name: 'North region timeline rail' }))
+      .toHaveCount(0)
     await expect(timeline.getByTestId('timeline-sticky-thread-headers'))
       .toHaveCSS('position', 'sticky')
     await expect(timeline.locator(
@@ -282,13 +311,22 @@ test('renders a read-only Focus timeline and opens active or archived Threads', 
     await expect(timeline.locator(
       `[data-testid="thread-rail-${active.id}"][data-state="yellow"]`
     )).toHaveCount(1)
-    const activeRailX = Number(await timeline.locator(
-      `[data-testid="thread-rail-${active.id}"]`
-    ).first().getAttribute('x1'))
+    const northRail = timeline.locator(
+      `[data-testid="thread-rail-${active.id}"][data-subject-id="${north.id}"]`
+    ).first()
+    const southRail = timeline.locator(
+      `[data-testid="thread-rail-${active.id}"][data-subject-id="${south.id}"]`
+    ).first()
+    const northRailX = Number(await northRail.getAttribute('x1'))
+    const southRailX = Number(await southRail.getAttribute('x1'))
+    expect(southRailX - northRailX).toBeGreaterThanOrEqual(3)
+    expect(southRailX - northRailX).toBeLessThanOrEqual(6)
+    await expect(northRail.locator('title')).toHaveText('North region')
+    await expect(southRail.locator('title')).toHaveText('South region')
     const completedRailX = Number(await timeline.locator(
       `[data-testid="thread-rail-${completed.id}"]`
     ).first().getAttribute('x1'))
-    expect(completedRailX - activeRailX).toBeLessThanOrEqual(46)
+    expect(completedRailX - southRailX).toBeLessThanOrEqual(46)
     const directBubble = timeline.getByRole('button', {
       name: 'Read Current delivery update from Aug 18, 2026'
     })
@@ -297,6 +335,8 @@ test('renders a read-only Focus timeline and opens active or archived Threads', 
     })
     await expect(directBubble).toHaveAttribute('data-thread-color', activeThreadColor!)
     await expect(nestedBubble).toHaveAttribute('data-thread-color', activeThreadColor!)
+    await expect(directBubble).toHaveAttribute('data-subject-id', String(north.id))
+    await expect(nestedBubble).toHaveAttribute('data-subject-id', String(south.id))
     await expect(directBubble.getByRole('img', { name: 'Thread type' })).toBeVisible()
     await expect(nestedBubble.getByRole('img', { name: 'Commitment type' })).toBeVisible()
     const newestBubbleBox = await directBubble.boundingBox()

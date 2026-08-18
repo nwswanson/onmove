@@ -90,7 +90,10 @@ the Focus `lastReviewDate`; `pokeReview` records the local current date as revie
 Focus Overall retains status, due date, description, Focus Scope, and Notes. It owns no Goal,
 Commitment, Routine, Todo, Todo list, or direct Update. Its read-only timeline includes all child
 Threads, including done/cancelled Threads, and projects direct Thread plus descendant Commitment
-Updates onto centered vertical Thread rails without changing ownership. Compact evidence bubbles
+Updates onto centered vertical Thread rails without changing ownership. Each Thread remains one
+top-level rail group but expands into tightly spaced Subject tracks; exact Update Scope/Subject
+attribution selects the track, while unscoped history uses a Thread-wide fallback. Current and
+historically evidenced Subjects remain visible so Scope changes do not rewrite history. Compact evidence bubbles
 occupy one left lane and connect to dated rail points; state-colored rail intervals remain in effect
 until the next chronological Update state change even though the view orders newest first. Direct
 bubbles use the Thread title and icon; nested bubbles use `Thread › Commitment` and the Commitment

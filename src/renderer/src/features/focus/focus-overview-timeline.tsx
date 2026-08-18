@@ -9,6 +9,8 @@ import { cn } from '@/lib/utils'
 export interface FocusOverviewTimelineUpdateModel {
   id: number
   threadId: number
+  subjectId: number | null
+  subjectName: string
   date: string
   dateLabel: string
   observation: string
@@ -26,6 +28,12 @@ export interface FocusOverviewTimelineThreadModel {
   title: string
   statusLabel: string
   closed: boolean
+  tracks: FocusOverviewTimelineTrackModel[]
+}
+
+export interface FocusOverviewTimelineTrackModel {
+  subjectId: number | null
+  name: string
 }
 
 export interface FocusOverviewTimelineModel {
@@ -43,6 +51,8 @@ interface PositionedUpdate extends FocusOverviewTimelineUpdateModel {
 interface TimelinePoint {
   key: string
   threadId: number
+  subjectId: number | null
+  subjectName: string
   x: number
   y: number
   state: FocusOverviewTimelineUpdateModel['state']
@@ -58,6 +68,8 @@ interface TimelineDateMarker {
 interface TimelineRailSegment {
   key: string
   threadId: number
+  subjectId: number | null
+  subjectName: string
   x: number
   y1: number
   y2: number
@@ -78,6 +90,7 @@ interface TimelineLayout {
 const BUBBLE_HEIGHT = 88
 const BUBBLE_GAP = 14
 const MAX_RAIL_GAP = 46
+const SUBJECT_TRACK_GAP = 5
 const DATE_GROUP_GAP = 64
 const DEFAULT_TIMELINE_WIDTH = 960
 const NEUTRAL_STATE: FocusOverviewTimelineUpdateModel['state'] = {
@@ -118,6 +131,16 @@ function dateSpacing(firstDate: string, secondDate: string): number {
   return Math.min(150, DATE_GROUP_GAP + Math.sqrt(dayDistance(firstDate, secondDate)) * 10)
 }
 
+function subjectTrackKey(threadId: number, subjectId: number | null): string {
+  return `${threadId}:${subjectId ?? 'thread-wide'}`
+}
+
+function threadTracks(thread: FocusOverviewTimelineThreadModel): FocusOverviewTimelineTrackModel[] {
+  return thread.tracks.length > 0
+    ? thread.tracks
+    : [{ subjectId: null, name: 'Thread-wide' }]
+}
+
 function buildFocusTimelineLayout(
   model: FocusOverviewTimelineModel,
   availableWidth: number
@@ -129,19 +152,41 @@ function buildFocusTimelineLayout(
   const bubbleX = sidePadding
   const minimumRailX = bubbleX + bubbleWidth + connectorGap
   const availableRailWidth = Math.max(0, width - minimumRailX - sidePadding)
+  const internalTrackSpan = model.threads.reduce(
+    (total, thread) => total + Math.max(0, threadTracks(thread).length - 1) * SUBJECT_TRACK_GAP,
+    0
+  )
   const railGap = model.threads.length <= 1
     ? 0
-    : Math.min(MAX_RAIL_GAP, availableRailWidth / (model.threads.length - 1))
-  const railSpan = Math.max(0, (model.threads.length - 1) * railGap)
+    : Math.min(
+        MAX_RAIL_GAP,
+        Math.max(18, (availableRailWidth - internalTrackSpan) / (model.threads.length - 1))
+      )
+  const railSpan = Math.max(
+    0,
+    internalTrackSpan + Math.max(0, model.threads.length - 1) * railGap
+  )
   const desiredRailCenter = width * 0.64
   const firstRailX = Math.min(
     width - sidePadding - railSpan,
     Math.max(minimumRailX, desiredRailCenter - railSpan / 2)
   )
-  const railXs = new Map(model.threads.map((thread, index) => [
-    thread.id,
-    firstRailX + index * railGap
-  ]))
+  const railXs = new Map<number, number>()
+  const trackXs = new Map<string, number>()
+  const trackIndexes = new Map<string, number>()
+  let trackCursor = firstRailX
+  let trackIndex = 0
+  model.threads.forEach((thread, threadIndex) => {
+    const tracks = threadTracks(thread)
+    tracks.forEach((track, index) => {
+      trackXs.set(subjectTrackKey(thread.id, track.subjectId), trackCursor + index * SUBJECT_TRACK_GAP)
+      trackIndexes.set(subjectTrackKey(thread.id, track.subjectId), trackIndex)
+      trackIndex += 1
+    })
+    const groupSpan = Math.max(0, tracks.length - 1) * SUBJECT_TRACK_GAP
+    railXs.set(thread.id, trackCursor + groupSpan / 2)
+    trackCursor += groupSpan + (threadIndex < model.threads.length - 1 ? railGap : 0)
+  })
   const threadIndexes = new Map(model.threads.map((thread, index) => [thread.id, index]))
   const dates = [...new Set(model.updates.map(({ date }) => date))].sort().reverse()
   const positionedUpdates: PositionedUpdate[] = []
@@ -154,6 +199,8 @@ function buildFocusTimelineLayout(
       .filter((update) => update.date === date)
       .sort((left, right) =>
         (threadIndexes.get(left.threadId) ?? 0) - (threadIndexes.get(right.threadId) ?? 0) ||
+        (trackIndexes.get(subjectTrackKey(left.threadId, left.subjectId)) ?? 0) -
+          (trackIndexes.get(subjectTrackKey(right.threadId, right.subjectId)) ?? 0) ||
         right.id - left.id)
     const groupHeight = Math.max(
       BUBBLE_HEIGHT,
@@ -166,25 +213,29 @@ function buildFocusTimelineLayout(
         ...update,
         bubbleX,
         bubbleY: groupTop + updateIndex * (BUBBLE_HEIGHT + BUBBLE_GAP),
-        pointX: railXs.get(update.threadId) ?? firstRailX,
+        pointX: trackXs.get(subjectTrackKey(update.threadId, update.subjectId)) ??
+          railXs.get(update.threadId) ?? firstRailX,
         pointY
       })
     })
 
-    const updatesByThread = new Map<number, FocusOverviewTimelineUpdateModel[]>()
+    const updatesByTrack = new Map<string, FocusOverviewTimelineUpdateModel[]>()
     dateUpdates.forEach((update) => {
-      updatesByThread.set(update.threadId, [
-        ...(updatesByThread.get(update.threadId) ?? []),
+      const key = subjectTrackKey(update.threadId, update.subjectId)
+      updatesByTrack.set(key, [
+        ...(updatesByTrack.get(key) ?? []),
         update
       ])
     })
-    updatesByThread.forEach((threadUpdates, threadId) => {
-      const effectiveUpdate = threadUpdates.reduce((latest, update) =>
+    updatesByTrack.forEach((trackUpdates, key) => {
+      const effectiveUpdate = trackUpdates.reduce((latest, update) =>
         update.id > latest.id ? update : latest)
       points.push({
-        key: `${threadId}:${date}`,
-        threadId,
-        x: railXs.get(threadId) ?? firstRailX,
+        key: `${key}:${date}`,
+        threadId: effectiveUpdate.threadId,
+        subjectId: effectiveUpdate.subjectId,
+        subjectName: effectiveUpdate.subjectName,
+        x: trackXs.get(key) ?? railXs.get(effectiveUpdate.threadId) ?? firstRailX,
         y: pointY,
         state: effectiveUpdate?.state ?? NEUTRAL_STATE
       })
@@ -201,48 +252,59 @@ function buildFocusTimelineLayout(
   })
 
   const height = dates.length === 0 ? 240 : groupTop + 52
-  const railSegments = model.threads.flatMap((thread) => {
-    const x = railXs.get(thread.id) ?? firstRailX
-    const threadPoints = points
-      .filter((point) => point.threadId === thread.id)
-      .sort((left, right) => left.y - right.y)
-    if (threadPoints.length === 0) {
-      return [{
-        key: `${thread.id}:empty`,
-        threadId: thread.id,
-        x,
-        y1: 0,
-        y2: height - 20,
-        state: NEUTRAL_STATE
-      }]
-    }
-    return [
-      {
-        key: `${thread.id}:current`,
-        threadId: thread.id,
-        x,
-        y1: 0,
-        y2: threadPoints[0]?.y ?? 0,
-        state: threadPoints[0]?.state ?? NEUTRAL_STATE
-      },
-      ...threadPoints.slice(0, -1).map((point, index) => ({
-        key: `${thread.id}:${index}`,
-        threadId: thread.id,
-        x,
-        y1: point.y,
-        y2: threadPoints[index + 1]?.y ?? point.y,
-        state: threadPoints[index + 1]?.state ?? NEUTRAL_STATE
-      })),
-      {
-        key: `${thread.id}:before-first-update`,
-        threadId: thread.id,
-        x,
-        y1: threadPoints.at(-1)?.y ?? 0,
-        y2: height - 20,
-        state: NEUTRAL_STATE
+  const railSegments = model.threads.flatMap((thread) =>
+    threadTracks(thread).flatMap((track) => {
+      const key = subjectTrackKey(thread.id, track.subjectId)
+      const x = trackXs.get(key) ?? railXs.get(thread.id) ?? firstRailX
+      const trackPoints = points
+        .filter((point) =>
+          point.threadId === thread.id && point.subjectId === track.subjectId)
+        .sort((left, right) => left.y - right.y)
+      if (trackPoints.length === 0) {
+        return [{
+          key: `${key}:empty`,
+          threadId: thread.id,
+          subjectId: track.subjectId,
+          subjectName: track.name,
+          x,
+          y1: 0,
+          y2: height - 20,
+          state: NEUTRAL_STATE
+        }]
       }
-    ]
-  })
+      return [
+        {
+          key: `${key}:current`,
+          threadId: thread.id,
+          subjectId: track.subjectId,
+          subjectName: track.name,
+          x,
+          y1: 0,
+          y2: trackPoints[0]?.y ?? 0,
+          state: trackPoints[0]?.state ?? NEUTRAL_STATE
+        },
+        ...trackPoints.slice(0, -1).map((point, index) => ({
+          key: `${key}:${index}`,
+          threadId: thread.id,
+          subjectId: track.subjectId,
+          subjectName: track.name,
+          x,
+          y1: point.y,
+          y2: trackPoints[index + 1]?.y ?? point.y,
+          state: trackPoints[index + 1]?.state ?? NEUTRAL_STATE
+        })),
+        {
+          key: `${key}:before-first-update`,
+          threadId: thread.id,
+          subjectId: track.subjectId,
+          subjectName: track.name,
+          x,
+          y1: trackPoints.at(-1)?.y ?? 0,
+          y2: height - 20,
+          state: NEUTRAL_STATE
+        }
+      ]
+    }))
 
   return {
     width,
@@ -450,25 +512,35 @@ export function FocusOverviewTimeline({
                 <line
                   key={segment.key}
                   data-testid={`thread-rail-${segment.threadId}`}
+                  data-subject-id={segment.subjectId ?? 'thread-wide'}
+                  data-subject-name={segment.subjectName}
                   data-state={segment.state.label.toLowerCase()}
                   data-filtered={hidden ? 'true' : 'false'}
+                  aria-label={`${segment.subjectName} track for ${thread?.title ?? 'Thread'}`}
                   x1={segment.x}
                   x2={segment.x}
                   y1={segment.y1}
                   y2={segment.y2}
-                  className={hidden
-                    ? 'stroke-muted-foreground/30'
-                    : stateToneClass(segment.state.tone, 'stroke')}
                   strokeWidth="4"
                   strokeOpacity={hidden ? '0.24' : thread?.closed ? '0.42' : '0.9'}
                   strokeLinecap="round"
-                />
+                  className={cn(
+                    'cursor-help',
+                    hidden
+                      ? 'stroke-muted-foreground/30'
+                      : stateToneClass(segment.state.tone, 'stroke')
+                  )}
+                >
+                  <title>{segment.subjectName}</title>
+                </line>
               )
             })}
             {layout.updates.map((update) => (
               <path
                 key={`connector:${update.id}`}
                 data-testid={`timeline-connector-${update.id}`}
+                data-subject-id={update.subjectId ?? 'thread-wide'}
+                data-subject-name={update.subjectName}
                 d={connectorPath(update, layout.bubbleWidth)}
                 fill="none"
                 className={stateToneClass(update.state.tone, 'stroke')}
@@ -497,7 +569,13 @@ export function FocusOverviewTimeline({
               </g>
             ))}
             {layout.points.map((point) => (
-              <g key={point.key}>
+              <g
+                key={point.key}
+                data-testid={`timeline-point-${point.key}`}
+                data-subject-id={point.subjectId ?? 'thread-wide'}
+                data-subject-name={point.subjectName}
+              >
+                <title>{`${point.subjectName} · ${point.state.label}`}</title>
                 <circle
                   cx={point.x}
                   cy={point.y}
@@ -527,6 +605,8 @@ export function FocusOverviewTimeline({
               type="button"
               data-side="left"
               data-thread-color={threadColors.get(update.threadId)}
+              data-subject-id={update.subjectId ?? 'thread-wide'}
+              data-subject-name={update.subjectName}
               className="absolute overflow-hidden rounded-xl border border-border/75 bg-card px-3.5 py-3 text-left shadow-sm transition hover:-translate-y-px hover:border-primary/55 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               style={{
                 left: update.bubbleX,
@@ -566,7 +646,7 @@ export function FocusOverviewTimeline({
         open={selectedUpdate !== null}
         title={selectedUpdate ? updateTitle(selectedUpdate.sourceLabel) : 'Update'}
         description={selectedUpdate && selectedThread
-          ? `${selectedThread.title} · ${selectedUpdate.dateLabel}`
+          ? `${selectedThread.title} · ${selectedUpdate.subjectName} · ${selectedUpdate.dateLabel}`
           : undefined}
         contentClassName="max-w-2xl"
         onClose={() => setSelectedUpdateId(null)}

@@ -104,20 +104,38 @@ export function focusOverviewTimelineModel(
   snapshot: FocusOverviewTimelineSnapshot,
   hideSensitiveContent = false
 ): FocusOverviewTimelineModel {
-  const threads = snapshot.threads
+  const visibleThreadSnapshots = snapshot.threads
     .filter((thread) => !hideSensitiveContent || !thread.sensitive)
-    .map((thread) => ({
-      id: thread.id,
-      title: thread.title,
-      statusLabel: workStatusLabel(thread.status).label,
-      closed: thread.status === 'done' || thread.status === 'cancelled'
-    }))
-  const visibleThreadIds = new Set(threads.map(({ id }) => id))
-  const threadTitles = new Map(threads.map(({ id, title }) => [id, title]))
+  const visibleThreadIds = new Set(visibleThreadSnapshots.map(({ id }) => id))
+  const threadTitles = new Map(visibleThreadSnapshots.map(({ id, title }) => [id, title]))
   const updates = snapshot.updates.filter((update) =>
     visibleThreadIds.has(update.threadId) &&
     (!hideSensitiveContent || !update.effectiveSensitive)
   )
+  const threads = visibleThreadSnapshots.map((thread) => {
+    const historicalSubjects = updates
+      .filter((update) => update.threadId === thread.id && update.scope !== null)
+      .map((update) => update.scope!.subject)
+    const subjects = new Map([
+      ...thread.subjects,
+      ...historicalSubjects
+    ].map((subject) => [subject.id, subject]))
+    const hasThreadWideEvidence = updates.some((update) =>
+      update.threadId === thread.id && update.scope === null)
+    const tracks: FocusOverviewTimelineModel['threads'][number]['tracks'] = [...subjects.values()]
+      .sort((left, right) => left.name.localeCompare(right.name) || left.id - right.id)
+      .map((subject) => ({ subjectId: subject.id, name: subject.name }))
+    if (tracks.length === 0 || hasThreadWideEvidence) {
+      tracks.unshift({ subjectId: null, name: 'Thread-wide' })
+    }
+    return {
+      id: thread.id,
+      title: thread.title,
+      statusLabel: workStatusLabel(thread.status).label,
+      closed: thread.status === 'done' || thread.status === 'cancelled',
+      tracks
+    }
+  })
 
   return {
     threads,
@@ -126,6 +144,8 @@ export function focusOverviewTimelineModel(
       .map((update) => ({
         id: update.id,
         threadId: update.threadId,
+        subjectId: update.scope?.subject.id ?? null,
+        subjectName: update.scope?.subject.name ?? 'Thread-wide',
         date: update.date,
         dateLabel: timelineDateLabel(update.date),
         observation: update.observation,

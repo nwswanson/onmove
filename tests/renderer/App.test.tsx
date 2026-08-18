@@ -3927,6 +3927,19 @@ describe('App', () => {
       subjects: subjectApplied ? [customerOperations] : [],
       focusSubjects: subjectApplied ? [customerOperations] : []
     }))
+    const getFocusOverviewTimeline = vi.fn(async () => ({
+      focusId: current.id,
+      threads: [{
+        id: sprint.id,
+        title: sprint.title,
+        status: sprint.status,
+        sensitive: sprint.sensitive,
+        subjects: subjectApplied
+          ? [{ id: customerOperations.id, name: customerOperations.name }]
+          : []
+      }],
+      updates: []
+    }))
     installApi({
       listFocuses: vi.fn().mockResolvedValue([current]),
       listThreads: vi.fn().mockResolvedValue([sprint]),
@@ -3938,7 +3951,8 @@ describe('App', () => {
       }),
       addFocusScopeSubject,
       removeFocusScopeSubject,
-      getThreadScope
+      getThreadScope,
+      getFocusOverviewTimeline
     })
     const user = userEvent.setup()
     render(<App />)
@@ -3955,6 +3969,8 @@ describe('App', () => {
     expect(screen.getByText('1 Subject in scope')).toBeVisible()
     expect(subjectInput).toHaveValue('')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId(`thread-rail-${sprint.id}`))
+      .toHaveAttribute('data-subject-name', 'Customer Operations'))
 
     await user.click(screen.getByRole('button', { name: /^Sprint execution$/ }))
     expect(await screen.findByRole('tab', { name: 'Work in Customer Operations' })).toBeVisible()
@@ -3973,6 +3989,8 @@ describe('App', () => {
       'aria-current',
       'page'
     )
+    await waitFor(() => expect(screen.getByTestId(`thread-rail-${sprint.id}`))
+      .toHaveAttribute('data-subject-name', 'Thread-wide'))
     await user.click(screen.getByRole('button', { name: /^Sprint execution$/ }))
     expect(screen.queryByRole('tablist', { name: 'Thread working context' }))
       .not.toBeInTheDocument()
@@ -4067,8 +4085,20 @@ describe('App', () => {
       getFocusOverviewTimeline: vi.fn().mockResolvedValue({
         focusId: current.id,
         threads: [
-          { id: activeThread.id, title: activeThread.title, status: 'active', sensitive: false },
-          { id: closedThread.id, title: closedThread.title, status: 'done', sensitive: false }
+          {
+            id: activeThread.id,
+            title: activeThread.title,
+            status: 'active',
+            sensitive: false,
+            subjects: []
+          },
+          {
+            id: closedThread.id,
+            title: closedThread.title,
+            status: 'done',
+            sensitive: false,
+            subjects: []
+          }
         ],
         updates: [
           {
@@ -4079,6 +4109,7 @@ describe('App', () => {
             state: 'green',
             sensitive: false,
             effectiveSensitive: false,
+            scope: null,
             source: { type: 'thread', id: activeThread.id, title: activeThread.title }
           },
           {
@@ -4089,6 +4120,7 @@ describe('App', () => {
             state: 'yellow',
             sensitive: false,
             effectiveSensitive: false,
+            scope: null,
             source: { type: 'commitment', id: 21, title: 'Close the launch' }
           }
         ]

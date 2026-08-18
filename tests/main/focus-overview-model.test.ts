@@ -57,8 +57,14 @@ describe('Focus Overview timeline model', () => {
     expect(database!.domain.focusOverview.timeline(focus.id)).toEqual({
       focusId: focus.id,
       threads: [
-        { id: completed.id, title: 'Discovery', status: 'done', sensitive: true },
-        { id: sprint.id, title: 'Sprint execution', status: 'active', sensitive: false }
+        { id: completed.id, title: 'Discovery', status: 'done', sensitive: true, subjects: [] },
+        {
+          id: sprint.id,
+          title: 'Sprint execution',
+          status: 'active',
+          sensitive: false,
+          subjects: []
+        }
       ],
       updates: [
         {
@@ -69,6 +75,7 @@ describe('Focus Overview timeline model', () => {
           state: 'yellow',
           sensitive: false,
           effectiveSensitive: true,
+          scope: null,
           source: { type: 'commitment', id: commitment.id, title: 'Improve ticket quality' }
         },
         {
@@ -79,10 +86,74 @@ describe('Focus Overview timeline model', () => {
           state: 'green',
           sensitive: false,
           effectiveSensitive: false,
+          scope: null,
           source: { type: 'thread', id: sprint.id, title: 'Sprint execution' }
         }
       ]
     })
+  })
+
+  it('projects current Subjects and preserves each Update exact Subject cell', () => {
+    const now = new Date('2026-08-01T12:00:00.000Z')
+    const focus = database!.domain.focuses.create({ title: 'Project Atlas' })
+    database!.domain.focusScopes.addSubject(focus.id, { name: 'North region' }, now)
+    const scope = database!.domain.focusScopes.addSubject(
+      focus.id,
+      { name: 'South region' },
+      now
+    )
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Regional rollout',
+      reviewFrequencyDays: 7
+    }, now)
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'tracking',
+      title: 'Confirm readiness'
+    }, now)
+    const north = scope.subjects.find(({ name }) => name === 'North region')!
+    const south = scope.subjects.find(({ name }) => name === 'South region')!
+    const northUpdate = database!.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2026-08-18',
+      observation: 'North is ready.',
+      state: 'green',
+      scope: { scopeId: scope.scopeId!, subjectId: north.id }
+    }, now)
+    const southUpdate = database!.domain.updates.create({
+      parent: { type: 'commitment', id: commitment.id },
+      date: '2026-08-18',
+      observation: 'South remains blocked.',
+      state: 'red',
+      scope: { scopeId: scope.scopeId!, subjectId: south.id }
+    }, now)
+
+    const timeline = database!.domain.focusOverview.timeline(focus.id)
+
+    expect(timeline.threads).toEqual([expect.objectContaining({
+      id: thread.id,
+      subjects: [
+        { id: north.id, name: 'North region' },
+        { id: south.id, name: 'South region' }
+      ]
+    })])
+    expect(timeline.updates).toEqual([
+      expect.objectContaining({
+        id: southUpdate.id,
+        scope: {
+          scopeId: scope.scopeId,
+          subject: { id: south.id, name: 'South region' }
+        }
+      }),
+      expect.objectContaining({
+        id: northUpdate.id,
+        scope: {
+          scopeId: scope.scopeId,
+          subject: { id: north.id, name: 'North region' }
+        }
+      })
+    ])
   })
 
   it('validates the Focus boundary and removes a deleted Thread rail atomically', () => {

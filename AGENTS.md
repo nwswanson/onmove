@@ -90,8 +90,11 @@
   screen contains Focus status, due date, description, Focus Scope administration, and the Default
   note. It must not render or create a Goal, Commitment, Routine, Todo, or direct Focus Update.
   Render one read-only graphical timeline beneath that metadata: include every child Thread
-  regardless of lifecycle status and keep its continuous vertical rail in a tightly spaced center
-  rail group. Give the timeline the complete main-canvas width rather than the metadata column's
+  regardless of lifecycle status. A Thread owns one header/filter but its rail fans into one track
+  per current or historically evidenced Subject, spaced 3–6px apart; Thread-wide evidence uses an
+  explicit fallback track. Keep Subjects out of the top filter and expose each track's Subject name
+  through its native SVG hover title and accessible label. Give the timeline the complete main-canvas
+  width rather than the metadata column's
   maximum width. Bind SVG measurement to the mounted timeline element—not a one-shot screen mount—
   because Threads arrive asynchronously and Focus navigation can remove and recreate the canvas;
   keep it hidden until the live width is measured and never stretch SVG text with a mismatched

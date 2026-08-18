@@ -4,6 +4,7 @@ import type {
   ThreadStatus
 } from '../../shared/contracts'
 import { ModelNotFoundError, ModelValidationError } from './model'
+import { ThreadScopeRepository } from './scope-model'
 import type { SqliteAdapter } from './sqlite-adapter'
 
 interface FocusRow {
@@ -30,11 +31,18 @@ interface TimelineUpdateRow {
   source_type: 'thread' | 'commitment'
   source_id: number
   source_title: string
+  scope_id: number | null
+  subject_id: number | null
+  subject_name: string | null
 }
 
 /** One receiver-neutral projection for the Focus Overview timeline. */
 export class FocusOverviewRepository {
-  constructor(private readonly database: SqliteAdapter) {}
+  private readonly threadScopes: ThreadScopeRepository
+
+  constructor(private readonly database: SqliteAdapter) {
+    this.threadScopes = new ThreadScopeRepository(database)
+  }
 
   timeline(focusId: number): FocusOverviewTimelineSnapshot {
     if (!Number.isSafeInteger(focusId) || focusId <= 0) {
@@ -56,9 +64,11 @@ export class FocusOverviewRepository {
       `SELECT update_row.id, thread.id AS thread_id, update_row.recorded_on,
               update_row.observation, update_row.state, update_row.sensitive,
               thread.sensitive AS thread_sensitive, 0 AS commitment_sensitive,
-              'thread' AS source_type, thread.id AS source_id, thread.title AS source_title
+              'thread' AS source_type, thread.id AS source_id, thread.title AS source_title,
+              update_row.scope_id, update_row.subject_id, subject.name AS subject_name
        FROM updates update_row
        JOIN threads thread ON thread.id = update_row.thread_id
+       LEFT JOIN subjects subject ON subject.id = update_row.subject_id
        WHERE thread.focus_id = ?
        UNION ALL
        SELECT update_row.id, thread.id AS thread_id, update_row.recorded_on,
@@ -66,10 +76,12 @@ export class FocusOverviewRepository {
               thread.sensitive AS thread_sensitive,
               commitment.sensitive AS commitment_sensitive,
               'commitment' AS source_type, commitment.id AS source_id,
-              commitment.title AS source_title
+              commitment.title AS source_title,
+              update_row.scope_id, update_row.subject_id, subject.name AS subject_name
        FROM updates update_row
        JOIN commitments commitment ON commitment.id = update_row.commitment_id
        JOIN threads thread ON thread.id = commitment.thread_id
+       LEFT JOIN subjects subject ON subject.id = update_row.subject_id
        WHERE thread.focus_id = ?
          AND commitment.status NOT IN ('done', 'cancelled')
        ORDER BY 3 DESC, 1 DESC`,
@@ -82,7 +94,11 @@ export class FocusOverviewRepository {
         id: Number(thread.id),
         title: thread.title,
         status: thread.status as ThreadStatus,
-        sensitive: Boolean(thread.sensitive)
+        sensitive: Boolean(thread.sensitive),
+        subjects: this.threadScopes.get(Number(thread.id)).subjects.map(({ id, name }) => ({
+          id,
+          name
+        }))
       })),
       updates: updates.map((update) => ({
         id: Number(update.id),
@@ -97,6 +113,15 @@ export class FocusOverviewRepository {
           update.commitment_sensitive ||
           update.sensitive
         ),
+        scope: update.scope_id === null || update.subject_id === null
+          ? null
+          : {
+              scopeId: Number(update.scope_id),
+              subject: {
+                id: Number(update.subject_id),
+                name: update.subject_name ?? `Subject ${update.subject_id}`
+              }
+            },
         source: {
           type: update.source_type,
           id: Number(update.source_id),

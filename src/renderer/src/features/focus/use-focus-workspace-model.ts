@@ -298,9 +298,10 @@ export function useFocusWorkspaceModel({
 
   async function refreshFocusScopeDependents(): Promise<void> {
     const requestId = ++threadProjectionRequest.current
-    const [data, nextRoutines] = await Promise.all([
+    const [data, nextRoutines, nextTimeline] = await Promise.all([
       loadFocusThreadWorkspaceData(focus.id),
-      window.onmove.domain.listRoutines()
+      window.onmove.domain.listRoutines(),
+      window.onmove.domain.getFocusOverviewTimeline(focus.id)
     ])
     if (requestId !== threadProjectionRequest.current) return
     applyFocusThreadWorkspaceData(data)
@@ -308,6 +309,7 @@ export function useFocusWorkspaceModel({
     setRoutines(nextRoutines.filter((routine) =>
       routine.parent.type === 'thread' && threadIds.has(routine.parent.id)
     ))
+    setFocusTimeline(nextTimeline)
   }
 
   async function mutateFocusScope(
@@ -369,7 +371,8 @@ export function useFocusWorkspaceModel({
         id: created.id,
         title: created.title,
         status: created.status,
-        sensitive: created.sensitive
+        sensitive: created.sensitive,
+        subjects: scope.subjects.map(({ id, name }) => ({ id, name }))
       }]
     }))
     return created
@@ -387,6 +390,7 @@ export function useFocusWorkspaceModel({
       ...current,
       threads: current.threads.map((thread) => thread.id === updated.id
         ? {
+            ...thread,
             id: updated.id,
             title: updated.title,
             status: updated.status,

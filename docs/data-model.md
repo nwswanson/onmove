@@ -76,7 +76,11 @@ their original records; the projection is read-only. The renderer lays this proj
 vertical Thread rails, with compact left-lane bubbles connected to each recorded-date point and full
 rich text available only through the evidence popup. Rail intervals use the state established by
 each chronological Update until a later Update changes it; this is a view projection and does not
-persist a second state history. The projection orders newest first and omits Updates whose
+persist a second state history. A scoped Thread rail contains one tightly spaced track per Subject;
+each Update retains and targets its exact historical Scope/Subject cell. The snapshot includes the
+Thread's current Subjects and unions in historically evidenced Subjects so later Scope removal does
+not collapse or hide prior evidence. Unscoped history uses a distinct Thread-wide track. The
+projection orders newest first and omits Updates whose
 Commitment is done or cancelled; deletion already moves an Update into Update Archive, outside the
 live projection.
 
