@@ -1628,11 +1628,13 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
   }
 
   private assertParentExists(parent: CommitmentParent): void {
-    const table = parent.type === 'focus' ? 'focuses' : 'threads'
-    const row = this.database.get<ExistsRow>(`SELECT 1 AS found FROM ${table} WHERE id = ?`, [
+    if (parent.type === 'focus') {
+      throw new ModelValidationError('a Commitment must belong to a Thread')
+    }
+    const row = this.database.get<ExistsRow>('SELECT 1 AS found FROM threads WHERE id = ?', [
       parent.id
     ])
-    if (!row) throw new ModelNotFoundError(parent.type === 'focus' ? 'Focus' : 'Thread', parent.id)
+    if (!row) throw new ModelNotFoundError('Thread', parent.id)
   }
 
   private focusIdForParent(parent: CommitmentParent): number {
@@ -1794,12 +1796,10 @@ export class UpdateRepository extends BaseRepository<UpdateRecord, UpdateModel> 
   }
 
   private assertParentExists(parent: UpdateParent): void {
-    const table =
-      parent.type === 'focus'
-        ? 'focuses'
-        : parent.type === 'thread'
-          ? 'threads'
-          : 'commitments'
+    if (parent.type === 'focus') {
+      throw new ModelValidationError('an Update must belong to a Thread or Commitment')
+    }
+    const table = parent.type === 'thread' ? 'threads' : 'commitments'
     const row = this.database.get<ExistsRow>(`SELECT 1 AS found FROM ${table} WHERE id = ?`, [
       parent.id
     ])

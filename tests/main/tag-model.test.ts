@@ -37,8 +37,7 @@ describe('Tag model', () => {
   it('derives canonical tag uses and hierarchy links from every user-authored record kind', () => {
     const focus = database!.domain.focuses.create({
       title: 'Project @Atlas',
-      description: richText('Coordinate @Launch across the portfolio'),
-      goal: 'Reach @Launch safely'
+      description: richText('Coordinate @Launch across the portfolio')
     })
     const thread = database!.domain.threads.create({
       focusId: focus.id,
@@ -67,14 +66,13 @@ describe('Tag model', () => {
 
     expect(database!.domain.tags.list()).toEqual([
       { name: 'atlas', useCount: 1, sensitiveUseCount: 0 },
-      { name: 'launch', useCount: 7, sensitiveUseCount: 4 }
+      { name: 'launch', useCount: 6, sensitiveUseCount: 4 }
     ])
 
     const uses = database!.domain.tags.uses('launch')
-    expect(uses).toHaveLength(7)
+    expect(uses).toHaveLength(6)
     expect(uses.map(({ source }) => source)).toEqual(expect.arrayContaining([
       { type: 'focus', id: focus.id, field: 'description' },
-      { type: 'focus', id: focus.id, field: 'goal' },
       { type: 'thread', id: thread.id, field: 'title' },
       { type: 'commitment', id: commitment.id, field: 'title' },
       { type: 'update', id: update.id, field: 'observation' },
@@ -96,7 +94,7 @@ describe('Tag model', () => {
     const longContext = `${'before '.repeat(40)}@Launch ${'after '.repeat(40)}`
     const focus = database!.domain.focuses.create({
       title: '@Launch and @launch',
-      goal: richText(`${longContext} then @Launch again`)
+      description: richText(`${longContext} then @Launch again`)
     })
 
     const launchUses = database!.domain.tags.uses('Launch')
@@ -117,8 +115,13 @@ describe('Tag model', () => {
 
   it('removes cascaded uses without repair and rejects malformed lookup identifiers', () => {
     const focus = database!.domain.focuses.create({ title: 'Project' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Delivery',
+      reviewFrequencyDays: 7
+    })
     const commitment = database!.domain.commitments.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       type: 'tracking',
       title: 'Deliver @Gone'
     })

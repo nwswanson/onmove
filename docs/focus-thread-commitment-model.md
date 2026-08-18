@@ -24,14 +24,13 @@ The central idea is:
 - Focus and Thread applicability is explicit through a Scope application. The absence of a bounded
   Scope is represented by `open`, never by a missing row.
 - Threads either inherit their Focus's effective Scope or use a custom Focus-owned Scope. A Focus
-  cannot inherit. A Thread-owned Commitment always derives the Thread's current effective Scope;
-  a Focus-owned Commitment is always unscoped.
+  cannot inherit. Every Commitment derives its owning Thread's current effective Scope.
 - A bounded Thread or Commitment Update belongs to one exact Scope/Subject cell. The cell is required
   and is retained as historical attribution. A Thread with zero effective Subjects is operationally
   Thread-wide and may record direct unscoped evidence until Subjects become effective.
 - A bounded Thread has one independently scheduled review cell per currently effective Subject.
   Reviewing one Subject never satisfies another Subject's review obligation.
-- Direct Focus Updates remain aggregate observations and therefore have no Scope/Subject cell.
+- Focuses do not own Updates or executable child work; Overall is an overview boundary.
 - Lifecycle status and observed state are distinct. Status is audited; state is derived from Updates.
 - Health, review dates, cadence deadlines, and `needsUpdate`/`reviewDue` are projections and are not
   writable columns.
@@ -58,14 +57,12 @@ Focus
 │   │   └── Updates[]
 │   ├── Updates[]
 │   └── Todos[] (aggregate or exact Scope/Subject cell)
-├── Commitments[]
-│   └── Updates[]
-├── Updates[]
-└── Todos[]
+├── Scopes[]
+└── Notes[]
 ```
 
-A Commitment has exactly one parent: a Focus or a Thread. An Update has exactly one parent: a
-Focus, Thread, or Commitment. SQLite enforces both exclusive-parent rules.
+A Commitment or Routine has exactly one Thread parent. An Update has exactly one Thread or
+Commitment parent. SQLite and repository validation enforce both exclusive-parent rules.
 
 ## Canonical entities
 
@@ -79,18 +76,21 @@ deliberately end.
 | `kind` | Currently the single enum value `generic`. |
 | `title` | Required name. Duplicate titles are allowed. |
 | `description` | Optional rich-text-compatible notes. |
-| `goal` | The desired condition, stored in the existing rich-text-compatible text field. |
 | `status` | `active`, `paused`, `done`, or `cancelled`. |
 | `dueDate` | Optional planning boundary. It does not constrain descendant dates. |
 | `statusChangedAt` | Timestamp of the materialized lifecycle status. |
-| `lastReviewDate` | Later of the explicit Focus review poke or newest direct Focus Update, considering evidence on or before the projection date. |
+| `lastReviewDate` | The latest explicit Focus review poke. |
 | `needsReview` | Whether review workflows should include the Focus. Independent of status. |
 | `sensitive` | Presentation classification; it does not change ownership or persistence. |
 | `createdAt`, `updatedAt` | Durable timestamps. |
 
-Focus completion is not blocked by active Threads or Commitments. Direct Focus Updates represent
-aggregate Focus-level judgments; descendant Updates do not advance `lastReviewDate`. `pokeReview`
-records the local current date as review evidence without creating an Update.
+Focus completion is not blocked by active Threads or Commitments. Descendant Updates do not advance
+the Focus `lastReviewDate`; `pokeReview` records the local current date as review evidence.
+
+Focus Overall retains status, due date, description, Focus Scope, and Notes. It owns no Goal,
+Commitment, Routine, Todo, Todo list, or direct Update. Its read-only timeline includes all child
+Threads, including done/cancelled Threads, and projects direct Thread plus descendant Commitment
+Updates into date rows and Thread rails without changing ownership.
 
 Every Focus owns zero or more named Scope definitions. Its Scope application may be `open`,
 `explicit`, or `derived`. A Focus cannot use `inherited` because it has no parent in this model.
@@ -208,9 +208,9 @@ child becomes effectively Open. If the parent selects another Scope, the child f
 not mutate the child's application row or silently mutate the parent.
 
 When a new Thread is created, it may inherit its Focus or declare a valid custom application. When a
-Commitment is created, creation order is deliberately irrelevant: a Thread-owned Commitment is
-always stored as `inherited`, even while the Thread is Open, so a later Thread Scope immediately
-materializes on every existing Commitment. A Focus-owned Commitment is always stored as `open`.
+Commitment is created, creation order is deliberately irrelevant: it is always stored as
+`inherited`, even while the Thread is Open, so a later Thread Scope immediately materializes on
+every existing Commitment.
 `CreateCommitmentInput` has no Scope field, and both repository validation and SQLite triggers reject
 direct Commitment application changes.
 
@@ -291,7 +291,7 @@ todo and does not block its parent from closing.
 
 | Field | Meaning |
 | --- | --- |
-| `parent` | Exactly one Focus or Thread. |
+| `parent` | Exactly one Thread. |
 | `type` | Durable behavior discriminator. `tracking` uses the evidence/cadence model in this section; `routine` uses immutable scheduled attestation Runs. |
 | `title` | Required statement of what is expected. |
 | `status` | `active`, `paused`, `done`, or `cancelled`, with transition history. |
@@ -310,7 +310,7 @@ todo and does not block its parent from closing.
 | `createdAt`, `updatedAt` | Durable timestamps. |
 
 Due dates are deliberately non-constraining across the hierarchy. A Thread may extend beyond its
-Focus, and a Commitment may extend beyond its direct Focus or Thread parent. The selected entity's
+Focus, and a Commitment may extend beyond its direct Thread parent. The selected entity's
 main screen compares only the direct parent and presents an accessible warning tooltip; persistence,
 reparenting, and import never clip or reject the child date for this reason.
 
@@ -370,18 +370,17 @@ model.
 
 | Field | Meaning |
 | --- | --- |
-| `parent` | Exactly one Focus, Thread, or Commitment. Immutable after creation. |
+| `parent` | Exactly one Thread or Commitment. Immutable after creation. |
 | `date` | `YYYY-MM-DD`, defaulting to the local current date; past and future dates are valid. |
 | `observation` | Optional rich-text-compatible text. Blank and state-only Updates are valid. |
 | `state` | `red`, `yellow`, `green`, or `none`; defaults to `none`. |
 | `sensitive` | Presentation classification. |
-| `scope` | Exact `{scopeId, subjectId}` attribution for bounded cells; `null` for Focus, Open-parent, and zero-Subject Thread-wide evidence. |
+| `scope` | Exact `{scopeId, subjectId}` attribution for bounded cells; `null` for Open-parent and zero-Subject Thread-wide evidence. |
 | `createdAt` | Durable insertion timestamp and same-day tie breaker. |
 
 Creation validation uses the parent's current effective application and tests membership on the
 Update date:
 
-- a direct Focus Update must be unscoped;
 - an Open Thread or Commitment Update must be unscoped;
 - a bounded Thread or Commitment Update must provide both Scope and Subject ids, except a direct
   Thread Update recorded when its effective Scope has zero Subjects is unscoped;
@@ -398,14 +397,14 @@ blocked while that evidence exists.
 
 Update ordering is by recorded date and then id. Commitment projections intentionally accept a
 future-dated Update as the latest evidence immediately, preserving the existing deferral behavior.
-Focus and Thread review projections are evaluated as of a supplied date and ignore observations
+Thread review projections are evaluated as of a supplied date and ignore observations
 after that projection date.
 
 ### Todo
 
 A Todo is an executable reminder, not evidence and not a Commitment. It has a required name, one
 immutable parent context, an optional due date, a boolean `done`, and independent sort placements.
-It may belong to a Focus, Thread, Commitment, Thread Scope/Subject cell, or Commitment Scope/Subject
+It may belong to a Thread, Commitment, Thread Scope/Subject cell, or Commitment Scope/Subject
 cell. A scoped Todo is returned both in its exact-cell list and its entity aggregate list.
 
 `completedAt` is durable transition evidence rather than an alias for `updatedAt`. Completing an
@@ -457,7 +456,7 @@ entity cascades its transition history.
 
 ## Review and cadence calculations
 
-- Focus review uses its direct Focus Updates plus its latest explicit poke.
+- Focus review uses only its latest explicit poke.
 - Open and zero-Subject Thread review uses its direct unscoped Update stream plus its latest explicit
   poke; the resulting latest date supplies the aggregate deadline.
 - Bounded Thread review is based on one independently scheduled direct-Update cell per effective
@@ -478,7 +477,8 @@ entity cascades its transition history.
   their respective review-frequency due state. Applicable Update or poke evidence dated today suppresses that
   exact target for the day. Enabled active Focuses follow the same-day suppression rule and return
   daily because they have no separate frequency.
-- Review exposes the target's direct Todos in the aggregate or exact Scope/Subject context. A
+- Review exposes direct Todos only for Thread and Commitment targets in the aggregate or exact
+  Scope/Subject context. A Focus target has no Todo or Update action and is acknowledged by Pass. A
   successful Todo mutation records an explicit review poke for that same target without creating
   Update evidence, changing derived state, or satisfying cadence. The active review item remains
   open so several Todo changes can be made before the reviewer explicitly advances.
@@ -486,15 +486,15 @@ entity cascades its transition history.
 
 ## Commitment parent moves
 
-A Commitment can move among Overall and Threads within one Focus through a two-step plan/move API.
+A Commitment can move between Threads within one Focus through a two-step plan/move API.
 The plan compares canonical Subject coverage, reports attached Update/Todo/Note counts, and lists any
 Subjects the destination would need to add. Exact and superset destinations move immediately;
-missing Subjects require confirmation of the exact planned ids. Confirmed Thread widening creates
-an isolated overlay, while confirmed Overall widening adds the missing Subjects to the Focus Scope.
+missing Subjects require confirmation of the exact planned ids. Confirmed widening creates an
+isolated Thread overlay.
 
 Updates, Todos, and Notes remain owned by the same Commitment id, so their identities, contents,
 sort placements, and exact historical Scope cells survive without copying. The Commitment's derived
-application synchronizes to `inherited` under a Thread or `open` under Overall. Immutable
+application remains synchronized to `inherited` under its Thread. Immutable
 `commitment_parent_transitions` record the initial parent and each actual move. SQLite rejects a
 cross-Focus reparent even below the repository boundary.
 
@@ -529,11 +529,11 @@ full cascade.
 
 ## Deletion and historical integrity
 
-- Deleting a Focus cascades its Threads, Focus- and Thread-owned Commitments, live Updates, status
+- Deleting a Focus cascades its Threads, their Commitments, live Updates, status
   histories, Scope definitions, memberships, and Scope applications. Every live Update is copied
   into the foreign-key-free Update archive before the cascade removes it.
 - Deleting a Thread cascades its direct live Updates, Commitments, their live Updates, histories,
-  and Scope applications. It does not delete Focus-owned Commitments; its Updates are archived.
+  and Scope applications. Its Updates are archived.
 - Deleting a Commitment cascades its live Updates, status history, and Scope application after the
   Updates have been archived.
 - Thread and Commitment deletion also cascades their Scope-application transition history. It does
@@ -571,6 +571,7 @@ database.domain.focusScopes
 database.domain.threadScopes
 database.domain.focuses
 database.domain.threads
+database.domain.focusOverview
 database.domain.commitments
 database.domain.updates
 database.domain.todos
@@ -606,7 +607,7 @@ Thread and Commitment inherit the same population, and each Update records the e
 ```ts
 const focus = database.domain.focuses.create({
   title: 'Maintain meaningful career development across my team',
-  goal: 'Every report has a current direction and a credible next step.'
+  description: 'Keep direction, evidence, and follow-through visible.'
 })
 
 const alex = database.domain.subjects.create({ kind: 'person', name: 'Alex' })

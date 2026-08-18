@@ -3,6 +3,7 @@ import type {
   CommitmentWorkingContextSnapshot,
   FocusSnapshot,
   FocusScopeSnapshot,
+  FocusOverviewTimelineSnapshot,
   FocusStatus,
   HealthState,
   RoutineSnapshot,
@@ -32,6 +33,7 @@ import type {
   SemanticSunflowerTone
 } from '@/components/ui/sunflower'
 import type { CommitmentCollectionModel } from '@/features/focus/commitment-ui'
+import type { FocusOverviewTimelineModel } from '@/features/focus/focus-overview-timeline'
 import type {
   FocusScopeEditorModel
 } from '@/features/focus/focus-scope-ui'
@@ -80,6 +82,56 @@ export function focusScopeEditorModel(scope: FocusScopeSnapshot): FocusScopeEdit
       ? 'Open scope — add a Subject to define its boundary.'
       : subjectCountLabel(scope.subjects.length),
     subjects: scope.subjects.map(({ id, name }) => ({ id, name }))
+  }
+}
+
+function timelineDateLabel(value: string): string {
+  const [year, month, day] = value.split('-').map(Number)
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  }).format(new Date(year, month - 1, day))
+}
+
+export function focusOverviewTimelineModel(
+  snapshot: FocusOverviewTimelineSnapshot,
+  hideSensitiveContent = false
+): FocusOverviewTimelineModel {
+  const threads = snapshot.threads
+    .filter((thread) => !hideSensitiveContent || !thread.sensitive)
+    .map((thread) => ({
+      id: thread.id,
+      title: thread.title,
+      statusLabel: workStatusLabel(thread.status).label,
+      closed: thread.status === 'done' || thread.status === 'cancelled'
+    }))
+  const visibleThreadIds = new Set(threads.map(({ id }) => id))
+  const updates = snapshot.updates.filter((update) =>
+    visibleThreadIds.has(update.threadId) &&
+    (!hideSensitiveContent || !update.effectiveSensitive)
+  )
+  const dates = [...new Set(updates.map(({ date }) => date))].sort().reverse()
+
+  return {
+    threads,
+    rows: dates.map((date) => ({
+      date,
+      dateLabel: timelineDateLabel(date),
+      cells: threads.map((thread) => ({
+        threadId: thread.id,
+        updates: updates
+          .filter((update) => update.threadId === thread.id && update.date === date)
+          .map((update) => ({
+            id: update.id,
+            observation: update.observation,
+            sourceLabel: update.source.type === 'thread'
+              ? 'Thread update'
+              : update.source.title,
+            state: healthStateLabel(update.state)
+          }))
+      }))
+    }))
   }
 }
 
@@ -288,6 +340,28 @@ function workContextMenuItems(
   ]
 }
 
+function overviewContextMenuItems(
+  sensitive: boolean,
+  needsReview: boolean
+): SidebarContextMenuItemModel[] {
+  return [
+    {
+      kind: 'checkbox',
+      id: 'needs-review',
+      label: 'Needs review',
+      icon: 'review',
+      checked: needsReview
+    },
+    {
+      kind: 'checkbox',
+      id: 'sensitive',
+      label: 'Sensitive',
+      icon: 'sensitive',
+      checked: sensitive
+    }
+  ]
+}
+
 function childWorkContextMenu(
   label: string,
   type: 'Commitment' | 'Routine',
@@ -386,17 +460,8 @@ export function focusContextSidebarItems(
       icon: 'overview',
       contextMenu: {
         ariaLabel: 'Overall actions',
-        items: workContextMenuItems(focusSensitive, focusNeedsReview, false)
+        items: overviewContextMenuItems(focusSensitive, focusNeedsReview)
       },
-      ...(commitmentsByItemId || routinesByItemId
-        ? {
-            childCollection: contextWorkChildCollection(
-              'Overall',
-              commitmentsByItemId?.overall ?? [],
-              routinesByItemId?.overall ?? []
-            )
-          }
-        : {}),
       group: { id: 'focus', label: 'Focus' }
     },
     ...[...threads]

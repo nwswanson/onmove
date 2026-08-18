@@ -83,6 +83,9 @@ describe('registerAppIpc', () => {
             subjects: []
           }))
         },
+        focusOverview: {
+          timeline: vi.fn((focusId: number) => ({ focusId, threads: [], updates: [] }))
+        },
         threadScopes: {
           get: vi.fn(() => ({
             threadId: 21,
@@ -301,9 +304,9 @@ describe('registerAppIpc', () => {
         tags: {
           list: vi.fn(() => [{ name: 'launch', useCount: 2, sensitiveUseCount: 0 }]),
           uses: vi.fn(() => [{
-            id: 'focus:12:goal:launch',
+            id: 'focus:12:description:launch',
             name: 'launch',
-            source: { type: 'focus', id: 12, field: 'goal' },
+            source: { type: 'focus', id: 12, field: 'description' },
             snippet: 'Ship @Launch',
             effectiveSensitive: false
           }])
@@ -617,7 +620,7 @@ describe('registerAppIpc', () => {
       { name: 'launch', useCount: 2, sensitiveUseCount: 0 }
     ])
     expect(await handlers.get(IPC_CHANNELS.listTagUses)?.(undefined, 'launch')).toMatchObject([
-      { id: 'focus:12:goal:launch', name: 'launch', snippet: 'Ship @Launch' }
+      { id: 'focus:12:description:launch', name: 'launch', snippet: 'Ship @Launch' }
     ])
     expect(await handlers.get(IPC_CHANNELS.getReviewOverview)?.()).toMatchObject({
       asOf: '2026-08-10',
@@ -635,13 +638,13 @@ describe('registerAppIpc', () => {
     })
     expect(invalidateNavigationBadges).toHaveBeenCalled()
     expect(await handlers.get(IPC_CHANNELS.getRichTextDocument)?.(undefined, {
-      type: 'focus', id: 12, field: 'goal'
+      type: 'focus', id: 12, field: 'description'
     })).toMatchObject({ value: 'Ship', revision: 1 })
 
     const syncEvent = { sender: { id: 7 }, returnValue: undefined as unknown }
     listeners.get(IPC_SYNC_CHANNELS.saveRichTextDocument)?.(
       syncEvent,
-      { type: 'focus', id: 12, field: 'goal' },
+      { type: 'focus', id: 12, field: 'description' },
       'Ship now'
     )
     expect(syncEvent.returnValue).toMatchObject({

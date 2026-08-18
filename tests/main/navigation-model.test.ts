@@ -53,47 +53,59 @@ describe('Navigation badge model', () => {
       needsReview: false,
       reviewFrequencyDays: 7
     })
+    const reviewedThread = database!.domain.threads.create({
+      focusId: reviewed.id,
+      title: 'Review work',
+      reviewFrequencyDays: 7,
+      needsReview: false
+    })
+    const sensitiveThread = database!.domain.threads.create({
+      focusId: sensitive.id,
+      title: 'Sensitive work',
+      reviewFrequencyDays: 7,
+      needsReview: false
+    })
 
     database!.domain.todos.create({
-      parent: { type: 'focus', id: reviewed.id },
+      parent: { type: 'thread', id: reviewedThread.id },
       name: 'Overdue Todo',
       dueDate: '2026-08-11'
     })
     database!.domain.todos.create({
-      parent: { type: 'focus', id: reviewed.id },
+      parent: { type: 'thread', id: reviewedThread.id },
       name: 'Due today',
       dueDate: '2026-08-12'
     })
     database!.domain.todos.create({
-      parent: { type: 'focus', id: reviewed.id },
+      parent: { type: 'thread', id: reviewedThread.id },
       name: 'Future Todo',
       dueDate: '2026-08-13'
     })
     database!.domain.todos.create({
-      parent: { type: 'focus', id: reviewed.id },
+      parent: { type: 'thread', id: reviewedThread.id },
       name: 'Completed overdue Todo',
       dueDate: '2026-08-01',
       done: true
     })
     database!.domain.todos.create({
-      parent: { type: 'focus', id: sensitive.id },
+      parent: { type: 'thread', id: sensitiveThread.id },
       name: 'Sensitive overdue Todo',
       dueDate: '2026-08-01'
     })
     database!.domain.routines.create({
-      parent: { type: 'focus', id: reviewed.id },
+      parent: { type: 'thread', id: reviewedThread.id },
       name: 'Review delivery evidence',
       scheduleWeekdays: ['wednesday'],
       checklist: [{ inspection: 'Verify delivery evidence.' }]
     }, new Date('2026-08-12T09:00:00.000Z'))
     database!.domain.routines.create({
-      parent: { type: 'focus', id: sensitive.id },
+      parent: { type: 'thread', id: sensitiveThread.id },
       name: 'Review sensitive evidence',
       scheduleWeekdays: ['wednesday'],
       checklist: [{ inspection: 'Verify sensitive evidence.' }]
     }, new Date('2026-08-12T09:00:00.000Z'))
     database!.domain.routines.create({
-      parent: { type: 'focus', id: reviewed.id },
+      parent: { type: 'thread', id: reviewedThread.id },
       name: 'Unscheduled inspection',
       scheduleWeekdays: [],
       checklist: [{ inspection: 'Verify only when explicitly scheduled.' }]

@@ -15,7 +15,6 @@ function focus(overrides: Partial<FocusSnapshot> = {}): FocusSnapshot {
     kind: 'generic',
     title: 'Project Atlas',
     description: null,
-    goal: '',
     status: 'active',
     dueDate: null,
     statusChangedAt: '2026-08-01T12:00:00.000Z',

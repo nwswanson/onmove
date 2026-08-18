@@ -128,7 +128,7 @@ export function UpdateComposerProvider({
       <CommandMenu
         open={chooserOpen}
         label="Choose update target"
-        placeholder="Filter Focuses, Threads, Commitments, and Subjects…"
+        placeholder="Filter Threads, Commitments, and Subjects…"
         resultsLabel="Update targets"
         emptyLabel="No matching update target."
         loadingLabel="Loading update targets…"

@@ -875,10 +875,12 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
   private validateParent(parent: TodoParent, now: Date): ParentColumns {
     this.assertContextShape(parent)
     const entity = entityParent(parent)
+    if (entity.type === 'focus') {
+      throw new ModelValidationError('a Todo must belong to a Thread or Commitment')
+    }
     const focusId = this.requireEntityParent(entity)
     const scope = scopeCell(parent)
     if (!scope) {
-      if (entity.type === 'focus') return parentColumns(parent)
       const owner = entity.type === 'thread'
         ? { type: 'thread' as const, id: entity.id }
         : { type: 'commitment' as const, id: entity.id }

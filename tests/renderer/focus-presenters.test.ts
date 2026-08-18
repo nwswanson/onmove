@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type {
   CommitmentSnapshot,
+  FocusOverviewTimelineSnapshot,
   FocusScopeSnapshot,
   FocusSnapshot,
   RoutineSnapshot,
@@ -18,6 +19,7 @@ import {
   focusContextSidebarItems,
   focusDrawerAdapter,
   focusPrimaryNavigationItems,
+  focusOverviewTimelineModel,
   focusScopeEditorModel,
   statusSunflowerModel,
   threadDrawerAdapter,
@@ -35,7 +37,6 @@ const focus: FocusSnapshot = {
   kind: 'generic',
   title: 'Project Atlas',
   description: 'Launch notes',
-  goal: 'Ship safely',
   status: 'active',
   dueDate: null,
   statusChangedAt: '2026-01-01T00:00:00.000Z',
@@ -67,7 +68,7 @@ const thread: ThreadSnapshot = {
 
 const commitment: CommitmentSnapshot = {
   id: 20,
-  parent: { type: 'focus', id: 1 },
+  parent: { type: 'thread', id: 10 },
   type: 'tracking',
   title: 'Improve ticket quality',
   status: 'active',
@@ -263,24 +264,11 @@ describe('Focus presentation adapters', () => {
           ariaLabel: 'Overall actions',
           items: [
             {
-              kind: 'action',
-              id: 'add-commitment',
-              label: 'Add commitment',
-              icon: 'add'
-            },
-            {
-              kind: 'action',
-              id: 'add-routine',
-              label: 'Add Routine',
-              icon: 'checklist'
-            },
-            {
               kind: 'checkbox',
               id: 'needs-review',
               label: 'Needs review',
               icon: 'review',
-              checked: true,
-              separatorBefore: true
+              checked: true
             },
             {
               kind: 'checkbox',
@@ -475,12 +463,7 @@ describe('Focus presentation adapters', () => {
     )
   })
 
-  it('maps direct Focus and Thread commitments into nested sidebar collections', () => {
-    const focusCommitment = {
-      ...commitment,
-      title: 'Align sponsors',
-      state: 'red' as const
-    }
+  it('keeps Overall as an overview while projecting Thread work into nested collections', () => {
     const threadCommitment = {
       ...commitment,
       id: 21,
@@ -488,12 +471,6 @@ describe('Focus presentation adapters', () => {
       title: 'Improve ticket quality',
       state: 'yellow' as const,
       status: 'paused' as const
-    }
-    const doneFocusCommitment = {
-      ...focusCommitment,
-      id: 22,
-      title: 'Archived sponsor plan',
-      status: 'done' as const
     }
     const cancelledThreadCommitment = {
       ...threadCommitment,
@@ -507,25 +484,11 @@ describe('Focus presentation adapters', () => {
       {},
       false,
       {
-        overall: [focusCommitment, doneFocusCommitment],
         'thread:10': [threadCommitment, cancelledThreadCommitment]
       }
     )
 
-    expect(items[0]?.childCollection).toEqual({
-      id: 'commitments',
-      label: 'Commitments and Routines',
-      items: [
-        {
-          id: '20',
-          label: 'Align sponsors',
-          ariaLabel: 'Open Overall commitment Align sponsors',
-          state: { label: 'Red', tone: 'danger' },
-          contextMenu: expect.objectContaining({ ariaLabel: 'Align sponsors actions' }),
-          tone: 'default'
-        }
-      ]
-    })
+    expect(items[0]?.childCollection).toBeUndefined()
     expect(items[1]?.childCollection).toEqual({
       id: 'commitments',
       label: 'Commitments and Routines',
@@ -584,12 +547,10 @@ describe('Focus presentation adapters', () => {
     })
     expect(
       commitmentContextSidebarItems([
-        focusCommitment,
         threadCommitment,
-        doneFocusCommitment,
         cancelledThreadCommitment
       ]).map(({ label }) => label)
-    ).toEqual(['Align sponsors', 'Improve ticket quality'])
+    ).toEqual(['Improve ticket quality'])
   })
 
   it('maps every model health state into a labeled semantic receiver tone', () => {
@@ -641,7 +602,7 @@ describe('Focus presentation adapters', () => {
     ])
   })
 
-  it('marks nested Commitment and Routine exclusions without repeating Focus flags on Overall', () => {
+  it('marks nested Commitment and Routine exclusions on their owning Thread only', () => {
     const excludedCommitment = {
       ...commitment,
       sensitive: true,
@@ -649,23 +610,24 @@ describe('Focus presentation adapters', () => {
     }
     const excludedRoutine = {
       id: 31,
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       name: 'Optional evidence inspection',
       status: 'green',
       sensitive: true,
       needsAttestation: false
     } as RoutineSnapshot
     const items = focusContextSidebarItems(
-      [],
+      [{ ...thread, status: 'active' }],
       {},
       false,
-      { overall: [excludedCommitment] },
-      { overall: [excludedRoutine] },
+      { 'thread:10': [excludedCommitment] },
+      { 'thread:10': [excludedRoutine] },
       true
     )
 
     expect(items[0]).not.toHaveProperty('indicators')
-    expect(items[0]?.childCollection?.items).toEqual([
+    expect(items[0]?.childCollection).toBeUndefined()
+    expect(items[1]?.childCollection?.items).toEqual([
       expect.objectContaining({
         id: '20',
         indicators: ['sensitive', 'review-excluded']
@@ -675,6 +637,52 @@ describe('Focus presentation adapters', () => {
         indicators: ['sensitive', 'review-excluded']
       })
     ])
+  })
+
+  it('groups Thread evidence by date and preserves closed Thread rails in the overview timeline', () => {
+    const snapshot: FocusOverviewTimelineSnapshot = {
+      focusId: focus.id,
+      threads: [
+        { id: 10, title: 'Sprint execution', status: 'active', sensitive: false },
+        { id: 11, title: 'Completed launch', status: 'done', sensitive: false }
+      ],
+      updates: [
+        {
+          id: 101,
+          threadId: 10,
+          date: '2026-08-18',
+          observation: 'Direct evidence',
+          state: 'green',
+          sensitive: false,
+          effectiveSensitive: false,
+          source: { type: 'thread', id: 10, title: 'Sprint execution' }
+        },
+        {
+          id: 102,
+          threadId: 11,
+          date: '2026-08-18',
+          observation: 'Nested evidence',
+          state: 'yellow',
+          sensitive: false,
+          effectiveSensitive: false,
+          source: { type: 'commitment', id: 20, title: 'Ship safely' }
+        }
+      ]
+    }
+
+    expect(focusOverviewTimelineModel(snapshot)).toMatchObject({
+      threads: [
+        { id: 10, closed: false },
+        { id: 11, closed: true }
+      ],
+      rows: [{
+        date: '2026-08-18',
+        cells: [
+          { threadId: 10, updates: [{ id: 101, sourceLabel: 'Thread update' }] },
+          { threadId: 11, updates: [{ id: 102, sourceLabel: 'Ship safely' }] }
+        ]
+      }]
+    })
   })
 
   it('maps every shared work lifecycle status into the UI label contract', () => {
@@ -845,14 +853,14 @@ describe('Focus presentation adapters', () => {
     const onDelete = vi.fn().mockResolvedValue(undefined)
     const adapter = commitmentDrawerAdapter({
       commitment,
-      parentTitle: focus.title,
+      parentTitle: thread.title,
       ancestorKeys: ['focus:1'],
       onSave,
       onDelete
     })
 
     expect(adapter).not.toHaveProperty('render')
-    expect(adapter.invalidationKeys).toEqual(['focus:1', 'commitment:20'])
+    expect(adapter.invalidationKeys).toEqual(['focus:1', 'thread:10', 'commitment:20'])
     expect(adapter.model.sections[0]).toEqual({
       id: 'details',
       fields: [
@@ -863,7 +871,7 @@ describe('Focus presentation adapters', () => {
           value: 'Improve ticket quality',
           required: true
         },
-        { kind: 'static', id: 'parent', label: 'Parent', value: 'Focus — Project Atlas' },
+        { kind: 'static', id: 'parent', label: 'Parent', value: 'Thread — Sprint execution' },
         { kind: 'date', id: 'due-date', label: 'Due date', value: '' },
         {
           kind: 'static',

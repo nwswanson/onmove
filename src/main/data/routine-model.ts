@@ -1029,12 +1029,14 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
   }
 
   private assertParent(parent: CommitmentParent): void {
-    const table = parent.type === 'focus' ? 'focuses' : 'threads'
+    if (parent.type === 'focus') {
+      throw new ModelValidationError('a Routine must belong to a Thread')
+    }
     if (!this.database.get<{ found: number }>(
-      `SELECT 1 AS found FROM ${table} WHERE id = ?`,
+      'SELECT 1 AS found FROM threads WHERE id = ?',
       [parent.id]
     )) {
-      throw new ModelNotFoundError(parent.type === 'focus' ? 'Focus' : 'Thread', parent.id)
+      throw new ModelNotFoundError('Thread', parent.id)
     }
   }
 

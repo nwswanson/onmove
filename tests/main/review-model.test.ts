@@ -32,8 +32,14 @@ describe('Review model', () => {
       },
       new Date('2026-01-01T12:00:00.000Z')
     )
+    const oversight = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Stakeholder oversight',
+      reviewFrequencyDays: 30,
+      needsReview: false
+    }, new Date('2026-01-01T12:00:00.000Z'))
     const overall = database!.domain.commitments.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: oversight.id },
       type: 'tracking',
       title: 'Keep sponsors aligned',
       cadenceDays: 7
@@ -61,9 +67,9 @@ describe('Review model', () => {
 
     expect(overview.asOf).toBe('2026-01-03')
     expect(overview.items.map(({ key }) => key)).toEqual([
-      `commitment:${overall.id}`,
       `thread:${thread.id}`,
-      `commitment:${unscheduled.id}`
+      `commitment:${unscheduled.id}`,
+      `commitment:${overall.id}`
     ])
     expect(overview.items.find(({ key }) => key === `thread:${thread.id}`)).toMatchObject({
       kind: 'thread',
@@ -205,14 +211,9 @@ describe('Review model', () => {
     expect(database!.domain.reviews.getOverview('2026-01-04').items).toEqual([])
   })
 
-  it('does not queue a Focus that already has direct Update evidence today', () => {
+  it('does not queue a Focus that was explicitly reviewed today', () => {
     const focus = database!.domain.focuses.create({ title: 'Current board' })
-    database!.domain.updates.create({
-      parent: { type: 'focus', id: focus.id },
-      date: '2026-01-10',
-      observation: 'Reviewed this board today',
-      state: 'green'
-    })
+    focus.pokeReview(new Date('2026-01-10T12:00:00.000Z'))
 
     expect(database!.domain.reviews.getOverview('2026-01-10').items
       .filter(({ kind }) => kind === 'focus')).toEqual([])
@@ -226,8 +227,13 @@ describe('Review model', () => {
       title: 'Paused program',
       status: 'paused'
     })
+    const pausedThread = database!.domain.threads.create({
+      focusId: pausedFocus.id,
+      title: 'Paused delivery',
+      reviewFrequencyDays: 7
+    })
     const hiddenCommitment = database!.domain.commitments.create({
-      parent: { type: 'focus', id: pausedFocus.id },
+      parent: { type: 'thread', id: pausedThread.id },
       type: 'tracking',
       title: 'Hidden cadence',
       cadenceDays: 1
@@ -236,8 +242,14 @@ describe('Review model', () => {
       title: 'Active program',
       needsReview: false
     })
+    const activeThread = database!.domain.threads.create({
+      focusId: activeFocus.id,
+      title: 'Active delivery',
+      reviewFrequencyDays: 7,
+      needsReview: false
+    })
     const visibleCommitment = database!.domain.commitments.create({
-      parent: { type: 'focus', id: activeFocus.id },
+      parent: { type: 'thread', id: activeThread.id },
       type: 'tracking',
       title: 'Visible cadence',
       cadenceDays: 1

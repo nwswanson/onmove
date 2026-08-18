@@ -30,7 +30,6 @@ describe('Focus models', () => {
       kind: 'generic',
       title: 'Ship the first version',
       description: null,
-      goal: '',
       status: 'active',
       lastReviewDate: null,
       needsReview: true,
@@ -71,7 +70,6 @@ describe('Focus models', () => {
     focus.update({
       title: 'Updated',
       description: 'Notes',
-      goal: 'Deliver predictable value',
       status: 'paused'
     })
     focus.setStatus('active').setStatus('done').setStatus('done')
@@ -79,7 +77,6 @@ describe('Focus models', () => {
     expect(focus.toSnapshot()).toMatchObject({
       title: 'Updated',
       description: 'Notes',
-      goal: 'Deliver predictable value',
       status: 'done'
     })
     expect(focus.statusHistory()).toMatchObject([
@@ -90,18 +87,17 @@ describe('Focus models', () => {
     ])
   })
 
-  it('normalizes optional notes and validates titles and enum values', () => {
+  it('normalizes optional notes, rejects the retired Goal, and validates enums', () => {
     const focus = database!.domain.focuses.create({
       title: '  Valid  ',
-      description: '   ',
-      goal: '  Make progress  '
+      description: '   '
     })
 
     expect(focus.toSnapshot()).toMatchObject({
       title: 'Valid',
-      description: null,
-      goal: 'Make progress'
+      description: null
     })
+    expect(() => focus.update({ goal: 'Make progress' } as never)).toThrow(/retired/)
     expect(() => database!.domain.focuses.create({ title: '   ' })).toThrow(ModelValidationError)
     expect(() => database!.domain.focuses.create({ title: 'Invalid', kind: 'other' as never })).toThrow(
       ModelValidationError
@@ -151,8 +147,7 @@ describe('Focus models', () => {
   it('retains details and status history after reopening', () => {
     const focus = database!.domain.focuses.create({
       title: 'Persistent',
-      description: 'Stored in SQLite',
-      goal: 'Retain the goal too'
+      description: 'Stored in SQLite'
     })
     focus.setStatus('paused').update({ needsReview: false })
     const id = focus.id
@@ -164,7 +159,6 @@ describe('Focus models', () => {
     expect(reopened.toSnapshot()).toMatchObject({
       title: 'Persistent',
       description: 'Stored in SQLite',
-      goal: 'Retain the goal too',
       status: 'paused',
       needsReview: false,
       sensitive: false
@@ -188,7 +182,7 @@ describe('Focus models', () => {
     expect(() => focus.update({ sensitive: 'yes' as never })).toThrow(ModelValidationError)
   })
 
-  it('derives last review from the later direct Focus update or explicit review poke', () => {
+  it('derives Focus review solely from explicit pokes, never descendant evidence', () => {
     const focus = database!.domain.focuses.create({ title: 'Project execution' })
     const thread = database!.domain.threads.create({
       focusId: focus.id,
@@ -196,7 +190,7 @@ describe('Focus models', () => {
       reviewFrequencyDays: 7
     })
     const commitment = database!.domain.commitments.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       type: 'tracking',
       title: 'Align sponsors'
     })
@@ -213,21 +207,11 @@ describe('Focus models', () => {
     })
     expect(focus.snapshot('2026-01-05').lastReviewDate).toBeNull()
 
-    database!.domain.updates.create({
-      parent: { type: 'focus', id: focus.id },
-      date: '2026-01-03',
-      observation: 'Focus reviewed'
-    })
-    database!.domain.updates.create({
-      parent: { type: 'focus', id: focus.id },
-      date: '2026-01-10',
-      observation: 'Future review'
-    })
     focus.pokeReview(new Date('2026-01-07T12:00:00.000Z'))
 
-    expect(focus.snapshot('2026-01-06').lastReviewDate).toBe('2026-01-03')
+    expect(focus.snapshot('2026-01-06').lastReviewDate).toBeNull()
     expect(focus.snapshot('2026-01-09').lastReviewDate).toBe('2026-01-07')
-    expect(focus.snapshot('2026-01-10').lastReviewDate).toBe('2026-01-10')
+    expect(focus.snapshot('2026-01-10').lastReviewDate).toBe('2026-01-07')
 
     focus.pokeReview(new Date('2026-01-06T12:00:00.000Z'))
     expect(focus.snapshot('2026-01-09').lastReviewDate).toBe('2026-01-07')

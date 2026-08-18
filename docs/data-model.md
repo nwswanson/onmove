@@ -54,7 +54,6 @@ Focuses are top-level portfolio objects rather than hierarchy children. Their in
   kind: 'generic',
   title: string,
   description: string | null,
-  goal: string,
   status: 'active' | 'paused' | 'cancelled' | 'done',
   dueDate: string | null,
   lastReviewDate: string | null,
@@ -62,16 +61,18 @@ Focuses are top-level portfolio objects rather than hierarchy children. Their in
 }
 ```
 
-`goal` is durable rich-text-compatible content and defaults to an empty string for new and migrated
-Focus records.
-
 Titles are required but intentionally not unique. Status is materialized on the `focuses` row and
 every actual change is appended by SQLite triggers to `focus_status_transitions`. Active and paused
 records appear in sidebar navigation; paused records are visually muted. Cancelled and done records
 remain durable and queryable but are omitted from navigation. `needsReview` is a durable inclusion
-flag independent of status. `lastReviewDate` is derived from the later of the newest effective
-Update directly on the Focus and its explicit `review_poked_on` date; descendant Thread and
-Commitment Updates do not advance it.
+flag independent of status. `lastReviewDate` is the Focus's explicit `review_poked_on` date;
+descendant Thread and Commitment Updates do not advance it.
+
+Focus Overall is an overview boundary, not a synthetic Thread. It owns no Goal, Commitment,
+Routine, Todo, Todo list, or direct Update. It retains status, due date, description, Focus Scope,
+and Notes. `FocusOverviewRepository.timeline()` projects every child Thread—including done and
+cancelled Threads—alongside direct Thread and descendant Commitment Updates. Updates remain owned by
+their original records; the projection is read-only and groups them by recorded date and Thread.
 
 Focuses, Threads, and Commitments each store an optional calendar due date. The hierarchy does not
 enforce chronological containment: a child may be due after its direct parent. Main entity screens
@@ -115,7 +116,7 @@ Note titled `Default` for every current aggregate. The database does not require
 have a Note and does not cap the array at one, so later document organization can remove the default
 or introduce multiple named documents without changing parent shape.
 
-Focus goal, Focus description, Update observation, and Note content implement one addressable
+Focus description, Update observation, and Note content implement one addressable
 `RichTextDocumentReference` contract. A changed value is committed synchronously on the main
 process's single SQLite connection. SQLite triggers increment the field-specific revision and append
 the complete committed value to `rich_text_history`; saving the identical value is a no-op. Parent
@@ -172,7 +173,7 @@ same parser; no destructive migration is required.
 Tags intentionally remain a derived model rather than a relational registry. Identity is Unicode
 lowercase (`@Launch` and `@launch` both resolve to `@launch`) without rewriting the stored text, and
 there is no canonical tag row to synchronize.
-`TagRepository` projects current Focus title/description/goal, Thread and Commitment titles, Update
+`TagRepository` projects current Focus title/description, Thread and Commitment titles, Update
 observation, Todo name, and Note title/content. Rich-text envelopes are reduced to plain text before
 parsing. Repeated instances of the same canonical tag in one field produce one use, whose snippet is
 centered on the first instance. One query returns canonical-name summaries and per-field counts; a
@@ -186,7 +187,8 @@ hierarchy sensitivity as data, while the renderer remains responsible for applyi
 preference to tag and use collections. Hyphenated/underscored forms and email-like substrings remain
 unrecognized.
 
-The model beneath Focus—Subjects, Focus-owned Scopes, Threads, Commitments, dated Updates, Todos,
+The model beneath Focus—Subjects, Focus-owned Scopes, Threads, Thread-owned Commitments, dated
+Updates and Todos,
 health, reviews, and cadence—is specified as a unified whole in
 [`focus-thread-commitment-model.md`](focus-thread-commitment-model.md). The schema and repository work
 introduced for Scope is summarized separately in
@@ -226,6 +228,13 @@ through Friday is valid, including none. Effective queue inclusion is the persis
 no Runs without erasing that preference. The earlier `cadence_days` and `anchor_on` fields remain
 only for tolerant import of older archives.
 
+Migration 33 establishes the breaking Focus-overview boundary. It clears retired Focus Goal
+content, deletes former Focus-owned work through the normal cascade/archive path, and installs
+SQLite guards against new Focus-owned Commitments, Routines, Updates, Todos, or Todo lists. Every
+Update removed directly or through a retired parent is rescued by `updates_archive_before_delete`.
+Portable import applies the same semantic cleanup to pre-v33 archives without disabling the central
+archive or archive-context triggers.
+
 ## Subjects, Scopes, and exact Update cells
 
 Subjects are global canonical records for anything managed or observed. A Scope is a named,
@@ -234,10 +243,9 @@ are effective-dated, so changing populations does not rewrite historical meaning
 
 Focuses and Threads have editable Scope applications. `open` means no boundary; a Thread may use
 `inherited`, while `explicit` and `derived` select a Scope owned by the same Focus. Commitment
-application rows are enforced projections: Thread-owned Commitments always inherit the Thread's
-effective Scope, and Focus-owned Commitments remain open. A bounded Thread or Commitment Update must
-store the exact effective Scope and Subject cell. Direct Focus Updates remain aggregate and
-unscoped. A Thread whose effective Scope has zero Subjects is operationally Thread-wide and may
+application rows are enforced projections: every Commitment inherits its owning Thread's effective
+Scope. A bounded Thread or Commitment Update must store the exact effective Scope and Subject cell.
+A Thread whose effective Scope has zero Subjects is operationally Thread-wide and may
 record a direct unscoped Update; Commitments retain the strict exact-cell rule.
 
 Scope is applicability, not tagging or current attention. Current exception sets can later be

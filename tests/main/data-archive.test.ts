@@ -155,8 +155,13 @@ describe('DataArchiveRepository', () => {
   it('upgrades aggregate Routine Runs from a pre-cell portable archive', () => {
     const source = createDatabase('archive-routine-v27-source')
     const focus = source.domain.focuses.create({ title: 'Older Routine focus' })
+    const thread = source.domain.threads.create({
+      focusId: focus.id,
+      title: 'Older Routine Thread',
+      reviewFrequencyDays: 7
+    })
     const routine = source.domain.routines.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       name: 'Inspect older evidence',
       scheduleWeekdays: ['monday'],
       checklist: [{ inspection: 'Verify the evidence was inspected.' }]
@@ -213,8 +218,13 @@ describe('DataArchiveRepository', () => {
     const now = new Date('2026-08-12T12:00:00.000Z')
     const source = createDatabase('archive-rescued-update-source')
     const sourceFocus = source.domain.focuses.create({ title: 'Imported focus' })
+    const sourceThread = source.domain.threads.create({
+      focusId: sourceFocus.id,
+      title: 'Imported Thread',
+      reviewFrequencyDays: 7
+    })
     const sourceDeleted = source.domain.updates.create({
-      parent: { type: 'focus', id: sourceFocus.id },
+      parent: { type: 'thread', id: sourceThread.id },
       observation: 'Already rescued evidence'
     }, now)
     source.domain.updates.delete(sourceDeleted.id)
@@ -223,8 +233,13 @@ describe('DataArchiveRepository', () => {
 
     const target = createDatabase('archive-rescued-update-target')
     const targetFocus = target.domain.focuses.create({ title: 'Outgoing local focus' })
+    const targetThread = target.domain.threads.create({
+      focusId: targetFocus.id,
+      title: 'Outgoing local Thread',
+      reviewFrequencyDays: 7
+    })
     const outgoing = target.domain.updates.create({
-      parent: { type: 'focus', id: targetFocus.id },
+      parent: { type: 'thread', id: targetThread.id },
       observation: 'Archive me during replacement'
     }, now)
 
@@ -357,7 +372,7 @@ describe('DataArchiveRepository', () => {
         }],
         todos: [{
           id: 40,
-          focusId: 10,
+          threadId: 20,
           name: 'Older completed Todo',
           done: true
         }],
@@ -394,6 +409,81 @@ describe('DataArchiveRepository', () => {
     })
     expect(target.domain.commitments.requireModel(commitment.id).parentHistory())
       .toMatchObject([{ from: null, to: { type: 'thread', id: thread.id } }])
+  })
+
+  it('retires Focus-owned work from older archives and rescues its Updates', () => {
+    const target = createDatabase('archive-focus-overview-retirement')
+    const summary = target.dataArchive.import({
+      format: DATA_ARCHIVE_FORMAT,
+      archiveVersion: 1,
+      schemaVersion: 32,
+      tables: {
+        focuses: [{
+          id: 1,
+          title: 'Legacy overview',
+          goal: 'Legacy goal',
+          kind: 'generic',
+          status: 'active'
+        }],
+        threads: [{
+          id: 2,
+          focusId: 1,
+          title: 'Surviving Thread',
+          reviewFrequencyDays: 7,
+          status: 'active'
+        }],
+        commitments: [{
+          id: 3,
+          focusId: 1,
+          commitmentType: 'tracking',
+          behaviorType: 'tracking',
+          title: 'Legacy Focus commitment',
+          status: 'active'
+        }],
+        updates: [
+          {
+            id: 4,
+            focusId: 1,
+            recordedOn: '2026-08-08',
+            observation: 'Legacy direct evidence',
+            state: 'yellow'
+          },
+          {
+            id: 5,
+            commitmentId: 3,
+            recordedOn: '2026-08-09',
+            observation: 'Legacy nested evidence',
+            state: 'red'
+          }
+        ],
+        todos: [{ id: 6, focusId: 1, name: 'Legacy Focus Todo', done: false }]
+      }
+    }, new Date('2026-08-10T12:00:00.000Z'))
+
+    expect(summary.skippedRows).toBeGreaterThanOrEqual(4)
+    expect(target.dataArchive.export('test').tables.focuses).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 1, goal: '' })
+    ]))
+    expect(target.domain.threads.listForFocus(1)).toMatchObject([{
+      id: 2,
+      title: 'Surviving Thread'
+    }])
+    expect(target.domain.commitments.find(3)).toBeNull()
+    expect(target.domain.todos.find(6)).toBeNull()
+    expect(target.domain.updates.find(4)).toBeNull()
+    expect(target.domain.updates.find(5)).toBeNull()
+    expect(target.domain.archivedUpdates.list()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        originalUpdateId: 4,
+        observation: 'Legacy direct evidence',
+        context: expect.objectContaining({ focusTitle: 'Legacy overview' })
+      }),
+      expect.objectContaining({
+        originalUpdateId: 5,
+        observation: 'Legacy nested evidence',
+        context: expect.objectContaining({ commitmentTitle: 'Legacy Focus commitment' })
+      })
+    ]))
   })
 
   it('keeps valid records while pruning broken relationships', () => {

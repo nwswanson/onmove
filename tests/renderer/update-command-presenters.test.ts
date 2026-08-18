@@ -20,7 +20,6 @@ function focus(overrides: Partial<FocusSnapshot> = {}): FocusSnapshot {
     kind: 'generic',
     title: 'Project Atlas',
     description: null,
-    goal: '',
     status: 'active',
     dueDate: null,
     statusChangedAt: '2026-08-01T12:00:00.000Z',
@@ -194,7 +193,7 @@ describe('update command presenters', () => {
       ]])
     }), false)
 
-    expect(groups.map(({ label }) => label)).toEqual(['Focuses', 'Threads', 'Commitments'])
+    expect(groups.map(({ label }) => label)).toEqual(['Threads', 'Commitments'])
     const threadItems = groups.find(({ id }) => id === 'threads')?.items ?? []
     const commitmentItems = groups.find(({ id }) => id === 'commitments')?.items ?? []
     expect(threadItems.map(({ id }) => id)).toEqual([
@@ -252,7 +251,6 @@ describe('update command presenters', () => {
     }), true)
 
     expect(groups.flatMap(({ items }) => items.map(({ id }) => id))).toEqual([
-      'focus:1',
       'thread:10',
       'commitment:20'
     ])
@@ -275,9 +273,9 @@ describe('update command presenters', () => {
     })
 
     expect(updateCommandGroups(snapshot, false).flatMap(({ items }) => items))
-      .toHaveLength(5)
+      .toHaveLength(4)
     const hidden = updateCommandGroups(snapshot, true).flatMap(({ items }) => items)
-    expect(hidden).toHaveLength(3)
+    expect(hidden).toHaveLength(2)
     expect(hidden.some(({ description }) => description.includes('Executive'))).toBe(false)
   })
 
@@ -305,6 +303,6 @@ describe('update command presenters', () => {
     }), false)
 
     expect(groups.flatMap(({ items }) => items.map(({ id }) => id)))
-      .toEqual(['focus:1', 'thread:10'])
+      .toEqual(['thread:10'])
   })
 })

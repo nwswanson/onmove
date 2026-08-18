@@ -113,7 +113,7 @@ describe('useDurableRichText', () => {
   })
 
   it('does not let a stale initial load overwrite a newer synchronous keystroke', async () => {
-    const reference = { type: 'focus', id: 4, field: 'goal' } as const
+    const reference = { type: 'focus', id: 4, field: 'description' } as const
     let resolveLoad: ((value: {
       reference: typeof reference
       title: string

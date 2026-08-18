@@ -35,7 +35,6 @@ interface FocusTextRow {
   id: number
   title: string
   description: string | null
-  goal: string
   sensitive: number
 }
 
@@ -240,7 +239,7 @@ export class TagRepository {
 
   private focusRecords(): TaggableRecord[] {
     return this.database.all<FocusTextRow>(
-      'SELECT id, title, description, goal, sensitive FROM focuses ORDER BY id'
+      'SELECT id, title, description, sensitive FROM focuses ORDER BY id'
     ).flatMap((row) => {
       const context: TagUseContextSnapshot = {
         focus: { id: Number(row.id), title: row.title, sensitive: Boolean(row.sensitive) },
@@ -251,8 +250,7 @@ export class TagRepository {
       const base = { context, effectiveSensitive: Boolean(row.sensitive) }
       return [
         { ...base, source: { type: 'focus', id: Number(row.id), field: 'title' }, value: row.title, richText: false },
-        { ...base, source: { type: 'focus', id: Number(row.id), field: 'description' }, value: row.description ?? '', richText: true },
-        { ...base, source: { type: 'focus', id: Number(row.id), field: 'goal' }, value: row.goal, richText: true }
+        { ...base, source: { type: 'focus', id: Number(row.id), field: 'description' }, value: row.description ?? '', richText: true }
       ] satisfies TaggableRecord[]
     })
   }

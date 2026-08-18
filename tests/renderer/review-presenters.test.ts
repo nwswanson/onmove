@@ -16,7 +16,6 @@ const focus: FocusSnapshot = {
   kind: 'generic',
   title: 'Project Atlas',
   description: 'A measured rollout',
-  goal: 'Ship safely',
   status: 'active',
   dueDate: null,
   statusChangedAt: '2026-01-01T00:00:00.000Z',

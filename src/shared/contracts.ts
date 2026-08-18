@@ -27,6 +27,7 @@ export const IPC_CHANNELS = {
   removeFocusScopeSubject: 'domain:remove-focus-scope-subject',
   getThreadScope: 'domain:get-thread-scope',
   getThreadSubjectMatrix: 'domain:get-thread-subject-matrix',
+  getFocusOverviewTimeline: 'domain:get-focus-overview-timeline',
   customizeThreadScope: 'domain:customize-thread-scope',
   addThreadScopeSubject: 'domain:add-thread-scope-subject',
   removeThreadScopeSubject: 'domain:remove-thread-scope-subject',
@@ -169,7 +170,6 @@ export interface FocusSnapshot {
   kind: FocusKind
   title: string
   description: string | null
-  goal: string
   status: FocusStatus
   dueDate: string | null
   statusChangedAt: string
@@ -193,7 +193,6 @@ export interface CreateFocusInput {
   kind?: FocusKind
   title: string
   description?: string | null
-  goal?: string
   status?: FocusStatus
   dueDate?: string | null
   needsReview?: boolean
@@ -203,7 +202,6 @@ export interface CreateFocusInput {
 export interface UpdateFocusInput {
   title?: string
   description?: string | null
-  goal?: string
   status?: FocusStatus
   dueDate?: string | null
   needsReview?: boolean
@@ -780,6 +778,39 @@ export type UpdateParent =
   | { type: 'thread'; id: number }
   | { type: 'commitment'; id: number }
 
+export interface FocusOverviewTimelineThreadSnapshot {
+  id: number
+  title: string
+  status: ThreadStatus
+  sensitive: boolean
+}
+
+export interface FocusOverviewTimelineUpdateSnapshot {
+  id: number
+  threadId: number
+  date: string
+  observation: string
+  state: HealthState
+  sensitive: boolean
+  /** Includes sensitivity inherited from the Focus, Thread, or Commitment. */
+  effectiveSensitive: boolean
+  source: {
+    type: 'thread' | 'commitment'
+    id: number
+    title: string
+  }
+}
+
+/**
+ * Read-only evidence projection for Focus Overall. Every live Update in a
+ * child Thread subtree is assigned to exactly one Thread rail.
+ */
+export interface FocusOverviewTimelineSnapshot {
+  focusId: number
+  threads: FocusOverviewTimelineThreadSnapshot[]
+  updates: FocusOverviewTimelineUpdateSnapshot[]
+}
+
 export interface UpdateSnapshot {
   id: number
   parent: UpdateParent
@@ -884,7 +915,7 @@ export interface NoteSnapshot {
 }
 
 export type TagUseSource =
-  | { type: 'focus'; id: number; field: 'title' | 'description' | 'goal' }
+  | { type: 'focus'; id: number; field: 'title' | 'description' }
   | { type: 'thread'; id: number; field: 'title' }
   | { type: 'commitment'; id: number; field: 'title' }
   | { type: 'update'; id: number; field: 'observation' }
@@ -935,7 +966,7 @@ export interface TagSummarySnapshot {
 }
 
 export type RichTextDocumentReference =
-  | { type: 'focus'; id: number; field: 'goal' | 'description' }
+  | { type: 'focus'; id: number; field: 'description' }
   | { type: 'update'; id: number; field: 'observation' }
   | { type: 'note'; id: number; field: 'content' }
 
@@ -1154,6 +1185,7 @@ export interface DomainApi {
   ) => Promise<FocusScopeSnapshot>
   getThreadScope: (threadId: number) => Promise<ThreadScopeSnapshot>
   getThreadSubjectMatrix: (threadId: number) => Promise<ThreadSubjectCellSnapshot[]>
+  getFocusOverviewTimeline: (focusId: number) => Promise<FocusOverviewTimelineSnapshot>
   customizeThreadScope: (threadId: number) => Promise<ThreadScopeSnapshot>
   addThreadScopeSubject: (
     threadId: number,

@@ -554,8 +554,13 @@ describe('Subject, Scope, and scoped Update models', () => {
     expect(() => update.update({ date: '2025-12-31' })).toThrow('not an effective member')
     expect(update.refresh().toSnapshot().date).toBe('2026-01-10')
 
+    const openThread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Executive approval',
+      reviewFrequencyDays: 7
+    })
     const openCommitment = database!.domain.commitments.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: openThread.id },
       type: 'tracking',
       title: 'Obtain executive approval'
     })
@@ -566,7 +571,7 @@ describe('Subject, Scope, and scoped Update models', () => {
     expect(() => database!.domain.updates.create({
       parent: { type: 'focus', id: focus.id },
       scope: { scopeId: reports.id, subjectId: alex.id }
-    })).toThrow('direct Focus Update')
+    })).toThrow('must belong to a Thread or Commitment')
   })
 
   it('accepts Thread-wide evidence when a Thread has no effective Subjects', () => {

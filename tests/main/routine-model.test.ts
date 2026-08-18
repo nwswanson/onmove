@@ -25,8 +25,13 @@ describe('Routine Commitment model', () => {
 
   function createRoutine(overrides: Record<string, unknown> = {}) {
     const focus = database!.domain.focuses.create({ title: 'Project delivery' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Delivery oversight',
+      reviewFrequencyDays: 7
+    }, new Date('2026-01-01T11:00:00.000Z'))
     const routine = database!.domain.routines.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       name: 'Weekly delivery inspection',
       scheduleWeekdays: ['thursday'],
       checklist: [
@@ -35,14 +40,14 @@ describe('Routine Commitment model', () => {
       ],
       ...overrides
     }, new Date('2026-01-01T12:00:00.000Z'))
-    return { focus, routine }
+    return { focus, thread, routine }
   }
 
   it('stores Routine as a generic Commitment without leaking it into tracking lists', () => {
-    const { focus, routine } = createRoutine()
+    const { thread, routine } = createRoutine()
 
     expect(routine.snapshot('2026-01-01')).toMatchObject({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       type: 'routine',
       name: 'Weekly delivery inspection',
       status: 'green',
@@ -53,7 +58,7 @@ describe('Routine Commitment model', () => {
         progress: { complete: 0, required: 2 }
       }
     })
-    expect(database!.domain.commitments.listForFocus(focus.id)).toEqual([])
+    expect(database!.domain.commitments.listForThread(thread.id)).toEqual([])
     expect(database!.domain.commitments.find(routine.id)).toBeNull()
     expect(database!.domain.routines.list('2026-01-01')).toHaveLength(1)
 
@@ -182,8 +187,13 @@ describe('Routine Commitment model', () => {
 
   it('allows the next scheduled Run to be attested one occurrence early', () => {
     const focus = database!.domain.focuses.create({ title: 'Friday readiness' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Friday delivery',
+      reviewFrequencyDays: 7
+    })
     const routine = database!.domain.routines.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       name: 'Friday inspection',
       scheduleWeekdays: ['friday'],
       checklist: [{ inspection: 'Verify Friday readiness.' }]
@@ -391,8 +401,13 @@ describe('Routine Commitment model', () => {
       { name: 'Europe' },
       new Date('2026-01-01T09:30:00.000Z')
     )
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Regional delivery',
+      reviewFrequencyDays: 7
+    })
     const routine = database!.domain.routines.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       name: 'Regional inspection',
       scheduleWeekdays: ['thursday'],
       scopeId: focusScope.scopeId,
@@ -443,15 +458,20 @@ describe('Routine Commitment model', () => {
     expect(twoSubjectScope.scopeId).toBe(focusScope.scopeId)
   })
 
-  it('reconciles an untouched Focus Routine Run when its applied Scope membership changes', () => {
+  it('reconciles an untouched inherited Thread Routine Run when Focus Scope membership changes', () => {
     const focus = database!.domain.focuses.create({ title: 'Changing regions' })
     const originalScope = database!.domain.focusScopes.addSubject(
       focus.id,
       { name: 'North America' },
       new Date('2026-01-01T09:00:00.000Z')
     )
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Changing regional delivery',
+      reviewFrequencyDays: 7
+    })
     const routine = database!.domain.routines.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       name: 'Regional evidence inspection',
       scheduleWeekdays: ['thursday'],
       scopeId: originalScope.scopeId,
@@ -573,17 +593,22 @@ describe('Routine Commitment model', () => {
     expect(refreshed.currentRun!.cells.some((cell) => cell.subject === null)).toBe(false)
   })
 
-  it('adopts a Focus Scope created after an Overall Routine', () => {
+  it('adopts a Focus Scope created after an inherited Thread Routine', () => {
     const focus = database!.domain.focuses.create({ title: 'Late Focus scope' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Inherited delivery',
+      reviewFrequencyDays: 7
+    })
     const overallRoutine = database!.domain.routines.create({
-      parent: { type: 'focus', id: focus.id },
-      name: 'Overall inspection',
+      parent: { type: 'thread', id: thread.id },
+      name: 'Inherited inspection',
       scheduleWeekdays: ['thursday'],
       checklist: [{ inspection: 'Verify Overall evidence.' }]
     }, new Date('2026-01-01T09:30:00.000Z'))
 
-    const scope = database!.domain.focusScopes.addSubject(
-      focus.id,
+    const scope = database!.domain.threadScopes.addSubject(
+      thread.id,
       { name: 'Platform' },
       new Date('2026-01-01T11:00:00.000Z')
     )
@@ -595,16 +620,21 @@ describe('Routine Commitment model', () => {
     ])
   })
 
-  it('keeps an explicitly unscoped Routine open when its parent Scope already exists', () => {
+  it('keeps a Routine explicitly open when no optional Scope is supplied', () => {
     const focus = database!.domain.focuses.create({ title: 'Optional scope' })
     database!.domain.focusScopes.addSubject(
       focus.id,
       { name: 'Europe' },
       new Date('2026-01-01T09:00:00.000Z')
     )
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Optional scope delivery',
+      reviewFrequencyDays: 7
+    })
     const routine = database!.domain.routines.create({
-      parent: { type: 'focus', id: focus.id },
-      name: 'Deliberately open inspection',
+      parent: { type: 'thread', id: thread.id },
+      name: 'Inherited inspection',
       scheduleWeekdays: ['thursday'],
       scopeId: null,
       checklist: [{ inspection: 'Verify shared evidence.' }]
@@ -618,9 +648,7 @@ describe('Routine Commitment model', () => {
 
     expect(routine.snapshot('2026-01-01')).toMatchObject({
       scope: null,
-      currentRun: {
-        cells: [expect.objectContaining({ subject: null })]
-      }
+      currentRun: { cells: [expect.objectContaining({ subject: null })] }
     })
   })
 
@@ -631,8 +659,13 @@ describe('Routine Commitment model', () => {
       { name: 'Temporary region' },
       new Date('2026-01-01T09:00:00.000Z')
     )
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Empty matrix delivery',
+      reviewFrequencyDays: 7
+    })
     const routine = database!.domain.routines.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       name: 'Scoped inspection',
       scheduleWeekdays: ['thursday'],
       scopeId: scope.scopeId,
@@ -673,22 +706,27 @@ describe('Routine Commitment model', () => {
     const focus = database!.domain.focuses.create({ title: 'First focus' })
     const other = database!.domain.focuses.create({ title: 'Other focus' })
     const otherScope = database!.domain.focusScopes.addSubject(other.id, { name: 'Other subject' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'First Thread',
+      reviewFrequencyDays: 7
+    })
 
     expect(() => database!.domain.routines.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       name: 'Invalid scope',
       scheduleWeekdays: ['thursday'],
       scopeId: otherScope.scopeId,
       checklist: [{ inspection: 'Verify ownership.' }]
     })).toThrow(/Scope must belong/)
     expect(() => database!.domain.routines.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       name: 'Empty',
       scheduleWeekdays: ['thursday'],
       checklist: []
     })).toThrow(ModelValidationError)
     expect(() => database!.domain.commitments.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       type: 'routine',
       title: 'Wrong repository'
     } as never)).toThrow(/Routine repository/)
@@ -698,7 +736,7 @@ describe('Routine Commitment model', () => {
   })
 
   it('cascades complete Routine history with its owning Focus or Thread', () => {
-    const { focus, routine } = createRoutine()
+    const { focus, thread: focusCascadeThread, routine } = createRoutine()
     const thread = database!.domain.threads.create({
       focusId: focus.id,
       title: 'Sprint execution',
@@ -713,6 +751,7 @@ describe('Routine Commitment model', () => {
 
     expect(database!.domain.threads.delete(thread.id)).toBe(true)
     expect(database!.domain.routines.find(threadRoutine.id)).toBeNull()
+    expect(database!.domain.threads.findModel(focusCascadeThread.id)).not.toBeNull()
     expect(database!.domain.focuses.delete(focus.id)).toBe(true)
     expect(database!.domain.routines.find(routine.id)).toBeNull()
   })
@@ -792,7 +831,7 @@ describe('Routine Commitment model', () => {
     expect(() => database!.domain.routines.move(routine.id, {
       parent: { type: 'focus', id: focus.id },
       plannedFrom: { type: 'thread', id: source.id }
-    }, new Date('2026-01-02T11:00:00.000Z'))).toThrow(/stale/)
+    }, new Date('2026-01-02T11:00:00.000Z'))).toThrow(/must belong to a Thread/)
     const otherFocus = database!.domain.focuses.create({ title: 'Other Focus' })
     const otherThread = database!.domain.threads.create({
       focusId: otherFocus.id,

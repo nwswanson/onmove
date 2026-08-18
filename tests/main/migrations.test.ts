@@ -70,8 +70,13 @@ describe('database migrations', () => {
   it('upgrades the previous schema with a bounded archive without touching live Updates', () => {
     const current = new AppDatabase(databasePath)
     const focus = current.domain.focuses.create({ title: 'Existing focus' })
+    const thread = current.domain.threads.create({
+      focusId: focus.id,
+      title: 'Existing thread',
+      reviewFrequencyDays: 7
+    })
     const update = current.domain.updates.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       date: '2026-08-11',
       observation: 'Existing evidence',
       state: 'yellow'
@@ -142,8 +147,13 @@ describe('database migrations', () => {
   it('backfills Commitment review schedules from legacy update cadence', () => {
     const current = new AppDatabase(databasePath)
     const focus = current.domain.focuses.create({ title: 'Legacy schedule' })
+    const thread = current.domain.threads.create({
+      focusId: focus.id,
+      title: 'Legacy thread',
+      reviewFrequencyDays: 7
+    })
     const commitment = current.domain.commitments.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       type: 'tracking',
       title: 'Carry the existing cadence forward',
       cadenceDays: 14
@@ -170,14 +180,19 @@ describe('database migrations', () => {
   it('promotes tracking to the generic Commitment type without losing legacy due semantics', () => {
     const current = new AppDatabase(databasePath)
     const focus = current.domain.focuses.create({ title: 'Typed commitments' })
+    const thread = current.domain.threads.create({
+      focusId: focus.id,
+      title: 'Typed thread',
+      reviewFrequencyDays: 7
+    })
     const dueDated = current.domain.commitments.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       type: 'tracking',
       title: 'Ship the launch',
       dueDate: '2026-09-15'
     })
     const undated = current.domain.commitments.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       type: 'tracking',
       title: 'Maintain launch health'
     })
@@ -242,8 +257,13 @@ describe('database migrations', () => {
   it('freezes Routine item notes and resolutions after explicit finalization', () => {
     const database = new AppDatabase(databasePath)
     const focus = database.domain.focuses.create({ title: 'Routine notes' })
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Routine thread',
+      reviewFrequencyDays: 7
+    })
     const routine = database.domain.routines.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       name: 'Evidence review',
       scheduleWeekdays: ['thursday'],
       checklist: [{ inspection: 'Verify evidence.' }]
@@ -274,8 +294,13 @@ describe('database migrations', () => {
   it('rejects replacing a Routine Run after attestation evidence begins', () => {
     const database = new AppDatabase(databasePath)
     const focus = database.domain.focuses.create({ title: 'Protected Routine evidence' })
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Protected Routine thread',
+      reviewFrequencyDays: 7
+    })
     const routine = database.domain.routines.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       name: 'Protected inspection',
       scheduleWeekdays: ['thursday'],
       checklist: [{ inspection: 'Verify protected evidence.' }]
@@ -297,8 +322,13 @@ describe('database migrations', () => {
   it('migrates legacy Routine anchors to constrained weekday schedules', () => {
     const database = new AppDatabase(databasePath)
     const focus = database.domain.focuses.create({ title: 'Legacy Routine schedule' })
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Legacy Routine thread',
+      reviewFrequencyDays: 7
+    })
     const routine = database.domain.routines.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       name: 'Weekend inspection',
       scheduleWeekdays: ['friday'],
       checklist: [{ inspection: 'Verify evidence.' }]
@@ -424,12 +454,17 @@ describe('database migrations', () => {
   it('backfills and enforces Todo completion timestamps', () => {
     const database = new AppDatabase(databasePath)
     const focus = database.domain.focuses.create({ title: 'Completion history' })
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Completion thread',
+      reviewFrequencyDays: 7
+    })
     const open = database.domain.todos.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       name: 'Open Todo'
     })
     const done = database.domain.todos.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       name: 'Done Todo',
       done: true
     })
@@ -467,9 +502,14 @@ describe('database migrations', () => {
   it('upgrades v17 Todos and enforces shared aggregate Subject completion cells', () => {
     const database = new AppDatabase(databasePath)
     const focus = database.domain.focuses.create({ title: 'Shared Todo migration' })
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Shared Todo thread',
+      reviewFrequencyDays: 7
+    })
     const subject = database.domain.subjects.create({ name: 'Customer Operations' })
     const ordinary = database.domain.todos.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       name: 'Ordinary Todo'
     })
     database.close()
@@ -777,7 +817,8 @@ describe('database migrations', () => {
       CREATE INDEX updates_commitment_date_index
         ON updates(commitment_id, recorded_on DESC, id DESC);
       INSERT INTO focuses (id, title) VALUES (1, 'Existing focus');
-      INSERT INTO commitments (id, focus_id, thread_id) VALUES (2, 1, NULL);
+      INSERT INTO threads (id, focus_id) VALUES (1, 1);
+      INSERT INTO commitments (id, focus_id, thread_id) VALUES (2, NULL, 1);
       INSERT INTO updates (
         id, focus_id, thread_id, commitment_id, recorded_on, observation, state, created_at
       ) VALUES (
@@ -835,12 +876,13 @@ describe('database migrations', () => {
     })
     expect(stateOnly).toMatchObject({ observation: '', state: 'red' })
     expect(focusScope).toMatchObject({ mode: 'open', scope_id: null })
-    expect(commitmentScope).toMatchObject({ mode: 'open', scope_id: null })
+    expect(commitmentScope).toMatchObject({ mode: 'inherited', scope_id: null })
     expect(focusScopeHistory).toEqual([
       { from_mode: null, from_scope_id: null, to_mode: 'open', to_scope_id: null }
     ])
     expect(commitmentScopeHistory).toEqual([
-      { from_mode: null, from_scope_id: null, to_mode: 'open', to_scope_id: null }
+      { from_mode: null, from_scope_id: null, to_mode: 'open', to_scope_id: null },
+      { from_mode: 'open', from_scope_id: null, to_mode: 'inherited', to_scope_id: null }
     ])
     expect(foreignKeyViolations).toEqual([])
   })
@@ -853,13 +895,18 @@ describe('database migrations', () => {
       title: 'Sprint execution',
       reviewFrequencyDays: 7
     })
+    const openThread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Sponsor alignment',
+      reviewFrequencyDays: 7
+    })
     const threadCommitment = database.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
       type: 'tracking',
       title: 'Improve ticket quality'
     })
-    const focusCommitment = database.domain.commitments.create({
-      parent: { type: 'focus', id: focus.id },
+    const openCommitment = database.domain.commitments.create({
+      parent: { type: 'thread', id: openThread.id },
       type: 'tracking',
       title: 'Align sponsors'
     })
@@ -879,7 +926,7 @@ describe('database migrations', () => {
       WHERE commitment_id = ${threadCommitment.id};
       UPDATE commitment_scope_applications
       SET mode = 'inherited', scope_id = NULL
-      WHERE commitment_id = ${focusCommitment.id};
+      WHERE commitment_id = ${openCommitment.id};
       DELETE FROM schema_migrations WHERE version = 12;
     `)
     legacy.close()
@@ -892,11 +939,11 @@ describe('database migrations', () => {
         effectiveScopeId: threadScope.scopeId,
         inheritedFrom: { type: 'thread', id: thread.id }
       })
-    expect(migrated.domain.commitments.requireModel(focusCommitment.id).scopeApplication())
+    expect(migrated.domain.commitments.requireModel(openCommitment.id).scopeApplication())
       .toMatchObject({
-        mode: 'open',
+        mode: 'inherited',
         effectiveScopeId: null,
-        inheritedFrom: null
+        inheritedFrom: { type: 'thread', id: openThread.id }
       })
     migrated.close()
 
@@ -908,8 +955,8 @@ describe('database migrations', () => {
     ).run(threadCommitment.id)).toThrow(/Commitment Scope is derived/)
     expect(() => raw.prepare(
       `UPDATE commitment_scope_applications
-       SET mode = 'inherited', scope_id = NULL WHERE commitment_id = ?`
-    ).run(focusCommitment.id)).toThrow(/Commitment Scope is derived/)
+       SET mode = 'open', scope_id = NULL WHERE commitment_id = ?`
+    ).run(openCommitment.id)).toThrow(/Commitment Scope is derived/)
 
     const transition = raw.prepare(
       `SELECT id FROM scope_application_transitions
@@ -942,8 +989,13 @@ describe('database migrations', () => {
       name: 'Second Scope',
       dimension: 'people'
     })
+    const thread = database.domain.threads.create({
+      focusId: firstFocus.id,
+      title: 'Scoped work',
+      reviewFrequencyDays: 7
+    })
     const commitment = database.domain.commitments.create({
-      parent: { type: 'focus', id: firstFocus.id },
+      parent: { type: 'thread', id: thread.id },
       type: 'tracking',
       title: 'Hold a conversation'
     })
@@ -981,6 +1033,11 @@ describe('database migrations', () => {
       title: 'Sprint execution',
       reviewFrequencyDays: 7
     }, now)
+    const otherThread = database.domain.threads.create({
+      focusId: firstFocus.id,
+      title: 'Other work',
+      reviewFrequencyDays: 7
+    }, now)
     const scoped = database.domain.threadScopes.addSubject(
       thread.id,
       { name: 'Customer Operations' },
@@ -992,9 +1049,9 @@ describe('database migrations', () => {
       name: 'Other Scope',
       dimension: 'subject'
     }, now)
-    const focusTodo = database.domain.todos.create({
-      parent: { type: 'focus', id: firstFocus.id },
-      name: 'Focus Todo'
+    const threadTodo = database.domain.todos.create({
+      parent: { type: 'thread', id: otherThread.id },
+      name: 'Thread Todo'
     }, now)
     const scopedTodo = database.domain.todos.create({
       parent: {
@@ -1034,20 +1091,137 @@ describe('database migrations', () => {
     )).toThrow()
     expect(() => raw.prepare(
       "UPDATE todos SET due_on = '2026-02-30' WHERE id = ?"
-    ).run(focusTodo.id)).toThrow()
+    ).run(threadTodo.id)).toThrow()
     expect(() => raw.prepare(
-      'UPDATE todos SET focus_id = ?, thread_id = NULL WHERE id = ?'
-    ).run(firstFocus.id, scopedTodo.id)).toThrow(/parent context is immutable/)
+      'UPDATE todos SET thread_id = ? WHERE id = ?'
+    ).run(otherThread.id, scopedTodo.id)).toThrow(/parent context is immutable/)
 
-    const focusList = raw.prepare(
-      'SELECT id FROM todo_lists WHERE focus_id = ?'
-    ).get(firstFocus.id) as { id: number }
+    const otherThreadList = raw.prepare(
+      'SELECT id FROM todo_lists WHERE thread_id = ? AND scope_id IS NULL'
+    ).get(otherThread.id) as { id: number }
     expect(() => raw.prepare(
       `INSERT INTO todo_sort_placements (
          todo_id, list_id, sort_key, created_at, updated_at
        ) VALUES (?, ?, 9999, ?, ?)`
-    ).run(scopedTodo.id, focusList.id, now.toISOString(), now.toISOString()))
+    ).run(scopedTodo.id, otherThreadList.id, now.toISOString(), now.toISOString()))
       .toThrow(/must match its parent context/)
+    raw.close()
+  })
+
+  it('retires Focus-owned work while rescuing every affected Update into the archive', () => {
+    const database = new AppDatabase(databasePath)
+    const focus = database.domain.focuses.create({ title: 'Legacy overview' })
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Surviving thread',
+      reviewFrequencyDays: 7
+    })
+    const directFocusUpdate = database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2026-08-10',
+      observation: 'Legacy direct Focus evidence',
+      state: 'yellow'
+    })
+    const focusCommitment = database.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'tracking',
+      title: 'Legacy Focus commitment'
+    })
+    const commitmentUpdate = database.domain.updates.create({
+      parent: { type: 'commitment', id: focusCommitment.id },
+      date: '2026-08-11',
+      observation: 'Legacy Commitment evidence',
+      state: 'red'
+    })
+    const focusRoutine = database.domain.routines.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Legacy Focus routine',
+      scheduleWeekdays: ['friday'],
+      checklist: [{ inspection: 'Verify the migration.' }]
+    })
+    const survivingUpdate = database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2026-08-12',
+      observation: 'Keep this Thread evidence',
+      state: 'green'
+    })
+    database.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec('PRAGMA foreign_keys = ON;')
+    legacy.exec(`
+      DROP TRIGGER commitments_require_thread_parent_insert;
+      DROP TRIGGER commitments_require_thread_parent_update;
+      DROP TRIGGER updates_disallow_focus_parent_insert;
+      DROP TRIGGER updates_disallow_focus_parent_update;
+      DROP TRIGGER todos_disallow_focus_parent_insert;
+      DROP TRIGGER todos_disallow_focus_parent_update;
+      DROP TRIGGER todo_lists_disallow_focus_parent_insert;
+      DROP TRIGGER todo_lists_disallow_focus_parent_update;
+      DROP TRIGGER focuses_goal_is_retired;
+      DROP TRIGGER focuses_goal_is_retired_insert;
+      DELETE FROM schema_migrations WHERE version = 33;
+    `)
+    legacy.prepare(
+      'UPDATE updates SET focus_id = ?, thread_id = NULL WHERE id = ?'
+    ).run(focus.id, directFocusUpdate.id)
+    legacy.prepare(
+      'UPDATE commitments SET focus_id = ?, thread_id = NULL WHERE id IN (?, ?)'
+    ).run(focus.id, focusCommitment.id, focusRoutine.id)
+    legacy.prepare(`
+      INSERT INTO todos (
+        focus_id, thread_id, commitment_id, scope_id, subject_id,
+        name, due_on, done, created_at, updated_at
+      ) VALUES (?, NULL, NULL, NULL, NULL, ?, NULL, 0, ?, ?)
+    `).run(
+      focus.id,
+      'Legacy Focus Todo',
+      '2026-08-12T12:00:00.000Z',
+      '2026-08-12T12:00:00.000Z'
+    )
+    legacy.prepare('UPDATE focuses SET goal = ? WHERE id = ?')
+      .run('Legacy goal', focus.id)
+    legacy.close()
+
+    const migrated = new AppDatabase(databasePath)
+    expect(migrated.dataArchive.export('test').tables.focuses).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: focus.id, goal: '' })
+    ]))
+    expect(migrated.domain.updates.find(directFocusUpdate.id)).toBeNull()
+    expect(migrated.domain.updates.find(commitmentUpdate.id)).toBeNull()
+    expect(migrated.domain.archivedUpdates.listForOriginalUpdate(directFocusUpdate.id))
+      .toMatchObject([{
+        observation: 'Legacy direct Focus evidence',
+        context: { focusTitle: 'Legacy overview' }
+      }])
+    expect(migrated.domain.archivedUpdates.listForOriginalUpdate(commitmentUpdate.id))
+      .toMatchObject([{
+        observation: 'Legacy Commitment evidence',
+        context: { commitmentTitle: 'Legacy Focus commitment' }
+      }])
+    expect(migrated.domain.commitments.find(focusCommitment.id)).toBeNull()
+    expect(migrated.domain.commitments.find(focusRoutine.id)).toBeNull()
+    expect(migrated.domain.updates.find(survivingUpdate.id)).toMatchObject({
+      observation: 'Keep this Thread evidence'
+    })
+    migrated.close()
+
+    const raw = new DatabaseSync(databasePath)
+    expect(raw.prepare("SELECT count(*) AS count FROM todos WHERE focus_id = ?").get(focus.id))
+      .toEqual({ count: 0 })
+    expect(raw.prepare(
+      "SELECT count(*) AS count FROM rich_text_history WHERE document_type = 'focus-goal'"
+    ).get()).toEqual({ count: 0 })
+    expect(() => raw.prepare(
+      `INSERT INTO commitments (
+         focus_id, thread_id, commitment_type, behavior_type, title, status,
+         sensitive, created_at, updated_at
+       ) VALUES (?, NULL, 'tracking', 'tracking', 'Rejected', 'active', 0, ?, ?)`
+    ).run(
+      focus.id,
+      '2026-08-13T12:00:00.000Z',
+      '2026-08-13T12:00:00.000Z'
+    )).toThrow(/must belong to a Thread/)
     raw.close()
   })
 })

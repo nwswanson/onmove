@@ -38,7 +38,7 @@ describe('Due model', () => {
       reviewFrequencyDays: 7
     })
     const overall = database!.domain.commitments.create({
-      parent: { type: 'focus', id: atlas.id },
+      parent: { type: 'thread', id: sprint.id },
       type: 'tracking',
       title: 'Approve launch',
       dueDate: '2026-09-08'
@@ -51,7 +51,7 @@ describe('Due model', () => {
       status: 'done'
     })
     database!.domain.commitments.create({
-      parent: { type: 'focus', id: atlas.id },
+      parent: { type: 'thread', id: sprint.id },
       type: 'tracking',
       title: 'Undated expectation'
     })

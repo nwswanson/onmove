@@ -3142,6 +3142,124 @@ const migrations: readonly Migration[] = [
         END;
       `)
     }
+  },
+  {
+    version: 33,
+    name: 'focus_overview_thread_only_work',
+    up(database) {
+      const requiredTables = [
+        'focuses',
+        'threads',
+        'commitments',
+        'updates',
+        'todos',
+        'todo_lists',
+        'archived_updates'
+      ]
+      const hasCompleteWorkDomain = requiredTables.every((table) =>
+        database.get<{ found: number }>(
+          "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?",
+          [table]
+        )
+      )
+      const focusColumns = new Set(
+        database.all<{ name: string }>('PRAGMA table_info(focuses)').map(({ name }) => name)
+      )
+      const updateColumns = new Set(
+        database.all<{ name: string }>('PRAGMA table_info(updates)').map(({ name }) => name)
+      )
+      if (
+        !hasCompleteWorkDomain ||
+        !['title', 'goal', 'updated_at'].every((column) => focusColumns.has(column)) ||
+        !['focus_id', 'thread_id', 'commitment_id'].every((column) => updateColumns.has(column))
+      ) return
+
+      // Focus Overall is now an overview rather than a work-owning pseudo-Thread.
+      // Deleting through SQLite is deliberate: the single Updates BEFORE DELETE
+      // trigger rescues direct evidence and every Commitment cascade into the
+      // bounded archive before any former owner disappears.
+      database.exec(`
+        DELETE FROM updates WHERE focus_id IS NOT NULL;
+        DELETE FROM commitments WHERE focus_id IS NOT NULL;
+        DELETE FROM todos WHERE focus_id IS NOT NULL;
+        DELETE FROM todo_lists WHERE focus_id IS NOT NULL;
+
+        UPDATE focuses
+        SET goal = '', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE goal <> '';
+        DELETE FROM rich_text_history WHERE document_type = 'focus-goal';
+
+        CREATE TRIGGER commitments_require_thread_parent_insert
+        BEFORE INSERT ON commitments
+        WHEN NEW.focus_id IS NOT NULL OR NEW.thread_id IS NULL
+        BEGIN
+          SELECT RAISE(ABORT, 'Commitments and Routines must belong to a Thread');
+        END;
+
+        CREATE TRIGGER commitments_require_thread_parent_update
+        BEFORE UPDATE OF focus_id, thread_id ON commitments
+        WHEN NEW.focus_id IS NOT NULL OR NEW.thread_id IS NULL
+        BEGIN
+          SELECT RAISE(ABORT, 'Commitments and Routines must belong to a Thread');
+        END;
+
+        CREATE TRIGGER updates_disallow_focus_parent_insert
+        BEFORE INSERT ON updates
+        WHEN NEW.focus_id IS NOT NULL
+        BEGIN
+          SELECT RAISE(ABORT, 'Updates must belong to a Thread or Commitment');
+        END;
+
+        CREATE TRIGGER updates_disallow_focus_parent_update
+        BEFORE UPDATE OF focus_id, thread_id, commitment_id ON updates
+        WHEN NEW.focus_id IS NOT NULL
+        BEGIN
+          SELECT RAISE(ABORT, 'Updates must belong to a Thread or Commitment');
+        END;
+
+        CREATE TRIGGER todos_disallow_focus_parent_insert
+        BEFORE INSERT ON todos
+        WHEN NEW.focus_id IS NOT NULL
+        BEGIN
+          SELECT RAISE(ABORT, 'Todos must belong to a Thread or Commitment');
+        END;
+
+        CREATE TRIGGER todos_disallow_focus_parent_update
+        BEFORE UPDATE OF focus_id, thread_id, commitment_id ON todos
+        WHEN NEW.focus_id IS NOT NULL
+        BEGIN
+          SELECT RAISE(ABORT, 'Todos must belong to a Thread or Commitment');
+        END;
+
+        CREATE TRIGGER todo_lists_disallow_focus_parent_insert
+        BEFORE INSERT ON todo_lists
+        WHEN NEW.focus_id IS NOT NULL
+        BEGIN
+          SELECT RAISE(ABORT, 'Todo lists must belong to a Thread or Commitment');
+        END;
+
+        CREATE TRIGGER todo_lists_disallow_focus_parent_update
+        BEFORE UPDATE OF focus_id, thread_id, commitment_id ON todo_lists
+        WHEN NEW.focus_id IS NOT NULL
+        BEGIN
+          SELECT RAISE(ABORT, 'Todo lists must belong to a Thread or Commitment');
+        END;
+
+        CREATE TRIGGER focuses_goal_is_retired
+        BEFORE UPDATE OF goal ON focuses
+        WHEN NEW.goal <> ''
+        BEGIN
+          SELECT RAISE(ABORT, 'Focus Goal has been retired');
+        END;
+
+        CREATE TRIGGER focuses_goal_is_retired_insert
+        BEFORE INSERT ON focuses
+        WHEN NEW.goal <> ''
+        BEGIN
+          SELECT RAISE(ABORT, 'Focus Goal has been retired');
+        END;
+      `)
+    }
   }
 ]
 

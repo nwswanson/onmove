@@ -24,8 +24,13 @@ describe('UpdateArchiveRepository', () => {
 
   it('archives an explicit Update delete exactly once with its complete durable state', () => {
     const focus = database!.domain.focuses.create({ title: 'Project Atlas', sensitive: true })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Launch readiness',
+      reviewFrequencyDays: 7
+    })
     const update = database!.domain.updates.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       date: '2026-08-12',
       observation: 'Launch readiness is green.',
       state: 'green',
@@ -37,7 +42,7 @@ describe('UpdateArchiveRepository', () => {
     expect(database!.domain.archivedUpdates.list()).toMatchObject([{
       archiveId: expect.stringMatching(/^[0-9a-f]{32}$/),
       originalUpdateId: update.id,
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       scope: null,
       date: '2026-08-12',
       observation: 'Launch readiness is green.',
@@ -48,7 +53,7 @@ describe('UpdateArchiveRepository', () => {
       updatedAt: '2026-08-12T12:00:00.000Z',
       context: {
         focusTitle: 'Project Atlas',
-        threadTitle: null,
+        threadTitle: 'Launch readiness',
         commitmentTitle: null,
         subjectName: null
       },
@@ -82,10 +87,6 @@ describe('UpdateArchiveRepository', () => {
     })
     const updates = [
       database!.domain.updates.create({
-        parent: { type: 'focus', id: focus.id },
-        observation: 'Portfolio evidence'
-      }),
-      database!.domain.updates.create({
         parent: { type: 'thread', id: thread.id },
         scope: cell,
         observation: 'Thread evidence'
@@ -98,7 +99,7 @@ describe('UpdateArchiveRepository', () => {
     ]
 
     expect(database!.domain.focuses.delete(focus.id)).toBe(true)
-    expect(database!.domain.archivedUpdates.list()).toHaveLength(3)
+    expect(database!.domain.archivedUpdates.list()).toHaveLength(2)
     expect(database!.domain.archivedUpdates.list().every(({ effectiveSensitive }) =>
       effectiveSensitive)).toBe(true)
     expect(new Set(database!.domain.archivedUpdates.list().map(({ originalUpdateId }) =>
@@ -161,8 +162,13 @@ describe('UpdateArchiveRepository', () => {
 
   it('keeps archived content immutable while allowing repository-owned permanent deletion', () => {
     const focus = database!.domain.focuses.create({ title: 'Project Atlas' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Archive ownership',
+      reviewFrequencyDays: 7
+    })
     const update = database!.domain.updates.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       observation: 'Retain this.'
     })
     database!.domain.updates.delete(update.id)
@@ -218,8 +224,13 @@ describe('UpdateArchiveRepository', () => {
 
   it('rolls archive writes back atomically when the deleting transaction fails', () => {
     const focus = database!.domain.focuses.create({ title: 'Project Atlas' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Transactional archive',
+      reviewFrequencyDays: 7
+    })
     const update = database!.domain.updates.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       observation: 'Do not archive a rolled-back delete.'
     })
     database!.close()

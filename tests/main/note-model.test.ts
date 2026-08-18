@@ -97,14 +97,14 @@ describe('Note and durable rich-text models', () => {
     ])
   })
 
-  it('uses one versioned contract for Focus fields and Update observations', () => {
+  it('uses one versioned contract for Focus descriptions and Update observations', () => {
     const focus = database!.domain.focuses.create({ title: 'Unified documents' })
-    const update = database!.domain.updates.create({ parent: { type: 'focus', id: focus.id } })
-
-    const goal = database!.domain.richTextDocuments.save(
-      { type: 'focus', id: focus.id, field: 'goal' },
-      'Ship safely'
-    )
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Delivery',
+      reviewFrequencyDays: 7
+    })
+    const update = database!.domain.updates.create({ parent: { type: 'thread', id: thread.id } })
     const description = database!.domain.richTextDocuments.save(
       { type: 'focus', id: focus.id, field: 'description' },
       'Working notes'
@@ -114,15 +114,9 @@ describe('Note and durable rich-text models', () => {
       'Quality improved'
     )
 
-    expect(goal).toMatchObject({
-      title: 'Unified documents — Goal',
-      contextPath: ['Portfolio', 'Unified documents', 'Goal'],
-      revision: 1
-    })
     expect(description).toMatchObject({ value: 'Working notes', revision: 1 })
     expect(observation).toMatchObject({ value: 'Quality improved', revision: 1 })
     expect(database!.domain.focuses.requireModel(focus.id).toSnapshot()).toMatchObject({
-      goal: 'Ship safely',
       description: 'Working notes'
     })
     expect(database!.domain.updates.requireModel(update.id).toSnapshot()).toMatchObject({
@@ -143,7 +137,7 @@ describe('Note and durable rich-text models', () => {
       title: 'Improve ticket quality'
     })
     const overallCommitment = database!.domain.commitments.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       type: 'tracking',
       title: 'Keep sponsors aligned'
     })
@@ -164,7 +158,7 @@ describe('Note and durable rich-text models', () => {
       'Project Atlas', 'Sprint execution', 'Improve ticket quality', 'Default'
     ])
     expect(notePath(overallCommitment.snapshot().notes[0].id)).toEqual([
-      'Project Atlas', 'Overall', 'Keep sponsors aligned', 'Default'
+      'Project Atlas', 'Sprint execution', 'Keep sponsors aligned', 'Default'
     ])
   })
 

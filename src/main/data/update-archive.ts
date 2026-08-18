@@ -9,7 +9,7 @@ import type { SqliteAdapter } from './sqlite-adapter'
 export const UPDATE_ARCHIVE_DELETE_TRIGGER = 'updates_archive_before_delete'
 export const UPDATE_ARCHIVE_RETENTION_TRIGGER = 'archived_updates_enforce_retention'
 export const UPDATE_ARCHIVE_RETENTION_DAYS = 30
-const ARCHIVE_CONTEXT_TRIGGER_NAMES = [
+export const UPDATE_ARCHIVE_CONTEXT_TRIGGER_NAMES = [
   'focuses_prepare_update_archive_context',
   'threads_prepare_update_archive_context',
   'commitments_prepare_update_archive_context',
@@ -190,7 +190,7 @@ export class UpdateArchiveRepository {
     )
     const mirroredColumns = archiveColumns.filter((column) =>
       ARCHIVE_MIRROR_COLUMNS.some((expected) => expected === column))
-    const contextTriggers = ARCHIVE_CONTEXT_TRIGGER_NAMES.every((name) =>
+    const contextTriggers = UPDATE_ARCHIVE_CONTEXT_TRIGGER_NAMES.every((name) =>
       Boolean(this.database.get<TriggerRow>(
         "SELECT 1 AS found FROM sqlite_master WHERE type = 'trigger' AND name = ?",
         [name]

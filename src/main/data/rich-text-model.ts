@@ -21,7 +21,7 @@ function assertReference(reference: RichTextDocumentReference): void {
     throw new ModelValidationError('rich-text document id must be a positive integer')
   }
   const valid =
-    (reference.type === 'focus' && ['goal', 'description'].includes(reference.field)) ||
+    (reference.type === 'focus' && reference.field === 'description') ||
     (reference.type === 'update' && reference.field === 'observation') ||
     (reference.type === 'note' && reference.field === 'content')
   if (!valid) throw new ModelValidationError('unsupported rich-text document reference')
@@ -33,7 +33,7 @@ function timestamp(now = new Date()): string {
 
 function referenceTitle(reference: RichTextDocumentReference, row: RichTextRow): string {
   if (reference.type === 'focus') {
-    return `${row.owner_title} — ${reference.field === 'goal' ? 'Goal' : 'Description'}`
+    return `${row.owner_title} — Description`
   }
   if (reference.type === 'update') return `${row.owner_title} — Update`
   return `${row.owner_title} — ${row.document_title ?? 'Note'}`
@@ -59,7 +59,7 @@ function referenceContextPath(
   row: RichTextRow
 ): string[] {
   const leaf = reference.type === 'focus'
-    ? (reference.field === 'goal' ? 'Goal' : 'Description')
+    ? 'Description'
     : reference.type === 'update'
       ? 'Update'
       : (row.document_title ?? 'Note')
@@ -103,9 +103,8 @@ export class RichTextDocumentRepository {
       const changedAt = timestamp(now)
       let result: { changes: number }
       if (reference.type === 'focus') {
-        const column = reference.field === 'goal' ? 'goal' : 'description'
         result = this.database.run(
-          `UPDATE focuses SET ${column} = ?, updated_at = ? WHERE id = ?`,
+          'UPDATE focuses SET description = ?, updated_at = ? WHERE id = ?',
           [value, changedAt, reference.id]
         )
       } else if (reference.type === 'update') {
@@ -128,12 +127,8 @@ export class RichTextDocumentRepository {
 
   private row(reference: RichTextDocumentReference): RichTextRow | undefined {
     if (reference.type === 'focus') {
-      const valueColumn = reference.field === 'goal' ? 'goal' : 'description'
-      const revisionColumn = reference.field === 'goal'
-        ? 'goal_revision'
-        : 'description_revision'
       return this.database.get<RichTextRow>(
-        `SELECT ${valueColumn} AS value, ${revisionColumn} AS revision,
+        `SELECT description AS value, description_revision AS revision,
                 updated_at, title AS owner_title, NULL AS document_title,
                 title AS focus_title, NULL AS thread_title, NULL AS commitment_title
          FROM focuses WHERE id = ?`,

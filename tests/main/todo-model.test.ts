@@ -22,7 +22,7 @@ describe('Todo model', () => {
     rmSync(directory, { recursive: true, force: true })
   })
 
-  it('creates and edits aggregate Focus, Thread, and Commitment Todos', () => {
+  it('creates and edits aggregate Thread and Commitment Todos', () => {
     const focus = database!.domain.focuses.create({ title: 'Project Atlas' })
     const thread = database!.domain.threads.create({
       focusId: focus.id,
@@ -33,10 +33,6 @@ describe('Todo model', () => {
       parent: { type: 'thread', id: thread.id },
       type: 'tracking',
       title: 'Improve ticket quality'
-    })
-    const focusTodo = database!.domain.todos.create({
-      parent: { type: 'focus', id: focus.id },
-      name: 'Align sponsors'
     })
     const threadTodo = database!.domain.todos.create({
       parent: { type: 'thread', id: thread.id },
@@ -49,13 +45,6 @@ describe('Todo model', () => {
       done: true
     })
 
-    expect(focusTodo.toSnapshot()).toMatchObject({
-      name: 'Align sponsors',
-      parent: { type: 'focus', id: focus.id },
-      dueDate: null,
-      done: false,
-      sort: [{ context: { type: 'focus', id: focus.id }, position: 1024 }]
-    })
     expect(threadTodo.toSnapshot()).toMatchObject({
       dueDate: '2026-08-15',
       sort: [{ context: { type: 'thread', id: thread.id }, position: 1024 }]
@@ -78,8 +67,13 @@ describe('Todo model', () => {
 
   it('persists literal text-tag syntax unchanged across database reopen', () => {
     const focus = database!.domain.focuses.create({ title: 'Tagged work' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Tagged Thread',
+      reviewFrequencyDays: 7
+    })
     const todo = database!.domain.todos.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       name: 'Coordinate @Launch2 readiness'
     })
 
@@ -308,7 +302,12 @@ describe('Todo model', () => {
 
   it('reorders filtered subsets without moving hidden Todos out of their slots', () => {
     const focus = database!.domain.focuses.create({ title: 'Project Atlas' })
-    const context = { type: 'focus' as const, id: focus.id }
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Sprint execution',
+      reviewFrequencyDays: 7
+    })
+    const context = { type: 'thread' as const, id: thread.id }
     const first = database!.domain.todos.create({ parent: context, name: 'First active' })
     const hiddenDone = database!.domain.todos.create({
       parent: context,
@@ -362,11 +361,11 @@ describe('Todo model', () => {
     }, now)
 
     expect(() => database!.domain.todos.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       name: '   '
     })).toThrow('Todo name cannot be empty')
     expect(() => database!.domain.todos.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       name: 'Invalid date',
       dueDate: '2026-02-30'
     })).toThrow('real calendar date')
@@ -406,14 +405,23 @@ describe('Todo model', () => {
       } },
       name: 'Valid scoped Todo'
     }, now)
-    database!.domain.todos.create({
-      parent: { type: 'focus', id: focus.id },
-      name: 'Focus-level Todo'
+    const otherThread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Other Thread',
+      reviewFrequencyDays: 7
+    }, now)
+    const otherTodo = database!.domain.todos.create({
+      parent: { type: 'thread', id: otherThread.id },
+      name: 'Other Thread Todo'
     }, now)
     expect(() => database!.domain.todos.reorder(
-      { type: 'focus', id: focus.id },
-      [valid.id]
+      { type: 'thread', id: thread.id },
+      [otherTodo.id]
     )).toThrow('not in this sort context')
+    expect(() => database!.domain.todos.create({
+      parent: { type: 'focus', id: focus.id },
+      name: 'Retired Focus Todo'
+    }, now)).toThrow(/must belong to a Thread or Commitment/)
     expect(() => database!.domain.todos.reorder(
       { type: 'thread', id: thread.id },
       [valid.id, valid.id]
@@ -502,9 +510,14 @@ describe('Todo model', () => {
       type: 'tracking',
       title: 'Improve ticket quality'
     })
+    const oversight = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Oversight',
+      reviewFrequencyDays: 7
+    })
     const focusTodo = database!.domain.todos.create({
-      parent: { type: 'focus', id: focus.id },
-      name: 'Due focus item',
+      parent: { type: 'thread', id: oversight.id },
+      name: 'Due oversight item',
       dueDate: '2026-08-08'
     })
     const threadTodo = database!.domain.todos.create({
@@ -533,8 +546,9 @@ describe('Todo model', () => {
     expect(database!.domain.todos.find(commitmentTodo.id)).toBeNull()
     expect(thread.delete()).toBe(true)
     expect(database!.domain.todos.find(threadTodo.id)).toBeNull()
-    expect(focus.delete()).toBe(true)
+    expect(database!.domain.threads.delete(oversight.id)).toBe(true)
     expect(database!.domain.todos.find(focusTodo.id)).toBeNull()
+    expect(focus.delete()).toBe(true)
     expect(database!.domain.todos.query()).toEqual([])
   })
 
@@ -555,7 +569,7 @@ describe('Todo model', () => {
       title: 'Improve ticket quality'
     }, now)
     const active = database!.domain.todos.create({
-      parent: { type: 'focus', id: focus.id },
+      parent: { type: 'thread', id: thread.id },
       name: 'Align sponsors',
       dueDate: '2026-08-09'
     }, now)

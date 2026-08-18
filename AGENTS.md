@@ -74,28 +74,35 @@
 - Give every active Thread row contextual actions for Add commitment, Add Routine, Needs review,
   Sensitive, and Delete Thread. Creation targets that exact Thread, checkbox actions use typed
   Thread updates, and deletion must open a confirmation before invoking the existing cascade-safe
-  Thread deletion. Give the Focus Overall row the same creation, Needs review, and Sensitive
-  actions, targeting the Focus itself, but never expose Delete Thread there because Overall is not
-  a Thread. Give Commitment and Routine sidebar rows receiver-owned Needs review, Sensitive, and
+  Thread deletion. Give the Focus Overall row only Needs review and Sensitive actions targeting the
+  Focus itself; it owns no child work and is not a Thread. Give Commitment and Routine sidebar rows receiver-owned Needs review, Sensitive, and
   confirmed Delete actions; Routine Needs review translates to its stored attestation-inclusion
   preference while schedule availability remains a separate derived condition.
   Do not render Add commitment / Add Routine controls beneath nested child collections, and render
-  no placeholder or empty collection chrome when a Thread or Overall has no visible children.
+  no placeholder or empty collection chrome when a Thread has no visible children.
 - Keep Done and Cancelled Threads in the Focus model and SQLite history, but omit them from the
   active top-level contextual hierarchy. Expose them through the Focus level's Archive footer
   action, subject the archive list to the normal sensitive-ancestor visibility boundary, and restore
   them by submitting an audited `active` status transition through the typed Thread mutation. If a
   selected Thread becomes closed, refresh navigation to the Focus Overall item; restoring a Thread
   makes it available again without selecting it or changing contextual depth.
-- Give each Focus and Thread its own parent-asserting Commitment level. Opening Commitments from the
-  parent screen's collection heading replaces the contextual sidebar, selects the first owned
-  Commitment, and returns through the shared Back behavior; never mix Focus-owned Commitments into
-  a Thread level.
-- At the top level, render each Focus Overall or Thread item's direct Commitments as a nested tree.
+- Treat Focus Overall as a read-oriented overview, never as a synthetic top-level Thread. Its main
+  screen contains Focus status, due date, description, Focus Scope administration, and the Default
+  note. It must not render or create a Goal, Commitment, Routine, Todo, or direct Focus Update.
+  Render one read-only horizontal-by-Thread timeline beneath that metadata: include every child
+  Thread regardless of lifecycle status, keep one continuous vertical rail per Thread, group rows by
+  recorded Update date, and stack multiple direct-Thread or descendant-Commitment Update cards in
+  the corresponding date/Thread cell. Timeline headers and cards link to the owning Thread. A closed
+  Thread opens as a standalone route without restoring it or adding it to the active contextual
+  sidebar; the timeline never exposes Update editing or deletion controls.
+- Give each Thread its own parent-asserting Commitment level. Opening Commitments from the Thread
+  screen's collection heading replaces the contextual sidebar, selects the first owned Commitment,
+  and returns through the shared Back behavior.
+- At the top level, render each Thread item's direct Commitments as a nested tree.
   Nested Commitment rows use the receiver-owned semantic state dot, never a Sunflower. Selecting a
   nested Commitment changes the main route while preserving the top-level sidebar.
   Render its direct Routine definitions after its direct Commitments with a checklist icon and
-  derived status dot. Routine rows are draggable between Overall and sibling Threads through the
+  derived status dot. Routine rows are draggable between sibling Threads through the
   same generic child-move boundary as Commitments. A Routine move changes ownership only: retain
   its Focus-owned optional Scope, schedule, template versions, current Run, immutable history,
   Subject cells, and item notes. Routine selections preserve the top-level contextual sidebar and
@@ -109,7 +116,7 @@
   modal. Creation opens for that exact scope and never enters a filtered level. Do not render a
   Commitments drilldown in the contextual tree.
 - Treat top-level nested Commitment and Routine rows as generic dnd-kit draggable children and
-  Overall/Thread rows as stationary ownership drop targets through the contextual sidebar's receiver-owned
+  Thread rows as stationary ownership drop targets through the contextual sidebar's receiver-owned
   child-move contract. Top-level Thread rows are also draggable to Focus rows in the primary
   sidebar; Overall is never draggable, and Threads remain alphabetically ordered rather than being
   reorderable within a Focus. One shared domain-free sidebar DnD provider must span both sidebar
@@ -200,7 +207,7 @@ foreground colors and do not rely on color alone to communicate selection or sta
   drawer accepts `ContextDrawerModel`; callers must not provide row/drawer JSX, arbitrary classes,
   render callbacks, or domain records to those receivers.
 - Use the shared Lexical-backed `RichTextEditor` for every multiline user-authored field, currently
-  Focus description/notes, Focus goal, and Update observation. Keep titles, dates, statuses, and
+  Focus description/notes and Update observation. Keep titles, dates, statuses, and
   other compact values as native controls. Rich text is limited to bold, italic, underline,
   strikethrough, yellow highlight, a conventional readable text-color palette, bulleted, numbered,
   and check lists, and safe external links; do not add images or other embedded media. Strikethrough
@@ -235,9 +242,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - Keep domain-to-UI translation in plain feature presenter `.ts` modules. Presenters may import
   domain types and UI contract types but must not render React. Domain snapshots and model hooks
   must not expose UI fields, icons, styling, or render methods.
-- Render direct Focus, Thread, and Commitment Updates through the receiver-owned `UpdateList`
-  contract. Focus Updates belong in Overall, Thread Updates in the selected Thread, and Commitment
-  Updates in the selected Commitment view; none of these lists includes descendant Updates. Give
+- Render direct Thread and Commitment Updates through the receiver-owned `UpdateList`
+  contract. Thread Updates belong in the selected Thread and Commitment Updates in the selected
+  Commitment view; neither list includes descendant Updates. Give
   every Update its own responsive card: observation
   uses the full card width while date, state, and actions occupy a wrapping metadata header. Do not
   reintroduce tabular columns. Updates must expose editable date, optional multi-line observation,
@@ -250,8 +257,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
   immediately adds an Update wherever direct creation is valid, focuses its observation editor,
   and reveals the complete new card with the least necessary workspace scroll.
   In a bounded All Subjects view it focuses the required Subject creation picker, then focuses the
-  created card after selection; on Review it starts an Update for the current exact target and
-  reveals its editor region. Todos, Tags, and other screens without Updates leave `Cmd-P` untouched.
+  created card after selection; on Review it starts an Update only for a Thread or Commitment target
+  and reveals its editor region. Focus Overall, Todos, Tags, and other screens without Updates leave
+  `Cmd-P` untouched.
 - Treat a bounded Thread's Subject selector as an operational working-context lens, distinct from
   editing the Thread's Scope definition. All Subjects keeps its main Update list limited to
   currently applicable canonical Subjects. Put retained Updates whose Subject is no longer
@@ -292,13 +300,13 @@ foreground colors and do not rely on color alone to communicate selection or sta
   exposes Current (separate Active and Paused sections) and retains Done / Cancelled in a
   closed-by-default accordion. Contextual sidebars project only Active and Paused Commitments;
   never render closed Commitment rows or a Done / Cancelled sidebar group.
-- Render Focus- and Thread-owned collections through the same `CommitmentCollection` receiver.
+- Render Thread-owned collections through the shared `CommitmentCollection` receiver.
   Presenters must translate the business projection into its receiver-owned item contract; the
   receiver owns row markup and the visible `Add commitment` action, and emits only creation
   requests or Commitment ids for open, pin, and completion actions. Successful parent-page
   creation must select the new nested Commitment route without entering the filtered Commitment
   level; creation from an already-filtered level remains in that level.
-- Treat `tracking` and `routine` as separate Commitment behavior adapters. Existing Focus/Thread
+- Treat `tracking` and `routine` as separate Commitment behavior adapters. Existing Thread
   Commitment collections, health rollups, Update commands, Due, and Review consume tracking records
   only. The top-level Routines view consumes `RoutineSnapshot` only; do not switch on behavior inside
   low-level UI receivers.
@@ -314,7 +322,7 @@ foreground colors and do not rely on color alone to communicate selection or sta
   unrelated checkbox and button controls. Keep Run history visually flat: use simple separators for
   Subject cells and inspection rows instead of nesting a card around every level.
 - Render the Routine's current actionable check-in above the `Check-in history` section on its
-  owning Focus/Thread screen. History contains prior completed Runs; when several weekday
+  owning Thread screen. History contains prior completed Runs; when several weekday
   occurrences are unfinished, expose the oldest one as current and advance to the next only after
   explicit finalization. For a scoped Run, expose receiver-owned tabs for concrete Subjects only,
   retain a valid selected Subject or default to the first available Subject, and filter
@@ -322,14 +330,13 @@ foreground colors and do not rely on color alone to communicate selection or sta
   A selected Routine owns the tab-bar slot completely: if its current Run has no concrete Subject
   cells, render no Routine tab bar and never fall through to its parent Thread's working-context
   tabs.
-- Create and manage Routines only from the owning Focus Overall or Thread screen. Put `Add Routine`
+- Create and manage Routines only from the owning Thread screen. Put `Add Routine`
   beside `Add commitment`, render the parent's Routine definitions directly beneath its Commitment
   collection, and open the Routine's history when a Routine row is selected. Keep the creation form
   in the shared `Add Routine` dialog because no record exists yet, but render edits to its future
   template, queue inclusion, sensitivity, weekday schedule, and Scope as an embedded main-screen editor; do
   not open an Edit Routine dialog. Expose permanent deletion through the Routine's standard context
-  drawer action with confirmation and shared invalidation behavior. Never mix Focus-owned and
-  Thread-owned definitions in a parent screen. Do not put definition creation or mutation in the
+  drawer action with confirmation and shared invalidation behavior. Do not put definition creation or mutation in the
   global Routines destination. A scoped scheduled occurrence snapshots one independently
   completable attestation cell per effective Subject; never collapse multiple Subjects into a
   shared checklist resolution. When the parent already has an effective Scope, default a new
@@ -353,7 +360,7 @@ foreground colors and do not rely on color alone to communicate selection or sta
   shared accessible warning icon and tooltip while preserving the entered value. Keep a local draft
   while its native date input is focused and persist on blur; never key/remount or disable the field
   in response to an intermediate date segment, because macOS emits valid partial years while typing.
-- Render Focus, Thread, and Commitment Todos through the shared receiver-owned `TodoList`. The
+- Render Thread and Commitment Todos through the shared receiver-owned `TodoList`. The
   receiver owns inline creation, editable name/due date/done controls, overdue presentation, delete,
   and dnd-kit sortable ordering. Overdue means incomplete with a due date before the current local
   date; always show the `Overdue` text in destructive color instead of relying on color alone.
@@ -431,9 +438,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
   next day. Render direct evidence and child Commitments as non-navigating reference rows; a Focus
   or Thread must never drill into a Commitment from Review. `Ignore` dismisses only the current
   in-memory queue entry, `Pass along` calls the aggregate's typed `pokeReview` operation, refreshes
-  the application-owned Focus projection, and advances the session. `Update` immediately creates a
-  blank direct Update before exposing its autosaved editor. The editor's finish action advances the
-  session and refreshes the owning Focus projection; it is not a Save button. A same-day queue
+  the application-owned Focus projection, and advances the session. For Thread and Commitment
+  targets, `Update` immediately creates a blank direct Update before exposing its autosaved editor;
+  Focus targets offer Pass but no Update action. The editor's finish action advances the session and
+  refreshes the owning Focus projection; it is not a Save button. A same-day queue
   refresh must retain passed and updated item keys while offering ignored items again; do not
   present a completed item as fresh work through a replay-style `Review again` action.
 - Keep the current Review target and the Focus, Thread, and Commitment detail screens paired with
@@ -458,8 +466,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
   a due date removes the row after persistence. Apply hierarchy-cascading sensitive filtering at the
   presenter collection boundary. A link may open a closed Focus without restoring it to normal sidebar
   navigation.
-- Render the current Review target's direct Todos through the shared `DirectTodos`/`TodoList`
-  contracts, using the exact Scope/Subject cell for a scoped queue entry. Every successful
+- Render a current Thread or Commitment Review target's direct Todos through the shared
+  `DirectTodos`/`TodoList` contracts, using the exact Scope/Subject cell for a scoped queue entry.
+  Focus Review targets own no Todos. Every successful
   Review-originated Todo mutation records the same typed aggregate or exact-cell review poke and
   refreshes the owning Focus projection, but it must keep the current queue item onscreen so the
   user can make multiple changes before advancing. This acknowledgement updates review timing;
@@ -475,6 +484,11 @@ foreground colors and do not rely on color alone to communicate selection or sta
 ## Data model
 
 - Add schema changes as new numbered migrations; never edit a migration already released to users.
+- Migration 33 is the breaking Focus-overview boundary. It clears retired Focus Goal content and
+  rejects new direct Focus Commitments, Routines, Updates, Todos, and Todo lists in both repositories
+  and SQLite. Its cleanup deletes former Focus-owned work through the normal foreign-key graph so
+  every affected direct or descendant Update reaches `archived_updates`. Portable import must apply
+  the same semantic repair to older archives while keeping the central archive triggers installed.
 - Rescue every Update deletion through the SQLite-owned `updates_archive_before_delete` trigger.
   `archived_updates` mirrors every live Update field plus its original id, former hierarchy labels,
   effective sensitivity, and deletion timestamp without foreign keys, so direct deletes and Focus,
@@ -493,7 +507,7 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - Preserve hierarchy cascades, relation `SET NULL` behavior, and automatic status-transition
   auditing.
 - Keep tag identity derived from literal current text instead of adding a second persisted source of
-  truth. Index Focus title/description/goal, Thread and Commitment titles, Update observation, Todo
+  truth. Index Focus title/description, Thread and Commitment titles, Update observation, Todo
   name, and Note title/content. Canonicalize names to lowercase and deduplicate repeated names within
   one field. Project rich-text envelopes to plain text before parsing or producing snippets.
   Imports, edits, moves, and cascade deletions must therefore become visible to
@@ -509,9 +523,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
   aggregate.
 - Order Commitment Updates by their recorded date without capping them at today. A future-dated
   Update immediately supplies the Commitment's state and cadence baseline.
-- Derive every aggregate `lastReviewDate` as the later of its persisted explicit review poke and its
-  applicable direct Update evidence. For Focus, applicable evidence is the newest effective direct
-  Update. For an Open or zero-Subject Thread, it is the newest effective direct unscoped Update, and
+- Derive Focus `lastReviewDate` only from its persisted explicit review poke because Focuses no
+  longer own Updates. Derive every Thread or Commitment `lastReviewDate` as the later of its persisted
+  explicit review poke and applicable direct Update evidence. For an Open or zero-Subject Thread,
+  that evidence is the newest effective direct unscoped Update, and
   the later poke also advances the aggregate review deadline. For a bounded Thread with Subjects,
   expose one independent review cell per effective Subject: aggregate `reviewDue` with any due cell,
   `nextReviewDate` with the earliest cell deadline, and Update-derived coverage as the oldest latest
@@ -524,10 +539,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
   Commitment's review schedule overrides its parent Thread's schedule and inclusion; bounded
   Commitments derive independent review deadlines per effective Subject cell. Keep persisted
   `needsReview` separate from lifecycle status and from all derived review projections.
-- A Commitment must have exactly one Focus or Thread parent. An Update must have exactly one Focus,
-  Thread, or Commitment parent. Preserve these SQLite constraints and cascades.
+- A Commitment or Routine must have exactly one Thread parent. An Update must have exactly one
+  Thread or Commitment parent. Preserve these SQLite constraints and cascades.
 - Treat Commitment as a generic behavior-discriminated model. `tracking` and `routine` share only
-  the base Focus-or-Thread ownership boundary. Migration 26's constrained `commitment_type` remains
+  the base Thread ownership boundary. Migration 26's constrained `commitment_type` remains
   tracking compatibility storage; migration 27's constrained `behavior_type` is canonical. Keep the
   due-derived `action`/`ongoing` compatibility value isolated in `legacy_due_type`; never expose it
   as the Commitment's type or use it to branch application behavior.
@@ -564,7 +579,7 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - Treat Subject, Scope, and Scope application as distinct model concepts. Subjects are canonical and
   generic; Scopes are Focus-owned applicability expressions; editable applications belong to Focus
   and Thread. Persist Commitment application rows only as enforced derived projections:
-  Thread-owned Commitments are always `inherited`, and Focus-owned Commitments are always `open`.
+  Commitments always inherit their owning Thread.
 - Route Focus and Thread applicability through their aggregate repositories and named IPC. Focus
   edits are inline on its main screen; Thread edits originate in its context drawer. A Thread
   customization must create and apply a new Focus-owned overlay Scope based on its current effective
@@ -587,21 +602,21 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - Keep context, Scope, and attention separate. Scope is the complete applicability set, not a tag or
   a filtered list of current exceptions; attention can be derived later without narrowing Scope.
 - Require every bounded Thread or Commitment Update to store its exact effective Scope and Subject
-  cell. Direct Focus Updates and Updates on Open parents remain unscoped. A Thread with zero
+  cell. Updates on Open parents remain unscoped. A Thread with zero
   effective Subjects is operationally Thread-wide and may store direct unscoped Updates; this
   exception does not apply to Commitments. Preserve cell attribution when applications or membership
   later change.
 - Never accept a Scope declaration when creating or mutating a Commitment. Changing a Thread Scope
   must immediately change the effective working context of all its Commitments regardless of
   whether those Commitments were created before or after the Thread Scope.
-- Reparent Commitments only through the transactional plan/move repository contract and only within
-  one Focus. Updates, Todos, and Notes retain their Commitment ids and exact historical Scope cells;
+- Reparent Commitments only through the transactional plan/move repository contract between Threads
+  within one Focus. Updates, Todos, and Notes retain their Commitment ids and exact historical Scope cells;
   the move never copies or deletes child rows. Compare canonical Subjects in the source and
   destination contexts independently of evidence count. Exact/superset destinations need no
   confirmation; missing Subjects require an explicit, stale-plan-safe confirmation before widening
   the destination Focus Scope or an isolated Thread overlay. Record every actual parent change in
   immutable `commitment_parent_transitions` history and keep the derived Commitment Scope
-  application synchronized (`inherited` under a Thread, `open` under Overall).
+  application synchronized to its owning Thread.
 - Move Threads between Focuses only through the transactional plan/move repository contract. Keep
   the Thread id and all descendant Commitment, Update, Todo, Note, and sort-placement identities.
   An Open/inherited Thread follows the destination Focus; canonical Subjects absent there require
@@ -611,8 +626,8 @@ foreground colors and do not rely on color alone to communicate selection or sta
   cells as a different Scope merely because its Subjects match. Authorize those otherwise-immutable
   Scope-id remaps only inside the move transaction, and append immutable
   `thread_parent_transitions` for every actual parent change.
-- Model Todos separately from Commitments. A Todo has a required name, immutable Focus/Thread/
-  Commitment or exact Thread/Commitment Scope-cell parent, optional due date, boolean done state,
+- Model Todos separately from Commitments. A Todo has a required name, immutable Thread/Commitment
+  or exact Thread/Commitment Scope-cell parent, optional due date, boolean done state,
   and contextual sort placements. Individual scoped Todos receive placements in their exact cell
   and entity rollup. A shared aggregate Thread/Commitment Todo receives one durable current-Subject
   completion cell plus an exact placement per cell; parent completion is derived and cannot be
@@ -628,7 +643,7 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - Model Notes as ordered children of exactly one Focus, Thread, or Commitment. Current inserts create
   one hardcoded `Default` Note through database triggers, but the schema and snapshots must tolerate
   zero or multiple Notes for future document organization. Parent deletion cascades Notes.
-- Treat Focus goal, Focus description, Update observation, and Note content as addressable rich-text
+- Treat Focus description, Update observation, and Note content as addressable rich-text
   documents. Save each changed value before returning to its editor, append a numbered full-value
   revision, and broadcast the committed revision across renderer windows. Dedicated document
   windows use the same sandboxed preload contract and SQLite path; they must not own a second cache

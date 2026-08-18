@@ -33,7 +33,7 @@ import {
 } from '@/components/ui/contextual-sidebar'
 import { Dialog, DialogField } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { RichTextContent, RichTextEditor } from '@/components/ui/rich-text-editor'
+import { RichTextContent } from '@/components/ui/rich-text-editor'
 import { TaggedInput, TaggedText } from '@/components/ui/tagged-text'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
 import { WorkspaceTabBar } from '@/components/ui/workspace-tab-bar'
@@ -58,11 +58,13 @@ import {
   archivedThreadItems,
   focusContextSidebarItems,
   focusDrawerAdapter,
+  focusOverviewTimelineModel,
   focusScopeEditorModel,
   threadDrawerAdapter,
   threadWorkingContextModel,
   threadSidebarItemId
 } from '@/features/focus/focus-presenters'
+import { FocusOverviewTimeline } from '@/features/focus/focus-overview-timeline'
 import { isVisibleThread } from '@/features/focus/focus-utils'
 import { ThreadArchiveDialog } from '@/features/focus/thread-archive-dialog'
 import { useCommitmentWorkingContextModel } from '@/features/focus/use-commitment-working-context-model'
@@ -204,7 +206,6 @@ interface FocusWorkspaceProps {
   focus: FocusSnapshot
   contextDrawer: ContextDrawerControl
   onUpdateFocus: (input: UpdateFocusInput) => Promise<void>
-  onRefreshFocus: () => Promise<FocusSnapshot>
   onRefreshStatusSummary: () => Promise<void>
   onDeleteFocus: () => Promise<void>
   selectedSubjectId: number | null
@@ -220,7 +221,6 @@ export function FocusWorkspace({
   focus,
   contextDrawer,
   onUpdateFocus,
-  onRefreshFocus,
   onRefreshStatusSummary,
   onDeleteFocus,
   selectedSubjectId,
@@ -277,6 +277,7 @@ export function FocusWorkspace({
     parent: CommitmentParent
     commitmentId: number
   } | null>(null)
+  const [standaloneThreadRoute, setStandaloneThreadRoute] = useState<number | null>(null)
   const [pendingThreadMove, setPendingThreadMove] = useState<{
     plan: ThreadMovePlanSnapshot
     threadTitle: string
@@ -329,8 +330,14 @@ export function FocusWorkspace({
           focus.sensitive,
           focus.needsReview
         ),
-        onSelect: () => setStandaloneCommitmentRoute(null),
-        onSelectChild: () => setStandaloneCommitmentRoute(null),
+        onSelect: () => {
+          setStandaloneCommitmentRoute(null)
+          setStandaloneThreadRoute(null)
+        },
+        onSelectChild: () => {
+          setStandaloneCommitmentRoute(null)
+          setStandaloneThreadRoute(null)
+        },
         onChildContextMenuAction: (
           _parentItemId,
           _collectionId,
@@ -373,7 +380,10 @@ export function FocusWorkspace({
         parent: focusLevel,
         parentItemId: 'overall',
         items: [],
-        onSelect: () => setStandaloneCommitmentRoute(null),
+        onSelect: () => {
+          setStandaloneCommitmentRoute(null)
+          setStandaloneThreadRoute(null)
+        },
         onContextMenuAction: (itemId, actionId, checked) =>
           childContextMenuRequest.current(itemId, actionId, checked),
         newItem: {
@@ -767,7 +777,10 @@ export function FocusWorkspace({
       parent: focusLevel,
       parentItemId: threadSidebarItemId(parent.id),
       items: commitmentContextSidebarItems(visibleCommitmentsFor(parent)),
-      onSelect: () => setStandaloneCommitmentRoute(null),
+      onSelect: () => {
+        setStandaloneCommitmentRoute(null)
+        setStandaloneThreadRoute(null)
+      },
       onContextMenuAction: (itemId, actionId, checked) =>
         childContextMenuRequest.current(itemId, actionId, checked),
       newItem: {
@@ -842,8 +855,12 @@ export function FocusWorkspace({
 
     const thread = destination.threadId === null
       ? null
-      : visibleThreadRecords.find(({ id }) => id === destination.threadId)
-    if (destination.threadId !== null && !thread) return
+      : model.threads.find(({ id }) => id === destination.threadId)
+    if (
+      destination.threadId !== null &&
+      (!thread || (hideSensitiveContent && (focus.sensitive || thread.sensitive)))
+    ) return
+    if (destination.threadId === null && destination.commitmentId !== null) return
 
     const parent: CommitmentParent = thread
       ? { type: 'thread', id: thread.id }
@@ -859,6 +876,27 @@ export function FocusWorkspace({
     }
 
     navigation.reset()
+    const threadIsInSidebar = thread
+      ? visibleThreadRecords.some(({ id }) => id === thread.id)
+      : false
+    if (thread && !threadIsInSidebar) {
+      navigation.select('overall')
+      onSelectedSubjectChange(destination.subjectId)
+      queueMicrotask(() => {
+        if (destination.commitmentId === null) {
+          setStandaloneThreadRoute(thread.id)
+        } else {
+          setStandaloneCommitmentRoute({
+            parent,
+            commitmentId: destination.commitmentId
+          })
+        }
+      })
+      appliedDestinationRequest.current = destination.requestId
+      onDestinationApplied?.(destination.requestId)
+      return
+    }
+    queueMicrotask(() => setStandaloneThreadRoute(null))
     const parentItemId = contextItemIdForCommitmentParent(parent)
     if (destination.commitmentId === null) {
       navigation.select(parentItemId)
@@ -891,6 +929,9 @@ export function FocusWorkspace({
   }, [
     destination,
     focus.id,
+    focus.sensitive,
+    hideSensitiveContent,
+    model.threads,
     navigation,
     onDestinationApplied,
     onSelectedSubjectChange,
@@ -899,14 +940,17 @@ export function FocusWorkspace({
     visibleThreadRecords
   ])
 
-  const rawSelectedThread =
-    navigationSnapshot.level === focusLevel && navigationSnapshot.selectedItemId
+  const rawSelectedThread = standaloneThreadRoute !== null
+    ? model.threads.find((thread) => thread.id === standaloneThreadRoute)
+    : navigationSnapshot.level === focusLevel && navigationSnapshot.selectedItemId
       ? model.threads.find(
           (thread) => threadSidebarItemId(thread.id) === navigationSnapshot.selectedItemId
         )
       : undefined
   const selectedThread = rawSelectedThread &&
-    visibleThreadRecords.some((thread) => thread.id === rawSelectedThread.id)
+    (standaloneThreadRoute !== null
+      ? !(hideSensitiveContent && (focus.sensitive || rawSelectedThread.sensitive))
+      : visibleThreadRecords.some((thread) => thread.id === rawSelectedThread.id))
       ? rawSelectedThread
       : undefined
   const levelCommitmentParent = commitmentParentForLevel(
@@ -1265,6 +1309,7 @@ export function FocusWorkspace({
     return snapshot.selectedItemId === itemId ||
       snapshot.selectedChild?.parentItemId === itemId ||
       snapshot.level.id === `thread:${threadId}:commitments` ||
+      standaloneThreadRoute === threadId ||
       (standaloneCommitmentRoute?.parent.type === 'thread' &&
         standaloneCommitmentRoute.parent.id === threadId)
   }
@@ -1277,6 +1322,7 @@ export function FocusWorkspace({
     contextDrawer.onInvalidate([`thread:${threadId}`])
     if (routeUsesThread) {
       setStandaloneCommitmentRoute(null)
+      setStandaloneThreadRoute(null)
       navigation.reset()
       navigation.select('overall')
     }
@@ -1571,21 +1617,6 @@ export function FocusWorkspace({
     }
   }
 
-  async function refreshFocusAfterUpdates(): Promise<void> {
-    const updated = await onRefreshFocus()
-    if (contextDrawer.pinnedAdapter?.id === `focus:${focus.id}`) {
-      contextDrawer.onPin(
-        focusDrawerAdapter({
-          focus: updated,
-          onSave: onUpdateFocus,
-          onDescriptionChange: model.saveDescription,
-          onOpenDescription: model.openDescriptionInWindow,
-          onDelete: onDeleteFocus
-        })
-      )
-    }
-  }
-
   async function refreshCommitmentsAfterUpdates(
     parent: CommitmentParent
   ): Promise<void> {
@@ -1602,6 +1633,7 @@ export function FocusWorkspace({
 
   function drillIntoCommitments(parent: CommitmentParent): void {
     setStandaloneCommitmentRoute(null)
+    setStandaloneThreadRoute(null)
     const level = commitmentsLevelFor(parent)
     level.setItems(
       commitmentContextSidebarItems(visibleCommitmentsFor(parent))
@@ -1613,6 +1645,7 @@ export function FocusWorkspace({
     parent: CommitmentParent,
     commitmentId: number
   ): void {
+    setStandaloneThreadRoute(null)
     navigation.reset()
     const parentItemId = contextItemIdForCommitmentParent(parent)
     const isCurrent = buildCommitmentListModel(
@@ -2049,24 +2082,6 @@ export function FocusWorkspace({
               </p>
             )}
 
-            <div className="mt-6">
-              <div className="mb-1.5 flex items-center justify-between gap-3">
-                <label htmlFor="focus-goal" className="text-xs font-semibold">Goal</label>
-                {model.goalSaving && <span className="text-xs text-muted-foreground">Saving…</span>}
-              </div>
-              <RichTextEditor
-                id="focus-goal"
-                ariaLabel="Goal"
-                placeholder="What should this focus accomplish?"
-                value={model.goal}
-                externalRevision={model.goalRevision}
-                onChange={model.setGoal}
-                onBlur={(value) => void model.saveGoal(value)}
-                onOpenInWindow={model.openGoalInWindow}
-              />
-              {model.goalError && <p role="alert" className="mt-2 text-xs text-destructive">{model.goalError}</p>}
-            </div>
-
             <FocusScopeEditor
               model={model.focusScope ? focusScopeEditorModel(model.focusScope) : null}
               loading={model.focusScopeLoading}
@@ -2079,64 +2094,21 @@ export function FocusWorkspace({
               }}
             />
 
-            <CommitmentCollection
-              idPrefix={`focus-${focus.id}`}
-              model={commitmentCollectionModel(
-                buildCommitmentListModel(
-                  visibleCommitmentsFor({ type: 'focus', id: focus.id })
-                )
-              )}
-              statusSavingId={commitmentStatusSavingId}
-              statusError={commitmentStatusError}
-              onCreate={() =>
-                setNewCommitmentParent({ type: 'focus', id: focus.id })
-              }
-              onCreateRoutine={() =>
-                setNewRoutineParent({ type: 'focus', id: focus.id })
-              }
-              onOpenCollection={() =>
-                drillIntoCommitments({ type: 'focus', id: focus.id })
-              }
-              onOpen={(commitmentId) =>
-                openCommitment(
-                  { type: 'focus', id: focus.id },
-                  commitmentId
-                )
-              }
-              onPin={(commitmentId) =>
-                pinCommitment({ type: 'focus', id: focus.id }, commitmentId)
-              }
-              onComplete={(commitmentId) =>
-                void updateCommitmentDetails(commitmentId, { status: 'done' })
-              }
-            />
-
-            <RoutineManagementList
-              idPrefix={`focus-${focus.id}`}
-              model={routineManagementListModel(
-                visibleSensitiveRecords(
-                  model.routinesFor({ type: 'focus', id: focus.id }),
-                  hideSensitiveContent,
-                  focus.sensitive
-                )
-              )}
-              onOpen={(routineId) => {
-                const routine = model.routinesFor({
-                  type: 'focus',
-                  id: focus.id
-                }).find(({ id }) => id === routineId)
-                if (routine) openRoutine(routine.parent, routine.id)
+            <FocusOverviewTimeline
+              model={focusOverviewTimelineModel(model.focusTimeline, hideSensitiveContent)}
+              onOpenThread={(threadId) => {
+                setStandaloneCommitmentRoute(null)
+                onSelectedSubjectChange(null)
+                navigation.reset()
+                const threadIsInSidebar = visibleThreadRecords.some(({ id }) => id === threadId)
+                if (threadIsInSidebar) {
+                  setStandaloneThreadRoute(null)
+                  navigation.select(threadSidebarItemId(threadId))
+                } else {
+                  navigation.select('overall')
+                  setStandaloneThreadRoute(threadId)
+                }
               }}
-            />
-
-            <DirectTodos context={{ type: 'focus', id: focus.id }} />
-
-            <DirectUpdates
-              key={`focus-updates:${focus.id}`}
-              parent={{ type: 'focus', id: focus.id }}
-              hideSensitiveContent={hideSensitiveContent}
-              ancestorSensitive={focus.sensitive}
-              onUpdatesChanged={refreshFocusAfterUpdates}
             />
 
             {model.loadError && <p role="alert" className="mt-5 text-sm text-destructive">{model.loadError}</p>}

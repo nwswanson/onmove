@@ -11,19 +11,6 @@ import {
 } from '@playwright/test'
 import { AppDatabase } from '../../src/main/database'
 
-async function isFullyVisibleInMain(locator: Locator): Promise<boolean> {
-  return locator.evaluate((element) => {
-    const itemBounds = element.getBoundingClientRect()
-    const mainBounds = element.closest('main')?.getBoundingClientRect()
-    if (!mainBounds) return false
-    const tolerance = 1
-    return (
-      itemBounds.top >= mainBounds.top - tolerance &&
-      itemBounds.bottom <= mainBounds.bottom + tolerance
-    )
-  })
-}
-
 function localDate(now = new Date()): string {
   const year = now.getFullYear()
   const month = String(now.getMonth() + 1).padStart(2, '0')
@@ -49,8 +36,14 @@ test('badges actionable navigation and decrements Review after persistence', asy
   const today = localDate()
   const seeded = new AppDatabase(databasePath)
   const focus = seeded.domain.focuses.create({ title: 'Badge launch', dueDate: today })
+  const thread = seeded.domain.threads.create({
+    focusId: focus.id,
+    title: 'Badge delivery',
+    reviewFrequencyDays: 7,
+    needsReview: false
+  })
   seeded.domain.todos.create({
-    parent: { type: 'focus', id: focus.id },
+    parent: { type: 'thread', id: thread.id },
     name: 'Badge Todo',
     dueDate: today
   })
@@ -124,14 +117,11 @@ test('hides closed Threads in context and restores them from its footer archive'
 
     await window.getByRole('button', { name: 'Thread archive', exact: true }).click()
     const overallMenu = await openContextualItemMenu(window, 'Overall')
-    await expect(overallMenu.getByRole('menuitem', { name: 'Add commitment' })).toBeVisible()
-    await expect(overallMenu.getByRole('menuitem', { name: 'Add Routine' })).toBeVisible()
+    await expect(overallMenu.getByRole('menuitem', { name: 'Add commitment' })).toHaveCount(0)
+    await expect(overallMenu.getByRole('menuitem', { name: 'Add Routine' })).toHaveCount(0)
     await expect(overallMenu.getByRole('menuitemcheckbox', { name: 'Sensitive' })).toBeVisible()
     await expect(overallMenu.getByRole('menuitem', { name: 'Delete Thread' })).toHaveCount(0)
-    await overallMenu.getByRole('menuitem', { name: 'Add commitment' }).click()
-    const commitmentDialog = window.getByRole('dialog', { name: 'New commitment' })
-    await expect(commitmentDialog).toContainText('Add a Focus-level commitment.')
-    await commitmentDialog.getByRole('button', { name: 'Close dialog' }).click()
+    await window.keyboard.press('Escape')
 
     const contextualSidebar = window.getByLabel('Contextual sidebar')
     await expect(contextualSidebar.getByRole('button', {
@@ -170,6 +160,83 @@ test('hides closed Threads in context and restores them from its footer archive'
         stored.close()
       }
     }).toEqual({ status: 'active' })
+  } finally {
+    await application?.close().catch(() => undefined)
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
+test('renders a read-only Focus timeline and opens active or archived Threads', async () => {
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-focus-timeline-e2e-'))
+  const databasePath = join(userDataDirectory, 'onmove.sqlite3')
+  const seeded = new AppDatabase(databasePath)
+  const focus = seeded.domain.focuses.create({
+    title: 'Timeline portfolio',
+    description: 'A read-only overview of delivery evidence.'
+  })
+  const active = seeded.domain.threads.create({
+    focusId: focus.id,
+    title: 'Current delivery',
+    reviewFrequencyDays: 7
+  })
+  const completed = seeded.domain.threads.create({
+    focusId: focus.id,
+    title: 'Completed discovery',
+    reviewFrequencyDays: 7
+  })
+  const commitment = seeded.domain.commitments.create({
+    parent: { type: 'thread', id: active.id },
+    type: 'tracking',
+    title: 'Stabilize the launch'
+  })
+  for (const [parent, observation, state] of [
+    [{ type: 'thread', id: active.id }, 'Direct launch evidence', 'green'],
+    [{ type: 'commitment', id: commitment.id }, 'Nested launch evidence', 'yellow'],
+    [{ type: 'thread', id: completed.id }, 'Discovery was closed cleanly', 'none']
+  ] as const) {
+    seeded.domain.updates.create({
+      parent,
+      date: '2026-08-18',
+      observation,
+      state
+    })
+  }
+  seeded.domain.threads.update(completed.id, { status: 'done' })
+  seeded.close()
+  let application: ElectronApplication | undefined
+
+  try {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    const window = await application.firstWindow()
+
+    await window.getByRole('button', { name: 'Timeline portfolio', exact: true }).click()
+    const timeline = window.getByTestId('focus-thread-timeline')
+    await expect(timeline).toContainText('Direct launch evidence')
+    await expect(timeline).toContainText('Nested launch evidence')
+    await expect(timeline).toContainText('Discovery was closed cleanly')
+    await expect(window.getByLabel('Goal')).toHaveCount(0)
+    await expect(window.getByRole('list', { name: 'Focus updates' })).toHaveCount(0)
+    await expect(window.getByLabel('Update observation')).toHaveCount(0)
+
+    await timeline.getByRole('button', { name: 'Open Thread Completed discovery' }).click()
+    await expect(window.getByRole('heading', { name: 'Completed discovery' })).toBeVisible()
+    await expect(
+      window.getByLabel('Contextual sidebar').getByRole('button', {
+        name: 'Completed discovery',
+        exact: true
+      })
+    ).toHaveCount(0)
+
+    await window.getByRole('button', { name: 'Overall', exact: true }).click()
+    await window.getByRole('button', { name: 'Open Thread Current delivery' }).click()
+    await expect(window.getByRole('heading', { name: 'Current delivery' })).toBeVisible()
+    await expect(window.getByRole('button', { name: 'Current delivery', exact: true }))
+      .toHaveAttribute('aria-current', 'page')
   } finally {
     await application?.close().catch(() => undefined)
     rmSync(userDataDirectory, { recursive: true, force: true })
@@ -694,17 +761,22 @@ test('sorts all current Todos and bounds recently completed work before renderin
   const seed = new AppDatabase(join(userDataDirectory, 'onmove.sqlite3'))
   const zulu = seed.domain.focuses.create({ title: 'Zulu Project' })
   const alpha = seed.domain.focuses.create({ title: 'Alpha Project' })
+  const zuluThread = seed.domain.threads.create({
+    focusId: zulu.id,
+    title: 'Zulu delivery',
+    reviewFrequencyDays: 7
+  })
   const alphaThread = seed.domain.threads.create({
     focusId: alpha.id,
     title: 'Sprint execution',
     reviewFrequencyDays: 7
   })
   const zuluTodo = seed.domain.todos.create({
-    parent: { type: 'focus', id: zulu.id },
+    parent: { type: 'thread', id: zuluThread.id },
     name: 'Zulu open work'
   }, now)
   const alphaTodo = seed.domain.todos.create({
-    parent: { type: 'focus', id: alpha.id },
+    parent: { type: 'thread', id: alphaThread.id },
     name: 'Alpha open work'
   }, now)
   seed.domain.todos.create({
@@ -712,12 +784,12 @@ test('sorts all current Todos and bounds recently completed work before renderin
     name: 'Review sprint execution'
   }, now)
   seed.domain.todos.create({
-    parent: { type: 'focus', id: alpha.id },
+    parent: { type: 'thread', id: alphaThread.id },
     name: 'Recently closed work',
     done: true
   }, recent)
   seed.domain.todos.create({
-    parent: { type: 'focus', id: alpha.id },
+    parent: { type: 'thread', id: alphaThread.id },
     name: 'Old closed work',
     done: true
   }, old)
@@ -762,7 +834,10 @@ test('sorts all current Todos and bounds recently completed work before renderin
     await expect(table.getByText('Zulu open work')).toBeVisible()
     expect(zuluTodo.done).toBe(false)
 
-    await table.getByRole('link', { name: 'Sprint execution' }).click()
+    await table
+      .getByRole('row', { name: /Review sprint execution/ })
+      .getByRole('link', { name: 'Sprint execution' })
+      .click()
     await expect(window.getByRole('heading', { name: 'Sprint execution', exact: true })).toBeVisible()
     await expect(window.getByRole('button', { name: 'Alpha Project' })).toHaveAttribute(
       'aria-current',
@@ -994,7 +1069,7 @@ test('jumps to hierarchy records, all persisted Todos, and Tags through Cmd-K', 
   })
   const oldCompletionDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
   seed.domain.todos.create({
-    parent: { type: 'focus', id: project.id },
+    parent: { type: 'thread', id: sprint.id },
     name: 'Confirm @launch brief',
     done: true
   }, oldCompletionDate)
@@ -1029,7 +1104,7 @@ test('jumps to hierarchy records, all persisted Todos, and Tags through Cmd-K', 
     palette = window.getByRole('dialog', { name: 'Jump to anything' })
     await palette.getByRole('combobox').fill('Confirm launch brief')
     await palette.getByRole('option', { name: /^Confirm @launch brief/ }).click()
-    await expect(window.getByRole('button', { name: 'Overall', exact: true })).toHaveAttribute(
+    await expect(window.getByRole('button', { name: 'Sprint execution', exact: true })).toHaveAttribute(
       'aria-current',
       'page'
     )
@@ -1279,9 +1354,17 @@ test('persists and visually restores text tags in compact and rich-text fields',
   let application: ElectronApplication | undefined
 
   const seed = new AppDatabase(databasePath)
-  const focus = seed.domain.focuses.create({ title: 'Project @Atlas2' })
+  const focus = seed.domain.focuses.create({
+    title: 'Project @Atlas2',
+    description: 'Review @Launch2 and revisit @LAUNCH2'
+  })
+  const thread = seed.domain.threads.create({
+    focusId: focus.id,
+    title: 'Tagged delivery',
+    reviewFrequencyDays: 7
+  })
   const todo = seed.domain.todos.create({
-    parent: { type: 'focus', id: focus.id },
+    parent: { type: 'thread', id: thread.id },
     name: 'Coordinate @Launch2 readiness'
   })
   seed.close()
@@ -1295,14 +1378,14 @@ test('persists and visually restores text tags in compact and rich-text fields',
     })
   }
 
-  function storedText(): { title: string; todo: string; goal: string } {
+  function storedText(): { title: string; todo: string; description: string } {
     const stored = new DatabaseSync(databasePath, { readOnly: true })
-    const focusRow = stored.prepare('SELECT title, goal FROM focuses WHERE id = ?')
-      .get(focus.id) as { title: string; goal: string }
+    const focusRow = stored.prepare('SELECT title, description FROM focuses WHERE id = ?')
+      .get(focus.id) as { title: string; description: string }
     const todoRow = stored.prepare('SELECT name FROM todos WHERE id = ?')
       .get(todo.id) as { name: string }
     stored.close()
-    return { title: focusRow.title, todo: todoRow.name, goal: focusRow.goal }
+    return { title: focusRow.title, todo: todoRow.name, description: focusRow.description }
   }
 
   try {
@@ -1318,22 +1401,22 @@ test('persists and visually restores text tags in compact and rich-text fields',
       'true'
     )
 
-    const goal = window.getByLabel('Goal')
-    await goal.fill('Review @Launch2 and revisit @LAUNCH2')
-    await expect(goal.getByText('@Launch2', { exact: true }))
+    const description = window.getByLabel('Focus description')
+    await expect(description.getByText('@Launch2', { exact: true }))
       .toHaveAttribute('data-text-tag', 'true')
-    await expect.poll(() => storedText().goal).toContain('"type":"tag"')
+    await expect(description.getByText('@LAUNCH2', { exact: true }))
+      .toHaveAttribute('data-text-tag', 'true')
 
     await application.close()
     application = await launch()
     window = await application.firstWindow()
     await window.getByRole('button', { name: 'Project @Atlas2', exact: true }).click()
-    await expect(window.getByLabel('Goal').getByText('@Launch2', { exact: true }))
+    await expect(window.getByLabel('Focus description').getByText('@Launch2', { exact: true }))
       .toHaveAttribute('data-text-tag', 'true')
     expect(storedText()).toMatchObject({
       title: 'Project @Atlas2',
       todo: 'Coordinate @Launch2 readiness',
-      goal: expect.stringContaining('"type":"tag"')
+      description: expect.stringContaining('@Launch2')
     })
 
     await window.getByRole('button', { name: 'Tags', exact: true }).click()
@@ -1387,7 +1470,6 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
   function storedFocus(): {
     title: string
     description: string | null
-    goal: string
     status: string
     dueDate: string | null
     needsReview: number
@@ -1398,12 +1480,11 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     })
     const row = database
       .prepare(
-        'SELECT title, description, goal, status, due_on AS dueDate, needs_review AS needsReview, sensitive FROM focuses ORDER BY id LIMIT 1'
+        'SELECT title, description, status, due_on AS dueDate, needs_review AS needsReview, sensitive FROM focuses ORDER BY id LIMIT 1'
       )
       .get() as {
         title: string
         description: string | null
-        goal: string
         status: string
         dueDate: string | null
         needsReview: number
@@ -1565,7 +1646,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
 
   function storedCommitment(): {
     title: string
-    focusId: number
+    threadId: number
     type: string
     legacyDueType: string
     status: string
@@ -1578,15 +1659,15 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     })
     const row = database
       .prepare(
-        `SELECT title, focus_id AS focusId, commitment_type AS type,
+        `SELECT title, thread_id AS threadId, commitment_type AS type,
                 legacy_due_type AS legacyDueType, status,
                 due_on AS dueDate, review_frequency_days AS reviewFrequencyDays,
                 needs_review AS needsReview
-         FROM commitments WHERE focus_id IS NOT NULL ORDER BY id LIMIT 1`
+         FROM commitments WHERE thread_id IS NOT NULL ORDER BY id LIMIT 1`
       )
       .get() as {
         title: string
-        focusId: number
+        threadId: number
         type: string
         legacyDueType: string
         status: string
@@ -1632,29 +1713,6 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       .get() as { status: string } | undefined
     database.close()
     return row?.status
-  }
-
-  function storedFocusUpdate(): {
-    date: string
-    observation: string
-    state: string
-    focusId: number
-  } | undefined {
-    const database = new DatabaseSync(join(userDataDirectory, 'onmove.sqlite3'), {
-      readOnly: true
-    })
-    const row = database
-      .prepare(
-        'SELECT recorded_on AS date, observation, state, focus_id AS focusId FROM updates WHERE focus_id IS NOT NULL ORDER BY id LIMIT 1'
-      )
-      .get() as {
-        date: string
-        observation: string
-        state: string
-        focusId: number
-      } | undefined
-    database.close()
-    return row
   }
 
   function storedFocusSubjectNames(): string[] {
@@ -1842,109 +1900,10 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await focusDrawer.getByLabel('Needs review').uncheck()
     await focusDrawer.getByRole('button', { name: 'Save changes' }).click()
     await expect.poll(() => storedFocus()?.needsReview).toBe(0)
-    const goal = window.getByLabel('Goal')
-    await goal.fill('Deliver predictable customer value')
-    await goal.press('Meta+A')
-    await goal.locator('xpath=../..').getByRole('button', { name: 'Bold' }).click()
-    await expect(goal.locator('strong')).toContainText('Deliver predictable customer value')
-    await goal.press('Meta+A')
-    await goal.locator('xpath=../..').getByRole('button', { name: 'Insert link' }).click()
-    const goalLinkEditor = goal.locator('xpath=../..').getByRole('group', {
-      name: 'Link editor'
-    })
-    await goalLinkEditor.getByLabel('Link URL').fill('handbook.example.com')
-    await goalLinkEditor.getByRole('button', { name: 'Insert' }).click()
-    const goalLink = goal.getByRole('link', { name: 'Deliver predictable customer value' })
-    await expect(goalLink).toHaveAttribute('href', 'https://handbook.example.com/')
-    const goalToolbar = goal.locator('xpath=../..')
-    await goal.press('Meta+A')
-    await goal.press('Meta+Shift+X')
-    await expect(goalToolbar.getByRole('button', { name: 'Strikethrough' }))
-      .toHaveAttribute('aria-pressed', 'true')
-    await goal.press('Meta+Y')
-    await expect(goalToolbar.getByRole('button', { name: 'Highlight' }))
-      .toHaveAttribute('aria-pressed', 'true')
-    await goalToolbar.getByLabel('Text color').selectOption({ label: 'Blue' })
-    await expect(goal.locator('[style*="--rich-text-blue"]')).toContainText(
-      'Deliver predictable customer value'
-    )
-    await goal.press('Meta+A')
-    await goal.locator('xpath=../..').getByRole('button', { name: 'Numbered list' }).click()
-    await goal.evaluate((editor) => {
-      const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
-      let lastText: Text | null = null
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) lastText = node as Text
-      if (!lastText) throw new Error('Expected the list item to contain text')
-      const range = document.createRange()
-      range.setStart(lastText, lastText.data.length)
-      range.collapse(true)
-      const selection = window.getSelection()
-      selection?.removeAllRanges()
-      selection?.addRange(range)
-      document.dispatchEvent(new Event('selectionchange'))
-    })
-    await goal.press('Enter')
-    await goal.pressSequentially('With aligned teams')
-    await goal.press('Tab')
-    await expect(goal.locator('ol ol')).toContainText('With aligned teams')
-    await expect(goal.locator('ol ol').locator('..')).toHaveCSS('list-style-type', 'none')
-    await goal.press('Shift+Tab')
-    await expect(goal.locator('ol ol')).toHaveCount(0)
-    await goal.press('Tab')
-    await expect(goal.locator('ol ol')).toContainText('With aligned teams')
-    await expect(goal.locator('ol ol').locator('..')).toHaveCSS('list-style-type', 'none')
-    await expect
-      .poll(() => storedFocus()?.goal, { timeout: 3_000 })
-      .toContain('With aligned teams')
-    const focusUpdates = window.getByRole('list', { name: 'Focus updates' })
-    await expect(focusUpdates).toBeVisible()
-    await window.keyboard.press('Meta+p')
-    let updateChooser = window.getByRole('dialog', { name: 'Choose update target' })
-    await updateChooser.getByRole('option', { name: /^Persistent focus/ }).click()
-    let updateComposer = window.getByRole('dialog', { name: 'Add update' })
-    const focusUpdateObservation = updateComposer.getByLabel('Update observation')
-    await focusUpdateObservation.fill('Overall review completed')
-    await focusUpdateObservation.press('Meta+A')
-    await focusUpdateObservation
-      .locator('xpath=../..')
-      .getByRole('button', { name: 'Checklist' })
-      .click()
-    const focusUpdateChecklistItem = focusUpdateObservation.getByRole('checkbox')
-    await focusUpdateChecklistItem.click({ position: { x: 7, y: 10 } })
-    await expect(focusUpdateChecklistItem).toHaveAttribute('aria-checked', 'true')
-    await updateComposer.getByLabel('Update state').selectOption('green')
-    await updateComposer.getByRole('button', { name: 'Add update' }).click()
-    await expect.poll(() => storedFocusUpdate()?.state, { timeout: 3_000 }).toBe('green')
-    await expect
-      .poll(() => storedFocusUpdate()?.observation, { timeout: 3_000 })
-      .toContain('Overall review completed')
-    const focusUpdateDate = storedFocusUpdate()!.date
-    await expect.poll(() => isFullyVisibleInMain(
-      focusUpdates.getByRole('listitem', { name: `Update from ${focusUpdateDate}` })
-    )).toBe(true)
-    await expect(window.getByRole('button', { name: 'Create update' })).toHaveCount(0)
-    await expect(window.getByLabel('Focus last reviewed')).toContainText(
-      `Last reviewed · ${focusUpdateDate}`
-    )
-    const focusSidebarButton = window.getByRole('button', { name: 'Persistent focus' })
-    const overallSunflower = focusSidebarButton.getByRole('img', {
-      name: 'Overall Green; no active commitments'
-    })
-    await expect(overallSunflower).toBeVisible()
-    await expect(overallSunflower).toHaveAttribute('width', '24')
-    await expect(overallSunflower.locator('[data-seed-index="0"]')).toHaveAttribute(
-      'fill',
-      'var(--success)'
-    )
-    await expect(overallSunflower.locator('[data-seed-index="0"]')).toHaveCSS(
-      'fill',
-      'rgb(136, 176, 75)'
-    )
-    await expect(overallSunflower.locator('circle').first()).toHaveCSS(
-      'stroke',
-      'rgb(155, 183, 212)'
-    )
-    await expect(focusSidebarButton.locator('.lucide-circle')).toHaveCount(0)
+    await expect(window.getByLabel('Goal')).toHaveCount(0)
+    await expect(window.getByRole('list', { name: 'Focus updates' })).toHaveCount(0)
+    await expect(window.getByRole('heading', { name: 'Thread timeline' })).toBeVisible()
+    await expect(window.getByText('No Threads yet.')).toBeVisible()
     await window.getByRole('button', { name: 'New thread' }).click()
     await window
       .getByRole('dialog', { name: 'New thread' })
@@ -1978,9 +1937,9 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     const threadUpdates = window.getByRole('list', { name: 'Thread updates' })
     await expect(threadUpdates).toBeVisible()
     await window.keyboard.press('Meta+p')
-    updateChooser = window.getByRole('dialog', { name: 'Choose update target' })
+    let updateChooser = window.getByRole('dialog', { name: 'Choose update target' })
     await updateChooser.getByRole('option', { name: /^Sprint execution/ }).click()
-    updateComposer = window.getByRole('dialog', { name: 'Add update' })
+    let updateComposer = window.getByRole('dialog', { name: 'Add update' })
     await updateComposer.getByLabel('Update observation').fill('Sprint review completed')
     await updateComposer.getByLabel('Update state').selectOption('green')
     await updateComposer.getByRole('button', { name: 'Add update' }).click()
@@ -2026,56 +1985,20 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
         .getByRole('complementary', { name: 'Commitment context drawer' })
         .getByText('Thread — Sprint execution')
     ).toBeVisible()
-    await window
-      .getByRole('button', { name: 'Sprint execution, paused', exact: true })
-      .click()
-    await expect(
-      window.getByRole('button', { name: 'Open commitment Improve ticket quality' })
-    ).toBeVisible()
-    await window.getByRole('button', { name: 'Overall', exact: true }).click()
-    await expect(window.getByRole('complementary', { name: 'Focus context drawer' })).toBeVisible()
-    await window.getByRole('button', { name: 'Commitments', exact: true }).click()
-    await expect(window.getByRole('navigation', { name: 'Focus commitments' })).toBeVisible()
-    await expect(window.getByRole('complementary', { name: 'Context drawer' })).toContainText(
-      'No settings here.'
-    )
-    await window.getByRole('button', { name: 'New commitment' }).click()
-    const newCommitmentDialog = window.getByRole('dialog', { name: 'New commitment' })
-    await newCommitmentDialog.getByLabel(/^Title/).fill('Keep sponsors aligned')
-    await expect(newCommitmentDialog.getByLabel('Type')).toHaveCount(0)
     const commitmentDueDate = '2026-09-15'
-    await newCommitmentDialog.getByLabel(/Due date/).fill(commitmentDueDate)
-    await newCommitmentDialog.getByLabel('Review every (days)').fill('14')
-    await window.getByRole('button', { name: 'Create commitment' }).click()
+    const commitmentDueDateInput = window.getByLabel('Commitment due date', { exact: true })
+    await commitmentDueDateInput.fill(commitmentDueDate)
+    await commitmentDueDateInput.blur()
     await expect.poll(() => storedCommitment()?.type).toBe('tracking')
     await expect.poll(() => storedCommitment()?.legacyDueType).toBe('action')
     await expect.poll(() => storedCommitment()?.dueDate).toBe(commitmentDueDate)
-    await expect.poll(() => storedCommitment()?.reviewFrequencyDays).toBe(14)
-    const activeCommitmentSunflower = focusSidebarButton.getByRole('img', {
-      name: 'Overall Green; active commitments: Keep sponsors aligned None'
-    })
-    await expect(activeCommitmentSunflower).toBeVisible()
-    await expect(activeCommitmentSunflower.locator('[data-seed-index="0"]')).toHaveAttribute(
-      'fill',
-      'var(--success)'
-    )
-    await expect(activeCommitmentSunflower.locator('[data-seed-index="1"]')).toHaveAttribute(
-      'fill',
-      'var(--muted-foreground)'
-    )
-    await expect(window.getByRole('button', { name: 'Keep sponsors aligned' })).toHaveAttribute(
-      'aria-current',
-      'page'
-    )
-    await expect(window.getByRole('heading', { name: 'Keep sponsors aligned' })).toBeVisible()
+    await expect(window.getByRole('heading', { name: 'Improve ticket quality' })).toBeVisible()
     await expect(window.getByLabel('Commitment type')).toHaveCount(0)
     await expect(window.getByLabel('Commitment due date', { exact: true }))
       .toHaveValue(commitmentDueDate)
     await expect(window.getByLabel(
-      `Due date ${commitmentDueDate} is after the parent Focus due date ${focusDueDate}.`
+      `Due date ${commitmentDueDate} is after the parent Thread due date ${threadDueDate}.`
     )).toHaveAttribute('title')
-    const commitmentNavigation = window.getByRole('navigation', { name: 'Focus commitments' })
-    await expect(commitmentNavigation.getByText('Active · Last updated · Never')).toBeVisible()
     await expect(window.getByLabel('Commitment last updated')).toContainText(
       'Last updated · Never'
     )
@@ -2095,19 +2018,13 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await commitmentStatus.selectOption('paused')
     await expect.poll(() => storedCommitment()?.status).toBe('paused')
     await expect(commitmentStatus).toHaveValue('paused')
-    await expect(commitmentNavigation.getByText('Paused · Last updated · Never')).toBeVisible()
     await expect(commitmentDrawer.getByText('paused', { exact: true })).toBeVisible()
-    await expect(
-      focusSidebarButton.getByRole('img', {
-        name: 'Overall Green; active commitments: Improve ticket quality None'
-      })
-    ).toBeVisible()
     const updateList = window.getByRole('list', { name: 'Commitment updates' })
     await expect(updateList).toBeVisible()
     await expect(window.getByRole('table')).toHaveCount(0)
     await window.keyboard.press('Meta+p')
     updateChooser = window.getByRole('dialog', { name: 'Choose update target' })
-    await updateChooser.getByRole('option', { name: /^Keep sponsors aligned/ }).click()
+    await updateChooser.getByRole('option', { name: /^Improve ticket quality/ }).click()
     updateComposer = window.getByRole('dialog', { name: 'Add update' })
     const newUpdateDate = '2099-12-31'
     await updateComposer.getByLabel('Date', { exact: true }).fill(newUpdateDate)
@@ -2120,9 +2037,6 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(window.getByLabel('Commitment last updated')).toContainText(
       `Last updated · ${newUpdateDate}`
     )
-    await expect(
-      commitmentNavigation.getByText(`Paused · Last updated · ${newUpdateDate}`)
-    ).toBeVisible()
     await expect(commitmentDrawer.getByText(newUpdateDate)).toHaveCount(2)
     const updateObservation = window.getByLabel('Update observation')
     await expect(updateObservation).toBeVisible()
@@ -2146,26 +2060,22 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(
       updateList.locator('span').filter({ hasText: /^Red$/ })
     ).toBeVisible()
-    await expect(
-      window
-        .getByRole('navigation', { name: 'Focus commitments' })
-        .locator('[data-tone="danger"]')
-        .filter({ hasText: /^Red$/ })
-    ).toBeVisible()
     await updateObservation.fill('Sponsors confirmed the launch plan')
     await expect
       .poll(() => storedCommitmentUpdate()?.observation, { timeout: 3_000 })
       .toContain('Sponsors confirmed the launch plan')
     await expect(updateObservation).toContainText('Sponsors confirmed the launch plan')
-    await window.getByRole('button', { name: 'Back to Focus sections' }).click()
+    await window
+      .getByRole('button', { name: 'Sprint execution, paused', exact: true })
+      .click()
     const currentCommitments = window.getByRole('list', { name: 'Current commitments' })
     const actionRow = currentCommitments
-      .getByRole('button', { name: 'Open commitment Keep sponsors aligned' })
+      .getByRole('button', { name: 'Open commitment Improve ticket quality' })
       .locator('..')
     await expect(actionRow.getByText('Action', { exact: true })).toHaveCount(0)
     await expect(actionRow.getByText(`Due · ${commitmentDueDate}`)).toBeVisible()
     await actionRow
-      .getByRole('checkbox', { name: 'Mark commitment Keep sponsors aligned done' })
+      .getByRole('checkbox', { name: 'Mark commitment Improve ticket quality done' })
       .click()
     await expect.poll(() => storedCommitment()?.status).toBe('done')
     await expect.poll(() => latestCommitmentTransition()).toBe('done')
@@ -2179,32 +2089,32 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       name: 'Done and cancelled commitments'
     })
     const commitmentRow = closedCommitments
-      .getByRole('button', { name: 'Open commitment Keep sponsors aligned' })
+      .getByRole('button', { name: 'Open commitment Improve ticket quality' })
       .locator('..')
     await expect(commitmentRow).toContainText(`Last updated · ${newUpdateDate}`)
     await expect(
       commitmentRow.locator('[data-slot="lifecycle-status-label"]').filter({ hasText: /^Done$/ })
     ).toBeVisible()
     await expect(
-      commitmentRow.getByRole('checkbox', { name: 'Mark commitment Keep sponsors aligned done' })
+      commitmentRow.getByRole('checkbox', { name: 'Mark commitment Improve ticket quality done' })
     ).toBeChecked()
     await expect(
       commitmentRow.locator('[data-tone="danger"]').filter({ hasText: /^Red$/ })
     ).toBeVisible()
-    await expect(window.getByRole('complementary', { name: 'Focus context drawer' })).toBeVisible()
+    await expect(window.getByRole('complementary', { name: 'Thread context drawer' })).toBeVisible()
     await window
       .getByRole('button', {
-        name: 'Pin commitment Keep sponsors aligned in context drawer'
+        name: 'Pin commitment Improve ticket quality in context drawer'
       })
       .click()
     await expect(
       window.getByRole('complementary', { name: 'Commitment context drawer' })
     ).toBeVisible()
-    await expect(window.getByRole('button', { name: 'Overall', exact: true })).toHaveAttribute(
+    await expect(window.getByRole('button', { name: 'Sprint execution, paused', exact: true })).toHaveAttribute(
       'aria-current',
       'page'
     )
-    await expect(window.getByRole('heading', { name: 'Persistent focus' })).toBeVisible()
+    await expect(window.getByRole('heading', { name: 'Sprint execution' })).toBeVisible()
     await window.getByRole('button', { name: 'Todos' }).click()
     await expect(window.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
     await expect(
@@ -2286,6 +2196,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       .click()
     await expect(window.getByRole('main').getByText('Scope definition')).toHaveCount(0)
     await expect(window.getByRole('tablist', { name: 'Thread working context' })).toHaveCount(0)
+    await window.getByRole('button', { name: /Done \/ Cancelled/ }).click()
     await window
       .getByRole('button', { name: 'Open commitment Improve ticket quality' })
       .click()
@@ -2388,6 +2299,12 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       'Platform Team'
     ])
 
+    const scopedClosedCommitmentsToggle = window.getByRole('button', {
+      name: /Done \/ Cancelled/
+    })
+    if (await scopedClosedCommitmentsToggle.getAttribute('aria-expanded') === 'false') {
+      await scopedClosedCommitmentsToggle.click()
+    }
     await window
       .getByRole('button', { name: 'Open commitment Improve ticket quality' })
       .click()
@@ -2450,9 +2367,6 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     })
     expect(storedFocus()?.description).toContain('onmove-rich-text:1:')
     expect(storedFocus()?.description).toContain('Stored notes')
-    expect(storedFocus()?.goal).toContain('onmove-rich-text:1:')
-    expect(storedFocus()?.goal).toContain('Deliver predictable customer value')
-    expect(storedFocus()?.goal).toContain('With aligned teams')
     expect(storedThread()).toEqual({
       title: 'Sprint execution',
       reviewFrequencyDays: 7,
@@ -2463,8 +2377,8 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     expect(storedThreadCommitment()).toMatchObject({
       title: 'Improve ticket quality',
       type: 'tracking',
-      legacyDueType: 'ongoing',
-      status: 'active'
+      legacyDueType: 'action',
+      status: 'done'
     })
     expect(storedThreadUpdate()).toMatchObject({ state: 'green' })
     expect(storedThreadUpdate()?.observation).toContain('Sprint review completed')
@@ -2474,18 +2388,13 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     })
     expect(storedScopedThreadUpdate()?.observation).toContain('Customer scope review')
     expect(storedCommitment()).toMatchObject({
-      title: 'Keep sponsors aligned',
+      title: 'Improve ticket quality',
       status: 'done',
       type: 'tracking',
       legacyDueType: 'action',
-      reviewFrequencyDays: 14,
+      reviewFrequencyDays: 7,
       needsReview: 0
     })
-    expect(storedFocusUpdate()).toMatchObject({
-      date: focusUpdateDate,
-      state: 'green'
-    })
-    expect(storedFocusUpdate()?.observation).toContain('Overall review completed')
     expect(storedCommitmentUpdate()).toMatchObject({
       state: 'red'
     })
@@ -2501,27 +2410,7 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(
       window.getByLabel('Focus description').getByRole('link', { name: 'Stored notes' })
     ).toHaveAttribute('href', 'https://notes.example.com/')
-    await expect(window.getByLabel('Goal')).toContainText('Deliver predictable customer value')
-    await expect(
-      window
-        .getByLabel('Goal')
-        .locator('strong')
-        .filter({ hasText: 'Deliver predictable customer value' })
-    ).toBeVisible()
-    await expect(window.getByLabel('Goal').locator('ol ol')).toContainText('With aligned teams')
-    await expect(
-      window.getByLabel('Goal').getByRole('link', { name: 'Deliver predictable customer value' })
-    ).toHaveAttribute('href', 'https://handbook.example.com/')
-    const reloadedPrimaryGoal = window
-      .getByLabel('Goal')
-      .getByText('Deliver predictable customer value', { exact: true })
-    await expect(reloadedPrimaryGoal).toHaveClass(/line-through/)
-    await expect(reloadedPrimaryGoal).toHaveClass(/onmove-rich-text-highlight/)
-    await expect(
-      reloadedPrimaryGoal.locator(
-        'xpath=ancestor-or-self::*[contains(@style, "--rich-text-blue")][1]'
-      )
-    ).toHaveAttribute('style', /--rich-text-blue/)
+    await expect(window.getByLabel('Goal')).toHaveCount(0)
     await expect(window.getByRole('list', { name: 'Subjects in scope' })).toContainText(
       'Customer Operations'
     )
@@ -2533,14 +2422,11 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     )
     const screenshotPath = process.env.ONMOVE_SCREENSHOT_PATH
     if (screenshotPath) await window.screenshot({ path: screenshotPath })
-    await expect(window.getByRole('list', { name: 'Focus updates' })).toContainText(
-      'Overall review completed'
-    )
-    await expect(
-      window
-        .getByRole('list', { name: 'Focus updates' })
-        .getByRole('checkbox', { name: 'Overall review completed' })
-    ).toHaveAttribute('aria-checked', 'true')
+    const timeline = window.getByTestId('focus-thread-timeline')
+    await expect(timeline.getByRole('button', { name: 'Open Thread Sprint execution' }))
+      .toBeVisible()
+    await expect(timeline).toContainText('Sprint review completed')
+    await expect(timeline).toContainText('Sponsors confirmed the launch plan')
     await expect(
       window.getByRole('button', { name: 'Sprint execution, paused', exact: true })
     ).toBeVisible()
@@ -2593,6 +2479,10 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await reloadedFormerUpdatesToggle.click()
     await expect(window.getByRole('list', { name: 'Former scope updates' }))
       .toContainText('Sprint review completed')
+    const firstReloadedClosedCommitmentsToggle = window.getByRole('button', {
+      name: /Done \/ Cancelled/
+    })
+    await firstReloadedClosedCommitmentsToggle.click()
     await expect(
       window.getByRole('button', { name: 'Open commitment Improve ticket quality' })
     ).toBeVisible()
@@ -2600,42 +2490,34 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
       .getByRole('button', { name: 'Open commitment Improve ticket quality' })
       .click()
     await expect(
-      window
-        .getByRole('navigation', { name: 'Focus sections' })
-        .getByRole('button', {
-          name: 'Open Sprint execution commitment Improve ticket quality'
-        })
-    ).toHaveAttribute('aria-current', 'page')
-    await expect(
       window.getByRole('navigation', { name: 'Focus sections' })
     ).toBeVisible()
     await expect(window.getByRole('heading', { name: 'Improve ticket quality' })).toBeVisible()
     await window
       .getByRole('button', { name: 'Sprint execution, paused', exact: true })
       .click()
-    await window.getByRole('button', { name: 'Overall', exact: true }).click()
     const reloadedClosedCommitmentsToggle = window.getByRole('button', {
       name: /Done \/ Cancelled/
     })
     await expect(reloadedClosedCommitmentsToggle).toHaveAttribute('aria-expanded', 'false')
     await reloadedClosedCommitmentsToggle.click()
     await expect(
-      window.getByRole('button', { name: 'Open commitment Keep sponsors aligned' })
+      window.getByRole('button', { name: 'Open commitment Improve ticket quality' })
     ).toBeVisible()
     await expect(
       window
         .getByRole('list', { name: 'Done and cancelled commitments' })
-        .getByRole('button', { name: 'Open commitment Keep sponsors aligned' })
+        .getByRole('button', { name: 'Open commitment Improve ticket quality' })
         .getByText(/Last updated · /)
     ).toBeVisible()
     await expect(
       window
         .getByRole('list', { name: 'Done and cancelled commitments' })
-        .getByRole('button', { name: 'Open commitment Keep sponsors aligned' })
+        .getByRole('button', { name: 'Open commitment Improve ticket quality' })
         .locator('[data-slot="lifecycle-status-label"]')
         .filter({ hasText: /^Done$/ })
     ).toBeVisible()
-    await window.getByRole('button', { name: 'Open commitment Keep sponsors aligned' }).click()
+    await window.getByRole('button', { name: 'Open commitment Improve ticket quality' }).click()
     await expect(window.getByRole('combobox', { name: 'Commitment status' })).toHaveValue('done')
     await expect(window.getByLabel('Commitment type')).toHaveCount(0)
     await expect(window.getByLabel('Commitment due date', { exact: true }))
@@ -2643,11 +2525,19 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(
       window.getByRole('checkbox', { name: /Mark commitment/ })
     ).toHaveCount(0)
-    await expect(window.getByLabel('Update observation')).toContainText(
+    const reloadedCommitmentFormerUpdatesToggle = window.getByRole('button', {
+      name: /Former scope updates/
+    })
+    await reloadedCommitmentFormerUpdatesToggle.click()
+    const reloadedCommitmentObservation = window.getByLabel('Update observation')
+    await expect(reloadedCommitmentObservation).toContainText(
       'Sponsors confirmed the launch plan'
     )
     await expect(
-      window.getByRole('list', { name: 'Commitment updates' }).locator('span').filter({ hasText: /^Red$/ })
+      reloadedCommitmentObservation
+        .locator('xpath=ancestor::*[@role="listitem"]')
+        .locator('[data-tone="danger"]')
+        .filter({ hasText: /^Red$/ })
     ).toBeVisible()
     await window.getByRole('button', { name: 'Overall', exact: true }).click()
     await window.getByRole('button', { name: 'Toggle context drawer' }).click()
@@ -2668,7 +2558,6 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     expect(storedThreadCommitment()).toBeUndefined()
     expect(storedThreadUpdate()).toBeUndefined()
     expect(storedCommitment()).toBeUndefined()
-    expect(storedFocusUpdate()).toBeUndefined()
     expect(storedCommitmentUpdate()).toBeUndefined()
   } finally {
     await application?.close()
@@ -3258,13 +3147,19 @@ test('sorts and preserves contextual Todos through Scope changes', async () => {
     await window.getByLabel(/^Title/).fill('Todo Focus')
     await window.getByRole('button', { name: 'Create focus' }).click()
 
+    await window.getByRole('button', { name: 'New thread' }).click()
+    const planningThreadDialog = window.getByRole('dialog', { name: 'New thread' })
+    await planningThreadDialog.getByLabel(/^Title/).fill('Planning')
+    await planningThreadDialog.getByRole('button', { name: 'Create thread' }).click()
+    await window.getByRole('button', { name: 'Planning', exact: true }).click()
+
     const newTodoName = window.getByLabel('New Todo name')
     await newTodoName.fill('Overdue sponsor review')
     await window.getByLabel('New Todo due date').fill('2000-01-01')
     await window.getByRole('button', { name: 'Add Todo' }).click()
     await newTodoName.fill('Prepare next brief')
     await window.getByRole('button', { name: 'Add Todo' }).click()
-    const focusTodoList = window.getByRole('list', { name: 'focus Todos sortable list' })
+    const planningTodoList = window.getByRole('list', { name: 'thread Todos sortable list' })
     const overdueHandle = window.getByLabel('Drag Overdue sponsor review')
     const overdueTodo = overdueHandle.locator('..').locator('..')
     await expect(overdueTodo).toHaveAttribute('data-overdue', 'true')
@@ -3289,7 +3184,7 @@ test('sorts and preserves contextual Todos through Scope changes', async () => {
     await window.mouse.up()
     await expect(window.getByText('Drop Todo here')).toBeHidden()
     await expect(overdueTodo).toHaveAttribute('data-dragging', 'false')
-    await expect(focusTodoList.locator('[data-todo-id]').first().getByLabel('Todo name'))
+    await expect(planningTodoList.locator('[data-todo-id]').first().getByLabel('Todo name'))
       .toHaveValue('Prepare next brief')
     // dnd-kit briefly captures the click synthesized by the pointer-up so it cannot
     // activate a control underneath the dropped row.
@@ -3407,10 +3302,11 @@ test('sorts and preserves contextual Todos through Scope changes', async () => {
     })
     const reloadedWindow = await application.firstWindow()
     await reloadedWindow.getByRole('button', { name: 'Todo Focus' }).click()
-    const reloadedFocusTodos = reloadedWindow.getByRole('list', {
-      name: 'focus Todos sortable list'
+    await reloadedWindow.getByRole('button', { name: 'Planning', exact: true }).click()
+    const reloadedPlanningTodos = reloadedWindow.getByRole('list', {
+      name: 'thread Todos sortable list'
     })
-    await expect(reloadedFocusTodos.locator('[data-todo-id]').first().getByLabel('Todo name'))
+    await expect(reloadedPlanningTodos.locator('[data-todo-id]').first().getByLabel('Todo name'))
       .toHaveValue('Prepare next brief')
     await expect(reloadedWindow.getByLabel('Drag Overdue sponsor review')
       .locator('..').locator('..')).toHaveAttribute('data-overdue', 'true')

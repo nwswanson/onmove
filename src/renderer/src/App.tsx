@@ -549,7 +549,6 @@ export function App(): React.JSX.Element {
               focus={selectedFocus}
               contextDrawer={contextDrawer}
               onUpdateFocus={(input) => application.updateFocus(selectedFocus.id, input)}
-              onRefreshFocus={() => application.refreshFocus(selectedFocus.id)}
               onRefreshStatusSummary={() =>
                 application.refreshFocusStatusSummary(selectedFocus.id)
               }

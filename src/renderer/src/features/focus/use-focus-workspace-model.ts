@@ -7,6 +7,7 @@ import type {
   CreateCommitmentInput,
   CreateRoutineInput,
   CreateThreadInput,
+  FocusOverviewTimelineSnapshot,
   FocusSnapshot,
   FocusScopeSnapshot,
   MoveCommitmentInput,
@@ -24,10 +25,6 @@ import type {
 } from '../../../../shared/contracts'
 import { useDurableRichText } from '@/features/rich-text/use-durable-rich-text'
 import {
-  buildCommitmentListModel,
-  type CommitmentListModel
-} from '@/features/focus/commitment-list-model'
-import {
   buildStatusSummary,
   EMPTY_STATUS_SUMMARY,
   type StatusSummary
@@ -39,11 +36,6 @@ interface FocusWorkspaceModelOptions {
 }
 
 export interface FocusWorkspaceModel {
-  goal: string
-  setGoal: (goal: string) => void
-  goalSaving: boolean
-  goalRevision: number
-  goalError: string | null
   focusScope: FocusScopeSnapshot | null
   focusScopeLoading: boolean
   focusScopeSaving: boolean
@@ -56,11 +48,9 @@ export interface FocusWorkspaceModel {
   commitments: CommitmentSnapshot[]
   threadCommitments: Readonly<Record<number, readonly CommitmentSnapshot[] | undefined>>
   routines: RoutineSnapshot[]
-  commitmentList: CommitmentListModel
+  focusTimeline: FocusOverviewTimelineSnapshot
   commitmentsFor: (parent: CommitmentParent) => readonly CommitmentSnapshot[]
   routinesFor: (parent: CommitmentParent) => readonly RoutineSnapshot[]
-  saveGoal: (goal?: string) => Promise<void>
-  openGoalInWindow: () => void
   saveDescription: (value: string) => void
   openDescriptionInWindow: () => void
   addFocusScopeSubject: (name: string) => Promise<void>
@@ -206,16 +196,16 @@ export function useFocusWorkspaceModel({
     Record<number, readonly CommitmentSnapshot[] | undefined>
   >({})
   const [routines, setRoutines] = useState<RoutineSnapshot[]>([])
+  const [focusTimeline, setFocusTimeline] = useState<FocusOverviewTimelineSnapshot>({
+    focusId: focus.id,
+    threads: [],
+    updates: []
+  })
   const threadProjectionRequest = useRef(0)
-  const goalDocument = useDurableRichText(
-    { type: 'focus', id: focus.id, field: 'goal' },
-    focus.goal
-  )
   const descriptionDocument = useDurableRichText(
     { type: 'focus', id: focus.id, field: 'description' },
     focus.description ?? ''
   )
-  const commitmentList = buildCommitmentListModel(commitments)
 
   function applyFocusThreadWorkspaceData(data: FocusThreadWorkspaceData): void {
     setThreads(data.threads)
@@ -239,20 +229,19 @@ export function useFocusWorkspaceModel({
 
     Promise.all([
       loadFocusThreadWorkspaceData(focus.id),
-      window.onmove.domain.listCommitments({ type: 'focus', id: focus.id }),
-      window.onmove.domain.listRoutines()
+      window.onmove.domain.listRoutines(),
+      window.onmove.domain.getFocusOverviewTimeline(focus.id)
     ]).then(
-      ([threadData, nextCommitments, nextRoutines]) => {
+      ([threadData, nextRoutines, nextTimeline]) => {
         if (!active) return
         if (requestId === threadProjectionRequest.current) {
           applyFocusThreadWorkspaceData(threadData)
         }
-        setCommitments(nextCommitments)
+        setCommitments([])
+        setFocusTimeline(nextTimeline)
         const threadIds = new Set(threadData.threads.map(({ id }) => id))
         setRoutines(nextRoutines.filter((routine) =>
-          routine.parent.type === 'focus'
-            ? routine.parent.id === focus.id
-            : threadIds.has(routine.parent.id)
+          routine.parent.type === 'thread' && threadIds.has(routine.parent.id)
         ))
       },
       () => active && setLoadError('The focus workspace could not be loaded.')
@@ -270,9 +259,7 @@ export function useFocusWorkspaceModel({
     ]).then(([nextRoutines, nextThreads]) => {
       const threadIds = new Set(nextThreads.map(({ id }) => id))
       setRoutines(nextRoutines.filter((routine) =>
-        routine.parent.type === 'focus'
-          ? routine.parent.id === focus.id
-          : threadIds.has(routine.parent.id)
+        routine.parent.type === 'thread' && threadIds.has(routine.parent.id)
       ))
     }).catch(() => undefined)
   }), [focus.id])
@@ -282,11 +269,11 @@ export function useFocusWorkspaceModel({
     const requestId = ++threadProjectionRequest.current
     void Promise.all([
       loadFocusThreadWorkspaceData(focus.id),
-      window.onmove.domain.listCommitments({ type: 'focus', id: focus.id })
-    ]).then(([threadData, nextCommitments]) => {
+      window.onmove.domain.getFocusOverviewTimeline(focus.id)
+    ]).then(([threadData, nextTimeline]) => {
       if (requestId !== threadProjectionRequest.current) return
       applyFocusThreadWorkspaceData(threadData)
-      setCommitments(nextCommitments)
+      setFocusTimeline(nextTimeline)
     }).catch(() => setLoadError('The Update was added, but this workspace could not refresh.'))
   }), [focus.id])
 
@@ -309,14 +296,6 @@ export function useFocusWorkspaceModel({
     }
   }, [focus.id])
 
-  function changeGoal(nextGoal: string): void {
-    goalDocument.save(nextGoal)
-  }
-
-  async function saveGoal(nextGoal = goalDocument.value): Promise<void> {
-    goalDocument.save(nextGoal)
-  }
-
   async function refreshFocusScopeDependents(): Promise<void> {
     const requestId = ++threadProjectionRequest.current
     const [data, nextRoutines] = await Promise.all([
@@ -327,9 +306,7 @@ export function useFocusWorkspaceModel({
     applyFocusThreadWorkspaceData(data)
     const threadIds = new Set(data.threads.map(({ id }) => id))
     setRoutines(nextRoutines.filter((routine) =>
-      routine.parent.type === 'focus'
-        ? routine.parent.id === focus.id
-        : threadIds.has(routine.parent.id)
+      routine.parent.type === 'thread' && threadIds.has(routine.parent.id)
     ))
   }
 
@@ -386,6 +363,15 @@ export function useFocusWorkspaceModel({
       ...current,
       [created.id]: EMPTY_STATUS_SUMMARY
     }))
+    setFocusTimeline((current) => ({
+      ...current,
+      threads: [...current.threads, {
+        id: created.id,
+        title: created.title,
+        status: created.status,
+        sensitive: created.sensitive
+      }]
+    }))
     return created
   }
 
@@ -397,6 +383,17 @@ export function useFocusWorkspaceModel({
     setThreads((current) =>
       current.map((thread) => (thread.id === updated.id ? updated : thread))
     )
+    setFocusTimeline((current) => ({
+      ...current,
+      threads: current.threads.map((thread) => thread.id === updated.id
+        ? {
+            id: updated.id,
+            title: updated.title,
+            status: updated.status,
+            sensitive: updated.sensitive
+          }
+        : thread)
+    }))
     return updated
   }
 
@@ -411,6 +408,11 @@ export function useFocusWorkspaceModel({
     setRoutines((current) => current.filter((routine) =>
       routine.parent.type !== 'thread' || routine.parent.id !== id
     ))
+    setFocusTimeline((current) => ({
+      ...current,
+      threads: current.threads.filter((thread) => thread.id !== id),
+      updates: current.updates.filter((update) => update.threadId !== id)
+    }))
     return true
   }
 
@@ -428,6 +430,11 @@ export function useFocusWorkspaceModel({
     setRoutines((current) => current.filter((routine) =>
       routine.parent.type !== 'thread' || routine.parent.id !== id
     ))
+    setFocusTimeline((current) => ({
+      ...current,
+      threads: current.threads.filter((thread) => thread.id !== id),
+      updates: current.updates.filter((update) => update.threadId !== id)
+    }))
     return moved
   }
 
@@ -440,9 +447,7 @@ export function useFocusWorkspaceModel({
     const nextRoutines = await window.onmove.domain.listRoutines()
     const threadIds = new Set(threads.map(({ id }) => id))
     setRoutines(nextRoutines.filter((routine) =>
-      routine.parent.type === 'focus'
-        ? routine.parent.id === focus.id
-        : threadIds.has(routine.parent.id)
+      routine.parent.type === 'thread' && threadIds.has(routine.parent.id)
     ))
     return nextScope
   }
@@ -598,16 +603,17 @@ export function useFocusWorkspaceModel({
   ): Promise<CommitmentSnapshot> {
     const moved = await window.onmove.domain.moveCommitment(id, input)
     const requestId = ++threadProjectionRequest.current
-    const [threadData, nextCommitments, nextFocusScope] = await Promise.all([
+    const [threadData, nextFocusScope, nextTimeline] = await Promise.all([
       loadFocusThreadWorkspaceData(focus.id),
-      window.onmove.domain.listCommitments({ type: 'focus', id: focus.id }),
-      window.onmove.domain.getFocusScope(focus.id)
+      window.onmove.domain.getFocusScope(focus.id),
+      window.onmove.domain.getFocusOverviewTimeline(focus.id)
     ])
     if (requestId === threadProjectionRequest.current) {
       applyFocusThreadWorkspaceData(threadData)
     }
-    setCommitments(nextCommitments)
+    setCommitments([])
     setFocusScope(nextFocusScope)
+    setFocusTimeline(nextTimeline)
     return moved
   }
 
@@ -633,6 +639,12 @@ export function useFocusWorkspaceModel({
         [parent.id]: summaryWithoutCommitment(current[parent.id], id)
       }))
     }
+    setFocusTimeline((current) => ({
+      ...current,
+      updates: current.updates.filter((update) =>
+        update.source.type !== 'commitment' || update.source.id !== id
+      )
+    }))
     return true
   }
 
@@ -650,12 +662,13 @@ export function useFocusWorkspaceModel({
     threadId: number,
     knownScope?: ThreadScopeSnapshot
   ): Promise<ThreadSnapshot> {
-    const [nextThreads, nextCommitments, updates, scope, subjectMatrix] = await Promise.all([
+    const [nextThreads, nextCommitments, updates, scope, subjectMatrix, nextTimeline] = await Promise.all([
       window.onmove.domain.listThreads(focus.id),
       window.onmove.domain.listCommitments({ type: 'thread', id: threadId }),
       window.onmove.domain.listUpdates({ type: 'thread', id: threadId }),
       knownScope ?? window.onmove.domain.getThreadScope(threadId),
-      window.onmove.domain.getThreadSubjectMatrix(threadId)
+      window.onmove.domain.getThreadSubjectMatrix(threadId),
+      window.onmove.domain.getFocusOverviewTimeline(focus.id)
     ])
     const refreshed = nextThreads.find((thread) => thread.id === threadId)
     if (!refreshed) throw new Error('Thread no longer exists')
@@ -667,6 +680,7 @@ export function useFocusWorkspaceModel({
       ...current,
       [threadId]: buildStatusSummary(updates, nextCommitments)
     }))
+    setFocusTimeline(nextTimeline)
     return refreshed
   }
 
@@ -686,11 +700,6 @@ export function useFocusWorkspaceModel({
   }
 
   return {
-    goal: goalDocument.value,
-    setGoal: changeGoal,
-    goalSaving: goalDocument.saving,
-    goalRevision: goalDocument.revision,
-    goalError: goalDocument.error,
     focusScope,
     focusScopeLoading,
     focusScopeSaving,
@@ -703,11 +712,9 @@ export function useFocusWorkspaceModel({
     commitments,
     threadCommitments,
     routines,
-    commitmentList,
+    focusTimeline,
     commitmentsFor,
     routinesFor,
-    saveGoal,
-    openGoalInWindow: goalDocument.openInWindow,
     saveDescription: descriptionDocument.save,
     openDescriptionInWindow: descriptionDocument.openInWindow,
     addFocusScopeSubject,

@@ -2,6 +2,7 @@ import { LATEST_SCHEMA_VERSION } from './migrations'
 import type { SqlValue, SqliteAdapter } from './sqlite-adapter'
 import {
   purgeExpiredArchivedUpdates,
+  UPDATE_ARCHIVE_CONTEXT_TRIGGER_NAMES,
   UPDATE_ARCHIVE_DELETE_TRIGGER
 } from './update-archive'
 
@@ -465,9 +466,13 @@ function tableNames(value: ArchiveRow): string[] {
 }
 
 function dropAndRememberTriggers(database: SqliteAdapter): TriggerRow[] {
+  const protectedArchiveTriggers = new Set<string>([
+    UPDATE_ARCHIVE_DELETE_TRIGGER,
+    ...UPDATE_ARCHIVE_CONTEXT_TRIGGER_NAMES
+  ])
   const triggers = database.all<TriggerRow>(
     "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND sql IS NOT NULL ORDER BY name"
-  ).filter(({ name }) => name !== UPDATE_ARCHIVE_DELETE_TRIGGER)
+  ).filter(({ name }) => !protectedArchiveTriggers.has(name))
   for (const trigger of triggers) database.exec(`DROP TRIGGER ${quoteIdentifier(trigger.name)}`)
   return triggers
 }
@@ -499,6 +504,16 @@ function removeForeignKeyViolations(database: SqliteAdapter): number {
 
 function cleanSemanticViolations(database: SqliteAdapter): number {
   const statements = [
+    // Archives may predate Focus Overall becoming an overview. Apply the same
+    // breaking ownership migration during every import. The protected archive
+    // triggers stay installed while imports run, so direct and cascading
+    // Update deletions are rescued with their human-readable context.
+    'DELETE FROM updates WHERE focus_id IS NOT NULL',
+    'DELETE FROM commitments WHERE focus_id IS NOT NULL',
+    'DELETE FROM todos WHERE focus_id IS NOT NULL',
+    'DELETE FROM todo_lists WHERE focus_id IS NOT NULL',
+    "UPDATE focuses SET goal = '' WHERE goal <> ''",
+    "DELETE FROM rich_text_history WHERE document_type = 'focus-goal'",
     `DELETE FROM focus_scope_applications
      WHERE NOT (
        (mode = 'open' AND scope_id IS NULL) OR

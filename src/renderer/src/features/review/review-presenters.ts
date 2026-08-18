@@ -42,7 +42,6 @@ export interface ReviewItemModel {
   lastReviewLabel: string
   nextReviewLabel: string | null
   due: boolean
-  goal: string | null
   description: string | null
   dueDate: string | null
   cadenceDays: number | null
@@ -110,7 +109,6 @@ export function reviewItemModel(
     lastReviewLabel: dateOrNeverLabel(item.lastReviewDate),
     nextReviewLabel: item.nextReviewDate,
     due: item.due,
-    goal: item.kind === 'focus' && item.focus.goal ? item.focus.goal : null,
     description: item.kind === 'focus' ? item.focus.description : null,
     dueDate: record.dueDate,
     cadenceDays: item.commitment?.cadenceDays ?? null,

@@ -147,6 +147,9 @@ export function registerAppIpc(
   ipcMain.handle(IPC_CHANNELS.getThreadSubjectMatrix, (_event, threadId: number) =>
     database.domain.threads.subjectMatrix(threadId)
   )
+  ipcMain.handle(IPC_CHANNELS.getFocusOverviewTimeline, (_event, focusId: number) =>
+    database.domain.focusOverview.timeline(focusId)
+  )
   ipcMain.handle(IPC_CHANNELS.customizeThreadScope, (_event, threadId: number) =>
     routineMutation(() => database.domain.threadScopes.customize(threadId))
   )

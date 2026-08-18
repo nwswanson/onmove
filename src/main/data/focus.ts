@@ -23,7 +23,6 @@ interface FocusRow {
   kind: string
   title: string
   description: string | null
-  goal: string
   status: string
   due_on: string | null
   status_changed_at: string
@@ -58,12 +57,18 @@ function normalizeDescription(value: string | null | undefined): string | null {
   return value.trim()
 }
 
-function normalizeGoal(value: string | undefined): string {
+function retiredGoalValue(input: unknown): string {
+  const value = typeof input === 'object' && input !== null && 'goal' in input
+    ? (input as { goal?: unknown }).goal
+    : undefined
   if (value === undefined) return ''
   if (typeof value !== 'string') {
     throw new ModelValidationError('focus goal must be text')
   }
-  return value.trim()
+  if (value.trim().length > 0) {
+    throw new ModelValidationError('Focus Goal has been retired')
+  }
+  return ''
 }
 
 function assertId(id: number): void {
@@ -131,7 +136,6 @@ function focusFromRow(row: FocusRow, notes: FocusSnapshot['notes']): FocusRecord
     kind: row.kind as FocusKind,
     title: row.title,
     description: row.description,
-    goal: row.goal,
     status: row.status as FocusStatus,
     dueDate: row.due_on,
     statusChangedAt: row.status_changed_at,
@@ -172,10 +176,6 @@ export class FocusModel extends BaseModel<FocusRecord> {
 
   get description(): string | null {
     return this.record.description
-  }
-
-  get goal(): string {
-    return this.record.goal
   }
 
   get status(): FocusStatus {
@@ -249,7 +249,7 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
         normalizeKind(input.kind),
         normalizeTitle(input.title),
         normalizeDescription(input.description),
-        normalizeGoal(input.goal),
+        retiredGoalValue(input),
         normalizeStatus(input.status),
         normalizeOptionalDate(input.dueDate, 'dueDate'),
         normalizeNeedsReview(input.needsReview) ? 1 : 0,
@@ -274,16 +274,11 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
   private materializeOrNull(id: number, asOf: string): FocusRecord | null {
     assertId(id)
     const row = this.database.get<FocusRow>(
-      `SELECT id, kind, title, description, goal, status, due_on, status_changed_at, needs_review, sensitive,
+      `SELECT id, kind, title, description, status, due_on, status_changed_at, needs_review, sensitive,
               created_at, updated_at,
-              NULLIF(MAX(
-                COALESCE(CASE WHEN review_poked_on <= ? THEN review_poked_on END, ''),
-                COALESCE((SELECT recorded_on FROM updates
-                  WHERE focus_id = focuses.id AND recorded_on <= ?
-                  ORDER BY recorded_on DESC, id DESC LIMIT 1), '')
-              ), '') AS last_review_date
+              CASE WHEN review_poked_on <= ? THEN review_poked_on END AS last_review_date
        FROM focuses WHERE id = ?`,
-      [asOf, asOf, id]
+      [asOf, id]
     )
     return row ? focusFromRow(row, this.notes.list({ type: 'focus', id })) : null
   }
@@ -292,16 +287,11 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
     const date = normalizeDate(asOf, 'asOf')
     return this.database
       .all<FocusRow>(
-        `SELECT id, kind, title, description, goal, status, due_on, status_changed_at, needs_review, sensitive,
+        `SELECT id, kind, title, description, status, due_on, status_changed_at, needs_review, sensitive,
                 created_at, updated_at,
-                NULLIF(MAX(
-                  COALESCE(CASE WHEN review_poked_on <= ? THEN review_poked_on END, ''),
-                  COALESCE((SELECT recorded_on FROM updates
-                    WHERE focus_id = focuses.id AND recorded_on <= ?
-                    ORDER BY recorded_on DESC, id DESC LIMIT 1), '')
-                ), '') AS last_review_date
+                CASE WHEN review_poked_on <= ? THEN review_poked_on END AS last_review_date
          FROM focuses ORDER BY id`,
-        [date, date]
+        [date]
       )
       .map((row) => focusFromRow(row, this.notes.list({ type: 'focus', id: Number(row.id) })))
   }
@@ -319,7 +309,7 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
         input.description === undefined
           ? current.description
           : normalizeDescription(input.description),
-        input.goal === undefined ? current.goal : normalizeGoal(input.goal),
+        retiredGoalValue(input),
         input.status === undefined ? current.status : normalizeStatus(input.status),
         input.dueDate === undefined
           ? current.dueDate

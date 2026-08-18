@@ -61,6 +61,8 @@ const api: OnMoveApi = {
     getThreadScope: (threadId) => ipcRenderer.invoke(IPC_CHANNELS.getThreadScope, threadId),
     getThreadSubjectMatrix: (threadId) =>
       ipcRenderer.invoke(IPC_CHANNELS.getThreadSubjectMatrix, threadId),
+    getFocusOverviewTimeline: (focusId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.getFocusOverviewTimeline, focusId),
     customizeThreadScope: (threadId) =>
       ipcRenderer.invoke(IPC_CHANNELS.customizeThreadScope, threadId),
     addThreadScopeSubject: (threadId, input) =>

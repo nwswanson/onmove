@@ -16,7 +16,7 @@ import type {
 
 export interface UpdateCommandTarget {
   id: string
-  kind: 'focus' | 'thread' | 'commitment'
+  kind: 'thread' | 'commitment'
   focusId: number
   parent: UpdateParent
   scope: UpdateScopeCell | null
@@ -47,16 +47,7 @@ export function reviewUpdateCommandTarget(
   const subjectPath = reviewItem.cell ? ` › ${reviewItem.cell.subject.name}` : ''
 
   if (reviewItem.kind === 'focus') {
-    return {
-      id: `focus:${reviewItem.focus.id}`,
-      kind: 'focus',
-      focusId: reviewItem.focus.id,
-      parent: { type: 'focus', id: reviewItem.focus.id },
-      scope: null,
-      label: reviewItem.focus.title,
-      description: 'Focus › Overall',
-      keywords: ['focus', 'overall', reviewItem.focus.title]
-    }
+    throw new Error('Focus Overview does not accept direct Updates')
   }
 
   if (reviewItem.kind === 'thread') {
@@ -235,20 +226,6 @@ export function updateCommandGroups(
   })
 
   const groups: UpdateCommandGroupModel[] = [
-    {
-      id: 'focuses',
-      label: 'Focuses',
-      items: sorted(focuses.map((focus) => item({
-        id: `focus:${focus.id}`,
-        kind: 'focus',
-        focusId: focus.id,
-        parent: { type: 'focus', id: focus.id },
-        scope: null,
-        label: focus.title,
-        description: 'Focus › Overall',
-        keywords: ['focus', 'overall', focus.title]
-      }, 'folder')))
-    },
     {
       id: 'threads',
       label: 'Threads',

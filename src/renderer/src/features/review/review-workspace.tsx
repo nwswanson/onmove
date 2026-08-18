@@ -57,18 +57,10 @@ function ReviewSupportingDetails({
 }: {
   model: ReviewItemModel
 }): React.JSX.Element | null {
-  if (!model.goal && model.commitments.length === 0) return null
+  if (model.commitments.length === 0) return null
 
   return (
     <div className="space-y-7 border-t border-border/75 px-5 py-6 sm:px-7">
-      {model.goal && (
-        <section aria-labelledby="review-goal-heading">
-          <h3 id="review-goal-heading" className="mb-2 text-xs font-semibold text-muted-foreground uppercase">
-            Goal
-          </h3>
-          <RichTextContent value={model.goal} ariaLabel="Focus goal" />
-        </section>
-      )}
       {model.commitments.length > 0 && (
         <section aria-labelledby="review-commitments-heading">
           <div className="mb-2 flex items-baseline justify-between gap-3">
@@ -299,15 +291,17 @@ export function ReviewWorkspace({
                         <ArrowRight aria-hidden="true" />
                         {pending ? 'Passing…' : 'Pass along'}
                       </Button>
-                      <Button
-                        type="button"
-                        disabled={pending}
-                        onClick={() => updateComposer.openFor(reviewUpdateCommandTarget(current))}
-                        title="Add an Update to this review item"
-                      >
-                        <MessageSquarePlus aria-hidden="true" />
-                        Update
-                      </Button>
+                      {current.kind !== 'focus' && (
+                        <Button
+                          type="button"
+                          disabled={pending}
+                          onClick={() => updateComposer.openFor(reviewUpdateCommandTarget(current))}
+                          title="Add an Update to this review item"
+                        >
+                          <MessageSquarePlus aria-hidden="true" />
+                          Update
+                        </Button>
+                      )}
                     </div>
                   </div>
                   <div className="h-1 overflow-hidden bg-muted" aria-hidden="true">
@@ -318,13 +312,15 @@ export function ReviewWorkspace({
                   </div>
                 </div>
 
-                <div className="px-5 pb-6 sm:px-7">
-                  <DirectTodos
-                    key={current.key}
-                    context={reviewTodoContext(current)}
-                    onMutation={() => review.recordTodoMutation(current)}
-                  />
-                </div>
+                {current.kind !== 'focus' && (
+                  <div className="px-5 pb-6 sm:px-7">
+                    <DirectTodos
+                      key={current.key}
+                      context={reviewTodoContext(current)}
+                      onMutation={() => review.recordTodoMutation(current)}
+                    />
+                  </div>
+                )}
 
                 <ReviewUpdates model={currentModel} />
                 <ReviewSupportingDetails model={currentModel} />

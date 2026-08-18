@@ -32,7 +32,7 @@ function sourceLabel(use: TagUseSnapshot): string {
   switch (use.source.type) {
     case 'focus':
       if (use.source.field === 'title') return 'Focus title'
-      return use.source.field === 'goal' ? 'Goal' : 'Description'
+      return 'Description'
     case 'thread':
       return 'Thread title'
     case 'commitment':

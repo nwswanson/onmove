@@ -16,10 +16,7 @@ async function loadUpdateCommandGraph(
   focuses: readonly FocusSnapshot[]
 ): Promise<UpdateCommandGraph> {
   const bundles = await Promise.all(focuses.map(async (focus) => {
-    const [threads, focusCommitments] = await Promise.all([
-      window.onmove.domain.listThreads(focus.id),
-      window.onmove.domain.listCommitments({ type: 'focus', id: focus.id })
-    ])
+    const threads = await window.onmove.domain.listThreads(focus.id)
     const [threadScopes, threadCommitments] = await Promise.all([
       Promise.all(threads.map(async (thread) => [
         thread.id,
@@ -30,7 +27,7 @@ async function loadUpdateCommandGraph(
     ])
     return {
       threads,
-      commitments: [...focusCommitments, ...threadCommitments.flat()],
+      commitments: threadCommitments.flat(),
       threadScopes
     }
   }))
