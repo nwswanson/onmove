@@ -2586,6 +2586,13 @@ describe('App', () => {
 
     fireEvent.contextMenu(overallTarget)
     menu = screen.getByRole('menu', { name: 'Overall actions' })
+    await user.click(within(menu).getByRole('menuitemcheckbox', { name: 'Needs review' }))
+    await waitFor(() => expect(updateFocus).toHaveBeenCalledWith(current.id, {
+      needsReview: false
+    }))
+
+    fireEvent.contextMenu(overallTarget)
+    menu = screen.getByRole('menu', { name: 'Overall actions' })
     await user.click(within(menu).getByRole('menuitemcheckbox', { name: 'Sensitive' }))
     await waitFor(() => expect(updateFocus).toHaveBeenCalledWith(current.id, {
       sensitive: true
@@ -2605,6 +2612,13 @@ describe('App', () => {
 
     fireEvent.contextMenu(threadTarget)
     menu = screen.getByRole('menu', { name: 'Sprint execution actions' })
+    await user.click(within(menu).getByRole('menuitemcheckbox', { name: 'Needs review' }))
+    await waitFor(() => expect(updateThread).toHaveBeenCalledWith(sprint.id, {
+      needsReview: false
+    }))
+
+    fireEvent.contextMenu(threadTarget)
+    menu = screen.getByRole('menu', { name: 'Sprint execution actions' })
     await user.click(within(menu).getByRole('menuitemcheckbox', { name: 'Sensitive' }))
     await waitFor(() => expect(updateThread).toHaveBeenCalledWith(sprint.id, {
       sensitive: true
@@ -2620,6 +2634,95 @@ describe('App', () => {
     expect(deleteThread).toHaveBeenCalledWith(sprint.id)
     expect(within(contextualSidebar).queryByRole('button', { name: 'Sprint execution' }))
       .not.toBeInTheDocument()
+  })
+
+  it('edits and deletes Commitments and Routines through nested context menus', async () => {
+    const currentFocus = focus({ title: 'Project Atlas' })
+    let liveCommitment = commitment({ title: 'Keep sponsors aligned' })
+    let liveRoutine = routine({
+      id: 302,
+      parent: { type: 'focus', id: currentFocus.id },
+      name: 'Portfolio evidence inspection'
+    })
+    const updateCommitment = vi.fn(async (
+      _id: number,
+      input: Parameters<DomainApi['updateCommitment']>[1]
+    ) => {
+      liveCommitment = { ...liveCommitment, ...input }
+      return liveCommitment
+    })
+    const updateRoutine = vi.fn(async (
+      _id: number,
+      input: Parameters<DomainApi['updateRoutine']>[1]
+    ) => {
+      const attestationRequested = input.needsAttestation ??
+        liveRoutine.attestationRequested
+      liveRoutine = {
+        ...liveRoutine,
+        ...input,
+        attestationRequested,
+        needsAttestation: attestationRequested && liveRoutine.scheduleWeekdays.length > 0
+      }
+      return liveRoutine
+    })
+    const deleteCommitment = vi.fn().mockResolvedValue(true)
+    const deleteRoutine = vi.fn().mockResolvedValue(true)
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([currentFocus]),
+      listCommitments: vi.fn().mockImplementation(async () => [liveCommitment]),
+      listRoutines: vi.fn().mockImplementation(async () => [liveRoutine]),
+      updateCommitment,
+      updateRoutine,
+      deleteCommitment,
+      deleteRoutine
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    const sidebar = screen.getByLabelText('Contextual sidebar')
+    const commitmentName = 'Open Overall commitment Keep sponsors aligned'
+    const routineName = 'Open Overall Routine Portfolio evidence inspection'
+
+    fireEvent.contextMenu(within(sidebar).getByRole('button', { name: commitmentName }))
+    let menu = screen.getByRole('menu', { name: 'Keep sponsors aligned actions' })
+    await user.click(within(menu).getByRole('menuitemcheckbox', { name: 'Needs review' }))
+    await waitFor(() => expect(updateCommitment).toHaveBeenCalledWith(
+      liveCommitment.id,
+      { needsReview: false }
+    ))
+
+    fireEvent.contextMenu(within(sidebar).getByRole('button', { name: commitmentName }))
+    menu = screen.getByRole('menu', { name: 'Keep sponsors aligned actions' })
+    await user.click(within(menu).getByRole('menuitemcheckbox', { name: 'Sensitive' }))
+    await waitFor(() => expect(updateCommitment).toHaveBeenCalledWith(
+      liveCommitment.id,
+      { sensitive: true }
+    ))
+
+    fireEvent.contextMenu(within(sidebar).getByRole('button', { name: routineName }))
+    menu = screen.getByRole('menu', { name: 'Portfolio evidence inspection actions' })
+    await user.click(within(menu).getByRole('menuitemcheckbox', { name: 'Needs review' }))
+    await waitFor(() => expect(updateRoutine).toHaveBeenCalledWith(
+      liveRoutine.id,
+      { needsAttestation: false }
+    ))
+
+    fireEvent.contextMenu(within(sidebar).getByRole('button', { name: commitmentName }))
+    menu = screen.getByRole('menu', { name: 'Keep sponsors aligned actions' })
+    await user.click(within(menu).getByRole('menuitem', { name: 'Delete Commitment' }))
+    let confirmation = screen.getByRole('dialog', { name: 'Delete commitment?' })
+    expect(deleteCommitment).not.toHaveBeenCalled()
+    await user.click(within(confirmation).getByRole('button', { name: 'Delete commitment' }))
+    expect(deleteCommitment).toHaveBeenCalledWith(liveCommitment.id)
+
+    fireEvent.contextMenu(within(sidebar).getByRole('button', { name: routineName }))
+    menu = screen.getByRole('menu', { name: 'Portfolio evidence inspection actions' })
+    await user.click(within(menu).getByRole('menuitem', { name: 'Delete Routine' }))
+    confirmation = screen.getByRole('dialog', { name: 'Delete routine?' })
+    expect(deleteRoutine).not.toHaveBeenCalled()
+    await user.click(within(confirmation).getByRole('button', { name: 'Delete routine' }))
+    expect(deleteRoutine).toHaveBeenCalledWith(liveRoutine.id)
   })
 
   it('archives closed Threads outside navigation and restores them as active', async () => {

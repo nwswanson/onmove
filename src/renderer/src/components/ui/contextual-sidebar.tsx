@@ -52,6 +52,7 @@ export interface ContextualSidebarChildItemModel {
   movable?: boolean
   activation?: 'selection' | 'action'
   indicators?: readonly SidebarItemIndicator[]
+  contextMenu?: SidebarContextMenuModel
 }
 
 export interface ContextualSidebarChildCollectionActionModel {
@@ -132,6 +133,13 @@ export interface ContextualSidebarLevelOptions extends ContextualSidebarLevelBas
     parentItemId: string,
     collectionId: string,
     actionId: string
+  ) => void
+  onChildContextMenuAction?: (
+    parentItemId: string,
+    collectionId: string,
+    childItemId: string,
+    actionId: string,
+    checked?: boolean
   ) => void
   onContextMenuAction?: (
     itemId: string,
@@ -245,6 +253,13 @@ export abstract class ContextualSidebarLevelBase {
     collectionId: string,
     actionId: string
   ): void
+  abstract notifyChildContextMenuAction(
+    parentItemId: string,
+    collectionId: string,
+    childItemId: string,
+    actionId: string,
+    checked?: boolean
+  ): void
   abstract canDragChild(
     parentItemId: string,
     collectionId: string,
@@ -311,6 +326,7 @@ export class ContextualSidebarLevel extends ContextualSidebarLevelBase {
   private readonly onItemSelect?: ContextualSidebarLevelOptions['onSelect']
   private readonly onChildItemSelect?: ContextualSidebarLevelOptions['onSelectChild']
   private readonly onCollectionAction?: ContextualSidebarLevelOptions['onChildCollectionAction']
+  private readonly onChildItemContextMenuAction?: ContextualSidebarLevelOptions['onChildContextMenuAction']
   private readonly onItemContextMenuAction?: ContextualSidebarLevelOptions['onContextMenuAction']
   private readonly allowChildMove?: ContextualSidebarLevelOptions['canMoveChild']
   private readonly onChildMove?: ContextualSidebarLevelOptions['onMoveChild']
@@ -324,6 +340,7 @@ export class ContextualSidebarLevel extends ContextualSidebarLevelBase {
     this.onItemSelect = options.onSelect
     this.onChildItemSelect = options.onSelectChild
     this.onCollectionAction = options.onChildCollectionAction
+    this.onChildItemContextMenuAction = options.onChildContextMenuAction
     this.onItemContextMenuAction = options.onContextMenuAction
     this.allowChildMove = options.canMoveChild
     this.onChildMove = options.onMoveChild
@@ -406,6 +423,31 @@ export class ContextualSidebarLevel extends ContextualSidebarLevelBase {
     if (!action.disabled) {
       this.onCollectionAction?.(parentItemId, collectionId, actionId)
     }
+  }
+
+  notifyChildContextMenuAction(
+    parentItemId: string,
+    collectionId: string,
+    childItemId: string,
+    actionId: string,
+    checked?: boolean
+  ): void {
+    const child = this.getChildItem(parentItemId, collectionId, childItemId)
+    if (!child) {
+      throw new Error(
+        `Contextual sidebar item "${parentItemId}" does not contain child "${childItemId}" in collection "${collectionId}".`
+      )
+    }
+    const action = child.contextMenu?.items.find((candidate) => candidate.id === actionId)
+    if (!action || action.disabled || !this.onChildItemContextMenuAction) return
+    if (action.kind === 'checkbox' && typeof checked !== 'boolean') return
+    this.onChildItemContextMenuAction(
+      parentItemId,
+      collectionId,
+      childItemId,
+      actionId,
+      checked
+    )
   }
 
   canDragChild(
@@ -938,31 +980,42 @@ function ContextualSidebarDraggableChild({
 
   return (
     <li ref={setNodeRef} data-dragging={isDragging ? 'true' : 'false'}>
-      <button
-        type="button"
-        {...(draggable ? attributes : {})}
-        {...(draggable ? listeners : {})}
-        aria-current={selected ? 'page' : undefined}
-        aria-label={child.ariaLabel ?? child.label}
-        disabled={child.disabled}
-        className={cn(
-          'flex min-h-7 w-full items-center gap-2 rounded-md px-2 text-left text-xs outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring/55 disabled:pointer-events-none disabled:opacity-50',
-          draggable && 'touch-none',
-          selected && 'bg-sidebar-accent text-sidebar-accent-foreground',
-          child.tone === 'muted' && 'text-muted-foreground opacity-55',
-          isDragging && 'opacity-35'
+      <SidebarItemContextMenu
+        model={child.contextMenu}
+        onAction={(actionId, checked) => level.notifyChildContextMenuAction(
+          parentItemId,
+          collection.id,
+          child.id,
+          actionId,
+          checked
         )}
-        onClick={() => child.activation === 'action'
-          ? level.notifyChildSelection(parentItemId, collection.id, child.id)
-          : navigation.selectChild(parentItemId, collection.id, child.id)}
       >
-        {child.icon === 'checklist' && (
-          <ListChecks className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-        )}
-        {child.state && <StateDot model={child.state} />}
-        <span className="min-w-0 flex-1 truncate"><TaggedText value={child.label} /></span>
-        <SidebarItemIndicators indicators={child.indicators} size="compact" />
-      </button>
+        <button
+          type="button"
+          {...(draggable ? attributes : {})}
+          {...(draggable ? listeners : {})}
+          aria-current={selected ? 'page' : undefined}
+          aria-label={child.ariaLabel ?? child.label}
+          disabled={child.disabled}
+          className={cn(
+            'flex min-h-7 w-full items-center gap-2 rounded-md px-2 text-left text-xs outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring/55 disabled:pointer-events-none disabled:opacity-50',
+            draggable && 'touch-none',
+            selected && 'bg-sidebar-accent text-sidebar-accent-foreground',
+            child.tone === 'muted' && 'text-muted-foreground opacity-55',
+            isDragging && 'opacity-35'
+          )}
+          onClick={() => child.activation === 'action'
+            ? level.notifyChildSelection(parentItemId, collection.id, child.id)
+            : navigation.selectChild(parentItemId, collection.id, child.id)}
+        >
+          {child.icon === 'checklist' && (
+            <ListChecks className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          )}
+          {child.state && <StateDot model={child.state} />}
+          <span className="min-w-0 flex-1 truncate"><TaggedText value={child.label} /></span>
+          <SidebarItemIndicators indicators={child.indicators} size="compact" />
+        </button>
+      </SidebarItemContextMenu>
     </li>
   )
 }

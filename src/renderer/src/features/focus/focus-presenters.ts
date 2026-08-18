@@ -23,7 +23,10 @@ import type {
   ContextualSidebarItemModel
 } from '@/components/ui/contextual-sidebar'
 import type { SidebarNavigationItemModel } from '@/components/ui/sidebar-navigation'
-import type { SidebarContextMenuItemModel } from '@/components/ui/sidebar-context-menu'
+import type {
+  SidebarContextMenuItemModel,
+  SidebarContextMenuModel
+} from '@/components/ui/sidebar-context-menu'
 import type {
   SemanticSunflowerModel,
   SemanticSunflowerTone
@@ -243,6 +246,7 @@ export type RoutinesByContextItemId = Readonly<
 
 function workContextMenuItems(
   sensitive: boolean,
+  needsReview: boolean,
   includeDelete: boolean
 ): SidebarContextMenuItemModel[] {
   return [
@@ -260,11 +264,18 @@ function workContextMenuItems(
     },
     {
       kind: 'checkbox',
+      id: 'needs-review',
+      label: 'Needs review',
+      icon: 'review',
+      checked: needsReview,
+      separatorBefore: true
+    },
+    {
+      kind: 'checkbox',
       id: 'sensitive',
       label: 'Sensitive',
       icon: 'sensitive',
-      checked: sensitive,
-      separatorBefore: true
+      checked: sensitive
     },
     ...(includeDelete ? [{
       kind: 'action' as const,
@@ -275,6 +286,41 @@ function workContextMenuItems(
       separatorBefore: true
     }] : [])
   ]
+}
+
+function childWorkContextMenu(
+  label: string,
+  type: 'Commitment' | 'Routine',
+  sensitive: boolean,
+  needsReview: boolean
+): SidebarContextMenuModel {
+  return {
+    ariaLabel: `${label} actions`,
+    items: [
+      {
+        kind: 'checkbox',
+        id: 'needs-review',
+        label: 'Needs review',
+        icon: 'review',
+        checked: needsReview
+      },
+      {
+        kind: 'checkbox',
+        id: 'sensitive',
+        label: 'Sensitive',
+        icon: 'sensitive',
+        checked: sensitive
+      },
+      {
+        kind: 'action',
+        id: 'delete',
+        label: `Delete ${type}`,
+        icon: 'delete',
+        tone: 'destructive',
+        separatorBefore: true
+      }
+    ]
+  }
 }
 
 function contextWorkChildCollection(
@@ -292,6 +338,12 @@ function contextWorkChildCollection(
         ariaLabel: `Open ${ownerLabel} commitment ${commitment.title}`,
         state: healthStateLabel(commitment.state),
         ...sidebarIndicatorProps(commitment.sensitive, commitment.needsReview),
+        contextMenu: childWorkContextMenu(
+          commitment.title,
+          'Commitment',
+          commitment.sensitive,
+          commitment.needsReview
+        ),
         tone: commitment.status === 'active' ? ('default' as const) : ('muted' as const)
       })),
       ...routines.map((routine) => ({
@@ -305,6 +357,12 @@ function contextWorkChildCollection(
             ? { label: 'Overdue', tone: 'warning' as const }
             : { label: 'Lapsed', tone: 'danger' as const },
         ...sidebarIndicatorProps(routine.sensitive, routine.needsAttestation),
+        contextMenu: childWorkContextMenu(
+          routine.name,
+          'Routine',
+          Boolean(routine.sensitive),
+          Boolean(routine.attestationRequested)
+        ),
         tone: routine.needsAttestation ? ('default' as const) : ('muted' as const),
         movable: true
       }))
@@ -318,7 +376,8 @@ export function focusContextSidebarItems(
   hideSensitiveContent = false,
   commitmentsByItemId?: CommitmentsByContextItemId,
   routinesByItemId?: RoutinesByContextItemId,
-  focusSensitive = false
+  focusSensitive = false,
+  focusNeedsReview = true
 ): ContextualSidebarItemModel[] {
   return [
     {
@@ -327,7 +386,7 @@ export function focusContextSidebarItems(
       icon: 'overview',
       contextMenu: {
         ariaLabel: 'Overall actions',
-        items: workContextMenuItems(focusSensitive, false)
+        items: workContextMenuItems(focusSensitive, focusNeedsReview, false)
       },
       ...(commitmentsByItemId || routinesByItemId
         ? {
@@ -371,7 +430,7 @@ export function focusContextSidebarItems(
         movable: true,
         contextMenu: {
           ariaLabel: `${label} actions`,
-          items: workContextMenuItems(thread.sensitive, true)
+          items: workContextMenuItems(thread.sensitive, thread.needsReview, true)
         },
         group: { id: 'threads', label: 'Threads' }
       }
@@ -393,6 +452,12 @@ export function commitmentContextSidebarItems(
         lines: 2,
         stateLabel: healthStateLabel(commitment.state),
         ...sidebarIndicatorProps(commitment.sensitive, commitment.needsReview),
+        contextMenu: childWorkContextMenu(
+          commitment.title,
+          'Commitment',
+          commitment.sensitive,
+          commitment.needsReview
+        ),
         accessory: 'disclosure'
       }
     })

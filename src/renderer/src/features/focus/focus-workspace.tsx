@@ -258,6 +258,13 @@ export function FocusWorkspace({
   } | null>(null)
   const [threadDeleteSaving, setThreadDeleteSaving] = useState(false)
   const [threadDeleteError, setThreadDeleteError] = useState<string | null>(null)
+  const [pendingChildDelete, setPendingChildDelete] = useState<{
+    type: 'commitment' | 'routine'
+    id: number
+    title: string
+  } | null>(null)
+  const [childDeleteSaving, setChildDeleteSaving] = useState(false)
+  const [childDeleteError, setChildDeleteError] = useState<string | null>(null)
   const [pendingCommitmentMove, setPendingCommitmentMove] = useState<{
     plan: CommitmentMovePlanSnapshot
     commitmentTitle: string
@@ -288,6 +295,11 @@ export function FocusWorkspace({
     actionId: string,
     checked?: boolean
   ) => void>(() => undefined)
+  const childContextMenuRequest = useRef<(
+    itemId: string,
+    actionId: string,
+    checked?: boolean
+  ) => void>(() => undefined)
   const commitmentMoveExecution = useRef<(
     plan: CommitmentMovePlanSnapshot,
     confirmedScopeSubjectIds?: readonly number[]
@@ -314,10 +326,18 @@ export function FocusWorkspace({
           false,
           { overall: [] },
           { overall: [] },
-          focus.sensitive
+          focus.sensitive,
+          focus.needsReview
         ),
         onSelect: () => setStandaloneCommitmentRoute(null),
         onSelectChild: () => setStandaloneCommitmentRoute(null),
+        onChildContextMenuAction: (
+          _parentItemId,
+          _collectionId,
+          childItemId,
+          actionId,
+          checked
+        ) => childContextMenuRequest.current(childItemId, actionId, checked),
         onContextMenuAction: (itemId, actionId, checked) =>
           contextMenuRequest.current(itemId, actionId, checked),
         canMoveChild: ({ sourceCollectionId, targetCollectionId }) =>
@@ -354,6 +374,8 @@ export function FocusWorkspace({
         parentItemId: 'overall',
         items: [],
         onSelect: () => setStandaloneCommitmentRoute(null),
+        onContextMenuAction: (itemId, actionId, checked) =>
+          childContextMenuRequest.current(itemId, actionId, checked),
         newItem: {
           label: 'New commitment',
           onCreate: () => setNewCommitmentParent({ type: 'focus', id: focus.id })
@@ -552,11 +574,57 @@ export function FocusWorkspace({
       } else {
         void updateThreadDetails(parent.id, { sensitive: checked })
       }
+    } else if (actionId === 'needs-review' && typeof checked === 'boolean') {
+      if (parent.type === 'focus') {
+        void updateFocusDetails({ needsReview: checked })
+      } else {
+        void updateThreadDetails(parent.id, { needsReview: checked })
+      }
     } else if (actionId === 'delete' && parent.type === 'thread') {
       const thread = model.threads.find((candidate) => candidate.id === parent.id)
       if (!thread) return
       setThreadDeleteError(null)
       setPendingThreadDelete({ id: thread.id, title: thread.title })
+    }
+  }
+
+  function requestChildContextMenuAction(
+    itemId: string,
+    actionId: string,
+    checked?: boolean
+  ): void {
+    if (itemId.startsWith('routine:')) {
+      const routineId = Number(itemId.slice('routine:'.length))
+      const routine = model.routines.find(({ id }) => id === routineId)
+      if (!routine) return
+      if (actionId === 'needs-review' && typeof checked === 'boolean') {
+        void updateRoutineDetails(routine.id, { needsAttestation: checked })
+      } else if (actionId === 'sensitive' && typeof checked === 'boolean') {
+        void updateRoutineDetails(routine.id, { sensitive: checked })
+      } else if (actionId === 'delete') {
+        setChildDeleteError(null)
+        setPendingChildDelete({ type: 'routine', id: routine.id, title: routine.name })
+      }
+      return
+    }
+
+    const commitmentId = Number(itemId)
+    const commitment = [
+      ...model.commitments,
+      ...Object.values(model.threadCommitments).flatMap((items) => items ?? [])
+    ].find(({ id }) => id === commitmentId)
+    if (!commitment) return
+    if (actionId === 'needs-review' && typeof checked === 'boolean') {
+      void updateCommitmentDetails(commitment.id, { needsReview: checked })
+    } else if (actionId === 'sensitive' && typeof checked === 'boolean') {
+      void updateCommitmentDetails(commitment.id, { sensitive: checked })
+    } else if (actionId === 'delete') {
+      setChildDeleteError(null)
+      setPendingChildDelete({
+        type: 'commitment',
+        id: commitment.id,
+        title: commitment.title
+      })
     }
   }
 
@@ -620,7 +688,8 @@ export function FocusWorkspace({
       hideSensitiveContent,
       nextByContext,
       routinesByContextItemId,
-      focus.sensitive
+      focus.sensitive,
+      focus.needsReview
     ))
     navigation.refresh()
     navigation.selectChild(targetItemId, 'commitments', String(moved.id))
@@ -641,7 +710,8 @@ export function FocusWorkspace({
       hideSensitiveContent,
       commitmentsByContextItemId,
       nextByContext,
-      focus.sensitive
+      focus.sensitive,
+      focus.needsReview
     ))
     navigation.refresh()
     navigation.selectChild(targetItemId, 'commitments', `routine:${moved.id}`)
@@ -681,6 +751,7 @@ export function FocusWorkspace({
     commitmentMoveExecution.current = executeCommitmentMove
     threadMoveRequest.current = (move) => void requestThreadMove(move)
     contextMenuRequest.current = requestContextMenuAction
+    childContextMenuRequest.current = requestChildContextMenuAction
   })
 
   function commitmentsLevelFor(parent: CommitmentParent): ContextualSidebarLevel {
@@ -697,6 +768,8 @@ export function FocusWorkspace({
       parentItemId: threadSidebarItemId(parent.id),
       items: commitmentContextSidebarItems(visibleCommitmentsFor(parent)),
       onSelect: () => setStandaloneCommitmentRoute(null),
+      onContextMenuAction: (itemId, actionId, checked) =>
+        childContextMenuRequest.current(itemId, actionId, checked),
       newItem: {
         label: 'New commitment',
         onCreate: () => setNewCommitmentParent(parent)
@@ -724,7 +797,8 @@ export function FocusWorkspace({
         hideSensitiveContent,
         commitmentsByContextItemId,
         routinesByContextItemId,
-        focus.sensitive
+        focus.sensitive,
+        focus.needsReview
       )
     )
     focusCommitmentsLevel.setItems(
@@ -743,6 +817,7 @@ export function FocusWorkspace({
   }, [
     focusCommitmentsLevel,
     focusLevel,
+    focus.needsReview,
     focus.sensitive,
     model.commitments,
     model.threadCommitments,
@@ -1256,6 +1331,46 @@ export function FocusWorkspace({
     }
   }
 
+  async function deleteRoutineRecord(routine: RoutineSnapshot): Promise<void> {
+    const selectedAsChild = navigation.getSnapshot().selectedChild?.childItemId ===
+      `routine:${routine.id}`
+    const deleted = await model.deleteRoutine(routine.id)
+    if (!deleted) throw new Error('Routine deletion failed.')
+
+    setEditingRoutineId((current) => current === routine.id ? null : current)
+    contextDrawer.onInvalidate([`routine:${routine.id}`])
+    if (selectedAsChild) {
+      navigation.select(contextItemIdForCommitmentParent(routine.parent))
+    }
+  }
+
+  async function confirmChildContextDelete(): Promise<void> {
+    if (!pendingChildDelete || childDeleteSaving) return
+    setChildDeleteSaving(true)
+    setChildDeleteError(null)
+    try {
+      if (pendingChildDelete.type === 'routine') {
+        const routine = model.routines.find(({ id }) => id === pendingChildDelete.id)
+        if (!routine) throw new Error('Routine no longer exists.')
+        await deleteRoutineRecord(routine)
+      } else {
+        const commitment = [
+          ...model.commitments,
+          ...Object.values(model.threadCommitments).flatMap((items) => items ?? [])
+        ].find(({ id }) => id === pendingChildDelete.id)
+        if (!commitment) throw new Error('Commitment no longer exists.')
+        await deleteCommitmentFromDrawer(commitment)
+      }
+      setPendingChildDelete(null)
+    } catch {
+      setChildDeleteError(
+        `The ${pendingChildDelete.type === 'routine' ? 'Routine' : 'Commitment'} could not be deleted. Please try again.`
+      )
+    } finally {
+      setChildDeleteSaving(false)
+    }
+  }
+
   useEffect(() => {
     commitmentAdapterFactory.current = adapterForCommitment
     threadAdapterFactory.current = adapterForThread
@@ -1280,24 +1395,24 @@ export function FocusWorkspace({
     }
   }, [contextDrawer, focus.id, model.commitments, model.threadCommitments, model.threads])
 
-  const contextDrawerAdapter: ContextDrawerAdapter | null = selectedRoutine
-    ? routineDrawerAdapter({
-        routine: selectedRoutine,
-        parentLabel: commitmentParentLabel(selectedRoutine.parent),
+  function adapterForRoutine(routine: RoutineSnapshot): ContextDrawerAdapter {
+    return routineDrawerAdapter({
+        routine,
+        parentLabel: commitmentParentLabel(routine.parent),
         ancestorKeys: [
           `focus:${focus.id}`,
-          ...(selectedRoutine.parent.type === 'thread'
-            ? [`thread:${selectedRoutine.parent.id}`]
+          ...(routine.parent.type === 'thread'
+            ? [`thread:${routine.parent.id}`]
             : [])
         ],
         onDelete: async () => {
-          const deleted = await model.deleteRoutine(selectedRoutine.id)
-          if (!deleted) throw new Error('Routine deletion failed.')
-          setEditingRoutineId((current) => current === selectedRoutine.id ? null : current)
-          contextDrawer.onInvalidate([`routine:${selectedRoutine.id}`])
-          navigation.select(contextItemIdForCommitmentParent(selectedRoutine.parent))
+          await deleteRoutineRecord(routine)
         }
       })
+  }
+
+  const contextDrawerAdapter: ContextDrawerAdapter | null = selectedRoutine
+    ? adapterForRoutine(selectedRoutine)
     : selectedCommitment
       ? adapterForCommitment(selectedCommitment)
       : activeCommitmentParent
@@ -1340,7 +1455,8 @@ export function FocusWorkspace({
           [contextItemIdForCommitmentParent(created.parent)]: nextCommitments
         },
         routinesByContextItemId,
-        focus.sensitive
+        focus.sensitive,
+        focus.needsReview
       )
     )
     if (navigation.getSnapshot().level === level) {
@@ -1428,6 +1544,30 @@ export function FocusWorkspace({
       return false
     } finally {
       setCommitmentStatusSavingId(null)
+    }
+  }
+
+  async function updateRoutineDetails(
+    routineId: number,
+    input: UpdateRoutineInput
+  ): Promise<boolean> {
+    const key = `routine:${routineId}`
+    setWorkspaceStatusSavingKey(key)
+    setWorkspaceStatusError(null)
+    try {
+      const updated = await model.updateRoutine(routineId, input)
+      if (contextDrawer.pinnedAdapter?.id === key) {
+        contextDrawer.onPin(adapterForRoutine(updated))
+      }
+      return true
+    } catch {
+      setWorkspaceStatusError({
+        key,
+        message: 'The Routine could not be updated. Please try again.'
+      })
+      return false
+    } finally {
+      setWorkspaceStatusSavingKey(null)
     }
   }
 
@@ -2111,6 +2251,51 @@ export function FocusWorkspace({
           {threadDeleteError && (
             <p role="alert" className="mt-3 text-xs text-destructive">
               {threadDeleteError}
+            </p>
+          )}
+        </Dialog>
+      )}
+      {pendingChildDelete && (
+        <Dialog
+          open
+          title={`Delete ${pendingChildDelete.type}?`}
+          description={`“${pendingChildDelete.title}” will be permanently deleted.`}
+          onClose={() => {
+            if (childDeleteSaving) return
+            setChildDeleteError(null)
+            setPendingChildDelete(null)
+          }}
+          footer={
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={childDeleteSaving}
+                onClick={() => setPendingChildDelete(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={childDeleteSaving}
+                onClick={() => void confirmChildContextDelete()}
+              >
+                {childDeleteSaving
+                  ? 'Deleting…'
+                  : `Delete ${pendingChildDelete.type}`}
+              </Button>
+            </>
+          }
+        >
+          <p className="text-sm leading-6">
+            {pendingChildDelete.type === 'commitment'
+              ? 'Its Todos, Notes, and Updates will follow the existing deletion and archive rules.'
+              : 'Its template and attestation history will also be deleted.'}
+          </p>
+          {childDeleteError && (
+            <p role="alert" className="mt-3 text-xs text-destructive">
+              {childDeleteError}
             </p>
           )}
         </Dialog>

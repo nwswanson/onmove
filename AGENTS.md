@@ -64,17 +64,21 @@
   vertical layout so creation and Archive remain separate, easy-to-target rows.
   Keep `newItem` as the contextual level's creation declaration and let the receiver merge it with
   optional peer actions such as Archive instead of composing feature-specific footer markup.
-- Declare right-click actions on primary and contextual sidebar item models through the shared
-  `SidebarContextMenuModel`; never attach domain-specific menu JSX or per-item callbacks. The
+- Declare right-click actions on primary, contextual, and nested contextual-child sidebar item
+  models through the shared `SidebarContextMenuModel`; never attach domain-specific menu JSX or
+  per-item callbacks. The
   shadcn/Radix receiver owns pointer and keyboard opening, focus, dismissal, semantic icons,
   checkbox state, separators, and destructive styling. Sidebar owners receive only the target item
   id, declared action id, and optional checked value, then translate those into typed feature
   mutations.
-- Give every active Thread row contextual actions for Add commitment, Add Routine, Sensitive, and
-  Delete Thread. Creation targets that exact Thread, sensitivity uses the typed Thread update, and
-  deletion must open a confirmation before invoking the existing cascade-safe Thread deletion.
-  Give the Focus Overall row the same creation and Sensitive actions, targeting the Focus itself,
-  but never expose Delete Thread there because Overall is not a Thread.
+- Give every active Thread row contextual actions for Add commitment, Add Routine, Needs review,
+  Sensitive, and Delete Thread. Creation targets that exact Thread, checkbox actions use typed
+  Thread updates, and deletion must open a confirmation before invoking the existing cascade-safe
+  Thread deletion. Give the Focus Overall row the same creation, Needs review, and Sensitive
+  actions, targeting the Focus itself, but never expose Delete Thread there because Overall is not
+  a Thread. Give Commitment and Routine sidebar rows receiver-owned Needs review, Sensitive, and
+  confirmed Delete actions; Routine Needs review translates to its stored attestation-inclusion
+  preference while schedule availability remains a separate derived condition.
   Do not render Add commitment / Add Routine controls beneath nested child collections, and render
   no placeholder or empty collection chrome when a Thread or Overall has no visible children.
 - Keep Done and Cancelled Threads in the Focus model and SQLite history, but omit them from the

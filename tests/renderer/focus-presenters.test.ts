@@ -276,11 +276,18 @@ describe('Focus presentation adapters', () => {
             },
             {
               kind: 'checkbox',
+              id: 'needs-review',
+              label: 'Needs review',
+              icon: 'review',
+              checked: true,
+              separatorBefore: true
+            },
+            {
+              kind: 'checkbox',
               id: 'sensitive',
               label: 'Sensitive',
               icon: 'sensitive',
-              checked: false,
-              separatorBefore: true
+              checked: false
             }
           ]
         },
@@ -312,11 +319,18 @@ describe('Focus presentation adapters', () => {
             },
             {
               kind: 'checkbox',
+              id: 'needs-review',
+              label: 'Needs review',
+              icon: 'review',
+              checked: false,
+              separatorBefore: true
+            },
+            {
+              kind: 'checkbox',
               id: 'sensitive',
               label: 'Sensitive',
               icon: 'sensitive',
-              checked: false,
-              separatorBefore: true
+              checked: false
             },
             {
               kind: 'action',
@@ -339,6 +353,33 @@ describe('Focus presentation adapters', () => {
         group: { id: 'active', label: 'Active' },
         lines: 2,
         stateLabel: { label: 'Green', tone: 'success' },
+        contextMenu: {
+          ariaLabel: 'Improve ticket quality actions',
+          items: [
+            {
+              kind: 'checkbox',
+              id: 'needs-review',
+              label: 'Needs review',
+              icon: 'review',
+              checked: true
+            },
+            {
+              kind: 'checkbox',
+              id: 'sensitive',
+              label: 'Sensitive',
+              icon: 'sensitive',
+              checked: false
+            },
+            {
+              kind: 'action',
+              id: 'delete',
+              label: 'Delete Commitment',
+              icon: 'delete',
+              tone: 'destructive',
+              separatorBefore: true
+            }
+          ]
+        },
         accessory: 'disclosure'
       }
     ])
@@ -480,6 +521,7 @@ describe('Focus presentation adapters', () => {
           label: 'Align sponsors',
           ariaLabel: 'Open Overall commitment Align sponsors',
           state: { label: 'Red', tone: 'danger' },
+          contextMenu: expect.objectContaining({ ariaLabel: 'Align sponsors actions' }),
           tone: 'default'
         }
       ]
@@ -493,6 +535,9 @@ describe('Focus presentation adapters', () => {
           label: 'Improve ticket quality',
           ariaLabel: 'Open Sprint execution commitment Improve ticket quality',
           state: { label: 'Yellow', tone: 'warning' },
+          contextMenu: expect.objectContaining({
+            ariaLabel: 'Improve ticket quality actions'
+          }),
           tone: 'muted'
         }
       ]
@@ -514,11 +559,18 @@ describe('Focus presentation adapters', () => {
         },
         {
           kind: 'checkbox',
+          id: 'needs-review',
+          label: 'Needs review',
+          icon: 'review',
+          checked: false,
+          separatorBefore: true
+        },
+        {
+          kind: 'checkbox',
           id: 'sensitive',
           label: 'Sensitive',
           icon: 'sensitive',
-          checked: false,
-          separatorBefore: true
+          checked: false
         },
         {
           kind: 'action',
@@ -553,6 +605,8 @@ describe('Focus presentation adapters', () => {
       parent: { type: 'thread', id: thread.id },
       name: 'Weekly evidence inspection',
       status: 'yellow',
+      sensitive: false,
+      attestationRequested: true,
       needsAttestation: true
     } as RoutineSnapshot
     const items = focusContextSidebarItems(
@@ -571,6 +625,16 @@ describe('Focus presentation adapters', () => {
         ariaLabel: 'Open Sprint execution Routine Weekly evidence inspection',
         icon: 'checklist',
         state: { label: 'Overdue', tone: 'warning' },
+        contextMenu: expect.objectContaining({
+          ariaLabel: 'Weekly evidence inspection actions',
+          items: expect.arrayContaining([
+            expect.objectContaining({
+              id: 'needs-review',
+              kind: 'checkbox',
+              checked: true
+            })
+          ])
+        }),
         tone: 'default',
         movable: true
       }

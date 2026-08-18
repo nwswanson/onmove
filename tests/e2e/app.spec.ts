@@ -924,12 +924,14 @@ test('operates every explicit hierarchy deadline from the global Due worklist', 
     )).toBeVisible()
 
     const threadRow = table.locator(`[data-due-item="thread:${thread.id}"]`)
-    await threadRow.getByLabel('Thread due date', { exact: true }).fill('2099-01-11')
+    const threadDueDateInput = threadRow.getByLabel('Thread due date', { exact: true })
+    await threadDueDateInput.fill('2099-01-11')
+    await threadDueDateInput.blur()
     const commitmentRow = table.locator(`[data-due-item="commitment:${commitment.id}"]`)
     await commitmentRow.getByLabel('Commitment Improve ticket quality status')
       .selectOption('paused')
     const focusRow = table.locator(`[data-due-item="focus:${focus.id}"]`)
-    await focusRow.getByLabel('Focus due date', { exact: true }).fill('')
+    await focusRow.getByRole('button', { name: 'Clear Focus due date' }).click()
 
     await expect.poll(storedDeadlines).toEqual({
       focusDue: null,
@@ -1734,7 +1736,9 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await window.getByRole('button', { name: 'Create focus' }).click()
     await expect(window.getByRole('heading', { name: 'Persistent focus' })).toBeVisible()
     const focusDueDate = '2026-09-10'
-    await window.getByLabel('Focus due date', { exact: true }).fill(focusDueDate)
+    const focusDueDateInput = window.getByLabel('Focus due date', { exact: true })
+    await focusDueDateInput.fill(focusDueDate)
+    await focusDueDateInput.blur()
     await expect.poll(() => storedFocus()?.dueDate).toBe(focusDueDate)
     await expect(window.getByLabel('Focus last reviewed')).toContainText('Last reviewed · Never')
     await expect(window.getByRole('combobox', { name: 'Focus status' })).toHaveValue('active')
@@ -1952,7 +1956,9 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     ).toBeVisible()
     await window.getByRole('button', { name: 'Sprint execution', exact: true }).click()
     const threadDueDate = '2026-09-12'
-    await window.getByLabel('Thread due date', { exact: true }).fill(threadDueDate)
+    const threadDueDateInput = window.getByLabel('Thread due date', { exact: true })
+    await threadDueDateInput.fill(threadDueDate)
+    await threadDueDateInput.blur()
     await expect.poll(() => storedThread()?.dueDate).toBe(threadDueDate)
     await expect(window.getByLabel(
       `Due date ${threadDueDate} is after the parent Focus due date ${focusDueDate}.`

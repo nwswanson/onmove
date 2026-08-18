@@ -48,6 +48,13 @@ function level(
       collectionId: string,
       actionId: string
     ) => void
+    onChildContextMenuAction?: (
+      parentItemId: string,
+      collectionId: string,
+      childItemId: string,
+      actionId: string,
+      checked?: boolean
+    ) => void
     onContextMenuAction?: (itemId: string, actionId: string, checked?: boolean) => void
     canMoveChild?: (move: ContextualSidebarChildMove) => boolean
     onMoveChild?: (move: ContextualSidebarChildMove) => void
@@ -78,6 +85,7 @@ function level(
     onSelect: options.onSelect,
     onSelectChild: options.onSelectChild,
     onChildCollectionAction: options.onChildCollectionAction,
+    onChildContextMenuAction: options.onChildContextMenuAction,
     onContextMenuAction: options.onContextMenuAction,
     canMoveChild: options.canMoveChild,
     onMoveChild: options.onMoveChild,
@@ -263,6 +271,48 @@ describe('ContextualSidebarNavigation', () => {
     })
     expect(within(commitment).getByRole('img', { name: 'Excluded from reviews' })
       .querySelector('.lucide-clipboard-x')).toHaveClass('!size-3')
+  })
+
+  it('routes nested child context-menu actions through the generic level contract', async () => {
+    const onChildContextMenuAction = vi.fn()
+    const root = level('focus:1', 'Focus', [{
+      id: 'thread:10',
+      label: 'Sprint execution',
+      childCollection: {
+        id: 'commitments',
+        label: 'Commitments and Routines',
+        items: [{
+          id: 'commitment:20',
+          label: 'Improve ticket quality',
+          contextMenu: {
+            ariaLabel: 'Improve ticket quality actions',
+            items: [{
+              kind: 'checkbox',
+              id: 'needs-review',
+              label: 'Needs review',
+              icon: 'review',
+              checked: true
+            }]
+          }
+        }]
+      }
+    }], { onChildContextMenuAction })
+    const user = userEvent.setup()
+    render(<ContextualSidebar navigation={new ContextualSidebarNavigation(root)} />)
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Improve ticket quality' }))
+    const menu = screen.getByRole('menu', { name: 'Improve ticket quality actions' })
+    const needsReview = within(menu).getByRole('menuitemcheckbox', { name: 'Needs review' })
+    expect(needsReview.querySelector('.lucide-clipboard-check')).toHaveClass('size-3.5')
+    await user.click(needsReview)
+
+    expect(onChildContextMenuAction).toHaveBeenCalledWith(
+      'thread:10',
+      'commitments',
+      'commitment:20',
+      'needs-review',
+      false
+    )
   })
 
   it('owns nested collection trees and selects a child without replacing its level', async () => {
