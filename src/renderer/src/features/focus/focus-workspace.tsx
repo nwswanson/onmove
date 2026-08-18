@@ -2097,6 +2097,7 @@ export function FocusWorkspace({
             </div>
 
             <FocusOverviewTimeline
+              key={focus.id}
               model={focusOverviewTimelineModel(model.focusTimeline, hideSensitiveContent)}
               onOpenThread={(threadId) => {
                 setStandaloneCommitmentRoute(null)

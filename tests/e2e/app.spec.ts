@@ -252,6 +252,22 @@ test('renders a read-only Focus timeline and opens active or archived Threads', 
     await expect(timeline).not.toContainText('Archived evidence must stay out of the timeline')
     await expect(timeline).not.toContainText('Deleted evidence must stay out of the timeline')
     await expect(timeline.locator('[data-side="left"]')).toHaveCount(4)
+    const activeRailFilter = window.getByRole('button', {
+      name: 'Current delivery timeline rail'
+    })
+    await expect(activeRailFilter).toHaveAttribute('aria-pressed', 'true')
+    await activeRailFilter.click()
+    await expect(activeRailFilter).toHaveAttribute('aria-pressed', 'false')
+    await expect(timeline.getByText('Direct launch evidence')).toHaveCount(0)
+    await expect(timeline.getByText('Nested launch evidence')).toHaveCount(0)
+    await expect(timeline.getByText('Discovery was closed cleanly')).toBeVisible()
+    await expect(timeline.locator(
+      `[data-testid="thread-rail-${active.id}"][data-filtered="true"]`
+    )).toHaveCount(1)
+    await activeRailFilter.click()
+    await expect(activeRailFilter).toHaveAttribute('aria-pressed', 'true')
+    await expect(timeline.getByText('Direct launch evidence')).toBeVisible()
+    await expect(timeline.getByText('Nested launch evidence')).toBeVisible()
     await expect(timeline.getByTestId('timeline-sticky-thread-headers'))
       .toHaveCSS('position', 'sticky')
     await expect(timeline.locator(

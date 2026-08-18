@@ -107,6 +107,32 @@ describe('FocusOverviewTimeline', () => {
     expect(bubbles.at(-1)).toHaveAccessibleName('Read Delivery update from Aug 12, 2026')
   })
 
+  it('keeps filtered rails in place while hiding their update evidence', async () => {
+    const user = userEvent.setup()
+    render(<FocusOverviewTimeline model={model} onOpenThread={vi.fn()} />)
+
+    const deliveryFilter = screen.getByRole('button', { name: 'Delivery timeline rail' })
+    expect(deliveryFilter).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText('Delivery was blocked.')).toBeVisible()
+    expect(screen.getByText('The complete delivery update…')).toBeVisible()
+
+    await user.click(deliveryFilter)
+
+    expect(deliveryFilter).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByText('Delivery was blocked.')).not.toBeInTheDocument()
+    expect(screen.queryByText('The complete delivery update…')).not.toBeInTheDocument()
+    expect(screen.getByText('Discovery is complete.')).toBeVisible()
+    expect(screen.getAllByTestId('thread-rail-1')).toHaveLength(1)
+    expect(screen.getByTestId('thread-rail-1')).toHaveAttribute('data-filtered', 'true')
+    expect(screen.getByTestId('thread-rail-1')).toHaveClass('stroke-muted-foreground/30')
+
+    await user.click(deliveryFilter)
+
+    expect(deliveryFilter).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText('Delivery was blocked.')).toBeVisible()
+    expect(screen.getByText('The complete delivery update…')).toBeVisible()
+  })
+
   it('shows compact bubbles, opens the full update, and links to the owning Thread', async () => {
     const onOpenThread = vi.fn()
     const user = userEvent.setup()

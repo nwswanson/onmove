@@ -293,6 +293,7 @@ export function FocusOverviewTimeline({
   const [timelineElement, setTimelineElement] = useState<HTMLDivElement | null>(null)
   const [timelineWidth, setTimelineWidth] = useState<number | null>(null)
   const [selectedUpdateId, setSelectedUpdateId] = useState<number | null>(null)
+  const [hiddenThreadIds, setHiddenThreadIds] = useState<Set<number>>(() => new Set())
   const setTimelineRef = useCallback((element: HTMLDivElement | null): void => {
     setTimelineElement(element)
     if (!element) setTimelineWidth(null)
@@ -323,7 +324,11 @@ export function FocusOverviewTimeline({
     )
   }
 
-  const layout = buildFocusTimelineLayout(model, timelineWidth ?? DEFAULT_TIMELINE_WIDTH)
+  const visibleModel: FocusOverviewTimelineModel = {
+    threads: model.threads,
+    updates: model.updates.filter(({ threadId }) => !hiddenThreadIds.has(threadId))
+  }
+  const layout = buildFocusTimelineLayout(visibleModel, timelineWidth ?? DEFAULT_TIMELINE_WIDTH)
   const selectedUpdate = model.updates.find(({ id }) => id === selectedUpdateId) ?? null
   const selectedThread = selectedUpdate
     ? model.threads.find(({ id }) => id === selectedUpdate.threadId) ?? null
@@ -334,6 +339,55 @@ export function FocusOverviewTimeline({
       <div className="flex items-baseline justify-between gap-4 px-8">
         <h2 id="thread-timeline-heading" className="text-sm font-semibold">Thread timeline</h2>
         <p className="text-xs text-muted-foreground">Latest at top · earlier below</p>
+      </div>
+      <div className="mt-3 flex min-w-0 items-center gap-2 px-8">
+        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+          Rails
+        </span>
+        <div
+          role="group"
+          aria-label="Timeline rail filters"
+          className="flex min-w-0 gap-1.5 overflow-x-auto pb-1"
+        >
+          {model.threads.map((thread) => {
+            const hidden = hiddenThreadIds.has(thread.id)
+            return (
+              <button
+                key={thread.id}
+                type="button"
+                aria-label={`${thread.title} timeline rail`}
+                aria-pressed={!hidden}
+                title={hidden ? `Show ${thread.title}` : `Hide ${thread.title}`}
+                className={cn(
+                  'inline-flex h-6 max-w-40 shrink-0 items-center gap-1.5 rounded-md border px-2 text-[10px] font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  hidden
+                    ? 'border-border/60 bg-muted/30 text-muted-foreground/60'
+                    : 'border-primary/40 bg-primary/10 text-foreground hover:bg-primary/15'
+                )}
+                onClick={() => {
+                  setHiddenThreadIds((current) => {
+                    const next = new Set(current)
+                    if (hidden) next.delete(thread.id)
+                    else next.add(thread.id)
+                    return next
+                  })
+                  if (!hidden && selectedUpdate?.threadId === thread.id) {
+                    setSelectedUpdateId(null)
+                  }
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    'h-3 w-0.5 shrink-0 rounded-full',
+                    hidden ? 'bg-muted-foreground/35' : 'bg-primary'
+                  )}
+                />
+                <span className="truncate">{thread.title}</span>
+              </button>
+            )
+          })}
+        </div>
       </div>
       <div
         ref={setTimelineRef}
@@ -349,11 +403,15 @@ export function FocusOverviewTimeline({
         >
           {model.threads.map((thread) => {
             const x = layout.railXs.get(thread.id) ?? layout.width / 2
+            const hidden = hiddenThreadIds.has(thread.id)
             return (
               <button
                 key={thread.id}
                 type="button"
-                className="absolute bottom-1 w-28 rounded-md px-1.5 py-1 text-left hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className={cn(
+                  'absolute bottom-1 w-28 rounded-md px-1.5 py-1 text-left transition hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  hidden && 'opacity-30 grayscale'
+                )}
                 style={{
                   left: x,
                   transform: 'rotate(-34deg)',
@@ -385,18 +443,22 @@ export function FocusOverviewTimeline({
             <title>Thread state intervals and updates arranged chronologically</title>
             {layout.railSegments.map((segment) => {
               const thread = model.threads.find(({ id }) => id === segment.threadId)
+              const hidden = hiddenThreadIds.has(segment.threadId)
               return (
                 <line
                   key={segment.key}
                   data-testid={`thread-rail-${segment.threadId}`}
                   data-state={segment.state.label.toLowerCase()}
+                  data-filtered={hidden ? 'true' : 'false'}
                   x1={segment.x}
                   x2={segment.x}
                   y1={segment.y1}
                   y2={segment.y2}
-                  className={stateToneClass(segment.state.tone, 'stroke')}
+                  className={hidden
+                    ? 'stroke-muted-foreground/30'
+                    : stateToneClass(segment.state.tone, 'stroke')}
                   strokeWidth="4"
-                  strokeOpacity={thread?.closed ? '0.42' : '0.9'}
+                  strokeOpacity={hidden ? '0.24' : thread?.closed ? '0.42' : '0.9'}
                   strokeLinecap="round"
                 />
               )
@@ -451,9 +513,9 @@ export function FocusOverviewTimeline({
             ))}
           </svg>
 
-          {model.updates.length === 0 && (
+          {visibleModel.updates.length === 0 && (
             <p className="absolute top-20 left-8 text-sm text-muted-foreground">
-              No updates yet.
+              {model.updates.length === 0 ? 'No updates yet.' : 'All update rails are hidden.'}
             </p>
           )}
 

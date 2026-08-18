@@ -300,6 +300,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
   recorded date (including a future date); do not sort or inspect Updates again in the renderer.
   Show the snapshot's `lastUpdateDate` with a visible `Never` fallback in Commitment screens,
   drawers, contextual rows, and main-view lists.
+- Keep Focus timeline rail filters compact and local to the active Focus. Filtering a Thread must
+  preserve its rail position as a dim neutral guide while removing that Thread's update bubbles,
+  connectors, points, and otherwise-empty date groups; switching Focuses resets the rail filters.
 - Show Commitment lifecycle status as a receiver-owned, read-only label in lists. Render the shared
   feature-level `WorkStatusSelect` in Focus, Thread, and selected Commitment detail headers; it owns
   the common `active`, `paused`, `done`, and `cancelled` vocabulary while the low-level UI primitive
