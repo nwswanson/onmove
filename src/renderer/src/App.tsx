@@ -134,6 +134,11 @@ interface AppSidebarProps {
   onArchive: () => void
   onSettings: () => void
   onSelectFocus: (focusId: string) => void
+  onFocusContextMenuAction: (
+    focusId: string,
+    actionId: string,
+    checked?: boolean
+  ) => void
   onNewFocus: () => void
   onShowData: () => void
 }
@@ -153,6 +158,7 @@ function AppSidebar({
   onArchive,
   onSettings,
   onSelectFocus,
+  onFocusContextMenuAction,
   onNewFocus,
   onShowData
 }: AppSidebarProps): React.JSX.Element {
@@ -242,6 +248,7 @@ function AppSidebar({
             selectedItemId={selectedFocusId}
             emptyLabel="No focuses yet"
             onSelect={onSelectFocus}
+            onContextMenuAction={onFocusContextMenuAction}
             actions={[{
               id: 'new-focus',
               label: 'New focus',
@@ -485,6 +492,14 @@ export function App(): React.JSX.Element {
             onSelectFocus={(focusId) => {
               setFocusDestination(null)
               application.selectFocus(Number(focusId))
+            }}
+            onFocusContextMenuAction={(focusId, actionId, checked) => {
+              if (typeof checked !== 'boolean') return
+              if (actionId === 'needs-review') {
+                void application.updateFocus(Number(focusId), { needsReview: checked })
+              } else if (actionId === 'sensitive') {
+                void application.updateFocus(Number(focusId), { sensitive: checked })
+              }
             }}
             onNewFocus={() => setNewFocusOpen(true)}
             onShowData={() => void application.showDataFolder()}

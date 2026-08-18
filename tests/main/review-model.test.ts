@@ -21,8 +21,7 @@ describe('Review model', () => {
 
   it('includes initial reviews but suppresses recent evidence until scheduled work is due', () => {
     const focus = database!.domain.focuses.create({
-      title: 'Project Atlas',
-      needsReview: false
+      title: 'Project Atlas'
     })
     const thread = database!.domain.threads.create(
       {
@@ -186,8 +185,7 @@ describe('Review model', () => {
 
   it('uses a Commitment review schedule independently of its parent and honors exclusion', () => {
     const focus = database!.domain.focuses.create({
-      title: 'Independent delivery',
-      needsReview: false
+      title: 'Independent delivery'
     })
     const thread = database!.domain.threads.create({
       focusId: focus.id,
@@ -211,15 +209,35 @@ describe('Review model', () => {
     expect(database!.domain.reviews.getOverview('2026-01-04').items).toEqual([])
   })
 
-  it('does not queue a Focus that was explicitly reviewed today', () => {
+  it('never queues a Focus and uses its inclusion flag as a reversible descendant gate', () => {
     const focus = database!.domain.focuses.create({ title: 'Current board' })
-    focus.pokeReview(new Date('2026-01-10T12:00:00.000Z'))
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Delivery health',
+      reviewFrequencyDays: 7
+    })
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'tracking',
+      title: 'Confirm release readiness',
+      reviewFrequencyDays: 7
+    })
 
-    expect(database!.domain.reviews.getOverview('2026-01-10').items
-      .filter(({ kind }) => kind === 'focus')).toEqual([])
-    expect(database!.domain.reviews.getOverview('2026-01-11').items
-      .filter(({ kind }) => kind === 'focus').map(({ key }) => key))
-      .toEqual([`focus:${focus.id}`])
+    expect(database!.domain.reviews.getOverview('2026-01-10').items.map(({ key }) => key))
+      .toEqual([`thread:${thread.id}`, `commitment:${commitment.id}`])
+
+    focus.update({ needsReview: false })
+    expect(database!.domain.reviews.getOverview('2026-01-10').items).toEqual([])
+
+    focus.update({ needsReview: true })
+    expect(database!.domain.reviews.getOverview('2026-01-10').items.map(({ key }) => key))
+      .toEqual([`thread:${thread.id}`, `commitment:${commitment.id}`])
+
+    thread.update({ needsReview: false })
+    focus.update({ needsReview: false })
+    focus.update({ needsReview: true })
+    expect(database!.domain.reviews.getOverview('2026-01-10').items.map(({ key }) => key))
+      .toEqual([`commitment:${commitment.id}`])
   })
 
   it('omits inactive ancestry and reacts to deletion without retained queue records', () => {
@@ -239,8 +257,7 @@ describe('Review model', () => {
       cadenceDays: 1
     }, new Date('2026-01-01T12:00:00.000Z'))
     const activeFocus = database!.domain.focuses.create({
-      title: 'Active program',
-      needsReview: false
+      title: 'Active program'
     })
     const activeThread = database!.domain.threads.create({
       focusId: activeFocus.id,

@@ -278,6 +278,10 @@ export function focusPrimaryNavigationItems(
       ...(paused ? {} : { sunflower }),
       tone: paused ? 'muted' : 'default',
       ...sidebarIndicatorProps(focus.sensitive, focus.needsReview),
+      contextMenu: {
+        ariaLabel: `${label} actions`,
+        items: overviewContextMenuItems(focus.sensitive, focus.needsReview)
+      },
       dropTarget: { type: 'focus', id: String(focus.id) }
     }
   })
@@ -372,7 +376,7 @@ function overviewContextMenuItems(
     {
       kind: 'checkbox',
       id: 'needs-review',
-      label: 'Needs review',
+      label: 'Track descendant reviews',
       icon: 'review',
       checked: needsReview
     },
@@ -634,9 +638,9 @@ export function focusDrawerAdapter({
             {
               kind: 'checkbox',
               id: 'needs-review',
-              label: 'Needs review',
+              label: 'Track descendant reviews',
               value: focus.needsReview,
-              description: 'Include this Focus in review workflows.'
+              description: 'Include this Focus’s Threads, Commitments, and Routines in review workflows.'
             },
             {
               kind: 'checkbox',

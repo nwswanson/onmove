@@ -179,11 +179,12 @@ function reviewItem(
   overrides: Partial<ReviewQueueItemSnapshot> = {}
 ): ReviewQueueItemSnapshot {
   const currentFocus = focus({ id: 1, title: 'Project Atlas' })
+  const currentThread = thread({ id: 10, focusId: currentFocus.id })
   return {
-    key: 'focus:1',
-    kind: 'focus',
+    key: 'thread:10',
+    kind: 'thread',
     focus: currentFocus,
-    thread: null,
+    thread: currentThread,
     commitment: null,
     cell: null,
     lastReviewDate: null,
@@ -861,6 +862,31 @@ describe('App', () => {
     expect(within(screen.getByRole('main')).getByText('0 of 2 attested')).toBeVisible()
   })
 
+  it('excludes Routine attestations beneath a Focus that disables descendant review tracking', async () => {
+    const excludedFocus = focus({
+      id: 1,
+      title: 'Excluded program',
+      needsReview: false
+    })
+    const owner = thread({ id: 21, focusId: excludedFocus.id, title: 'Delivery checks' })
+    installApi({
+      listFocuses: vi.fn().mockResolvedValue([excludedFocus]),
+      listThreads: vi.fn().mockResolvedValue([owner]),
+      listRoutines: vi.fn().mockResolvedValue([routine({
+        parent: { type: 'thread', id: owner.id },
+        name: 'Hidden scheduled inspection'
+      })])
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Routines' }))
+    expect(await screen.findByRole('heading', { name: 'All caught up' })).toBeVisible()
+    expect(screen.queryByRole('button', {
+      name: /Hidden scheduled inspection/
+    })).not.toBeInTheDocument()
+  })
+
   it('switches an owned scoped Routine between Subject-only tabs without an aggregate tab', async () => {
     const base = routine()
     const europeItems = base.currentRun!.items.map((item, index) => ({
@@ -1416,7 +1442,7 @@ describe('App', () => {
     )
   })
 
-  it('reviews full-width Focus and Thread surfaces without commitment drilldown', async () => {
+  it('reviews full-width Thread surfaces without commitment drilldown', async () => {
     const currentFocus = focus({
       id: 4,
       title: 'Project Atlas',
@@ -1444,11 +1470,6 @@ describe('App', () => {
       asOf: '2026-08-10',
       items: [
         reviewItem({
-          key: 'focus:4',
-          focus: currentFocus,
-          commitments: [related]
-        }),
-        reviewItem({
           key: 'thread:14',
           kind: 'thread',
           focus: currentFocus,
@@ -1474,13 +1495,12 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Review' })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('heading', { name: 'Review' })).toBeInTheDocument()
     expect(screen.queryByLabelText('Contextual sidebar')).not.toBeInTheDocument()
-    expect(screen.getByRole('article', { name: 'Focus review: Project Atlas' })).toBeVisible()
-    expect(screen.getByRole('img', { name: 'Focus type' })).toBeVisible()
+    expect(screen.queryByRole('article', { name: 'Focus review: Project Atlas' }))
+      .not.toBeInTheDocument()
+    expect(screen.getByRole('article', { name: 'Thread review: Sprint execution' })).toBeVisible()
+    expect(screen.getByRole('img', { name: 'Thread type' })).toBeVisible()
     expect(screen.getByRole('navigation', { name: 'Review context' })).toHaveTextContent(
-      'PortfolioProject Atlas'
-    )
-    expect(screen.getByLabelText('Focus description')).toHaveTextContent(
-      'Coordinate a measured customer rollout.'
+      'Project AtlasSprint execution'
     )
     expect(screen.getByRole('list', { name: 'Related commitments' })).toHaveTextContent(
       'Improve ticket quality'
@@ -1488,20 +1508,13 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: /Open commitment/ })).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Ignore' }))
+    expect(await screen.findByRole('heading', { name: 'You’re caught up' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Review skipped items' }))
     expect(screen.getByRole('article', { name: 'Thread review: Sprint execution' })).toBeVisible()
-    expect(screen.getByRole('img', { name: 'Thread type' })).toBeVisible()
-    expect(screen.getByRole('navigation', { name: 'Review context' })).toHaveTextContent(
-      'Project AtlasSprint execution'
-    )
     await user.click(screen.getByRole('button', { name: 'Pass along' }))
     await waitFor(() => expect(pokeThreadReview).toHaveBeenCalledWith(14))
     expect(await screen.findByRole('heading', { name: 'You’re caught up' })).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Review again' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Review skipped items' }))
-    expect(await screen.findByRole('article', { name: 'Focus review: Project Atlas' })).toBeVisible()
-    expect(screen.queryByRole('article', {
-      name: 'Thread review: Sprint execution'
-    })).not.toBeInTheDocument()
     expect(getReviewOverview).toHaveBeenCalledTimes(2)
 
     await user.click(screen.getByRole('button', { name: 'Project Atlas' }))
@@ -1560,30 +1573,41 @@ describe('App', () => {
 
   it('keeps the Default note in a resizable lower pane and pokes without advancing', async () => {
     clearReviewPrimaryPanePreference()
-    const currentNote = note({ id: 47, parent: { type: 'focus', id: 7 } })
+    const currentNote = note({ id: 47, parent: { type: 'thread', id: 17 } })
     const currentFocus = focus({
       id: 7,
       title: 'Launch board',
+      notes: []
+    })
+    const currentThread = thread({
+      id: 17,
+      focusId: currentFocus.id,
+      title: 'Launch readiness',
       notes: [currentNote]
     })
-    const pokeFocusReview = vi.fn().mockResolvedValue({
-      ...currentFocus,
+    const pokeThreadReview = vi.fn().mockResolvedValue({
+      ...currentThread,
       lastReviewDate: '2026-08-10'
     })
     const api = installApi({
       listFocuses: vi.fn().mockResolvedValue([currentFocus]),
-      pokeFocusReview,
+      listThreads: vi.fn().mockResolvedValue([currentThread]),
+      pokeThreadReview,
       getReviewOverview: vi.fn().mockResolvedValue({
         asOf: '2026-08-10',
-        items: [reviewItem({ key: 'focus:7', focus: currentFocus })]
+        items: [reviewItem({
+          key: 'thread:17',
+          focus: currentFocus,
+          thread: currentThread
+        })]
       })
     })
     const user = userEvent.setup()
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: 'Review' }))
-    const reviewArticle = screen.getByRole('article', { name: 'Focus review: Launch board' })
-    const notePane = screen.getByRole('region', { name: 'Focus default note' })
+    const reviewArticle = screen.getByRole('article', { name: 'Thread review: Launch readiness' })
+    const notePane = screen.getByRole('region', { name: 'Thread default note' })
     const divider = screen.getByRole('separator', { name: 'Resize review and note panes' })
     expect(reviewArticle).toBeVisible()
     expect(notePane).toBeVisible()
@@ -1600,27 +1624,27 @@ describe('App', () => {
     })).toHaveAttribute('aria-valuenow', '67')
 
     await user.click(screen.getByRole('button', { name: 'Collapse default note' }))
-    expect(screen.queryByRole('region', { name: 'Focus default note' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Thread default note' })).not.toBeInTheDocument()
     expect(screen.getByText('Default note', { selector: 'span' })).toBeVisible()
 
     await user.click(screen.getByRole('button', { name: 'Todos' }))
     await user.click(screen.getByRole('button', { name: 'Review' }))
     const expandNote = screen.getByRole('button', { name: 'Expand default note' })
     expect(expandNote).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByRole('region', { name: 'Focus default note' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Thread default note' })).not.toBeInTheDocument()
     await user.click(expandNote)
 
-    const restoredNotePane = screen.getByRole('region', { name: 'Focus default note' })
+    const restoredNotePane = screen.getByRole('region', { name: 'Thread default note' })
     const restoredReviewArticle = screen.getByRole('article', {
-      name: 'Focus review: Launch board'
+      name: 'Thread review: Launch readiness'
     })
     const editor = within(restoredNotePane).getByRole('textbox', { name: 'Default note' })
     await user.click(editor)
     await user.keyboard(' decision')
     await waitFor(() => expect(api.richText.saveDocument).toHaveBeenCalled())
-    await waitFor(() => expect(pokeFocusReview).toHaveBeenCalledWith(7))
-    expect(pokeFocusReview).toHaveBeenCalledTimes(1)
-    expect(screen.getByRole('article', { name: 'Focus review: Launch board' })).toBeVisible()
+    await waitFor(() => expect(pokeThreadReview).toHaveBeenCalledWith(17))
+    expect(pokeThreadReview).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('article', { name: 'Thread review: Launch readiness' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'You’re caught up' })).not.toBeInTheDocument()
     expect(within(restoredReviewArticle).getByText('2026-08-10', { selector: 'dd' })).toBeVisible()
   })
@@ -2540,7 +2564,19 @@ describe('App', () => {
     const user = userEvent.setup()
     render(<App />)
 
-    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    const primarySidebar = screen.getByLabelText('Primary sidebar')
+    fireEvent.contextMenu(await within(primarySidebar).findByRole('button', {
+      name: 'Project Atlas'
+    }))
+    let menu = screen.getByRole('menu', { name: 'Project Atlas actions' })
+    await user.click(within(menu).getByRole('menuitemcheckbox', {
+      name: 'Track descendant reviews'
+    }))
+    await waitFor(() => expect(updateFocus).toHaveBeenCalledWith(current.id, {
+      needsReview: false
+    }))
+
+    await user.click(within(primarySidebar).getByRole('button', { name: 'Project Atlas' }))
     const contextualSidebar = screen.getByLabelText('Contextual sidebar')
     const threadTarget = await within(contextualSidebar).findByRole('button', {
       name: 'Sprint execution'
@@ -2554,7 +2590,7 @@ describe('App', () => {
 
     const overallTarget = within(contextualSidebar).getByRole('button', { name: 'Overall' })
     fireEvent.contextMenu(overallTarget)
-    let menu = screen.getByRole('menu', { name: 'Overall actions' })
+    menu = screen.getByRole('menu', { name: 'Overall actions' })
     expect(within(menu).queryByRole('menuitem', { name: 'Delete Thread' }))
       .not.toBeInTheDocument()
     expect(within(menu).queryByRole('menuitem', { name: 'Add commitment' }))
@@ -2564,9 +2600,11 @@ describe('App', () => {
 
     fireEvent.contextMenu(overallTarget)
     menu = screen.getByRole('menu', { name: 'Overall actions' })
-    await user.click(within(menu).getByRole('menuitemcheckbox', { name: 'Needs review' }))
+    await user.click(within(menu).getByRole('menuitemcheckbox', {
+      name: 'Track descendant reviews'
+    }))
     await waitFor(() => expect(updateFocus).toHaveBeenCalledWith(current.id, {
-      needsReview: false
+      needsReview: true
     }))
 
     fireEvent.contextMenu(overallTarget)
@@ -4634,7 +4672,7 @@ describe('App', () => {
     const focusDrawer = screen.getByRole('complementary', { name: 'Focus context drawer' })
     expect(focusDrawer).toBeInTheDocument()
     expect(within(focusDrawer).getByText('2026-01-02')).toBeInTheDocument()
-    expect(within(focusDrawer).getByLabelText('Needs review')).toBeChecked()
+    expect(within(focusDrawer).getByLabelText('Track descendant reviews')).toBeChecked()
 
     await user.click(await screen.findByRole('button', { name: 'Sprint execution' }))
     expect(screen.getByLabelText('Thread last reviewed')).toHaveTextContent(
@@ -4700,7 +4738,7 @@ describe('App', () => {
     const notes = screen.getByLabelText('Description / notes')
     await user.type(notes, ' plus new notes')
     await user.selectOptions(screen.getByLabelText('Status'), 'paused')
-    await user.click(screen.getByLabelText('Needs review'))
+    await user.click(screen.getByLabelText('Track descendant reviews'))
     await user.click(screen.getByRole('button', { name: 'Save changes' }))
 
     expect(updateFocus).toHaveBeenCalledOnce()

@@ -244,6 +244,25 @@ describe('Focus presentation adapters', () => {
         icon: 'sunflower',
         sunflower,
         tone: 'default',
+        contextMenu: {
+          ariaLabel: 'Project Atlas actions',
+          items: [
+            {
+              kind: 'checkbox',
+              id: 'needs-review',
+              label: 'Track descendant reviews',
+              icon: 'review',
+              checked: true
+            },
+            {
+              kind: 'checkbox',
+              id: 'sensitive',
+              label: 'Sensitive',
+              icon: 'sensitive',
+              checked: false
+            }
+          ]
+        },
         dropTarget: { type: 'focus', id: '1' }
       },
       {
@@ -252,6 +271,25 @@ describe('Focus presentation adapters', () => {
         ariaLabel: 'Project Atlas, paused',
         icon: 'paused',
         tone: 'muted',
+        contextMenu: {
+          ariaLabel: 'Project Atlas actions',
+          items: [
+            {
+              kind: 'checkbox',
+              id: 'needs-review',
+              label: 'Track descendant reviews',
+              icon: 'review',
+              checked: true
+            },
+            {
+              kind: 'checkbox',
+              id: 'sensitive',
+              label: 'Sensitive',
+              icon: 'sensitive',
+              checked: false
+            }
+          ]
+        },
         dropTarget: { type: 'focus', id: '2' }
       }
     ])
@@ -266,7 +304,7 @@ describe('Focus presentation adapters', () => {
             {
               kind: 'checkbox',
               id: 'needs-review',
-              label: 'Needs review',
+              label: 'Track descendant reviews',
               icon: 'review',
               checked: true
             },

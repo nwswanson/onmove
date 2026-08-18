@@ -46,10 +46,6 @@ export function reviewUpdateCommandTarget(
     : null
   const subjectPath = reviewItem.cell ? ` › ${reviewItem.cell.subject.name}` : ''
 
-  if (reviewItem.kind === 'focus') {
-    throw new Error('Focus Overview does not accept direct Updates')
-  }
-
   if (reviewItem.kind === 'thread') {
     if (!reviewItem.thread) throw new Error('A Thread review target requires a Thread')
     return {

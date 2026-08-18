@@ -89,7 +89,7 @@ function queueEntries(
   const entries: RoutineQueueEntry[] = []
   for (const routine of routines) {
     const parent = parentFor(routine)
-    if (!routine.needsAttestation) continue
+    if (!routine.needsAttestation || parent?.focus.needsReview === false) continue
     if (
       hideSensitiveContent &&
       (routine.sensitive || parent?.focus.sensitive || parent?.thread?.sensitive)

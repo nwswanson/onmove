@@ -15,6 +15,10 @@ interface SensitiveRow {
   sensitive: number
 }
 
+interface RoutineReviewGateRow {
+  included: number
+}
+
 function today(now = new Date()): string {
   const year = now.getFullYear()
   const month = String(now.getMonth() + 1).padStart(2, '0')
@@ -91,6 +95,18 @@ export class NavigationRepository {
     )?.sensitive)
   }
 
+  private routineIsIncludedInReview(routineId: number): boolean {
+    return Boolean(this.database.get<RoutineReviewGateRow>(
+      `SELECT coalesce(focus.needs_review, thread_focus.needs_review, 0) AS included
+       FROM commitments commitment
+       LEFT JOIN focuses focus ON focus.id = commitment.focus_id
+       LEFT JOIN threads thread ON thread.id = commitment.thread_id
+       LEFT JOIN focuses thread_focus ON thread_focus.id = thread.focus_id
+       WHERE commitment.id = ? AND commitment.behavior_type = 'routine'`,
+      [routineId]
+    )?.included)
+  }
+
   getBadgeOverview(now = new Date()): NavigationBadgeOverviewSnapshot {
     const asOf = today(now)
     const dueThrough = addCalendarDays(asOf, 7)
@@ -102,6 +118,7 @@ export class NavigationRepository {
       return status !== 'done' && status !== 'cancelled' && item.dueDate <= dueThrough
     })
     const routineItems = this.routines.list(asOf).filter((routine) =>
+      this.routineIsIncludedInReview(routine.id) &&
       routine.needsAttestation &&
       routine.currentRun !== null &&
       routine.currentRun.completionDate === null &&

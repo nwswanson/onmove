@@ -32,8 +32,8 @@ export interface ReviewDefaultNoteModel {
 
 export interface ReviewItemModel {
   key: string
-  kind: 'focus' | 'thread' | 'commitment'
-  kindLabel: 'Focus' | 'Thread' | 'Commitment'
+  kind: 'thread' | 'commitment'
+  kindLabel: 'Thread' | 'Commitment'
   title: string
   contextPath: readonly string[]
   subjectLabel: string | null
@@ -42,7 +42,6 @@ export interface ReviewItemModel {
   lastReviewLabel: string
   nextReviewLabel: string | null
   due: boolean
-  description: string | null
   dueDate: string | null
   cadenceDays: number | null
   commitments: ReviewCommitmentRowModel[]
@@ -92,15 +91,9 @@ export function reviewItemModel(
   return {
     key: item.key,
     kind: item.kind,
-    kindLabel: item.kind === 'focus'
-      ? 'Focus'
-      : item.kind === 'thread'
-        ? 'Thread'
-        : 'Commitment',
+    kindLabel: item.kind === 'thread' ? 'Thread' : 'Commitment',
     title: record.title,
-    contextPath: item.kind === 'focus'
-      ? ['Portfolio', item.focus.title]
-      : item.kind === 'thread' && item.thread
+    contextPath: item.kind === 'thread' && item.thread
         ? [item.focus.title, item.thread.title]
         : [item.focus.title, item.thread?.title ?? 'Overall', record.title],
     subjectLabel: item.cell?.subject.name ?? null,
@@ -109,7 +102,6 @@ export function reviewItemModel(
     lastReviewLabel: dateOrNeverLabel(item.lastReviewDate),
     nextReviewLabel: item.nextReviewDate,
     due: item.due,
-    description: item.kind === 'focus' ? item.focus.description : null,
     dueDate: record.dueDate,
     cadenceDays: item.commitment?.cadenceDays ?? null,
     commitments: commitments.map((commitment) => ({

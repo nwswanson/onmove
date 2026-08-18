@@ -57,13 +57,13 @@ describe('Navigation badge model', () => {
       focusId: reviewed.id,
       title: 'Review work',
       reviewFrequencyDays: 7,
-      needsReview: false
+      needsReview: true
     })
     const sensitiveThread = database!.domain.threads.create({
       focusId: sensitive.id,
       title: 'Sensitive work',
       reviewFrequencyDays: 7,
-      needsReview: false
+      needsReview: true
     })
 
     database!.domain.todos.create({
@@ -98,6 +98,21 @@ describe('Navigation badge model', () => {
       scheduleWeekdays: ['wednesday'],
       checklist: [{ inspection: 'Verify delivery evidence.' }]
     }, new Date('2026-08-12T09:00:00.000Z'))
+    const excluded = database!.domain.focuses.create({
+      title: 'Excluded review hierarchy',
+      needsReview: false
+    })
+    const excludedThread = database!.domain.threads.create({
+      focusId: excluded.id,
+      title: 'Excluded routine owner',
+      reviewFrequencyDays: 7
+    })
+    database!.domain.routines.create({
+      parent: { type: 'thread', id: excludedThread.id },
+      name: 'Excluded scheduled inspection',
+      scheduleWeekdays: ['wednesday'],
+      checklist: [{ inspection: 'Verify excluded evidence.' }]
+    }, new Date('2026-08-12T09:00:00.000Z'))
     database!.domain.routines.create({
       parent: { type: 'thread', id: sensitiveThread.id },
       name: 'Review sensitive evidence',
@@ -122,7 +137,7 @@ describe('Navigation badge model', () => {
       due: { total: 4, nonSensitive: 3 }
     })
 
-    reviewed.pokeReview(new Date('2026-08-12T12:00:00.000Z'))
+    reviewedThread.pokeReview(new Date('2026-08-12T12:00:00.000Z'))
     expect(database!.domain.navigation.getBadgeOverview(
       new Date('2026-08-12T12:00:00.000Z')
     ).review).toEqual({ total: 1, nonSensitive: 0 })

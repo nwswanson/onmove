@@ -80,7 +80,7 @@ deliberately end.
 | `dueDate` | Optional planning boundary. It does not constrain descendant dates. |
 | `statusChangedAt` | Timestamp of the materialized lifecycle status. |
 | `lastReviewDate` | The latest explicit Focus review poke. |
-| `needsReview` | Whether review workflows should include the Focus. Independent of status. |
+| `needsReview` | Top-level gate for tracking descendant Threads, Commitments, and Routines in review workflows. The Focus itself is never a review target. |
 | `sensitive` | Presentation classification; it does not change ownership or persistence. |
 | `createdAt`, `updatedAt` | Durable timestamps. |
 
@@ -464,16 +464,18 @@ entity cascades its transition history.
 
 ## Review and cadence calculations
 
-- Focus review uses only its latest explicit poke.
+- A Focus is never a Review queue target. Its `needsReview` flag is an ancestor gate: false excludes
+  every descendant Thread, Commitment, and Routine from global review tracking while preserving
+  their own inclusion flags, schedules, Runs, and evidence for a later re-enable.
 - Open and zero-Subject Thread review uses its direct unscoped Update stream plus its latest explicit
   poke; the resulting latest date supplies the aggregate deadline.
 - Bounded Thread review is based on one independently scheduled direct-Update cell per effective
   Subject. Its aggregate due flag uses any due cell, its next date uses the earliest deadline, and
   its Update-derived last-review date is the all-current-Subjects coverage watermark. A later
   aggregate poke advances only the aggregate last-review date, not any Subject obligation.
-- `needsReview = false` excludes a Focus, Thread, or Commitment from review workflows without
-  pausing it. Each entity's inclusion flag is independent: excluding a parent does not exclude an
-  otherwise eligible child Commitment.
+- `needsReview = false` on a Thread or Commitment excludes only that record from Review without
+  pausing it. A Thread exclusion does not suppress an otherwise eligible child Commitment. A Focus
+  exclusion is deliberately different: it gates its entire descendant hierarchy.
 - A Thread review cell is due only when the Thread is active, included in review, and that cell's
   next review date is on or before the projection date.
 - Commitment cadence is per Scope/Subject cell when bounded and one stream when Open.
@@ -481,12 +483,12 @@ entity cascades its transition history.
   `reviewFrequencyDays`, independently of both Update cadence and its parent Thread's review
   schedule. Bounded Commitments schedule each effective Subject cell independently.
 - A Commitment needs an Update only when active and at least one applicable cadence deadline is due.
-- Review queues include never-reviewed active Threads and Commitments for an initial pass, then use
+- Review queues include never-reviewed active Threads and Commitments beneath an included Focus for
+  an initial pass, then use
   their respective review-frequency due state. Applicable Update or poke evidence dated today suppresses that
-  exact target for the day. Enabled active Focuses follow the same-day suppression rule and return
-  daily because they have no separate frequency.
+  exact target for the day.
 - Review exposes direct Todos only for Thread and Commitment targets in the aggregate or exact
-  Scope/Subject context. A Focus target has no Todo or Update action and is acknowledged by Pass. A
+  Scope/Subject context. A
   successful Todo mutation records an explicit review poke for that same target without creating
   Update evidence, changing derived state, or satisfying cadence. The active review item remains
   open so several Todo changes can be made before the reviewer explicitly advances.

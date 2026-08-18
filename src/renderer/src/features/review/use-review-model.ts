@@ -26,7 +26,6 @@ interface ReviewModelOptions {
 }
 
 function itemParent(item: ReviewQueueItemSnapshot): UpdateParent {
-  if (item.kind === 'focus') return { type: 'focus', id: item.focus.id }
   if (item.kind === 'thread') {
     if (!item.thread) throw new Error('A Thread review item requires a Thread')
     return { type: 'thread', id: item.thread.id }
@@ -155,9 +154,7 @@ export function useReviewModel({ onReviewChanged }: ReviewModelOptions = {}): Re
   }
 
   async function persistPoke(item: ReviewQueueItemSnapshot): Promise<void> {
-    if (item.kind === 'focus') {
-      await window.onmove.domain.pokeFocusReview(item.focus.id)
-    } else if (item.kind === 'thread' && item.thread) {
+    if (item.kind === 'thread' && item.thread) {
       if (item.cell) {
         await window.onmove.domain.pokeThreadReview(item.thread.id, {
           scopeId: item.cell.scopeId,

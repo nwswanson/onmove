@@ -39,8 +39,7 @@ test('badges actionable navigation and decrements Review after persistence', asy
   const thread = seeded.domain.threads.create({
     focusId: focus.id,
     title: 'Badge delivery',
-    reviewFrequencyDays: 7,
-    needsReview: false
+    reviewFrequencyDays: 7
   })
   seeded.domain.todos.create({
     parent: { type: 'thread', id: thread.id },
@@ -75,6 +74,66 @@ test('badges actionable navigation and decrements Review after persistence', asy
     await window.getByRole('button', { name: 'Review, 1 remaining', exact: true }).click()
     await window.getByRole('button', { name: 'Pass along' }).click()
     await expect(window.getByRole('button', { name: 'Review', exact: true })).toBeVisible()
+  } finally {
+    await application?.close().catch(() => undefined)
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
+test('toggles descendant review tracking from the primary Focus sidebar item', async () => {
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-focus-review-gate-e2e-'))
+  const databasePath = join(userDataDirectory, 'onmove.sqlite3')
+  const seeded = new AppDatabase(databasePath)
+  const focus = seeded.domain.focuses.create({ title: 'Review-gated program' })
+  seeded.domain.threads.create({
+    focusId: focus.id,
+    title: 'Review-gated delivery',
+    reviewFrequencyDays: 7
+  })
+  seeded.close()
+  let application: ElectronApplication | undefined
+
+  try {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    const window = await application.firstWindow()
+
+    await expect(window.getByRole('button', {
+      name: 'Review, 1 remaining',
+      exact: true
+    })).toBeVisible()
+    await window.getByLabel('Primary sidebar').getByRole('button', {
+      name: 'Review-gated program'
+    }).click({ button: 'right' })
+    await window.getByRole('menu', { name: 'Review-gated program actions' })
+      .getByRole('menuitemcheckbox', { name: 'Track descendant reviews' })
+      .click()
+
+    await expect.poll(() => {
+      const database = new DatabaseSync(databasePath, { readOnly: true })
+      const row = database.prepare('SELECT needs_review AS enabled FROM focuses WHERE id = ?')
+        .get(focus.id) as { enabled: number }
+      database.close()
+      return row.enabled
+    }).toBe(0)
+    await expect(window.getByRole('button', { name: 'Review', exact: true })).toBeVisible()
+    await window.getByRole('button', { name: 'Review', exact: true }).click()
+    await expect(window.getByRole('heading', { name: 'You’re caught up' })).toBeVisible()
+
+    await window.getByLabel('Primary sidebar').getByRole('button', {
+      name: 'Review-gated program'
+    }).click({ button: 'right' })
+    await window.getByRole('menu', { name: 'Review-gated program actions' })
+      .getByRole('menuitemcheckbox', { name: 'Track descendant reviews' })
+      .click()
+    await expect(window.getByRole('button', {
+      name: 'Review, 1 remaining',
+      exact: true
+    })).toBeVisible()
   } finally {
     await application?.close().catch(() => undefined)
     rmSync(userDataDirectory, { recursive: true, force: true })
@@ -1270,8 +1329,7 @@ test('reviews active work before cadence is due and refreshes typed pokes in the
   ].join('-')
   const seed = new AppDatabase(join(userDataDirectory, 'onmove.sqlite3'))
   const currentFocus = seed.domain.focuses.create({
-    title: 'Project Atlas',
-    needsReview: false
+    title: 'Project Atlas'
   })
   const currentThread = seed.domain.threads.create({
     focusId: currentFocus.id,
@@ -2028,8 +2086,8 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     const focusDrawer = window.getByRole('complementary', { name: 'Focus context drawer' })
     await expect(focusDrawer).toBeVisible()
     await expect(focusDrawer.getByText('Never')).toBeVisible()
-    await expect(focusDrawer.getByLabel('Needs review')).toBeChecked()
-    await focusDrawer.getByLabel('Needs review').uncheck()
+    await expect(focusDrawer.getByLabel('Track descendant reviews')).toBeChecked()
+    await focusDrawer.getByLabel('Track descendant reviews').uncheck()
     await focusDrawer.getByRole('button', { name: 'Save changes' }).click()
     await expect.poll(() => storedFocus()?.needsReview).toBe(0)
     await expect(window.getByLabel('Goal')).toHaveCount(0)

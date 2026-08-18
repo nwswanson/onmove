@@ -838,11 +838,12 @@ export interface ReviewScopeCellSnapshot extends UpdateScopeCell {
 /**
  * One review target with enough domain context to render its full working
  * surface without asking the renderer to reconstruct hierarchy ownership.
- * Thread and Commitment entries are repeated per effective Subject cell.
+ * Focuses are context-only ancestors and never review targets. Thread and
+ * Commitment entries are repeated per effective Subject cell.
  */
 export interface ReviewQueueItemSnapshot {
   key: string
-  kind: 'focus' | 'thread' | 'commitment'
+  kind: 'thread' | 'commitment'
   focus: FocusSnapshot
   thread: ThreadSnapshot | null
   commitment: CommitmentSnapshot | null

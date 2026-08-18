@@ -32,7 +32,6 @@ interface ReviewWorkspaceProps {
 }
 
 function reviewTodoContext(item: ReviewQueueItemSnapshot): TodoParent {
-  if (item.kind === 'focus') return { type: 'focus', id: item.focus.id }
   if (item.kind === 'thread' && item.thread) {
     return item.cell
       ? {
@@ -227,15 +226,6 @@ export function ReviewWorkspace({
                             </span>
                           )}
                         </div>
-                        {currentModel.description && (
-                          <div className="mt-2 max-h-12 max-w-3xl overflow-hidden text-muted-foreground">
-                            <RichTextContent
-                              value={currentModel.description}
-                              ariaLabel="Focus description"
-                              className="line-clamp-2 text-xs leading-5"
-                            />
-                          </div>
-                        )}
                         <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-[0.6875rem] text-muted-foreground">
                           <div className="flex gap-1.5">
                             <dt>{currentModel.kindLabel === 'Commitment' ? 'Last updated' : 'Last reviewed'}</dt>
@@ -291,17 +281,15 @@ export function ReviewWorkspace({
                         <ArrowRight aria-hidden="true" />
                         {pending ? 'Passing…' : 'Pass along'}
                       </Button>
-                      {current.kind !== 'focus' && (
-                        <Button
-                          type="button"
-                          disabled={pending}
-                          onClick={() => updateComposer.openFor(reviewUpdateCommandTarget(current))}
-                          title="Add an Update to this review item"
-                        >
-                          <MessageSquarePlus aria-hidden="true" />
-                          Update
-                        </Button>
-                      )}
+                      <Button
+                        type="button"
+                        disabled={pending}
+                        onClick={() => updateComposer.openFor(reviewUpdateCommandTarget(current))}
+                        title="Add an Update to this review item"
+                      >
+                        <MessageSquarePlus aria-hidden="true" />
+                        Update
+                      </Button>
                     </div>
                   </div>
                   <div className="h-1 overflow-hidden bg-muted" aria-hidden="true">
@@ -312,15 +300,13 @@ export function ReviewWorkspace({
                   </div>
                 </div>
 
-                {current.kind !== 'focus' && (
-                  <div className="px-5 pb-6 sm:px-7">
-                    <DirectTodos
-                      key={current.key}
-                      context={reviewTodoContext(current)}
-                      onMutation={() => review.recordTodoMutation(current)}
-                    />
-                  </div>
-                )}
+                <div className="px-5 pb-6 sm:px-7">
+                  <DirectTodos
+                    key={current.key}
+                    context={reviewTodoContext(current)}
+                    onMutation={() => review.recordTodoMutation(current)}
+                  />
+                </div>
 
                 <ReviewUpdates model={currentModel} />
                 <ReviewSupportingDetails model={currentModel} />

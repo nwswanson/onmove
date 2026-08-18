@@ -64,8 +64,12 @@ Focuses are top-level portfolio objects rather than hierarchy children. Their in
 Titles are required but intentionally not unique. Status is materialized on the `focuses` row and
 every actual change is appended by SQLite triggers to `focus_status_transitions`. Active and paused
 records appear in sidebar navigation; paused records are visually muted. Cancelled and done records
-remain durable and queryable but are omitted from navigation. `needsReview` is a durable inclusion
-flag independent of status. `lastReviewDate` is the Focus's explicit `review_poked_on` date;
+remain durable and queryable but are omitted from navigation. `needsReview` is the durable top-level
+gate for descendant review tracking, independent of status. A Focus is never itself a Review queue
+item. When this flag is false, its Threads, Commitments, and Routines are excluded from their global
+review queues and badges without changing any descendant setting, evidence, or schedule. Re-enabling
+the Focus therefore restores only descendants that remain individually eligible. `lastReviewDate`
+is the Focus's explicit `review_poked_on` date;
 descendant Thread and Commitment Updates do not advance it.
 
 Focus Overall is an overview boundary, not a synthetic Thread. It owns no Goal, Commitment,
@@ -105,8 +109,9 @@ exact cell is currently effective, and do not let callers write derived snapshot
 projections ignore pokes after their requested projection date. A Commitment exposes
 `lastReviewDate` separately from `lastUpdateDate`: poking it never changes state, cadence, or the
 meaning of its latest observation. Every Commitment owns a positive `reviewFrequencyDays` interval
-and a separate `needsReview` inclusion flag. These override its parent Thread for review scheduling:
-an excluded or long-interval Thread does not suppress a child Commitment whose own schedule is due.
+and a separate `needsReview` inclusion flag. Within a Focus that tracks descendants, these override
+its parent Thread for review scheduling: an excluded or long-interval Thread does not suppress a
+child Commitment whose own schedule is due. The Focus gate still excludes the entire hierarchy.
 For bounded Commitments, `nextReviewDate` and `reviewDue` are calculated independently for every
 effective Scope/Subject cell and aggregated using the earliest deadline and any-due semantics.
 

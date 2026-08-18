@@ -61,7 +61,7 @@ function appendIfEligible(
   item: ReviewQueueItemSnapshot,
   asOf: string
 ): void {
-  const participates = item.kind === 'focus' || item.lastReviewDate === null || item.due
+  const participates = item.lastReviewDate === null || item.due
   if (participates && isUnreviewedToday(item, asOf)) items.push(item)
 }
 
@@ -88,12 +88,9 @@ export class ReviewRepository {
     const items: ReviewQueueItemSnapshot[] = []
 
     for (const focus of this.focuses.list(date)) {
-      if (focus.status !== 'active') continue
+      if (focus.status !== 'active' || !focus.needsReview) continue
 
       const focusCommitments = this.commitments.listForFocus(focus.id, date)
-      if (focus.needsReview) {
-        appendIfEligible(items, this.focusItem(focus, focusCommitments), date)
-      }
       this.appendCommitmentItems(items, focus, null, focusCommitments, date)
 
       for (const thread of this.threads.listForFocus(focus.id, date)) {
@@ -122,26 +119,6 @@ export class ReviewRepository {
     }
 
     return { asOf: date, items }
-  }
-
-  private focusItem(
-    focus: FocusSnapshot,
-    commitments: CommitmentSnapshot[]
-  ): ReviewQueueItemSnapshot {
-    return {
-      key: `focus:${focus.id}`,
-      kind: 'focus',
-      focus,
-      thread: null,
-      commitment: null,
-      cell: null,
-      lastReviewDate: focus.lastReviewDate,
-      nextReviewDate: null,
-      due: false,
-      state: null,
-      updates: this.updates.listForFocus(focus.id),
-      commitments
-    }
   }
 
   private threadItem(

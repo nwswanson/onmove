@@ -12,6 +12,9 @@
 - Focus records with `active` or `paused` status appear in the selector. Paused focuses remain
   selectable but visually muted; `cancelled` and `done` focuses remain in SQLite but are filtered
   from navigation.
+- Give every primary Focus row the receiver-owned context menu used by Focus Overall. Its review
+  checkbox controls descendant review tracking for the whole Focus; keep the Overall entry as a
+  second access point to the same setting.
 - Put workspace utilities such as Settings, help, and data/storage actions at the bottom of the
   sidebar.
 - Expose `Archive` as a top-level item destination. It renders only deleted Updates retained by the
@@ -449,18 +452,19 @@ foreground colors and do not rely on color alone to communicate selection or sta
   nested Commitment, and Subject context restore atomically. Sensitive visibility remains a
   renderer collection rule: hide sensitive-only sidebar tags and sensitive use rows, then let the
   contextual navigation reconcile an invalid selection to its first remaining item.
-- Build Review as a full-width, single-item catch-up queue with no contextual sidebar. Review active
-  Focuses and Threads whose `needsReview` flag is enabled, plus active Commitments. A never-reviewed
-  Thread or Commitment gets an initial review; after that, Thread review frequency and Commitment
-  Update cadence determine when it participates again. Focus review is daily when enabled. Any
+- Build Review as a full-width, single-item catch-up queue with no contextual sidebar. Focuses are
+  context and eligibility ancestors, never queue items. Review active Threads and Commitments whose
+  own `needsReview` flag is enabled only when their owning Focus also enables descendant review
+  tracking. A never-reviewed Thread or Commitment gets an initial review; after that, Thread review
+  frequency and Commitment Update cadence determine when it participates again. Any
   applicable direct Update or explicit Pass dated today suppresses that exact target for today,
   even when an unmet Commitment cadence remains due; such a passed due Commitment may return the
-  next day. Render direct evidence and child Commitments as non-navigating reference rows; a Focus
-  or Thread must never drill into a Commitment from Review. `Ignore` dismisses only the current
+  next day. Render direct evidence and child Commitments as non-navigating reference rows; a Thread
+  must never drill into a Commitment from Review. `Ignore` dismisses only the current
   in-memory queue entry, `Pass along` calls the aggregate's typed `pokeReview` operation, refreshes
   the application-owned Focus projection, and advances the session. For Thread and Commitment
-  targets, `Update` immediately creates a blank direct Update before exposing its autosaved editor;
-  Focus targets offer Pass but no Update action. The editor's finish action advances the session and
+  targets, `Update` immediately creates a blank direct Update before exposing its autosaved editor.
+  The editor's finish action advances the session and
   refreshes the owning Focus projection; it is not a Save button. A same-day queue
   refresh must retain passed and updated item keys while offering ignored items again; do not
   present a completed item as fresh work through a replay-style `Review again` action.
@@ -538,9 +542,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
   aggregate `review_poked_on` fields and exact-cell review-poke tables are deliberate exceptions:
   mutate them only through typed `pokeReview` operations, never as caller-supplied projections.
 - Return Review through one named, bounded overview projection. The model owns active-ancestor and
-  inclusion filtering, due metadata, hierarchy context, exact Scope/Subject cells, direct Updates,
-  and direct child Commitments; the renderer must not rebuild review eligibility by fetching every
-  aggregate.
+  inclusion filtering, including the owning Focus's descendant-tracking gate, plus due metadata,
+  hierarchy context, exact Scope/Subject cells, direct Updates, and direct child Commitments. It
+  never returns a Focus as a review target; the renderer must not rebuild review eligibility by
+  fetching every aggregate.
 - Order Commitment Updates by their recorded date without capping them at today. A future-dated
   Update immediately supplies the Commitment's state and cadence baseline.
 - Derive Focus `lastReviewDate` only from its persisted explicit review poke because Focuses no
@@ -555,8 +560,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
   satisfy cell deadlines. An exact Thread-cell poke is separate durable review evidence for only
   that cell. Commitment `lastReviewDate` uses its later applicable aggregate/cell poke or Update,
   while state, `lastUpdateDate`, and update cadence remain Update-only projections. Persist a
-  positive `reviewFrequencyDays` and independent `needsReview` flag on every Commitment. A
-  Commitment's review schedule overrides its parent Thread's schedule and inclusion; bounded
+  positive `reviewFrequencyDays` and independent `needsReview` flag on every Commitment. Within an
+  included Focus, a Commitment's review schedule overrides its parent Thread's schedule and
+  inclusion; the Focus gate still excludes the entire descendant hierarchy. Bounded
   Commitments derive independent review deadlines per effective Subject cell. Keep persisted
   `needsReview` separate from lifecycle status and from all derived review projections.
 - A Commitment or Routine must have exactly one Thread parent. An Update must have exactly one

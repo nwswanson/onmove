@@ -124,14 +124,7 @@ describe('review presenters', () => {
     })
   })
 
-  it('projects complete hierarchy paths for Focus and Commitment reviews', () => {
-    expect(reviewItemModel(item({
-      key: 'focus:1',
-      kind: 'focus',
-      thread: null,
-      state: null
-    }), false).contextPath).toEqual(['Portfolio', 'Project Atlas'])
-
+  it('projects complete hierarchy paths for Commitment reviews', () => {
     expect(reviewItemModel(item({
       key: 'commitment:3',
       kind: 'commitment',
