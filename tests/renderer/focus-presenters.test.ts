@@ -293,6 +293,7 @@ describe('Focus presentation adapters', () => {
         icon: 'sunflower',
         sunflower,
         tone: 'default',
+        indicators: ['review-excluded'],
         movable: true,
         contextMenu: {
           ariaLabel: 'Sprint execution actions',
@@ -391,14 +392,17 @@ describe('Focus presentation adapters', () => {
 
     expect(focusPrimaryNavigationItems([sensitiveFocus], { 1: summary }, true)[0]).toMatchObject({
       label: sensitiveFocus.title,
-      ariaLabel: sensitiveFocus.title
+      ariaLabel: sensitiveFocus.title,
+      indicators: ['sensitive']
     })
     expect(focusContextSidebarItems([sensitiveThread], { 10: summary }, true)[1]).toMatchObject({
       label: sensitiveThread.title,
-      ariaLabel: `${sensitiveThread.title}, paused`
+      ariaLabel: `${sensitiveThread.title}, paused`,
+      indicators: ['sensitive', 'review-excluded']
     })
     expect(commitmentContextSidebarItems([sensitiveCommitment])[0]).toMatchObject({
-      label: sensitiveCommitment.title
+      label: sensitiveCommitment.title,
+      indicators: ['sensitive']
     })
     expect(
       commitmentCollectionModel(buildCommitmentListModel([sensitiveCommitment]))
@@ -570,6 +574,42 @@ describe('Focus presentation adapters', () => {
         tone: 'default',
         movable: true
       }
+    ])
+  })
+
+  it('marks nested Commitment and Routine exclusions without repeating Focus flags on Overall', () => {
+    const excludedCommitment = {
+      ...commitment,
+      sensitive: true,
+      needsReview: false
+    }
+    const excludedRoutine = {
+      id: 31,
+      parent: { type: 'focus', id: focus.id },
+      name: 'Optional evidence inspection',
+      status: 'green',
+      sensitive: true,
+      needsAttestation: false
+    } as RoutineSnapshot
+    const items = focusContextSidebarItems(
+      [],
+      {},
+      false,
+      { overall: [excludedCommitment] },
+      { overall: [excludedRoutine] },
+      true
+    )
+
+    expect(items[0]).not.toHaveProperty('indicators')
+    expect(items[0]?.childCollection?.items).toEqual([
+      expect.objectContaining({
+        id: '20',
+        indicators: ['sensitive', 'review-excluded']
+      }),
+      expect.objectContaining({
+        id: 'routine:31',
+        indicators: ['sensitive', 'review-excluded']
+      })
     ])
   })
 

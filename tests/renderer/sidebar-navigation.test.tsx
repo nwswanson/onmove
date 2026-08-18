@@ -89,6 +89,32 @@ describe('SidebarNavigation', () => {
     expect(screen.getByText('No focuses yet')).toBeInTheDocument()
   })
 
+  it('renders small receiver-owned sensitivity and review indicators after the label', () => {
+    render(
+      <SidebarNavigation
+        items={[{
+          id: 'focus:1',
+          label: 'Project Atlas',
+          indicators: ['sensitive', 'review-excluded']
+        }]}
+        selectedItemId="focus:1"
+        onSelect={vi.fn()}
+      />
+    )
+
+    const item = screen.getByRole('button', {
+      name: 'Project Atlas'
+    })
+    const indicators = item.querySelector<HTMLElement>('[data-slot="sidebar-item-indicators"]')
+    if (!indicators) throw new Error('Expected sidebar indicators')
+    expect(within(indicators).getByRole('img', { name: 'Sensitive' }))
+      .toHaveAttribute('title', 'Sensitive')
+    expect(within(indicators).getByRole('img', { name: 'Excluded from reviews' }))
+      .toHaveAttribute('title', 'Excluded from reviews')
+    expect(indicators.querySelector('.lucide-shield')).toHaveClass('!size-3.5')
+    expect(indicators.querySelector('.lucide-clipboard-x')).toHaveClass('!size-3.5')
+  })
+
   it('reads a generic context menu from its target item', async () => {
     const onContextMenuAction = vi.fn()
     const user = userEvent.setup()

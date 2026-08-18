@@ -29,6 +29,7 @@ import {
   useRoutinesModel,
   type RoutineParentOption
 } from '@/features/routines/use-routines-model'
+import { sidebarIndicatorProps } from '@/features/shared/sidebar-indicator-presenters'
 
 const CONTEXTUAL_SIDEBAR_MIN = 220
 const CONTEXTUAL_SIDEBAR_MAX = 340
@@ -161,6 +162,10 @@ function queueSidebarItems(entries: readonly RoutineQueueEntry[]): ContextualSid
           ? GROUPS.week
           : GROUPS.upcoming,
     stateLabel: statusModel(entry.routine.status),
+    ...sidebarIndicatorProps(
+      entry.routine.sensitive,
+      entry.routine.needsAttestation
+    ),
     lines: 2
   }))
 }

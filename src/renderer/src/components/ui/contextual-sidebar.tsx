@@ -30,6 +30,10 @@ import {
   type SidebarTransferSourceData,
   type SidebarTransferTargetData
 } from '@/components/ui/sidebar-dnd'
+import {
+  SidebarItemIndicators,
+  type SidebarItemIndicator
+} from '@/components/ui/sidebar-item-indicators'
 import { cn } from '@/lib/utils'
 
 export interface ContextualSidebarItemGroup {
@@ -47,6 +51,7 @@ export interface ContextualSidebarChildItemModel {
   disabled?: boolean
   movable?: boolean
   activation?: 'selection' | 'action'
+  indicators?: readonly SidebarItemIndicator[]
 }
 
 export interface ContextualSidebarChildCollectionActionModel {
@@ -86,6 +91,7 @@ export interface ContextualSidebarItemModel {
   movable?: boolean
   childCollection?: ContextualSidebarChildCollectionModel
   contextMenu?: SidebarContextMenuModel
+  indicators?: readonly SidebarItemIndicator[]
 }
 
 export interface ContextualSidebarNewItemAction {
@@ -955,6 +961,7 @@ function ContextualSidebarDraggableChild({
         )}
         {child.state && <StateDot model={child.state} />}
         <span className="min-w-0 flex-1 truncate"><TaggedText value={child.label} /></span>
+        <SidebarItemIndicators indicators={child.indicators} size="compact" />
       </button>
     </li>
   )
@@ -1042,6 +1049,7 @@ function ContextualSidebarItemButton({
             </span>
           )}
         </span>
+        <SidebarItemIndicators indicators={item.indicators} />
         {item.stateLabel && <StateLabel model={item.stateLabel} size="compact" />}
         {item.accessory === 'disclosure' && (
           <ChevronRight className="ml-auto" aria-hidden="true" />

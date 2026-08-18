@@ -48,6 +48,7 @@ import {
   WORK_STATUS_OPTIONS,
   workStatusLabel
 } from '@/features/shared/work-status'
+import { sidebarIndicatorProps } from '@/features/shared/sidebar-indicator-presenters'
 
 function textValue(values: ContextDrawerValues, id: string): string {
   const value = values[id]
@@ -197,6 +198,7 @@ export function focusPrimaryNavigationItems(
       icon: paused ? 'paused' : 'sunflower',
       ...(paused ? {} : { sunflower }),
       tone: paused ? 'muted' : 'default',
+      ...sidebarIndicatorProps(focus.sensitive, focus.needsReview),
       dropTarget: { type: 'focus', id: String(focus.id) }
     }
   })
@@ -289,6 +291,7 @@ function contextWorkChildCollection(
         label: commitment.title,
         ariaLabel: `Open ${ownerLabel} commitment ${commitment.title}`,
         state: healthStateLabel(commitment.state),
+        ...sidebarIndicatorProps(commitment.sensitive, commitment.needsReview),
         tone: commitment.status === 'active' ? ('default' as const) : ('muted' as const)
       })),
       ...routines.map((routine) => ({
@@ -301,6 +304,7 @@ function contextWorkChildCollection(
           : routine.status === 'yellow'
             ? { label: 'Overdue', tone: 'warning' as const }
             : { label: 'Lapsed', tone: 'danger' as const },
+        ...sidebarIndicatorProps(routine.sensitive, routine.needsAttestation),
         tone: routine.needsAttestation ? ('default' as const) : ('muted' as const),
         movable: true
       }))
@@ -363,6 +367,7 @@ export function focusContextSidebarItems(
             }
           : {}),
         tone: paused ? ('muted' as const) : ('default' as const),
+        ...sidebarIndicatorProps(thread.sensitive, thread.needsReview),
         movable: true,
         contextMenu: {
           ariaLabel: `${label} actions`,
@@ -387,6 +392,7 @@ export function commitmentContextSidebarItems(
         group: { id: group.id, label: group.label },
         lines: 2,
         stateLabel: healthStateLabel(commitment.state),
+        ...sidebarIndicatorProps(commitment.sensitive, commitment.needsReview),
         accessory: 'disclosure'
       }
     })

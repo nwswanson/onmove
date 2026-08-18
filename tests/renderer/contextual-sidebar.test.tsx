@@ -16,6 +16,7 @@ import {
 import type { StateLabelModel } from '../../src/renderer/src/components/ui/state-label'
 import type { SidebarFooterActionModel } from '../../src/renderer/src/components/ui/sidebar'
 import type { SidebarContextMenuModel } from '../../src/renderer/src/components/ui/sidebar-context-menu'
+import type { SidebarItemIndicator } from '../../src/renderer/src/components/ui/sidebar-item-indicators'
 
 interface TestItem {
   id: string
@@ -26,6 +27,7 @@ interface TestItem {
   stateLabel?: StateLabelModel
   childCollection?: ContextualSidebarChildCollectionModel
   contextMenu?: SidebarContextMenuModel
+  indicators?: readonly SidebarItemIndicator[]
 }
 
 function level(
@@ -231,6 +233,36 @@ describe('ContextualSidebarNavigation', () => {
       'bg-destructive'
     )
     expect(within(item).getByText('Last updated · 2026-08-07')).toBeInTheDocument()
+  })
+
+  it('scales metadata indicators for contextual rows and their smaller nested children', () => {
+    const root = level('focus:1', 'Focus', [{
+      id: 'thread:10',
+      label: 'Sprint execution',
+      indicators: ['sensitive', 'review-excluded'],
+      childCollection: {
+        id: 'commitments',
+        label: 'Commitments and Routines',
+        items: [{
+          id: 'commitment:20',
+          label: 'Improve ticket quality',
+          indicators: ['review-excluded']
+        }]
+      }
+    }])
+    render(<ContextualSidebar navigation={new ContextualSidebarNavigation(root)} />)
+
+    const thread = screen.getByRole('button', {
+      name: 'Sprint execution'
+    })
+    expect(within(thread).getByRole('img', { name: 'Sensitive' })
+      .querySelector('.lucide-shield')).toHaveClass('!size-3.5')
+
+    const commitment = screen.getByRole('button', {
+      name: 'Improve ticket quality'
+    })
+    expect(within(commitment).getByRole('img', { name: 'Excluded from reviews' })
+      .querySelector('.lucide-clipboard-x')).toHaveClass('!size-3')
   })
 
   it('owns nested collection trees and selects a child without replacing its level', async () => {

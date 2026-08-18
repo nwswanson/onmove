@@ -30,6 +30,9 @@
   markup.
 - Every selected destination must update the main view, use `aria-current="page"`, and retain a
   visible keyboard focus state.
+- Show unobtrusive, receiver-owned sidebar indicators for Sensitive and Excluded from reviews on
+  Focus, Thread, Commitment, and Routine destinations. Apply them to primary, contextual, and
+  nested contextual rows as applicable; do not repeat the Focus indicators on its Overall row.
 - Use the shared 24px semantic `Sunflower` for active Focus and Thread sidebar destinations instead
   of generic circle icons. The center seed represents the newest direct Update; subsequent seeds
   represent every active Commitment (including Thread-parented Commitments in a Focus rollup).

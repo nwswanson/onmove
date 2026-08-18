@@ -26,6 +26,10 @@ import {
   SidebarDndBoundary,
   type SidebarTransferTargetData
 } from '@/components/ui/sidebar-dnd'
+import {
+  SidebarItemIndicators,
+  type SidebarItemIndicator
+} from '@/components/ui/sidebar-item-indicators'
 
 /** Receiver-owned row contract for primary sidebar navigation. */
 export interface SidebarNavigationItemModel {
@@ -41,6 +45,7 @@ export interface SidebarNavigationItemModel {
     value: number
     label: string
   }
+  indicators?: readonly SidebarItemIndicator[]
   contextMenu?: SidebarContextMenuModel
 }
 
@@ -127,11 +132,12 @@ function SidebarNavigationRow({
           ) : item.icon === 'sunflower' && item.sunflower ? (
             <SemanticSunflower className="!size-6" model={item.sunflower} />
           ) : null}
-          <span className="truncate"><TaggedText value={item.label} /></span>
+          <span className="min-w-0 flex-1 truncate"><TaggedText value={item.label} /></span>
+          <SidebarItemIndicators indicators={item.indicators} />
           {item.badge && (
             <span
               aria-hidden="true"
-              className="ml-auto min-w-5 shrink-0 rounded-full bg-sidebar-accent px-1.5 py-0.5 text-center text-[0.6875rem] font-semibold tabular-nums text-sidebar-accent-foreground group-data-[active=true]/menu-button:bg-primary/45"
+              className="min-w-5 shrink-0 rounded-full bg-sidebar-accent px-1.5 py-0.5 text-center text-[0.6875rem] font-semibold tabular-nums text-sidebar-accent-foreground group-data-[active=true]/menu-button:bg-primary/45"
             >
               {item.badge.value}
             </span>
