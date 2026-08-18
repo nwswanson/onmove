@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { TriangleAlert, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -27,11 +27,17 @@ function WorkDueDateEditor({
   const inputId = useId()
   const [draft, setDraft] = useState(value ?? '')
   const [saving, setSaving] = useState(false)
+  const editingRef = useRef(false)
+
+  useEffect(() => {
+    if (!editingRef.current) setDraft(value ?? '')
+  }, [value])
 
   const warning = dueDateParentWarning(draft || null, parent)
 
   async function save(nextValue: string): Promise<void> {
     setDraft(nextValue)
+    if ((nextValue || null) === value) return
     setSaving(true)
     try {
       const saved = await onValueChange(nextValue || null)
@@ -58,7 +64,14 @@ function WorkDueDateEditor({
         className="h-8 w-[9.25rem] px-2 text-xs"
         value={draft}
         disabled={disabled || saving}
-        onChange={(event) => void save(event.target.value)}
+        onFocus={() => {
+          editingRef.current = true
+        }}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={(event) => {
+          editingRef.current = false
+          void save(event.currentTarget.value)
+        }}
       />
       {draft && (
         <Button
@@ -69,6 +82,7 @@ function WorkDueDateEditor({
           aria-label={`Clear ${entityLabel} due date`}
           title={`Clear ${entityLabel} due date`}
           disabled={disabled || saving}
+          onMouseDown={(event) => event.preventDefault()}
           onClick={() => void save('')}
         >
           <X aria-hidden="true" />
@@ -89,5 +103,5 @@ function WorkDueDateEditor({
 }
 
 export function WorkDueDateField(props: WorkDueDateFieldProps): React.JSX.Element {
-  return <WorkDueDateEditor key={`${props.entityLabel}:${props.value ?? ''}`} {...props} />
+  return <WorkDueDateEditor {...props} />
 }

@@ -342,7 +342,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - Expose optional due dates for Focus, Thread, and Commitment through the shared feature-level
   `WorkDueDateField` in every selected entity's main header. It must support setting and explicitly
   clearing the date. Do not clip or reject a child date after its direct parent's date; show the
-  shared accessible warning icon and tooltip while preserving the entered value.
+  shared accessible warning icon and tooltip while preserving the entered value. Keep a local draft
+  while its native date input is focused and persist on blur; never key/remount or disable the field
+  in response to an intermediate date segment, because macOS emits valid partial years while typing.
 - Render Focus, Thread, and Commitment Todos through the shared receiver-owned `TodoList`. The
   receiver owns inline creation, editable name/due date/done controls, overdue presentation, delete,
   and dnd-kit sortable ordering. Overdue means incomplete with a due date before the current local

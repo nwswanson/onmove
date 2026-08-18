@@ -1270,9 +1270,11 @@ describe('App', () => {
       'Due date 2026-08-12 is after the parent Thread due date 2026-08-09.'
     )).toBeVisible()
 
-    fireEvent.change(within(table).getByLabelText('Thread due date'), {
+    const dueWorkThreadDate = within(table).getByLabelText('Thread due date')
+    fireEvent.change(dueWorkThreadDate, {
       target: { value: '2026-08-11' }
     })
+    fireEvent.blur(dueWorkThreadDate)
     await waitFor(() => expect(updateThread).toHaveBeenCalledWith(15, {
       dueDate: '2026-08-11'
     }))
@@ -2834,6 +2836,7 @@ describe('App', () => {
     expect(updateFocus).toHaveBeenCalledWith(currentFocus.id, { dueDate: null })
     const clearedFocusDueDate = screen.getByLabelText('Focus due date')
     fireEvent.change(clearedFocusDueDate, { target: { value: '2026-09-10' } })
+    fireEvent.blur(clearedFocusDueDate)
     await waitFor(() => expect(screen.getByLabelText('Focus due date')).toHaveValue('2026-09-10'))
     expect(updateFocus).toHaveBeenLastCalledWith(currentFocus.id, { dueDate: '2026-09-10' })
 
@@ -2847,9 +2850,11 @@ describe('App', () => {
       expect(screen.getByLabelText('Thread due date')).not.toBeDisabled()
     })
     expect(updateThread).toHaveBeenCalledWith(currentThread.id, { dueDate: null })
-    fireEvent.change(screen.getByLabelText('Thread due date'), {
+    const clearedThreadDueDate = screen.getByLabelText('Thread due date')
+    fireEvent.change(clearedThreadDueDate, {
       target: { value: '2026-09-12' }
     })
+    fireEvent.blur(clearedThreadDueDate)
     await waitFor(() =>
       expect(screen.getByLabelText('Thread due date')).toHaveValue('2026-09-12')
     )
@@ -2867,9 +2872,11 @@ describe('App', () => {
       expect(screen.getByLabelText('Commitment due date')).not.toBeDisabled()
     })
     expect(updateCommitment).toHaveBeenCalledWith(currentCommitment.id, { dueDate: null })
-    fireEvent.change(screen.getByLabelText('Commitment due date'), {
+    const clearedCommitmentDueDate = screen.getByLabelText('Commitment due date')
+    fireEvent.change(clearedCommitmentDueDate, {
       target: { value: '2026-09-11' }
     })
+    fireEvent.blur(clearedCommitmentDueDate)
     await waitFor(() =>
       expect(screen.getByLabelText('Commitment due date')).toHaveValue('2026-09-11')
     )
