@@ -7,6 +7,7 @@ import {
   FocusOverviewTimeline,
   type FocusOverviewTimelineModel
 } from '../../src/renderer/src/features/focus/focus-overview-timeline'
+import { focusTimelineThreadColors } from '../../src/renderer/src/features/focus/focus-timeline-colors'
 
 const model: FocusOverviewTimelineModel = {
   threads: [
@@ -51,6 +52,22 @@ const model: FocusOverviewTimelineModel = {
 }
 
 describe('FocusOverviewTimeline', () => {
+  it('assigns stable, non-duplicated identity colors independent of Thread order', () => {
+    const threads = Array.from({ length: 24 }, (_, index) => ({
+      id: index + 1,
+      title: `Thread ${index + 1}`,
+      statusLabel: 'Active',
+      closed: false
+    }))
+    const colors = focusTimelineThreadColors(threads)
+    const reorderedColors = focusTimelineThreadColors([...threads].reverse())
+
+    expect(new Set(colors.values())).toHaveLength(threads.length)
+    for (const thread of threads) {
+      expect(reorderedColors.get(thread.id)).toBe(colors.get(thread.id))
+    }
+  })
+
   it('measures the timeline when async Threads first mount instead of stretching its fallback SVG', () => {
     const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       x: 0,
@@ -113,6 +130,18 @@ describe('FocusOverviewTimeline', () => {
 
     const deliveryFilter = screen.getByRole('button', { name: 'Delivery timeline rail' })
     expect(deliveryFilter).toHaveAttribute('aria-pressed', 'true')
+    const deliveryColor = deliveryFilter.getAttribute('data-thread-color')
+    const discoveryColor = screen.getByRole('button', {
+      name: 'Discovery timeline rail'
+    }).getAttribute('data-thread-color')
+    expect(deliveryColor).toBeTruthy()
+    expect(deliveryColor).not.toBe(discoveryColor)
+    expect(screen.getByRole('button', {
+      name: 'Read Delivery update from Aug 18, 2026'
+    })).toHaveAttribute('data-thread-color', deliveryColor)
+    expect(screen.getByRole('button', {
+      name: 'Open Thread Delivery'
+    })).toHaveAttribute('data-thread-color', deliveryColor)
     expect(screen.getByText('Delivery was blocked.')).toBeVisible()
     expect(screen.getByText('The complete delivery update…')).toBeVisible()
 

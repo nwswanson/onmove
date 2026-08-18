@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
 import { RichTextContent } from '@/components/ui/rich-text-editor'
+import { focusTimelineThreadColors } from '@/features/focus/focus-timeline-colors'
 import { WorkKindIcon } from '@/features/shared/work-kind-icon'
 import { cn } from '@/lib/utils'
 
@@ -328,6 +329,7 @@ export function FocusOverviewTimeline({
     threads: model.threads,
     updates: model.updates.filter(({ threadId }) => !hiddenThreadIds.has(threadId))
   }
+  const threadColors = focusTimelineThreadColors(model.threads)
   const layout = buildFocusTimelineLayout(visibleModel, timelineWidth ?? DEFAULT_TIMELINE_WIDTH)
   const selectedUpdate = model.updates.find(({ id }) => id === selectedUpdateId) ?? null
   const selectedThread = selectedUpdate
@@ -351,6 +353,7 @@ export function FocusOverviewTimeline({
         >
           {model.threads.map((thread) => {
             const hidden = hiddenThreadIds.has(thread.id)
+            const threadColor = threadColors.get(thread.id)
             return (
               <button
                 key={thread.id}
@@ -358,12 +361,14 @@ export function FocusOverviewTimeline({
                 aria-label={`${thread.title} timeline rail`}
                 aria-pressed={!hidden}
                 title={hidden ? `Show ${thread.title}` : `Hide ${thread.title}`}
+                data-thread-color={threadColor}
                 className={cn(
                   'inline-flex h-6 max-w-40 shrink-0 items-center gap-1.5 rounded-md border px-2 text-[10px] font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                   hidden
                     ? 'border-border/60 bg-muted/30 text-muted-foreground/60'
                     : 'border-primary/40 bg-primary/10 text-foreground hover:bg-primary/15'
                 )}
+                style={{ borderLeftColor: threadColor, borderLeftWidth: 3 }}
                 onClick={() => {
                   setHiddenThreadIds((current) => {
                     const next = new Set(current)
@@ -376,13 +381,6 @@ export function FocusOverviewTimeline({
                   }
                 }}
               >
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    'h-3 w-0.5 shrink-0 rounded-full',
-                    hidden ? 'bg-muted-foreground/35' : 'bg-primary'
-                  )}
-                />
                 <span className="truncate">{thread.title}</span>
               </button>
             )
@@ -404,6 +402,7 @@ export function FocusOverviewTimeline({
           {model.threads.map((thread) => {
             const x = layout.railXs.get(thread.id) ?? layout.width / 2
             const hidden = hiddenThreadIds.has(thread.id)
+            const threadColor = threadColors.get(thread.id)
             return (
               <button
                 key={thread.id}
@@ -414,10 +413,13 @@ export function FocusOverviewTimeline({
                 )}
                 style={{
                   left: x,
+                  borderLeftColor: threadColor,
+                  borderLeftWidth: 3,
                   transform: 'rotate(-34deg)',
                   transformOrigin: 'left bottom'
                 }}
                 title={`${thread.title} · ${thread.statusLabel}`}
+                data-thread-color={threadColor}
                 onClick={() => onOpenThread(thread.id)}
                 aria-label={`Open Thread ${thread.title}`}
               >
@@ -524,12 +526,15 @@ export function FocusOverviewTimeline({
               key={update.id}
               type="button"
               data-side="left"
+              data-thread-color={threadColors.get(update.threadId)}
               className="absolute overflow-hidden rounded-xl border border-border/75 bg-card px-3.5 py-3 text-left shadow-sm transition hover:-translate-y-px hover:border-primary/55 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               style={{
                 left: update.bubbleX,
                 top: update.bubbleY,
                 width: layout.bubbleWidth,
-                height: BUBBLE_HEIGHT
+                height: BUBBLE_HEIGHT,
+                borderRightColor: threadColors.get(update.threadId),
+                borderRightWidth: 4
               }}
               aria-label={`Read ${updateTitle(update.sourceLabel)} from ${update.dateLabel}`}
               onClick={() => setSelectedUpdateId(update.id)}

@@ -268,6 +268,12 @@ test('renders a read-only Focus timeline and opens active or archived Threads', 
     await expect(activeRailFilter).toHaveAttribute('aria-pressed', 'true')
     await expect(timeline.getByText('Direct launch evidence')).toBeVisible()
     await expect(timeline.getByText('Nested launch evidence')).toBeVisible()
+    const activeThreadColor = await activeRailFilter.getAttribute('data-thread-color')
+    const completedThreadColor = await window.getByRole('button', {
+      name: 'Completed discovery timeline rail'
+    }).getAttribute('data-thread-color')
+    expect(activeThreadColor).toBeTruthy()
+    expect(activeThreadColor).not.toBe(completedThreadColor)
     await expect(timeline.getByTestId('timeline-sticky-thread-headers'))
       .toHaveCSS('position', 'sticky')
     await expect(timeline.locator(
@@ -289,6 +295,8 @@ test('renders a read-only Focus timeline and opens active or archived Threads', 
     const nestedBubble = timeline.getByRole('button', {
       name: 'Read Current delivery › Stabilize the launch update from Aug 18, 2026'
     })
+    await expect(directBubble).toHaveAttribute('data-thread-color', activeThreadColor!)
+    await expect(nestedBubble).toHaveAttribute('data-thread-color', activeThreadColor!)
     await expect(directBubble.getByRole('img', { name: 'Thread type' })).toBeVisible()
     await expect(nestedBubble.getByRole('img', { name: 'Commitment type' })).toBeVisible()
     const newestBubbleBox = await directBubble.boundingBox()
