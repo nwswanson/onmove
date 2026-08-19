@@ -1616,6 +1616,11 @@ describe('App', () => {
     const divider = screen.getByRole('separator', { name: 'Resize review and note panes' })
     expect(reviewArticle).toBeVisible()
     expect(notePane).toBeVisible()
+    const primaryContent = reviewArticle.closest('[data-slot="review-primary-content"]')
+    const splitPane = notePane.closest('[data-slot="vertical-split-pane"]')
+    expect(primaryContent).toHaveClass('max-w-6xl', 'px-6')
+    expect(notePane.closest('[data-slot="review-primary-content"]')).toBeNull()
+    expect(splitPane).toHaveClass('w-full')
     expect(divider).toHaveAttribute('aria-orientation', 'horizontal')
     expect(divider).toHaveAttribute('aria-valuenow', '62')
 

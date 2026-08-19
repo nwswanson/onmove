@@ -158,13 +158,15 @@ export function ReviewWorkspace({
           className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
           aria-labelledby="review-heading"
         >
-          <section className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col px-6 py-7 sm:px-10">
+          <section className="flex h-full min-h-0 w-full flex-col">
             <h1 id="review-heading" className="sr-only">Review</h1>
 
             {review.loading ? (
-              <p className="text-sm text-muted-foreground">Loading review…</p>
+              <p className="mx-auto w-full max-w-6xl px-6 py-7 text-sm text-muted-foreground sm:px-10">
+                Loading review…
+              </p>
             ) : review.error && review.overview === null ? (
-              <div>
+              <div className="mx-auto w-full max-w-6xl px-6 py-7 sm:px-10">
                 <p role="alert" className="text-sm text-destructive">{review.error}</p>
                 <Button className="mt-4" variant="outline" onClick={() => void review.refresh()}>
                   Try again
@@ -174,14 +176,19 @@ export function ReviewWorkspace({
               <NoteSplitWorkspace
                 preferenceId="review"
                 workspaceLabel="Review"
+                className="w-full"
                 noteOwnerLabel={currentModel.kindLabel}
                 note={currentModel.defaultNote}
                 onNoteContentChange={() => void review.recordNoteMutation(current)}
                 primary={(
-                  <article
-                    aria-label={`${currentModel.kindLabel} review: ${currentModel.title}`}
-                    className="overflow-hidden rounded-xl border border-border/85 bg-card/25 shadow-xs"
+                  <div
+                    data-slot="review-primary-content"
+                    className="mx-auto min-h-full w-full max-w-6xl px-6 py-7 sm:px-10"
                   >
+                    <article
+                      aria-label={`${currentModel.kindLabel} review: ${currentModel.title}`}
+                      className="overflow-hidden rounded-xl border border-border/85 bg-card/25 shadow-xs"
+                    >
                 <div className="border-b border-border/75 bg-muted/15">
                   <div
                     role="toolbar"
@@ -310,11 +317,12 @@ export function ReviewWorkspace({
 
                 <ReviewUpdates model={currentModel} />
                 <ReviewSupportingDetails model={currentModel} />
-                  </article>
+                    </article>
+                  </div>
                 )}
               />
             ) : (
-              <div className="mx-auto flex max-w-sm flex-1 flex-col items-center justify-center py-16 text-center">
+              <div className="mx-auto flex max-w-sm flex-1 flex-col items-center justify-center px-6 py-16 text-center">
                 <span className="mb-4 flex size-11 items-center justify-center rounded-full bg-success/15 text-success-foreground">
                   <Check className="size-5" aria-hidden="true" />
                 </span>
@@ -331,7 +339,9 @@ export function ReviewWorkspace({
             )}
 
             {review.error && review.overview !== null && (
-              <p role="alert" className="mt-3 text-xs text-destructive">{review.error}</p>
+              <p role="alert" className="mx-auto mt-3 w-full max-w-6xl px-6 text-xs text-destructive sm:px-10">
+                {review.error}
+              </p>
             )}
           </section>
         </main>
