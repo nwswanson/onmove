@@ -198,6 +198,34 @@ describe('RichTextEditor', () => {
       .toHaveTextContent('A decision worth preserving')
   })
 
+  it('exits a quote after Return follows two empty quoted lines', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    render(<RichTextEditor value="Quoted word" ariaLabel="Notes" onChange={onChange} />)
+
+    const editor = screen.getByRole('textbox', { name: 'Notes' })
+    await user.click(editor)
+    await user.keyboard('{Control>}a{/Control}')
+    await user.click(screen.getByRole('button', { name: 'Quote block' }))
+    await user.click(editor)
+    selectText(editor, 'Quoted word'.length, 'Quoted word'.length)
+
+    await user.keyboard('{Enter}{Enter}')
+    const quote = editor.querySelector('blockquote')
+    expect(quote?.children).toHaveLength(3)
+    expect(quote?.children[1]).toHaveTextContent('')
+    expect(quote?.children[2]).toHaveTextContent('')
+
+    await user.keyboard('{Enter}')
+    expect(quote?.children).toHaveLength(1)
+    expect(quote).toHaveTextContent('Quoted word')
+    expect(window.getSelection()?.anchorNode).toBe(quote?.nextElementSibling)
+    await waitFor(() => {
+      expect(richTextPlainText(onChange.mock.calls.at(-1)?.[0] as string))
+        .toBe('Quoted word')
+    })
+  })
+
   it('upgrades saved legacy inline quotes without losing their text', async () => {
     const onChange = vi.fn()
     const legacyQuote = 'onmove-rich-text:1:{"root":{"children":[{"children":[{"detail":0,"format":0,"mode":"normal","style":"","text":"Legacy quote","type":"text","version":1}],"direction":null,"format":"","indent":0,"type":"quote","version":1}],"direction":null,"format":"","indent":0,"type":"root","version":1}}'

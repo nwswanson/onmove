@@ -37,6 +37,7 @@ import {
   $applyNodeReplacement,
   $getRoot,
   $getSelection,
+  $isParagraphNode,
   $nodesOfType,
   $isRootNode,
   $isRangeSelection,
@@ -47,6 +48,7 @@ import {
   FORMAT_TEXT_COMMAND,
   INDENT_CONTENT_COMMAND,
   KEY_DOWN_COMMAND,
+  KEY_ENTER_COMMAND,
   KEY_TAB_COMMAND,
   OUTDENT_CONTENT_COMMAND,
   PASTE_COMMAND,
@@ -229,11 +231,62 @@ function MultiBlockQuotePlugin(): null {
   const [editor] = useLexicalComposerContext()
 
   useEffect(() => {
-    const unregister = editor.registerNodeTransform(QuoteNode, $upgradeLegacyQuote)
+    const unregisterTransform = editor.registerNodeTransform(QuoteNode, $upgradeLegacyQuote)
+    const unregisterExit = editor.registerCommand(
+      KEY_ENTER_COMMAND,
+      (event) => {
+        if (
+          !event ||
+          event.shiftKey ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.altKey
+        ) {
+          return false
+        }
+        const selection = $getSelection()
+        if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false
+
+        const anchorNode = selection.anchor.getNode()
+        const quote = $containingQuote(anchorNode)
+        if (!quote) return false
+
+        let currentBlock: LexicalNode | null = anchorNode
+        while (currentBlock?.getParent() && !currentBlock.getParent()?.is(quote)) {
+          currentBlock = currentBlock.getParent()
+        }
+        if (
+          !currentBlock ||
+          !$isParagraphNode(currentBlock) ||
+          currentBlock.getTextContent().trim().length > 0 ||
+          currentBlock.getNextSibling() !== null
+        ) {
+          return false
+        }
+
+        const previousBlock = currentBlock.getPreviousSibling()
+        if (
+          !$isParagraphNode(previousBlock) ||
+          previousBlock.getTextContent().trim().length > 0
+        ) {
+          return false
+        }
+
+        event.preventDefault()
+        currentBlock.remove()
+        previousBlock.remove()
+        const paragraph = $createParagraphNode()
+        if (quote.isEmpty()) quote.replace(paragraph)
+        else quote.insertAfter(paragraph)
+        paragraph.selectStart()
+        return true
+      },
+      COMMAND_PRIORITY_HIGH
+    )
     editor.update(() => {
       for (const quote of $nodesOfType(QuoteNode)) $upgradeLegacyQuote(quote)
     }, { tag: 'quote-normalization' })
-    return unregister
+    return mergeRegister(unregisterTransform, unregisterExit)
   }, [editor])
 
   return null
