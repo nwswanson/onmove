@@ -36,6 +36,7 @@ test('serves MCP from the running app and immediately refreshes its open windows
     title: 'MCP delivery',
     reviewFrequencyDays: 7
   }).snapshot()
+  const unrelatedSubject = seeded.domain.subjects.create({ name: 'Unrelated Subject' }).toSnapshot()
   seeded.mcpSettings.update({ serverEnabled: true, serverPort, allowMutations: true })
   seeded.close()
 
@@ -68,7 +69,52 @@ test('serves MCP from the running app and immediately refreshes its open windows
       arguments: { id: thread.id }
     })
     expect(liveThread.structuredContent).toMatchObject({
-      entity: { title: 'Edited in the live app' }
+      entity: { title: 'Edited in the live app' },
+      writeGuide: {
+        createUpdate: {
+          attributionMode: 'unscoped',
+          subjectRequired: false,
+          allowedSubjects: []
+        }
+      }
+    })
+
+    const invalidUpdate = await client.callTool({
+      name: 'onmove.create_update',
+      arguments: {
+        parent: { type: 'thread', id: thread.id },
+        subjectId: unrelatedSubject.id,
+        observation: 'Live recovery evidence'
+      }
+    })
+    expect(invalidUpdate.isError).toBe(true)
+    expect(invalidUpdate.structuredContent).toMatchObject({
+      error: { code: 'open_parent_cannot_target_subject' },
+      recovery: {
+        retry: {
+          tool: 'onmove.create_update',
+          arguments: {
+            parent: { type: 'thread', id: thread.id },
+            attribution: { mode: 'unscoped' },
+            observation: 'Live recovery evidence'
+          }
+        }
+      }
+    })
+    const recovered = invalidUpdate.structuredContent as {
+      recovery: { retry: { tool: string; arguments: Record<string, unknown> } }
+    }
+    const recoveredUpdate = await client.callTool({
+      name: recovered.recovery.retry.tool,
+      arguments: recovered.recovery.retry.arguments
+    })
+    expect(recoveredUpdate.isError).not.toBe(true)
+    const updatedThread = await client.callTool({
+      name: 'onmove.get_thread',
+      arguments: { id: thread.id }
+    })
+    expect(updatedThread.structuredContent).toMatchObject({
+      updates: [expect.objectContaining({ observation: 'Live recovery evidence', scope: null })]
     })
 
     const created = await client.callTool({

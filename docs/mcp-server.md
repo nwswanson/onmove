@@ -35,6 +35,23 @@ Write access is intentionally limited to creating Updates and Todos, editing or 
 and poking Thread or Commitment reviews. There are no delete, move, import, archive-clear, or status
 transition tools. Successful MCP writes store a metadata-only audit row without user-authored text.
 
+### Creating Updates
+
+`onmove.create_update` creates an Update record beneath a Thread or Commitment; it does not edit the
+Thread or Commitment itself. Read the parent first and inspect `writeGuide.createUpdate`:
+
+- An Open parent has `attributionMode: "unscoped"`. Omit `subjectId` or send
+  `attribution: { "mode": "unscoped" }`.
+- A scoped parent has `attributionMode: "subject"`. Choose exactly one entry from
+  `allowedSubjects` and send
+  `attribution: { "mode": "subject", "subjectId": 34 }`.
+
+The older top-level `subjectId` shorthand remains accepted and may be null, but the named
+`attribution` object is preferred. If attribution does not match the parent, the tool returns a
+structured error with an inspection call, allowed Subjects, and a ready-to-run retry whenever the
+choice is unambiguous. It never silently drops a supplied Subject because that would change the
+meaning of the evidence.
+
 ## Search
 
 `onmove.search` is backed by a durable SQLite FTS5 index, not by raw `LIKE` queries or arbitrary

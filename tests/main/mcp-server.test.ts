@@ -86,8 +86,10 @@ describe('OnMove MCP protocol adapter', () => {
     const tools = (await client.listTools()).tools
     const search = tools.find(({ name }) => name === 'onmove.search')!
     const getThread = tools.find(({ name }) => name === 'onmove.get_thread')!
+    const createUpdate = tools.find(({ name }) => name === 'onmove.create_update')!
     const searchSchema = JSON.stringify(search.inputSchema)
     const threadSchema = JSON.stringify(getThread.inputSchema)
+    const updateSchema = JSON.stringify(createUpdate.inputSchema)
 
     expect(searchSchema).toContain('current OnMove UI Focus and Subject selection')
     expect(searchSchema).toContain('Null or omitted means mode=all')
@@ -95,6 +97,9 @@ describe('OnMove MCP protocol adapter', () => {
     expect(searchSchema).toContain('canonical Subject')
     expect(threadSchema).toContain('hierarchy.thread.id')
     expect(threadSchema).toContain('not searchResult.reference.id')
+    expect(createUpdate.description).toContain('Open parents require unscoped attribution')
+    expect(updateSchema).toContain('writeGuide.createUpdate.allowedSubjects')
+    expect(updateSchema).toContain('Null or omitted means unscoped')
   })
 
   it('searches globally by default and only uses the UI context when mode=current is explicit', async () => {
@@ -270,6 +275,224 @@ describe('OnMove MCP protocol adapter', () => {
       updates: [expect.objectContaining({ id: update.id, observation: expect.stringContaining('getthreadasdfasdf') })],
       diagnostics: { appliedScope: { mode: 'all', focusId: null, subjectId: null } }
     })
+  })
+
+  it('guides and recovers an agent that incorrectly targets a Subject on an Open Thread', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Open update target',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const subject = database.domain.subjects.create({ name: 'Person X' }).toSnapshot()
+    database.mcpSettings.update({ allowMutations: true })
+
+    const context = await client.callTool({
+      name: 'onmove.get_thread',
+      arguments: { id: thread.id }
+    })
+    expect(context.structuredContent).toMatchObject({
+      reference: { type: 'thread', id: thread.id },
+      scope: { mode: 'open', scopeId: null, subjects: [] },
+      writeGuide: {
+        createUpdate: {
+          tool: 'onmove.create_update',
+          parent: { type: 'thread', id: thread.id },
+          attributionMode: 'unscoped',
+          subjectRequired: false,
+          allowedSubjects: [],
+          requestExample: {
+            parent: { type: 'thread', id: thread.id },
+            attribution: { mode: 'unscoped' }
+          }
+        }
+      }
+    })
+
+    const rejected = await client.callTool({
+      name: 'onmove.create_update',
+      arguments: {
+        parent: { type: 'thread', id: thread.id },
+        subjectId: subject.id,
+        observation: 'Open Thread evidence',
+        state: 'green'
+      }
+    })
+    expect(rejected.isError).toBe(true)
+    expect(rejected.structuredContent).toMatchObject({
+      error: {
+        code: 'open_parent_cannot_target_subject',
+        message: expect.stringContaining('Retry without subjectId')
+      },
+      recovery: {
+        inspect: {
+          tool: 'onmove.get_thread',
+          arguments: { id: thread.id },
+          path: 'writeGuide.createUpdate'
+        },
+        allowedSubjects: [],
+        retry: {
+          tool: 'onmove.create_update',
+          arguments: {
+            parent: { type: 'thread', id: thread.id },
+            attribution: { mode: 'unscoped' },
+            observation: 'Open Thread evidence',
+            state: 'green'
+          }
+        }
+      }
+    })
+    expect(JSON.stringify(rejected.content)).toContain('Suggested retry')
+
+    const recovery = rejected.structuredContent as {
+      recovery: { retry: { tool: string; arguments: Record<string, unknown> } }
+    }
+    const created = await client.callTool({
+      name: recovery.recovery.retry.tool,
+      arguments: recovery.recovery.retry.arguments
+    })
+    expect(created.isError).not.toBe(true)
+    expect(created.structuredContent).toMatchObject({
+      parent: { type: 'thread', id: thread.id },
+      scope: null,
+      observation: 'Open Thread evidence',
+      state: 'green'
+    })
+  })
+
+  it('requires one allowed Subject for a scoped Thread and provides a ready retry when unambiguous', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Scoped update target',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const scope = database.domain.threadScopes.addSubject(thread.id, { name: 'Only Subject' })
+    const subject = scope.subjects[0]
+    database.mcpSettings.update({ allowMutations: true })
+
+    const context = await client.callTool({
+      name: 'onmove.get_thread',
+      arguments: { id: thread.id }
+    })
+    expect(context.structuredContent).toMatchObject({
+      writeGuide: {
+        createUpdate: {
+          attributionMode: 'subject',
+          subjectRequired: true,
+          allowedSubjects: [{ id: subject.id, name: 'Only Subject' }],
+          requestExample: {
+            attribution: { mode: 'subject', subjectId: subject.id }
+          }
+        }
+      }
+    })
+
+    const rejected = await client.callTool({
+      name: 'onmove.create_update',
+      arguments: {
+        parent: { type: 'thread', id: thread.id },
+        attribution: { mode: 'unscoped' },
+        observation: 'Needs exact attribution'
+      }
+    })
+    expect(rejected.isError).toBe(true)
+    expect(rejected.structuredContent).toMatchObject({
+      error: { code: 'scoped_parent_requires_subject' },
+      recovery: {
+        allowedSubjects: [{ id: subject.id, name: 'Only Subject' }],
+        retry: {
+          tool: 'onmove.create_update',
+          arguments: {
+            parent: { type: 'thread', id: thread.id },
+            attribution: { mode: 'subject', subjectId: subject.id },
+            observation: 'Needs exact attribution'
+          }
+        }
+      }
+    })
+
+    const created = await client.callTool({
+      name: 'onmove.create_update',
+      arguments: {
+        parent: { type: 'thread', id: thread.id },
+        attribution: { mode: 'subject', subjectId: subject.id },
+        observation: 'Subject evidence'
+      }
+    })
+    expect(created.isError).not.toBe(true)
+    expect(created.structuredContent).toMatchObject({
+      scope: { scopeId: scope.scopeId, subjectId: subject.id },
+      observation: 'Subject evidence'
+    })
+  })
+
+  it('does not guess between multiple scoped Subjects and rejects an unrelated Subject', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Multiple Subject target',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    database.domain.threadScopes.addSubject(thread.id, { name: 'North' })
+    const scope = database.domain.threadScopes.addSubject(thread.id, { name: 'South' })
+    const unrelated = database.domain.subjects.create({ name: 'Unrelated' }).toSnapshot()
+    database.mcpSettings.update({ allowMutations: true })
+
+    const missing = await client.callTool({
+      name: 'onmove.create_update',
+      arguments: {
+        parent: { type: 'thread', id: thread.id },
+        observation: 'Ambiguous evidence'
+      }
+    })
+    expect(missing.isError).toBe(true)
+    expect(missing.structuredContent).toMatchObject({
+      error: { code: 'scoped_parent_requires_subject' },
+      recovery: {
+        allowedSubjects: expect.arrayContaining(scope.subjects.map(({ id, name }) => ({ id, name }))),
+        retry: null
+      }
+    })
+    expect(JSON.stringify(missing.content)).toContain('choose one allowed Subject')
+
+    const invalid = await client.callTool({
+      name: 'onmove.create_update',
+      arguments: {
+        parent: { type: 'thread', id: thread.id },
+        attribution: { mode: 'subject', subjectId: unrelated.id },
+        observation: 'Invalidly attributed evidence'
+      }
+    })
+    expect(invalid.isError).toBe(true)
+    expect(invalid.structuredContent).toMatchObject({
+      error: { code: 'subject_not_applicable' },
+      recovery: {
+        allowedSubjects: expect.arrayContaining(scope.subjects.map(({ id, name }) => ({ id, name }))),
+        retry: null
+      }
+    })
+    expect(database.domain.updates.listForThread(thread.id)).toEqual([])
+  })
+
+  it('accepts an explicitly null legacy subjectId as unscoped attribution', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Nullable target',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    database.mcpSettings.update({ allowMutations: true })
+    const created = await client.callTool({
+      name: 'onmove.create_update',
+      arguments: {
+        parent: { type: 'thread', id: thread.id },
+        subjectId: null,
+        observation: 'Nullable unscoped evidence'
+      }
+    })
+    expect(created.isError).not.toBe(true)
+    expect(created.structuredContent).toMatchObject({ scope: null })
   })
 
   it('returns the same not-found behavior for hidden and unknown records', async () => {

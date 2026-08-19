@@ -2,6 +2,9 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
 import type { AppDatabase } from '../main/database'
 import {
+  ScopeTargetValidationError
+} from '../main/application/services'
+import {
   SEARCH_ENTITY_TYPES,
   type SearchEntityType,
   type SearchQuery
@@ -74,6 +77,95 @@ const searchScopeSchema = z.object({
 
 function diagnosticsScope(scope: AppliedSearchScope = GLOBAL_SCOPE): McpDiagnostics {
   return { appliedScope: scope, warnings: [] }
+}
+
+interface UpdateWriteGuide {
+  tool: 'onmove.create_update'
+  parent: { type: 'thread' | 'commitment'; id: number }
+  attributionMode: 'unscoped' | 'subject'
+  subjectRequired: boolean
+  allowedSubjects: Array<{ id: number; name: string }>
+  instruction: string
+  requestExample: Record<string, unknown>
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function subjectRecord(value: unknown): { id: number; name: string } | null {
+  const candidate = record(value)
+  return candidate && Number.isSafeInteger(candidate.id) && typeof candidate.name === 'string'
+    ? { id: Number(candidate.id), name: candidate.name }
+    : null
+}
+
+function updateWriteGuide(value: unknown): UpdateWriteGuide | null {
+  const context = record(value)
+  const reference = record(context?.reference)
+  if (
+    !context || !reference ||
+    (reference.type !== 'thread' && reference.type !== 'commitment') ||
+    !Number.isSafeInteger(reference.id)
+  ) return null
+  const parent = {
+    type: reference.type,
+    id: Number(reference.id)
+  } as const
+  const scope = record(context.scope)
+  const scopeId = typeof scope?.scopeId === 'number' ? scope.scopeId : null
+  const candidates = parent.type === 'thread'
+    ? (Array.isArray(scope?.subjects) ? scope.subjects : [])
+    : (Array.isArray(scope?.cells)
+        ? scope.cells.map((cell) => record(cell)?.subject)
+        : [])
+  const allowedSubjects = [...new Map(candidates.flatMap((candidate) => {
+    const subject = subjectRecord(candidate)
+    return subject ? [[subject.id, subject] as const] : []
+  })).values()]
+  const subjectRequired = scopeId !== null && allowedSubjects.length > 0
+  if (!subjectRequired) {
+    return {
+      tool: 'onmove.create_update',
+      parent,
+      attributionMode: 'unscoped',
+      subjectRequired: false,
+      allowedSubjects: [],
+      instruction:
+        `${parent.type === 'thread' ? 'Thread' : 'Commitment'} ${parent.id} accepts an ` +
+        'unscoped Update. Omit subjectId or use attribution.mode="unscoped".',
+      requestExample: {
+        parent,
+        attribution: { mode: 'unscoped' },
+        observation: 'Write the Update observation here.'
+      }
+    }
+  }
+  return {
+    tool: 'onmove.create_update',
+    parent,
+    attributionMode: 'subject',
+    subjectRequired: true,
+    allowedSubjects,
+    instruction:
+      `${parent.type === 'thread' ? 'Thread' : 'Commitment'} ${parent.id} is scoped. ` +
+      'Choose exactly one allowed Subject and use attribution.mode="subject".',
+    requestExample: {
+      parent,
+      attribution: { mode: 'subject', subjectId: allowedSubjects[0].id },
+      observation: 'Write the Update observation here.'
+    }
+  }
+}
+
+function withWriteGuide(value: unknown): unknown {
+  const context = record(value)
+  const guide = updateWriteGuide(value)
+  return context && guide
+    ? { ...context, writeGuide: { createUpdate: guide } }
+    : value
 }
 
 function resolveSearchScope(
@@ -205,6 +297,84 @@ function variableId(value: string | string[] | undefined): number {
   return id
 }
 
+interface CreateUpdateToolInput {
+  parent: { type: 'thread' | 'commitment'; id: number }
+  attribution?: null | { mode: 'unscoped' } | { mode: 'subject'; subjectId: number }
+  /** Backward-compatible shorthand. Prefer attribution. */
+  subjectId?: number | null
+  date?: string
+  observation?: string
+  state?: 'red' | 'yellow' | 'green' | 'none'
+  sensitive?: boolean
+}
+
+function normalizedUpdateSubject(input: CreateUpdateToolInput): number | undefined {
+  const legacySubjectId = input.subjectId ?? undefined
+  if (!input.attribution) return legacySubjectId
+  if (input.attribution.mode === 'unscoped') {
+    if (legacySubjectId !== undefined) {
+      throw new Error(
+        'attribution.mode="unscoped" conflicts with subjectId. Remove subjectId and retry.'
+      )
+    }
+    return undefined
+  }
+  if (legacySubjectId !== undefined && legacySubjectId !== input.attribution.subjectId) {
+    throw new Error(
+      'attribution.subjectId conflicts with the top-level subjectId. Use attribution only.'
+    )
+  }
+  return input.attribution.subjectId
+}
+
+function scopeTargetErrorResult(
+  error: ScopeTargetValidationError,
+  input: CreateUpdateToolInput,
+  guide: UpdateWriteGuide | null
+): {
+  isError: true
+  content: Array<{ type: 'text'; text: string }>
+  structuredContent: Record<string, unknown>
+} {
+  const base: Record<string, unknown> = { ...input }
+  delete base.subjectId
+  delete base.attribution
+  const unscoped = error.issue.code === 'open_parent_cannot_target_subject' ||
+    error.issue.code === 'empty_scope_cannot_target_subject'
+  const retryArguments = unscoped
+    ? { ...base, attribution: { mode: 'unscoped' } }
+    : guide?.allowedSubjects.length === 1
+      ? {
+          ...base,
+          attribution: { mode: 'subject', subjectId: guide.allowedSubjects[0].id }
+        }
+      : null
+  const recovery = {
+    inspect: {
+      tool: `onmove.get_${error.issue.parent.type}`,
+      arguments: { id: error.issue.parent.id },
+      path: 'writeGuide.createUpdate'
+    },
+    allowedSubjects: guide?.allowedSubjects ?? [],
+    retry: retryArguments === null
+      ? null
+      : { tool: 'onmove.create_update', arguments: retryArguments }
+  }
+  const structuredContent = {
+    error: { code: error.issue.code, message: error.message, target: error.issue },
+    recovery,
+    diagnostics: diagnosticsScope()
+  }
+  const retryText = retryArguments === null
+    ? 'Inspect the parent and choose one allowed Subject before retrying.'
+    : `Suggested retry: ${JSON.stringify(recovery.retry)}`
+  return {
+    isError: true,
+    content: [{ type: 'text', text: `${error.message}\n${retryText}` }],
+    structuredContent
+  }
+}
+
 /** Registers the complete typed MCP surface against one application-service boundary. */
 export function createOnMoveMcpServer(
   database: AppDatabase,
@@ -214,7 +384,7 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Use onmove.search for literal information that may appear anywhere in titles, Updates, Notes, Todos, Subjects, or other indexed text. Search is global by default: never assume the current UI Focus is applied. Use the explicit named scope only when narrowing is intended. Each result includes hierarchy IDs; use hierarchy.thread.id with onmove.get_thread, not the ID of a matching Update or Note. Inspect diagnostics.appliedScope and warnings on every response. Sensitive content and mutations are controlled only in OnMove Settings.'
+        'Use onmove.search for literal information that may appear anywhere in titles, Updates, Notes, Todos, Subjects, or other indexed text. Search is global by default: never assume the current UI Focus is applied. Use the explicit named scope only when narrowing is intended. Each result includes hierarchy IDs; use hierarchy.thread.id with onmove.get_thread, not the ID of a matching Update or Note. Before onmove.create_update, inspect writeGuide.createUpdate on onmove.get_thread or onmove.get_commitment: Open parents must be unscoped, while scoped parents require one listed Subject. Inspect diagnostics.appliedScope and warnings on every response. Sensitive content and mutations are controlled only in OnMove Settings.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -266,7 +436,7 @@ export function createOnMoveMcpServer(
         inputSchema: z.object({ id: idSchema.describe(idDescription) }),
         annotations: { readOnlyHint: true }
       },
-      async ({ id }) => result(found(getter(id)))
+      async ({ id }) => result(withWriteGuide(found(getter(id))))
     )
   }
 
@@ -384,26 +554,71 @@ export function createOnMoveMcpServer(
       'The parent Thread or Commitment\'s own ID. Use the corresponding searchResult.hierarchy ID, not an Update, Todo, or Note ID.'
     )
   })
+  const updateAttributionSchema = z.discriminatedUnion('mode', [
+    z.object({
+      mode: z.literal('unscoped').describe(
+        'Create a general Update on an Open parent or on a Scope with no applicable Subjects.'
+      )
+    }),
+    z.object({
+      mode: z.literal('subject').describe(
+        'Attribute the Update to exactly one currently applicable Subject cell.'
+      ),
+      subjectId: idSchema.describe(
+        'A Subject ID from writeGuide.createUpdate.allowedSubjects on onmove.get_thread or onmove.get_commitment.'
+      )
+    })
+  ]).nullable().optional().describe(
+    'Preferred explicit Update attribution. Inspect the parent\'s writeGuide.createUpdate first. Omit or use unscoped for an Open parent; use subject with one allowed Subject for a scoped parent.'
+  )
   server.registerTool(
     'onmove.create_update',
     {
       title: 'Create OnMove update',
-      description: 'Create direct evidence on a Thread or Commitment. Scoped parents require one currently applicable canonical Subject.',
+      description: 'Create an Update (direct evidence), not edit a Thread record. The parent object identifies the owning Thread or Commitment. Open parents require unscoped attribution and reject Subject IDs; scoped parents require exactly one Subject from the parent\'s writeGuide.createUpdate.allowedSubjects. Call onmove.get_thread or onmove.get_commitment first when attribution is uncertain.',
       inputSchema: z.object({
         parent: parentSchema,
-        subjectId: idSchema.optional().describe(
-          'The canonical Subject ID for one currently applicable Scope cell; omit only for an unscoped parent.'
+        attribution: updateAttributionSchema,
+        subjectId: idSchema.nullable().optional().describe(
+          'Backward-compatible shorthand for attribution.mode="subject". Prefer attribution. Null or omitted means unscoped and is required for an Open parent.'
         ),
-        date: dateSchema.optional(),
-        observation: z.string().optional(),
-        state: z.enum(['red', 'yellow', 'green', 'none']).optional(),
-        sensitive: z.boolean().optional()
+        date: dateSchema.optional().describe('The Update\'s recorded date; defaults to today.'),
+        observation: z.string().optional().describe(
+          'The Update evidence or observation. Blank Updates are valid.'
+        ),
+        state: z.enum(['red', 'yellow', 'green', 'none']).optional().describe(
+          'Evidence state; defaults to none.'
+        ),
+        sensitive: z.boolean().optional().describe(
+          'Whether the Update is sensitive; defaults to false and requires MCP sensitive access when true.'
+        )
       }),
       annotations: { readOnlyHint: false, destructiveHint: false }
     },
-    async (input) => mutationResult(() =>
-      database.commands.createUpdate(input, policy(), server.server.getClientVersion()?.name)
-    )
+    async (input) => {
+      const normalized: CreateUpdateToolInput = input
+      const subjectId = normalizedUpdateSubject(normalized)
+      try {
+        return mutationResult(() => database.commands.createUpdate(
+          {
+            parent: normalized.parent,
+            subjectId,
+            date: normalized.date,
+            observation: normalized.observation,
+            state: normalized.state,
+            sensitive: normalized.sensitive
+          },
+          policy(),
+          server.server.getClientVersion()?.name
+        ))
+      } catch (error) {
+        if (!(error instanceof ScopeTargetValidationError)) throw error
+        const context = error.issue.parent.type === 'thread'
+          ? database.queries.getThread(error.issue.parent.id, policy())
+          : database.queries.getCommitment(error.issue.parent.id, policy())
+        return scopeTargetErrorResult(error, normalized, updateWriteGuide(context))
+      }
+    }
   )
 
   server.registerTool(
@@ -499,7 +714,10 @@ function registerResources(server: McpServer, database: AppDatabase): void {
         description: `Hierarchy-aware OnMove ${type} context.`,
         mimeType: 'application/json'
       },
-      async (uri, variables) => resource(uri, found(getter(variableId(variables.id))))
+      async (uri, variables) => resource(
+        uri,
+        withWriteGuide(found(getter(variableId(variables.id))))
+      )
     )
   }
 

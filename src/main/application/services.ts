@@ -79,6 +79,27 @@ export interface PokeApplicationReview {
   subjectId?: number
 }
 
+export type ScopeTargetIssueCode =
+  | 'open_parent_cannot_target_subject'
+  | 'empty_scope_cannot_target_subject'
+  | 'scoped_parent_requires_subject'
+  | 'subject_not_applicable'
+
+export interface ScopeTargetIssue {
+  code: ScopeTargetIssueCode
+  parent: { type: 'thread' | 'commitment'; id: number }
+  subjectId: number | null
+  effectiveScopeId: number | null
+}
+
+/** A typed, recoverable attribution failure for MCP write targets. */
+export class ScopeTargetValidationError extends ModelValidationError {
+  constructor(message: string, readonly issue: ScopeTargetIssue) {
+    super(message)
+    this.name = 'ScopeTargetValidationError'
+  }
+}
+
 interface AuditInput {
   toolName: string
   entityType: string
@@ -574,25 +595,56 @@ export class OnMoveCommandService {
     on?: string
   ): UpdateScopeCell | null {
     const application = this.domain.scopeApplications.get(parent)
+    const parentName = `${parent.type === 'thread' ? 'Thread' : 'Commitment'} ${parent.id}`
     if (application.effectiveScopeId === null) {
       if (subjectId !== undefined) {
-        throw new ModelValidationError('an Open parent cannot target a Subject')
+        throw new ScopeTargetValidationError(
+          `${parentName} is Open (unscoped), so it cannot target Subject ${subjectId}. ` +
+          'Retry without subjectId (or set subjectId to null) to create an unscoped record.',
+          {
+            code: 'open_parent_cannot_target_subject', parent, subjectId,
+            effectiveScopeId: null
+          }
+        )
       }
       return null
     }
     const subjects = this.domain.scopes.effectiveSubjects(application.effectiveScopeId, on)
     if (subjects.length === 0) {
       if (subjectId !== undefined) {
-        throw new ModelValidationError('this parent has no applicable Subjects')
+        throw new ScopeTargetValidationError(
+          `${parentName}'s Scope currently has no applicable Subjects, so it cannot target ` +
+          `Subject ${subjectId}. Retry without subjectId (or set subjectId to null).`,
+          {
+            code: 'empty_scope_cannot_target_subject', parent, subjectId,
+            effectiveScopeId: application.effectiveScopeId
+          }
+        )
       }
       return null
     }
     if (subjectId === undefined) {
-      throw new ModelValidationError('a scoped parent requires a currently applicable Subject')
+      throw new ScopeTargetValidationError(
+        `${parentName} is scoped and requires one currently applicable subjectId. ` +
+        `Call onmove.get_${parent.type} with id ${parent.id}, inspect ` +
+        'writeGuide.createUpdate.allowedSubjects, and retry with one of those IDs.',
+        {
+          code: 'scoped_parent_requires_subject', parent, subjectId: null,
+          effectiveScopeId: application.effectiveScopeId
+        }
+      )
     }
     assertPositiveId(subjectId, 'subject id')
     if (!subjects.some((subject) => subject.id === subjectId)) {
-      throw new ModelValidationError('the Subject is not currently applicable to this parent')
+      throw new ScopeTargetValidationError(
+        `Subject ${subjectId} is not currently applicable to ${parentName}. ` +
+        `Call onmove.get_${parent.type} with id ${parent.id}, inspect ` +
+        'writeGuide.createUpdate.allowedSubjects, and retry with one of those IDs.',
+        {
+          code: 'subject_not_applicable', parent, subjectId,
+          effectiveScopeId: application.effectiveScopeId
+        }
+      )
     }
     return { scopeId: application.effectiveScopeId, subjectId }
   }

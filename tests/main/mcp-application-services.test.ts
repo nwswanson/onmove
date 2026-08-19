@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AppDatabase } from '../../src/main/database'
 import type { OnMoveAccessPolicy } from '../../src/main/application/access-policy'
+import { ScopeTargetValidationError } from '../../src/main/application/services'
 import { RICH_TEXT_PREFIX } from '../../src/shared/rich-text-value'
 
 const denied: OnMoveAccessPolicy = { sensitiveContent: 'deny', mutations: 'read-only' }
@@ -128,7 +129,7 @@ describe('OnMove MCP application services', () => {
     expect(() => database.commands.createUpdate({
       parent: { type: 'commitment', id: commitmentId },
       observation: 'Unattributed evidence'
-    }, writable)).toThrow('requires a currently applicable Subject')
+    }, writable)).toThrow('requires one currently applicable subjectId')
 
     const created = database.commands.createUpdate({
       parent: { type: 'commitment', id: commitmentId },
@@ -159,6 +160,39 @@ describe('OnMove MCP application services', () => {
       client_name: 'integration-test'
     })])
     expect(serialized).not.toContain('Scoped operational evidence')
+  })
+
+  it('keeps Open Thread Updates unscoped and returns typed recovery when a Subject is supplied', () => {
+    const { threadId } = hierarchy()
+    const unrelated = database.domain.subjects.create({ name: 'Unrelated Person' }).toSnapshot()
+
+    try {
+      database.commands.createUpdate({
+        parent: { type: 'thread', id: threadId },
+        subjectId: unrelated.id,
+        observation: 'Should not be silently misattributed'
+      }, writable)
+      throw new Error('Expected Open-parent attribution to be rejected')
+    } catch (error) {
+      expect(error).toBeInstanceOf(ScopeTargetValidationError)
+      expect(error).toMatchObject({
+        issue: {
+          code: 'open_parent_cannot_target_subject',
+          parent: { type: 'thread', id: threadId },
+          subjectId: unrelated.id,
+          effectiveScopeId: null
+        }
+      })
+      expect((error as Error).message).toContain(
+        'Retry without subjectId (or set subjectId to null)'
+      )
+    }
+
+    const created = database.commands.createUpdate({
+      parent: { type: 'thread', id: threadId },
+      observation: 'Correctly unscoped evidence'
+    }, writable)
+    expect(created.scope).toBeNull()
   })
 
   it('keeps mutations read-only by default and enforces sensitive-write permission', () => {
