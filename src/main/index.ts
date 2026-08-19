@@ -327,7 +327,15 @@ app.whenReady().then(async () => {
   maintainRollingBackup()
   backupMaintenanceTimer = setInterval(maintainRollingBackup, BACKUP_MAINTENANCE_CHECK_MS)
   backupMaintenanceTimer.unref()
-  mcpRuntime = new OnMoveMcpRuntime(database, broadcastDomainChanged)
+  mcpRuntime = new OnMoveMcpRuntime(
+    database,
+    broadcastDomainChanged,
+    (document) => broadcastRichTextChange({
+      document,
+      // WebContents IDs are positive; zero identifies an external MCP edit.
+      sourceWindowId: 0
+    })
+  )
   await mcpRuntime.initialize()
   unregisterIpc = registerAppIpc(
     ipcMain,

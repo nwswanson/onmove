@@ -8,6 +8,7 @@ import {
 import type {
   McpSettingsSnapshot,
   McpUiContextSnapshot,
+  RichTextDocumentSnapshot,
   UpdateMcpSettingsInput
 } from '../shared/contracts'
 import type { AppDatabase } from '../main/database'
@@ -34,7 +35,8 @@ export class OnMoveMcpHttpServer {
   constructor(
     private readonly database: AppDatabase,
     private readonly onMutation: () => void,
-    private readonly getUiContext: () => McpUiContextSnapshot = () => EMPTY_UI_CONTEXT
+    private readonly getUiContext: () => McpUiContextSnapshot = () => EMPTY_UI_CONTEXT,
+    private readonly onRichTextMutation: (document: RichTextDocumentSnapshot) => void = () => {}
   ) {}
 
   endpoint(): string | null {
@@ -48,6 +50,7 @@ export class OnMoveMcpHttpServer {
     const handler = createMcpHandler(
       () => createOnMoveMcpServer(this.database, {
         onMutation: this.onMutation,
+        onRichTextMutation: this.onRichTextMutation,
         getCurrentUiContext: this.getUiContext
       }),
       {
@@ -123,9 +126,15 @@ export class OnMoveMcpRuntime {
 
   constructor(
     private readonly database: AppDatabase,
-    onMutation: () => void
+    onMutation: () => void,
+    onRichTextMutation: (document: RichTextDocumentSnapshot) => void = () => {}
   ) {
-    this.http = new OnMoveMcpHttpServer(database, onMutation, () => this.uiContext)
+    this.http = new OnMoveMcpHttpServer(
+      database,
+      onMutation,
+      () => this.uiContext,
+      onRichTextMutation
+    )
   }
 
   setUiContext(context: McpUiContextSnapshot): void {

@@ -3,6 +3,9 @@ import type {
   DueOverviewSnapshot,
   FocusSnapshot,
   HealthState,
+  NoteParent,
+  NoteSnapshot,
+  RichTextDocumentSnapshot,
   ReviewOverviewSnapshot,
   TagSummarySnapshot,
   TagUseSnapshot,
@@ -50,6 +53,14 @@ export interface ApplicationEntityContext {
   threads: unknown[]
 }
 
+export interface ApplicationNoteContext {
+  reference: { type: 'note'; id: number }
+  uri: string
+  contextPath: Array<{ type: 'focus' | 'thread' | 'commitment'; id: number; title: string }>
+  effectiveSensitive: boolean
+  note: NoteSnapshot
+}
+
 export interface CreateApplicationUpdate {
   parent: { type: 'thread' | 'commitment'; id: number }
   subjectId?: number
@@ -72,6 +83,12 @@ export interface UpdateApplicationTodo {
   name?: string
   dueDate?: string | null
   done?: boolean
+}
+
+export interface UpdateApplicationNote {
+  id: number
+  expectedRevision: number
+  content: string
 }
 
 export interface PokeApplicationReview {
@@ -135,6 +152,21 @@ export class ScopeTargetValidationError extends ModelValidationError {
   constructor(message: string, readonly issue: ScopeTargetIssue) {
     super(message)
     this.name = 'ScopeTargetValidationError'
+  }
+}
+
+export interface NoteRevisionConflictIssue {
+  noteId: number
+  expectedRevision: number
+  currentRevision: number
+  parent: NoteParent
+}
+
+/** A recoverable optimistic-concurrency failure for live Note editing. */
+export class NoteRevisionConflictError extends ModelValidationError {
+  constructor(message: string, readonly issue: NoteRevisionConflictIssue) {
+    super(message)
+    this.name = 'NoteRevisionConflictError'
   }
 }
 
@@ -393,6 +425,53 @@ export class OnMoveQueryService {
       commitments: [],
       routines: [],
       threads: []
+    }
+  }
+
+  getNote(id: number, access: OnMoveAccessPolicy): ApplicationNoteContext | null {
+    assertPositiveId(id, 'note id')
+    const note = this.domain.notes.find(id)
+    if (!note || !this.sensitivity.canRead('note', id, access)) return null
+    const contextPath: ApplicationNoteContext['contextPath'] = []
+    if (note.parent.type === 'focus') {
+      const focus = this.domain.focuses.find(note.parent.id)
+      if (!focus) return null
+      contextPath.push({ type: 'focus', id: focus.id, title: focus.title })
+    } else if (note.parent.type === 'thread') {
+      const thread = this.domain.threads.find(note.parent.id)
+      const focus = thread ? this.domain.focuses.find(thread.focusId) : null
+      if (!thread || !focus) return null
+      contextPath.push(
+        { type: 'focus', id: focus.id, title: focus.title },
+        { type: 'thread', id: thread.id, title: thread.title }
+      )
+    } else {
+      const commitment = this.domain.commitments.find(note.parent.id)
+      if (!commitment) return null
+      if (commitment.parent.type === 'focus') {
+        const focus = this.domain.focuses.find(commitment.parent.id)
+        if (!focus) return null
+        contextPath.push(
+          { type: 'focus', id: focus.id, title: focus.title },
+          { type: 'commitment', id: commitment.id, title: commitment.title }
+        )
+      } else {
+        const thread = this.domain.threads.find(commitment.parent.id)
+        const focus = thread ? this.domain.focuses.find(thread.focusId) : null
+        if (!thread || !focus) return null
+        contextPath.push(
+          { type: 'focus', id: focus.id, title: focus.title },
+          { type: 'thread', id: thread.id, title: thread.title },
+          { type: 'commitment', id: commitment.id, title: commitment.title }
+        )
+      }
+    }
+    return {
+      reference: { type: 'note', id },
+      uri: `onmove://note/${id}`,
+      contextPath,
+      effectiveSensitive: Boolean(this.sensitivity.isSensitive('note', id)),
+      note: plainProjection(note) as NoteSnapshot
     }
   }
 
@@ -716,6 +795,49 @@ export class OnMoveCommandService {
         affectedSensitive: Boolean(this.sensitivity.isSensitive('todo', updated.id))
       })
       return updated
+    })
+  }
+
+  updateNote(
+    input: UpdateApplicationNote,
+    access: OnMoveAccessPolicy,
+    clientName?: string
+  ): RichTextDocumentSnapshot {
+    this.assertMutation(access)
+    assertPositiveId(input.id, 'note id')
+    if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) {
+      throw new ModelValidationError('expected Note revision must be a non-negative integer')
+    }
+    if (typeof input.content !== 'string') {
+      throw new ModelValidationError('Note content must be text')
+    }
+    if (!this.sensitivity.canRead('note', input.id, access)) {
+      throw new ModelNotFoundError('Note', input.id)
+    }
+    return this.database.transaction(() => {
+      const current = this.domain.notes.find(input.id)
+      if (!current) throw new ModelNotFoundError('Note', input.id)
+      if (current.revision !== input.expectedRevision) {
+        throw new NoteRevisionConflictError(
+          `Note ${input.id} changed after revision ${input.expectedRevision}. ` +
+          `The current revision is ${current.revision}. Read the Note again before retrying.`,
+          {
+            noteId: input.id,
+            expectedRevision: input.expectedRevision,
+            currentRevision: current.revision,
+            parent: current.parent
+          }
+        )
+      }
+      const document = this.domain.richTextDocuments.save({
+        type: 'note', id: input.id, field: 'content'
+      }, input.content)
+      this.audit.record({
+        toolName: 'onmove.update_note', entityType: 'note', entityId: input.id,
+        category: 'update', clientName,
+        affectedSensitive: Boolean(this.sensitivity.isSensitive('note', input.id))
+      })
+      return document
     })
   }
 

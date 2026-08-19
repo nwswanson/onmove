@@ -42,13 +42,14 @@ describe('running-application MCP server', () => {
     }).snapshot()
     database.mcpSettings.update({ allowMutations: true })
     const changed = vi.fn()
-    const server = new OnMoveMcpHttpServer(database, changed)
+    const richTextChanged = vi.fn()
+    const server = new OnMoveMcpHttpServer(database, changed, undefined, richTextChanged)
     const endpoint = await server.start(0)
     const client = new Client({ name: 'live-test', version: '1.0.0' })
 
     try {
       await client.connect(new StreamableHTTPClientTransport(new URL(endpoint)))
-      expect((await client.listTools()).tools).toHaveLength(17)
+      expect((await client.listTools()).tools).toHaveLength(19)
       const created = await client.callTool({
         name: 'onmove.create_todo',
         arguments: { parent: { type: 'thread', id: thread.id }, name: 'Same process Todo' }
@@ -58,6 +59,24 @@ describe('running-application MCP server', () => {
         expect.objectContaining({ name: 'Same process Todo' })
       ])
       expect(changed).toHaveBeenCalledOnce()
+
+      const note = database.domain.notes.list({ type: 'thread', id: thread.id })[0]
+      changed.mockClear()
+      const updatedNote = await client.callTool({
+        name: 'onmove.update_note',
+        arguments: {
+          id: note.id,
+          expectedRevision: note.revision,
+          content: 'Live Note content'
+        }
+      })
+      expect(updatedNote.isError).not.toBe(true)
+      expect(changed).toHaveBeenCalledOnce()
+      expect(richTextChanged).toHaveBeenCalledWith(expect.objectContaining({
+        reference: { type: 'note', id: note.id, field: 'content' },
+        value: 'Live Note content',
+        revision: note.revision + 1
+      }))
 
       const rejected = await fetch(endpoint, {
         method: 'POST',

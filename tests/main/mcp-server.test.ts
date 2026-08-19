@@ -40,16 +40,23 @@ describe('OnMove MCP protocol adapter', () => {
     expect(listed.tools.map(({ name }) => name)).toEqual(expect.arrayContaining([
       'onmove.list_focuses',
       'onmove.get_thread',
+      'onmove.get_note',
       'onmove.resolve_target',
       'onmove.search',
       'onmove.create_update',
+      'onmove.update_note',
       'onmove.poke_review'
     ]))
-    expect(listed.tools).toHaveLength(17)
+    expect(listed.tools).toHaveLength(19)
 
     const templates = await client.listResourceTemplates()
     expect(templates.resourceTemplates.map(({ uriTemplate }) => uriTemplate)).toEqual(
-      expect.arrayContaining(['onmove://focus/{id}', 'onmove://thread/{id}', 'onmove://tags/{name}'])
+      expect.arrayContaining([
+        'onmove://focus/{id}',
+        'onmove://thread/{id}',
+        'onmove://note/{id}',
+        'onmove://tags/{name}'
+      ])
     )
 
     const search = await client.callTool({
@@ -409,6 +416,80 @@ describe('OnMove MCP protocol adapter', () => {
       updates: [expect.objectContaining({ id: update.id, observation: expect.stringContaining('getthreadasdfasdf') })],
       diagnostics: { appliedScope: { mode: 'all', focusId: null, subjectId: null } }
     })
+  })
+
+  it('reads and safely updates a Note while returning structured stale-write recovery', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Note owner',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const note = database.domain.notes.list({ type: 'thread', id: thread.id })[0]
+    database.mcpSettings.update({ allowMutations: true })
+
+    const read = await client.callTool({
+      name: 'onmove.get_note', arguments: { id: note.id }
+    })
+    expect(read.isError).not.toBe(true)
+    expect(read.structuredContent).toMatchObject({
+      reference: { type: 'note', id: note.id },
+      contextPath: [
+        { type: 'focus', id: focus.id, title: 'Launch readiness' },
+        { type: 'thread', id: thread.id, title: 'Note owner' }
+      ],
+      note: { id: note.id, title: 'Default', content: '', revision: note.revision },
+      writeGuide: {
+        updateNote: {
+          tool: 'onmove.update_note',
+          noteId: note.id,
+          expectedRevision: note.revision,
+          requestExample: {
+            id: note.id,
+            expectedRevision: note.revision
+          }
+        }
+      }
+    })
+
+    const updated = await client.callTool({
+      name: 'onmove.update_note',
+      arguments: {
+        id: note.id,
+        expectedRevision: note.revision,
+        content: 'Updated live through MCP'
+      }
+    })
+    expect(updated.isError).not.toBe(true)
+    expect(updated.structuredContent).toMatchObject({
+      reference: { type: 'note', id: note.id, field: 'content' },
+      value: 'Updated live through MCP',
+      revision: note.revision + 1
+    })
+
+    const stale = await client.callTool({
+      name: 'onmove.update_note',
+      arguments: {
+        id: note.id,
+        expectedRevision: note.revision,
+        content: 'This must not overwrite the newer value'
+      }
+    })
+    expect(stale.isError).toBe(true)
+    expect(stale.structuredContent).toMatchObject({
+      error: {
+        code: 'note_revision_conflict',
+        noteId: note.id,
+        expectedRevision: note.revision,
+        currentRevision: note.revision + 1
+      },
+      recovery: {
+        inspect: { tool: 'onmove.get_note', arguments: { id: note.id } },
+        retry: null
+      }
+    })
+    expect(JSON.stringify(stale.content)).toContain('Read the Note again')
+    expect(database.domain.notes.find(note.id)?.content).toBe('Updated live through MCP')
   })
 
   it('guides and recovers an agent that incorrectly targets a Subject on an Open Thread', async () => {

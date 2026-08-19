@@ -80,6 +80,13 @@ the server is read-only unless **Allow safe MCP writes** is enabled. Use **Allow
 only when the connected client should be able to read records marked sensitive. If the default port
 is already occupied, change **Local port** in Settings and update the client URL.
 
+For hierarchy-shaped requests such as “Do X for Person Y's 1:1 in Team,” clients should call
+`onmove.resolve_target` first and execute its resolved Todo recommendation. This keeps duplicate
+names and Subject Scope attribution explicit instead of asking the model to guess IDs.
+
+To edit a Note, call `onmove.get_note` and then `onmove.update_note` with the returned revision.
+Stale revisions are rejected, and successful edits synchronize into open OnMove windows.
+
 See [`docs/mcp-server.md`](docs/mcp-server.md) for the available tools, search behavior, and security
 boundary.
 

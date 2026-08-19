@@ -32,8 +32,9 @@ Hidden records are indistinguishable from unknown IDs. Effective sensitivity inc
 Thread, Commitment or Routine, Scope, Subject cell, and record-level sensitivity.
 
 Write access is intentionally limited to creating Updates and Todos, editing or completing Todos,
-and poking Thread or Commitment reviews. There are no delete, move, import, archive-clear, or status
-transition tools. Successful MCP writes store a metadata-only audit row without user-authored text.
+updating existing Notes, and poking Thread or Commitment reviews. There are no delete, move,
+import, archive-clear, or status transition tools. Successful MCP writes store a metadata-only
+audit row without user-authored text.
 
 ### Creating Updates
 
@@ -86,6 +87,28 @@ The older top-level `subjectId` and `sharedAcrossSubjects` fields remain accepte
 but named `attribution` is preferred. Invalid Todo attribution returns the same structured
 inspection call, allowed choices, and unambiguous retry behavior as Update creation.
 
+### Updating Notes
+
+Search results and parent contexts expose each Note's own ID. Use `onmove.get_note` with that ID to
+read its hierarchy, content, current revision, and `writeGuide.updateNote`, then call:
+
+```json
+{
+  "id": 81,
+  "expectedRevision": 4,
+  "content": "Replacement note content"
+}
+```
+
+`onmove.update_note` replaces the complete Note content. Plain text remains valid in the rich-text
+editor, while callers that intentionally produce OnMove's versioned rich-text envelope may retain
+structured formatting. The current revision is mandatory: if the Note changed in the app after it
+was read, the write is rejected as `note_revision_conflict` without changing the database. The
+response instructs the client to read, reconcile, and retry; the server never invents a text merge.
+
+A committed Note edit is broadcast through both the domain and rich-text live-change channels, so
+the main application and any open pop-out Note window receive the new revision immediately.
+
 ## Search
 
 `onmove.search` is backed by a durable SQLite FTS5 index, not by raw `LIKE` queries or arbitrary
@@ -128,7 +151,7 @@ the Update's `reference.id`. This distinction is also described directly in the 
 ## Tools and resources
 
 Read tools cover Focuses, Threads, Commitments, Routines, Reviews, Due work, Todos, Tags, search,
-and hierarchy-aware target resolution. Write tools cover the safe mutations described above.
+Notes, and hierarchy-aware target resolution. Write tools cover the safe mutations described above.
 Stable resource templates use:
 
 ```text
@@ -136,6 +159,7 @@ onmove://focus/{id}
 onmove://thread/{id}
 onmove://commitment/{id}
 onmove://routine/{id}
+onmove://note/{id}
 onmove://tags/{name}
 ```
 

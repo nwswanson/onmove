@@ -2,6 +2,7 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
 import type { AppDatabase } from '../main/database'
 import {
+  NoteRevisionConflictError,
   ScopeTargetValidationError,
   type ApplicationResolvedTargetCandidate
 } from '../main/application/services'
@@ -10,11 +11,13 @@ import {
   type SearchEntityType,
   type SearchQuery
 } from '../main/application/search-index'
-import type { McpUiContextSnapshot } from '../shared/contracts'
+import type { McpUiContextSnapshot, RichTextDocumentSnapshot } from '../shared/contracts'
 
 export interface OnMoveMcpServerOptions {
   /** Called after a committed MCP mutation so the live application can refresh its windows. */
   onMutation?: () => void
+  /** Called with committed rich-text state so open editors can apply an external revision. */
+  onRichTextMutation?: (document: RichTextDocumentSnapshot) => void
   /** Read only for an explicit scope.mode=current search; never an implicit default filter. */
   getCurrentUiContext?: () => McpUiContextSnapshot
 }
@@ -99,6 +102,14 @@ interface TodoWriteGuide {
   allowedSubjects: Array<{ id: number; name: string }>
   instruction: string
   requestExamples: Record<string, Record<string, unknown>>
+}
+
+interface NoteWriteGuide {
+  tool: 'onmove.update_note'
+  noteId: number
+  expectedRevision: number
+  instruction: string
+  requestExample: { id: number; expectedRevision: number; content: string }
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -234,6 +245,39 @@ function withWriteGuide(value: unknown): unknown {
   const createTodo = todoWriteGuide(value)
   return context && createUpdate && createTodo
     ? { ...context, writeGuide: { createUpdate, createTodo } }
+    : value
+}
+
+function noteWriteGuide(value: unknown): NoteWriteGuide | null {
+  const context = record(value)
+  const reference = record(context?.reference)
+  const note = record(context?.note)
+  if (
+    reference?.type !== 'note' || !Number.isSafeInteger(reference.id) ||
+    !note || !Number.isSafeInteger(note.revision)
+  ) return null
+  const noteId = Number(reference.id)
+  const expectedRevision = Number(note.revision)
+  return {
+    tool: 'onmove.update_note',
+    noteId,
+    expectedRevision,
+    instruction:
+      'Send the revision just read as expectedRevision. A stale revision is rejected; ' +
+      'read the Note again and reconcile before retrying.',
+    requestExample: {
+      id: noteId,
+      expectedRevision,
+      content: 'Replacement Note content.'
+    }
+  }
+}
+
+function withNoteWriteGuide(value: unknown): unknown {
+  const context = record(value)
+  const updateNote = noteWriteGuide(value)
+  return context && updateNote
+    ? { ...context, writeGuide: { updateNote } }
     : value
 }
 
@@ -550,6 +594,37 @@ function todoScopeTargetErrorResult(
   }
 }
 
+function noteRevisionConflictResult(error: NoteRevisionConflictError): {
+  isError: true
+  content: Array<{ type: 'text'; text: string }>
+  structuredContent: Record<string, unknown>
+} {
+  const structuredContent = {
+    error: {
+      code: 'note_revision_conflict',
+      noteId: error.issue.noteId,
+      expectedRevision: error.issue.expectedRevision,
+      currentRevision: error.issue.currentRevision,
+      parent: error.issue.parent,
+      message: error.message
+    },
+    recovery: {
+      inspect: { tool: 'onmove.get_note', arguments: { id: error.issue.noteId } },
+      retry: null
+    },
+    diagnostics: diagnosticsScope()
+  }
+  return {
+    isError: true,
+    content: [{
+      type: 'text',
+      text: `${error.message} Read the Note again, reconcile the new content, and retry with ` +
+        'the newly returned revision. The server will not guess how to merge text.'
+    }],
+    structuredContent
+  }
+}
+
 function decorateResolvedTarget(
   database: AppDatabase,
   candidate: ApplicationResolvedTargetCandidate,
@@ -591,7 +666,7 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Use onmove.search for literal information that may appear anywhere in titles, Updates, Notes, Todos, Subjects, or other indexed text. Search is global by default: never assume the current UI Focus is applied. For a hierarchy-shaped request such as "do X for Person Y\'s 1:1 in Team", use onmove.resolve_target with Thread, Commitment, and Subject selectors, then follow its recommendedTodoRequest or writeGuide.createTodo. Each search result includes hierarchy IDs; use hierarchy.thread.id with onmove.get_thread, not the ID of a matching Update or Note. Before mutations, inspect the matching writeGuide: Open parents must be unscoped, while scoped parents require a listed Subject or an explicitly shared Todo. Inspect diagnostics and warnings on every response. Sensitive content and mutations are controlled only in OnMove Settings.'
+        'Use onmove.search for literal information that may appear anywhere in titles, Updates, Notes, Todos, Subjects, or other indexed text. Search is global by default: never assume the current UI Focus is applied. For a hierarchy-shaped request such as "do X for Person Y\'s 1:1 in Team", use onmove.resolve_target with Thread, Commitment, and Subject selectors, then follow its recommendedTodoRequest or writeGuide.createTodo. Each search result includes hierarchy IDs; use hierarchy.thread.id with onmove.get_thread, not the ID of a matching Update or Note. Before updating a Note, call onmove.get_note and send its revision as expectedRevision; stale writes are rejected rather than merged or overwritten. Before other mutations, inspect the matching writeGuide: Open parents must be unscoped, while scoped parents require a listed Subject or an explicitly shared Todo. Inspect diagnostics and warnings on every response. Sensitive content and mutations are controlled only in OnMove Settings.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -646,6 +721,21 @@ export function createOnMoveMcpServer(
       async ({ id }) => result(withWriteGuide(found(getter(id))))
     )
   }
+
+  server.registerTool(
+    'onmove.get_note',
+    {
+      title: 'Get an OnMove note',
+      description: 'Read one visible Note by its own ID, including hierarchy context, plain-text content, current revision, and the safe update contract. Use a note searchResult.reference.id or an ID from a parent context\'s notes array.',
+      inputSchema: z.object({
+        id: idSchema.describe(
+          'The Note\'s own positive ID from searchResult.reference.id or a parent context\'s notes array.'
+        )
+      }),
+      annotations: { readOnlyHint: true }
+    },
+    async ({ id }) => result(withNoteWriteGuide(found(database.queries.getNote(id, policy()))))
+  )
 
   server.registerTool(
     'onmove.list_routines',
@@ -989,6 +1079,41 @@ export function createOnMoveMcpServer(
   )
 
   server.registerTool(
+    'onmove.update_note',
+    {
+      title: 'Update an OnMove note',
+      description: 'Replace the content of one existing visible Note using optimistic concurrency. Call onmove.get_note first and pass its current revision as expectedRevision. Plain text is accepted as legacy rich text; a versioned OnMove rich-text envelope can be supplied when preserving structured formatting.',
+      inputSchema: z.object({
+        id: idSchema.describe(
+          'The Note\'s own positive ID from onmove.get_note, a Note search hit, or a parent context.'
+        ),
+        expectedRevision: z.number().int().nonnegative().describe(
+          'The exact Note revision returned by onmove.get_note. Stale revisions are rejected without changing content.'
+        ),
+        content: z.string().describe(
+          'Complete replacement Note content. Plain text is supported; existing formatting is preserved only when the caller submits a valid versioned OnMove rich-text envelope.'
+        )
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false }
+    },
+    async (input) => {
+      try {
+        const document = database.commands.updateNote(
+          input,
+          policy(),
+          server.server.getClientVersion()?.name
+        )
+        options.onRichTextMutation?.(document)
+        options.onMutation?.()
+        return result(document)
+      } catch (error) {
+        if (!(error instanceof NoteRevisionConflictError)) throw error
+        return noteRevisionConflictResult(error)
+      }
+    }
+  )
+
+  server.registerTool(
     'onmove.complete_todo',
     {
       title: 'Complete OnMove todo',
@@ -1048,6 +1173,20 @@ function registerResources(server: McpServer, database: AppDatabase): void {
       )
     )
   }
+
+  server.registerResource(
+    'onmove-note',
+    new ResourceTemplate('onmove://note/{id}', { list: undefined }),
+    {
+      title: 'OnMove note',
+      description: 'Hierarchy-aware Note content and revision.',
+      mimeType: 'application/json'
+    },
+    async (uri, variables) => resource(
+      uri,
+      withNoteWriteGuide(found(database.queries.getNote(variableId(variables.id), policy())))
+    )
+  )
 
   for (const [name, uri, getter] of [
     ['onmove-reviews', 'onmove://reviews', () => database.queries.getReviews(policy())],

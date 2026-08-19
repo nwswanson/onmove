@@ -5,7 +5,10 @@ import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AppDatabase } from '../../src/main/database'
 import type { OnMoveAccessPolicy } from '../../src/main/application/access-policy'
-import { ScopeTargetValidationError } from '../../src/main/application/services'
+import {
+  NoteRevisionConflictError,
+  ScopeTargetValidationError
+} from '../../src/main/application/services'
 import { RICH_TEXT_PREFIX } from '../../src/shared/rich-text-value'
 
 const denied: OnMoveAccessPolicy = { sensitiveContent: 'deny', mutations: 'read-only' }
@@ -281,5 +284,89 @@ describe('OnMove MCP application services', () => {
       })
       expect((error as Error).message).toContain('writeGuide.createTodo')
     }
+  })
+
+  it('updates a visible Note with optimistic revision safety and metadata-only auditing', () => {
+    const { threadId } = hierarchy()
+    const note = database.domain.notes.list({ type: 'thread', id: threadId })[0]
+    expect(database.queries.getNote(note.id, denied)).toMatchObject({
+      reference: { type: 'note', id: note.id },
+      contextPath: [
+        { type: 'focus', title: 'Project Atlas' },
+        { type: 'thread', title: 'Sprint execution' }
+      ],
+      note: { id: note.id, content: '', revision: note.revision }
+    })
+
+    const updated = database.commands.updateNote({
+      id: note.id,
+      expectedRevision: note.revision,
+      content: 'Person Y has completed the readiness review.'
+    }, writable, 'note-test')
+    expect(updated).toMatchObject({
+      reference: { type: 'note', id: note.id, field: 'content' },
+      value: 'Person Y has completed the readiness review.',
+      revision: note.revision + 1
+    })
+    expect(database.queries.getNote(note.id, denied)?.note).toMatchObject({
+      content: 'Person Y has completed the readiness review.',
+      revision: note.revision + 1
+    })
+
+    try {
+      database.commands.updateNote({
+        id: note.id,
+        expectedRevision: note.revision,
+        content: 'Stale replacement'
+      }, writable)
+      throw new Error('Expected a stale Note write to be rejected')
+    } catch (error) {
+      expect(error).toBeInstanceOf(NoteRevisionConflictError)
+      expect(error).toMatchObject({
+        issue: {
+          noteId: note.id,
+          expectedRevision: note.revision,
+          currentRevision: note.revision + 1,
+          parent: { type: 'thread', id: threadId }
+        }
+      })
+    }
+    expect(database.domain.notes.find(note.id)?.content).toBe(
+      'Person Y has completed the readiness review.'
+    )
+
+    const raw = new DatabaseSync(databasePath, { readOnly: true })
+    const audit = raw.prepare(
+      `SELECT tool_name, entity_type, entity_id, category, client_name
+       FROM mcp_mutation_audit WHERE entity_type = 'note'`
+    ).all()
+    raw.close()
+    expect(audit).toEqual([expect.objectContaining({
+      tool_name: 'onmove.update_note',
+      entity_type: 'note',
+      entity_id: note.id,
+      category: 'update',
+      client_name: 'note-test'
+    })])
+    expect(JSON.stringify(audit)).not.toContain('readiness review')
+  })
+
+  it('treats a Note under a sensitive ancestor as unknown unless sensitive access is enabled', () => {
+    const { focusId, threadId } = hierarchy()
+    const note = database.domain.notes.list({ type: 'thread', id: threadId })[0]
+    database.domain.focuses.requireModel(focusId).update({ sensitive: true })
+
+    expect(database.queries.getNote(note.id, denied)).toBeNull()
+    expect(() => database.commands.updateNote({
+      id: note.id,
+      expectedRevision: note.revision,
+      content: 'Hidden content'
+    }, writable)).toThrow('Note')
+
+    expect(database.commands.updateNote({
+      id: note.id,
+      expectedRevision: note.revision,
+      content: 'Authorized content'
+    }, sensitiveWritable)).toMatchObject({ value: 'Authorized content' })
   })
 })

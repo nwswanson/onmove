@@ -36,6 +36,7 @@ test('serves MCP from the running app and immediately refreshes its open windows
     title: 'MCP delivery',
     reviewFrequencyDays: 7
   }).snapshot()
+  const threadNote = seeded.domain.notes.list({ type: 'thread', id: thread.id })[0]
   const team = seeded.domain.threads.create({
     focusId: focus.id,
     title: 'Leadership Team',
@@ -73,6 +74,41 @@ test('serves MCP from the running app and immediately refreshes its open windows
     const tools = await client.listTools()
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.search')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.resolve_target')
+    expect(tools.tools.map(({ name }) => name)).toContain('onmove.update_note')
+
+    await window.evaluate((noteId) => {
+      const testWindow = window as typeof window & {
+        __mcpNoteChanges?: Array<{ id: number; value: string; revision: number }>
+      }
+      testWindow.__mcpNoteChanges = []
+      window.onmove.richText.onDocumentChanged(({ document }) => {
+        if (document.reference.type !== 'note' || document.reference.id !== noteId) return
+        testWindow.__mcpNoteChanges?.push({
+          id: document.reference.id,
+          value: document.value,
+          revision: document.revision
+        })
+      })
+    }, threadNote.id)
+    const updatedNote = await client.callTool({
+      name: 'onmove.update_note',
+      arguments: {
+        id: threadNote.id,
+        expectedRevision: threadNote.revision,
+        content: 'MCP content visible in open windows'
+      }
+    })
+    expect(updatedNote.isError).not.toBe(true)
+    await expect.poll(() => window.evaluate(() => {
+      const testWindow = window as typeof window & {
+        __mcpNoteChanges?: Array<{ id: number; value: string; revision: number }>
+      }
+      return testWindow.__mcpNoteChanges ?? []
+    })).toContainEqual({
+      id: threadNote.id,
+      value: 'MCP content visible in open windows',
+      revision: threadNote.revision + 1
+    })
 
     const resolved = await client.callTool({
       name: 'onmove.resolve_target',
