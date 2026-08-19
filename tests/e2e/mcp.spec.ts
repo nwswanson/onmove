@@ -5,12 +5,20 @@ import { join, resolve } from 'node:path'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { _electron as electron, expect, test, type ElectronApplication } from '@playwright/test'
 import { AppDatabase } from '../../src/main/database'
+import type { OnMoveRichTextDocument } from '../../src/shared/rich-text-document'
 
 function localDate(now = new Date()): string {
   const year = now.getFullYear()
   const month = String(now.getMonth() + 1).padStart(2, '0')
   const day = String(now.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
+}
+
+function richText(text: string): OnMoveRichTextDocument {
+  return {
+    version: 1,
+    blocks: [{ type: 'paragraph', children: [{ type: 'text', text, marks: ['bold'] }] }]
+  }
 }
 
 async function availableLoopbackPort(): Promise<number> {
@@ -190,7 +198,7 @@ test('serves MCP from the running app and immediately refreshes its open windows
       arguments: {
         parent: { type: 'thread', id: thread.id },
         subjectId: unrelatedSubject.id,
-        observation: 'Live recovery evidence'
+        document: richText('Live recovery evidence')
       }
     })
     expect(invalidUpdate.isError).toBe(true)
@@ -202,7 +210,7 @@ test('serves MCP from the running app and immediately refreshes its open windows
           arguments: {
             parent: { type: 'thread', id: thread.id },
             attribution: { mode: 'unscoped' },
-            observation: 'Live recovery evidence'
+            document: richText('Live recovery evidence')
           }
         }
       }
@@ -220,7 +228,11 @@ test('serves MCP from the running app and immediately refreshes its open windows
       arguments: { id: thread.id }
     })
     expect(updatedThread.structuredContent).toMatchObject({
-      updates: [expect.objectContaining({ observation: 'Live recovery evidence', scope: null })]
+      updates: [expect.objectContaining({
+        observation: 'Live recovery evidence',
+        observationRichText: richText('Live recovery evidence'),
+        scope: null
+      })]
     })
 
     const created = await client.callTool({

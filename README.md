@@ -88,6 +88,7 @@ To edit a Note, call `onmove.get_note`, modify the returned editor-neutral `note
 and pass it with the returned revision to `onmove.update_note`. The plain `note.content` field is a
 read-only search/prose projection, so an MCP client cannot accidentally flatten formatting. Stale
 revisions are rejected, and successful edits synchronize into open OnMove windows.
+`onmove.create_update` uses the same document shape for its optional rich-text observation.
 
 See [`docs/mcp-server.md`](docs/mcp-server.md) for the available tools, search behavior, and security
 boundary.

@@ -70,9 +70,14 @@ export interface CreateApplicationUpdate {
   parent: { type: 'thread' | 'commitment'; id: number }
   subjectId?: number
   date?: string
-  observation?: string
+  document?: OnMoveRichTextDocument
   state?: HealthState
   sensitive?: boolean
+}
+
+export interface ApplicationUpdateSnapshot extends UpdateSnapshot {
+  /** Lossless editor-neutral form of the plain observation projection. */
+  observationRichText: OnMoveRichTextDocument
 }
 
 export interface CreateApplicationTodo {
@@ -222,6 +227,13 @@ function uri(reference: ApplicationEntityReference): string {
 
 function trackingCommitment(record: { type: string }): boolean {
   return record.type === 'tracking'
+}
+
+function updateProjection(update: UpdateSnapshot): ApplicationUpdateSnapshot {
+  return {
+    ...plainProjection(update) as UpdateSnapshot,
+    observationRichText: onMoveRichTextDocumentFromStored(update.observation)
+  }
 }
 
 function normalizedLookup(value: string): string {
@@ -687,7 +699,7 @@ export class OnMoveQueryService {
       ? this.domain.updates.listForThread(parent.id)
       : this.domain.updates.listForCommitment(parent.id)
     return updates.filter((update) => this.sensitivity.canRead('update', update.id, access))
-      .map((update) => plainProjection(update))
+      .map(updateProjection)
   }
 
   private visibleTodos(parent: TodoParent, access: OnMoveAccessPolicy): unknown[] {
@@ -719,7 +731,7 @@ export class OnMoveCommandService {
     input: CreateApplicationUpdate,
     access: OnMoveAccessPolicy,
     clientName?: string
-  ): UpdateSnapshot {
+  ): ApplicationUpdateSnapshot {
     this.assertMutation(access)
     this.assertVisibleParent(input.parent, access)
     if (input.sensitive && access.sensitiveContent === 'deny') {
@@ -732,10 +744,20 @@ export class OnMoveCommandService {
       'writeGuide.createUpdate'
     )
     const result = this.database.transaction(() => {
+      let observation = ''
+      if (input.document !== undefined) {
+        try {
+          observation = onMoveRichTextDocumentToStored(input.document)
+        } catch (error) {
+          throw new ModelValidationError(
+            `Update rich-text document is invalid: ${error instanceof Error ? error.message : String(error)}`
+          )
+        }
+      }
       const created = this.domain.updates.create({
         parent: input.parent,
         date: input.date,
-        observation: input.observation ?? '',
+        observation,
         state: input.state ?? 'none',
         sensitive: input.sensitive ?? false,
         scope
@@ -745,7 +767,7 @@ export class OnMoveCommandService {
         category: 'create', clientName,
         affectedSensitive: Boolean(this.sensitivity.isSensitive('update', created.id))
       })
-      return created
+      return updateProjection(created)
     })
     return result
   }

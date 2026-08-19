@@ -53,6 +53,36 @@ structured error with an inspection call, allowed Subjects, and a ready-to-run r
 choice is unambiguous. It never silently drops a supplied Subject because that would change the
 meaning of the evidence.
 
+The observation uses the same editor-neutral rich-text document contract as Notes. For example:
+
+```json
+{
+  "parent": { "type": "thread", "id": 12 },
+  "attribution": { "mode": "unscoped" },
+  "document": {
+    "version": 1,
+    "blocks": [{
+      "type": "paragraph",
+      "children": [
+        { "type": "text", "text": "Delivery confidence improved", "marks": ["bold"] },
+        { "type": "text", "text": " after the " },
+        {
+          "type": "link",
+          "url": "https://example.com/review",
+          "children": [{ "type": "text", "text": "readiness review" }]
+        }
+      ]
+    }]
+  },
+  "state": "green"
+}
+```
+
+Omitting `document`, or sending an empty `blocks` array, creates a valid blank Update. The former
+plain `observation` write parameter is intentionally absent because it cannot represent formatting.
+Responses and parent contexts expose `observation` as a readable plain-text projection and
+`observationRichText` as the lossless document.
+
 ### Resolving a hierarchy and creating Todos
 
 Use `onmove.resolve_target` when a request names related records, rather than searching each name

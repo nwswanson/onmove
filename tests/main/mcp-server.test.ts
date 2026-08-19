@@ -118,6 +118,10 @@ describe('OnMove MCP protocol adapter', () => {
     expect(createUpdate.description).toContain('Open parents require unscoped attribution')
     expect(updateSchema).toContain('writeGuide.createUpdate.allowedSubjects')
     expect(updateSchema).toContain('Null or omitted means unscoped')
+    expect(updateSchema).toContain('complete rich-text observation document')
+    expect(updateSchema).toContain('checklist')
+    expect((createUpdate.inputSchema as { properties?: Record<string, unknown> }).properties)
+      .not.toHaveProperty('observation')
     expect(resolveTarget.description).toContain('Thread → Commitment → Subject')
     expect(JSON.stringify(resolveTarget.inputSchema)).toContain('1:1')
     expect(createTodo.description).toContain('writeGuide.createTodo')
@@ -546,6 +550,70 @@ describe('OnMove MCP protocol adapter', () => {
     expect(database.domain.notes.find(note.id)?.revision).toBe(note.revision)
   })
 
+  it('creates Update observations as lossless rich text and rejects the flattening string API', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Rich evidence owner',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const document: OnMoveRichTextDocument = {
+      version: 1,
+      blocks: [
+        {
+          type: 'paragraph',
+          children: [
+            { type: 'text', text: 'Delivery evidence', marks: ['bold'], color: 'green' },
+            { type: 'text', text: ' in the ' },
+            {
+              type: 'link',
+              url: 'https://example.com/review',
+              children: [{ type: 'text', text: 'review', marks: ['italic'] }]
+            }
+          ]
+        },
+        {
+          type: 'quote',
+          blocks: [{
+            type: 'checklist',
+            items: [{ content: [{ type: 'text', text: 'Confirm rollout' }], checked: true }]
+          }]
+        }
+      ]
+    }
+    database.mcpSettings.update({ allowMutations: true })
+
+    const created = await client.callTool({
+      name: 'onmove.create_update',
+      arguments: {
+        parent: { type: 'thread', id: thread.id },
+        attribution: { mode: 'unscoped' },
+        document,
+        state: 'green'
+      }
+    })
+    expect(created.isError).not.toBe(true)
+    expect(created.structuredContent).toMatchObject({
+      parent: { type: 'thread', id: thread.id },
+      observation: expect.stringContaining('Delivery evidence in the review'),
+      observationRichText: document,
+      state: 'green'
+    })
+    const stored = database.domain.updates.listForThread(thread.id)[0]
+    expect(stored.observation).toContain('"type":"link"')
+    expect(stored.observation).toContain('"listType":"check"')
+
+    const flattened = await client.callTool({
+      name: 'onmove.create_update',
+      arguments: {
+        parent: { type: 'thread', id: thread.id },
+        observation: 'This legacy string must not flatten rich text.'
+      }
+    })
+    expect(flattened.isError).toBe(true)
+    expect(database.domain.updates.listForThread(thread.id)).toHaveLength(1)
+  })
+
   it('guides and recovers an agent that incorrectly targets a Subject on an Open Thread', async () => {
     const focus = database.domain.focuses.requireModel(1).toSnapshot()
     const thread = database.domain.threads.create({
@@ -583,7 +651,7 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: {
         parent: { type: 'thread', id: thread.id },
         subjectId: subject.id,
-        observation: 'Open Thread evidence',
+        document: richText('Open Thread evidence'),
         state: 'green'
       }
     })
@@ -605,7 +673,7 @@ describe('OnMove MCP protocol adapter', () => {
           arguments: {
             parent: { type: 'thread', id: thread.id },
             attribution: { mode: 'unscoped' },
-            observation: 'Open Thread evidence',
+            document: richText('Open Thread evidence'),
             state: 'green'
           }
         }
@@ -720,7 +788,7 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: {
         parent: { type: 'thread', id: thread.id },
         attribution: { mode: 'unscoped' },
-        observation: 'Needs exact attribution'
+        document: richText('Needs exact attribution')
       }
     })
     expect(rejected.isError).toBe(true)
@@ -733,7 +801,7 @@ describe('OnMove MCP protocol adapter', () => {
           arguments: {
             parent: { type: 'thread', id: thread.id },
             attribution: { mode: 'subject', subjectId: subject.id },
-            observation: 'Needs exact attribution'
+            document: richText('Needs exact attribution')
           }
         }
       }
@@ -744,13 +812,14 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: {
         parent: { type: 'thread', id: thread.id },
         attribution: { mode: 'subject', subjectId: subject.id },
-        observation: 'Subject evidence'
+        document: richText('Subject evidence')
       }
     })
     expect(created.isError).not.toBe(true)
     expect(created.structuredContent).toMatchObject({
       scope: { scopeId: scope.scopeId, subjectId: subject.id },
-      observation: 'Subject evidence'
+      observation: 'Subject evidence',
+      observationRichText: richText('Subject evidence')
     })
   })
 
@@ -770,7 +839,7 @@ describe('OnMove MCP protocol adapter', () => {
       name: 'onmove.create_update',
       arguments: {
         parent: { type: 'thread', id: thread.id },
-        observation: 'Ambiguous evidence'
+        document: richText('Ambiguous evidence')
       }
     })
     expect(missing.isError).toBe(true)
@@ -788,7 +857,7 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: {
         parent: { type: 'thread', id: thread.id },
         attribution: { mode: 'subject', subjectId: unrelated.id },
-        observation: 'Invalidly attributed evidence'
+        document: richText('Invalidly attributed evidence')
       }
     })
     expect(invalid.isError).toBe(true)
@@ -815,7 +884,7 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: {
         parent: { type: 'thread', id: thread.id },
         subjectId: null,
-        observation: 'Nullable unscoped evidence'
+        document: richText('Nullable unscoped evidence')
       }
     })
     expect(created.isError).not.toBe(true)
@@ -841,7 +910,7 @@ describe('OnMove MCP protocol adapter', () => {
 
     const denied = await client.callTool({
       name: 'onmove.create_update',
-      arguments: { parent: { type: 'thread', id: thread.id }, observation: 'First evidence' }
+      arguments: { parent: { type: 'thread', id: thread.id }, document: richText('First evidence') }
     })
     expect(denied.isError).toBe(true)
 
@@ -850,13 +919,13 @@ describe('OnMove MCP protocol adapter', () => {
       name: 'onmove.create_update',
       arguments: {
         parent: { type: 'thread', id: thread.id },
-        observation: 'First evidence',
+        document: richText('First evidence'),
         state: 'green'
       }
     })
     expect(allowed.isError).not.toBe(true)
     expect(database.domain.updates.listForThread(thread.id)).toEqual([
-      expect.objectContaining({ observation: 'First evidence', state: 'green' })
+      expect.objectContaining({ observation: expect.stringContaining('First evidence'), state: 'green' })
     ])
   })
 })

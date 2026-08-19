@@ -136,25 +136,44 @@ describe('OnMove MCP application services', () => {
     const second = database.domain.focusScopes.addSubject(focusId, { name: 'Operations' })
     database.domain.threadScopes.followFocus(threadId)
     const platform = second.subjects.find(({ name }) => name === 'Platform') as { id: number }
+    const formattedEvidence: OnMoveRichTextDocument = {
+      version: 1,
+      blocks: [{
+        type: 'paragraph',
+        children: [
+          { type: 'text', text: 'Scoped operational ', marks: ['bold'], color: 'green' },
+          {
+            type: 'link',
+            url: 'https://example.com/evidence',
+            children: [{ type: 'text', text: 'evidence', marks: ['italic'] }]
+          }
+        ]
+      }]
+    }
 
     expect(() => database.commands.createUpdate({
       parent: { type: 'commitment', id: commitmentId },
-      observation: 'Unattributed evidence'
+      document: richText('Unattributed evidence')
     }, writable)).toThrow('requires one currently applicable subjectId')
 
     const created = database.commands.createUpdate({
       parent: { type: 'commitment', id: commitmentId },
       subjectId: platform.id,
-      observation: 'Scoped operational evidence',
+      document: formattedEvidence,
       state: 'yellow'
     }, writable, 'integration-test')
     expect(created.scope).toEqual({ scopeId: first.scopeId, subjectId: platform.id })
+    expect(created).toMatchObject({
+      observation: 'Scoped operational evidence',
+      observationRichText: formattedEvidence
+    })
+    expect(database.domain.updates.find(created.id)?.observation).toContain('"type":"link"')
 
     const unrelated = database.domain.subjects.create({ name: 'Former Subject' }).toSnapshot()
     expect(() => database.commands.createUpdate({
       parent: { type: 'thread', id: threadId },
       subjectId: unrelated.id,
-      observation: 'Former Subject evidence'
+      document: richText('Former Subject evidence')
     }, writable)).toThrow('not currently applicable')
 
     const raw = new DatabaseSync(databasePath, { readOnly: true })
@@ -181,7 +200,7 @@ describe('OnMove MCP application services', () => {
       database.commands.createUpdate({
         parent: { type: 'thread', id: threadId },
         subjectId: unrelated.id,
-        observation: 'Should not be silently misattributed'
+        document: richText('Should not be silently misattributed')
       }, writable)
       throw new Error('Expected Open-parent attribution to be rejected')
     } catch (error) {
@@ -201,7 +220,7 @@ describe('OnMove MCP application services', () => {
 
     const created = database.commands.createUpdate({
       parent: { type: 'thread', id: threadId },
-      observation: 'Correctly unscoped evidence'
+      document: richText('Correctly unscoped evidence')
     }, writable)
     expect(created.scope).toBeNull()
   })

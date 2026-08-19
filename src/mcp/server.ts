@@ -151,6 +151,15 @@ const richTextDocumentSchema = z.strictObject({
   'A complete editor-neutral OnMove rich-text document. Read note.richText, edit this structure, and submit the whole document without flattening it to note.content.'
 )
 
+function plainRichTextDocument(text: string): OnMoveRichTextDocument {
+  return {
+    version: 1,
+    blocks: text === ''
+      ? []
+      : [{ type: 'paragraph', children: [{ type: 'text', text }] }]
+  }
+}
+
 function diagnosticsScope(scope: AppliedSearchScope = GLOBAL_SCOPE): McpDiagnostics {
   return { appliedScope: scope, warnings: [] }
 }
@@ -242,7 +251,7 @@ function updateWriteGuide(value: unknown): UpdateWriteGuide | null {
       requestExample: {
         parent,
         attribution: { mode: 'unscoped' },
-        observation: 'Write the Update observation here.'
+        document: plainRichTextDocument('Write the Update observation here.')
       }
     }
   }
@@ -258,7 +267,7 @@ function updateWriteGuide(value: unknown): UpdateWriteGuide | null {
     requestExample: {
       parent,
       attribution: { mode: 'subject', subjectId: allowedSubjects[0].id },
-      observation: 'Write the Update observation here.'
+      document: plainRichTextDocument('Write the Update observation here.')
     }
   }
 }
@@ -493,7 +502,7 @@ interface CreateUpdateToolInput {
   /** Backward-compatible shorthand. Prefer attribution. */
   subjectId?: number | null
   date?: string
-  observation?: string
+  document?: OnMoveRichTextDocument
   state?: 'red' | 'yellow' | 'green' | 'none'
   sensitive?: boolean
 }
@@ -743,7 +752,7 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Use onmove.search for literal information that may appear anywhere in titles, Updates, Notes, Todos, Subjects, or other indexed text. Search is global by default: never assume the current UI Focus is applied. For a hierarchy-shaped request such as "do X for Person Y\'s 1:1 in Team", use onmove.resolve_target with Thread, Commitment, and Subject selectors, then follow its recommendedTodoRequest or writeGuide.createTodo. Each search result includes hierarchy IDs; use hierarchy.thread.id with onmove.get_thread, not the ID of a matching Update or Note. Before updating a Note, call onmove.get_note, edit note.richText without flattening it, and send its revision as expectedRevision; stale writes are rejected rather than merged or overwritten. Before other mutations, inspect the matching writeGuide: Open parents must be unscoped, while scoped parents require a listed Subject or an explicitly shared Todo. Inspect diagnostics and warnings on every response. Sensitive content and mutations are controlled only in OnMove Settings.'
+        'Use onmove.search for literal information that may appear anywhere in titles, Updates, Notes, Todos, Subjects, or other indexed text. Search is global by default: never assume the current UI Focus is applied. For a hierarchy-shaped request such as "do X for Person Y\'s 1:1 in Team", use onmove.resolve_target with Thread, Commitment, and Subject selectors, then follow its recommendedTodoRequest or writeGuide.createTodo. Each search result includes hierarchy IDs; use hierarchy.thread.id with onmove.get_thread, not the ID of a matching Update or Note. Rich-text writes always use the editor-neutral document contract: send document to onmove.create_update, and before updating a Note call onmove.get_note, edit note.richText without flattening it, and send its revision as expectedRevision. Before other mutations, inspect the matching writeGuide: Open parents must be unscoped, while scoped parents require a listed Subject or an explicitly shared Todo. Inspect diagnostics and warnings on every response. Sensitive content and mutations are controlled only in OnMove Settings.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -1050,16 +1059,16 @@ export function createOnMoveMcpServer(
     'onmove.create_update',
     {
       title: 'Create OnMove update',
-      description: 'Create an Update (direct evidence), not edit a Thread record. The parent object identifies the owning Thread or Commitment. Open parents require unscoped attribution and reject Subject IDs; scoped parents require exactly one Subject from the parent\'s writeGuide.createUpdate.allowedSubjects. Call onmove.get_thread or onmove.get_commitment first when attribution is uncertain.',
-      inputSchema: z.object({
+      description: 'Create an Update (direct evidence) with an optional editor-neutral rich-text document, not edit a Thread record. The parent object identifies the owning Thread or Commitment. Open parents require unscoped attribution and reject Subject IDs; scoped parents require exactly one Subject from the parent\'s writeGuide.createUpdate.allowedSubjects. Call onmove.get_thread or onmove.get_commitment first when attribution is uncertain.',
+      inputSchema: z.strictObject({
         parent: parentSchema,
         attribution: updateAttributionSchema,
         subjectId: idSchema.nullable().optional().describe(
           'Backward-compatible shorthand for attribution.mode="subject". Prefer attribution. Null or omitted means unscoped and is required for an Open parent.'
         ),
         date: dateSchema.optional().describe('The Update\'s recorded date; defaults to today.'),
-        observation: z.string().optional().describe(
-          'The Update evidence or observation. Blank Updates are valid.'
+        document: richTextDocumentSchema.optional().describe(
+          'The complete rich-text observation document. Omit it or send version=1 with empty blocks for a blank Update. Plain observation strings are intentionally not writable because they cannot represent formatting.'
         ),
         state: z.enum(['red', 'yellow', 'green', 'none']).optional().describe(
           'Evidence state; defaults to none.'
@@ -1071,7 +1080,10 @@ export function createOnMoveMcpServer(
       annotations: { readOnlyHint: false, destructiveHint: false }
     },
     async (input) => {
-      const normalized: CreateUpdateToolInput = input
+      const normalized: CreateUpdateToolInput = {
+        ...input,
+        document: input.document as OnMoveRichTextDocument | undefined
+      }
       const subjectId = normalizedUpdateSubject(normalized)
       try {
         return mutationResult(() => database.commands.createUpdate(
@@ -1079,7 +1091,7 @@ export function createOnMoveMcpServer(
             parent: normalized.parent,
             subjectId,
             date: normalized.date,
-            observation: normalized.observation,
+            document: normalized.document,
             state: normalized.state,
             sensitive: normalized.sensitive
           },
