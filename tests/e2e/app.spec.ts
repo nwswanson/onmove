@@ -2025,15 +2025,15 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     const documentWindow = await documentWindowPromise
     await expect(documentWindow.locator('[data-slot="rich-text-window-titlebar"]'))
       .toHaveCSS('-webkit-app-region', 'drag')
-    await expect(
-      documentWindow.getByRole('heading', { name: 'Persistent focus — Default' })
-    ).toBeVisible()
     const documentContext = documentWindow.getByRole('navigation', {
       name: 'Document context'
     })
-    await expect(documentContext.getByText('Portfolio', { exact: true })).toBeVisible()
     await expect(documentContext.getByText('Persistent focus', { exact: true })).toBeVisible()
-    await expect(documentContext.getByText('Default', { exact: true })).toBeVisible()
+    await expect(documentContext.getByRole('img', { name: 'Focus type' })).toBeVisible()
+    await expect(documentContext.getByText('Portfolio', { exact: true })).toHaveCount(0)
+    await expect(documentContext.getByText('Default', { exact: true })).toHaveCount(0)
+    await expect(documentWindow.getByText('Default Note', { exact: true })).toBeVisible()
+    await expect(documentWindow.getByRole('heading')).toHaveCount(0)
     await expect(documentWindow.getByText('OnMove document', { exact: true })).toHaveCount(0)
     await expect(documentWindow.getByText('Saved locally as you type', { exact: true }))
       .toHaveCount(0)
@@ -2075,7 +2075,6 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(defaultNote).toContainText('Changed safely in the document window')
     await detachedEditor.press('End')
     await detachedEditor.type('!')
-    await documentWindow.close()
     await expect.poll(() => storedFocusDefaultNote()?.content)
       .toContain('Changed safely in the document window!')
 
@@ -2342,11 +2341,14 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     })
     await expect(window.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
     await expect(window.getByRole('button', { name: 'Persistent focus, paused' })).toHaveCount(0)
+    await expect(detachedEditor).toContainText('Changed safely in the document window!')
+    await expect(documentWindow.getByText('Default Note', { exact: true })).toBeVisible()
     await application.evaluate(({ BrowserWindow, Menu }) => {
       const menuItem = Menu.getApplicationMenu()?.getMenuItemById('hide-sensitive-content')
       if (!menuItem) throw new Error('Missing sensitive-content View menu item')
       menuItem.click?.(menuItem, BrowserWindow.getFocusedWindow() ?? undefined, {} as never)
     })
+    await documentWindow.close()
     await expect(window.getByRole('button', { name: 'Persistent focus, paused' })).toBeVisible()
     await expect(window.getByRole('heading', { name: 'Todos', exact: true })).toBeVisible()
     await window.getByRole('button', { name: 'Persistent focus, paused' }).click()

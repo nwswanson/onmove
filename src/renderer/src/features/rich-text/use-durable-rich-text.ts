@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type {
+  EditUpdateInput,
+  RichTextDocumentContextSegment,
   RichTextDocumentReference,
-  RichTextDocumentSnapshot
+  RichTextDocumentSnapshot,
+  RichTextDocumentSubjectContext,
+  RichTextDocumentUpdateMetadata
 } from '../../../../shared/contracts'
 
 export function richTextReferencesEqual(
@@ -13,12 +17,18 @@ export function richTextReferencesEqual(
 
 export interface DurableRichTextModel {
   title: string
-  contextPath: readonly string[]
+  kind: RichTextDocumentSnapshot['kind']
+  context: readonly RichTextDocumentContextSegment[]
+  subject: RichTextDocumentSubjectContext | null
+  updateMetadata: RichTextDocumentUpdateMetadata | null
   value: string
   revision: number
   saving: boolean
   error: string | null
+  metadataSaving: boolean
+  metadataError: string | null
   save: (value: string) => void
+  saveUpdateMetadata: (input: EditUpdateInput) => Promise<void>
   openInWindow: () => void
 }
 
@@ -34,12 +44,17 @@ export function useDurableRichText(
   const [document, setDocument] = useState<RichTextDocumentSnapshot>({
     reference,
     title: '',
-    contextPath: [],
+    kind: reference.type === 'focus' ? 'description' : reference.type,
+    context: [],
+    subject: null,
+    updateMetadata: null,
     value: initialValue,
     revision: 0,
     updatedAt: ''
   })
   const [error, setError] = useState<string | null>(null)
+  const [metadataSaving, setMetadataSaving] = useState(false)
+  const [metadataError, setMetadataError] = useState<string | null>(null)
   const stableReference = useMemo<RichTextDocumentReference>(() => {
     if (reference.type === 'focus') {
       return { type: 'focus', id: reference.id, field: reference.field }
@@ -86,12 +101,47 @@ export function useDurableRichText(
     void window.onmove.richText.openWindow(stableReference)
   }, [stableReference])
 
-  const activeDocument = richTextReferencesEqual(document.reference, stableReference)
+  const saveUpdateMetadata = useCallback(async (input: EditUpdateInput): Promise<void> => {
+    if (stableReference.type !== 'update') return
+    setDocument((current) =>
+      richTextReferencesEqual(current.reference, stableReference) && current.updateMetadata
+        ? { ...current, updateMetadata: { ...current.updateMetadata, ...input } }
+        : current)
+    setMetadataSaving(true)
+    setMetadataError(null)
+    try {
+      const updated = await window.onmove.domain.updateUpdate(stableReference.id, input)
+      setDocument((current) => richTextReferencesEqual(current.reference, stableReference)
+        ? {
+            ...current,
+            updateMetadata: {
+              date: updated.date,
+              state: updated.state,
+              sensitive: updated.sensitive
+            },
+            updatedAt: updated.updatedAt
+          }
+        : current)
+    } catch {
+      setMetadataError('The Update details could not be saved.')
+      void window.onmove.richText.getDocument(stableReference).then(setDocument, () => undefined)
+    } finally {
+      setMetadataSaving(false)
+    }
+  }, [stableReference])
+
+  const activeDocument: RichTextDocumentSnapshot = richTextReferencesEqual(
+    document.reference,
+    stableReference
+  )
     ? document
     : {
         reference: stableReference,
         title: '',
-        contextPath: [],
+        kind: stableReference.type === 'focus' ? 'description' : stableReference.type,
+        context: [],
+        subject: null,
+        updateMetadata: null,
         value: initialValue,
         revision: 0,
         updatedAt: ''
@@ -99,12 +149,18 @@ export function useDurableRichText(
 
   return {
     title: activeDocument.title,
-    contextPath: activeDocument.contextPath,
+    kind: activeDocument.kind,
+    context: activeDocument.context,
+    subject: activeDocument.subject,
+    updateMetadata: activeDocument.updateMetadata,
     value: activeDocument.value,
     revision: activeDocument.revision,
     saving: false,
     error,
+    metadataSaving,
+    metadataError,
     save,
+    saveUpdateMetadata,
     openInWindow
   }
 }

@@ -263,9 +263,19 @@ export function registerAppIpc(
   ipcMain.handle(IPC_CHANNELS.createUpdate, (_event, input: CreateUpdateInput) =>
     mutation(() => database.domain.updates.create(input).toSnapshot())
   )
-  ipcMain.handle(IPC_CHANNELS.updateUpdate, (_event, id: number, input: EditUpdateInput) =>
-    mutation(() => database.domain.updates.requireModel(id).update(input).toSnapshot())
-  )
+  ipcMain.handle(IPC_CHANNELS.updateUpdate, (event, id: number, input: EditUpdateInput) => {
+    const updated = mutation(() =>
+      database.domain.updates.requireModel(id).update(input).toSnapshot())
+    richTextWindows.broadcast({
+      document: database.domain.richTextDocuments.get({
+        type: 'update',
+        id,
+        field: 'observation'
+      }),
+      sourceWindowId: event.sender.id
+    })
+    return updated
+  })
   ipcMain.handle(IPC_CHANNELS.deleteUpdate, (_event, id: number) =>
     mutation(() => database.domain.updates.delete(id))
   )

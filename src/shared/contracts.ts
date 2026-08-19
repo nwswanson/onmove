@@ -978,11 +978,32 @@ export type RichTextDocumentReference =
   | { type: 'update'; id: number; field: 'observation' }
   | { type: 'note'; id: number; field: 'content' }
 
+export interface RichTextDocumentContextSegment {
+  kind: 'focus' | 'thread' | 'commitment'
+  title: string
+}
+
+export interface RichTextDocumentSubjectContext {
+  id: number
+  name: string
+}
+
+export interface RichTextDocumentUpdateMetadata {
+  date: string
+  state: HealthState
+  sensitive: boolean
+}
+
 export interface RichTextDocumentSnapshot {
   reference: RichTextDocumentReference
   title: string
-  /** Receiver-neutral hierarchy segments for a compact document breadcrumb. */
-  contextPath: string[]
+  kind: 'description' | 'note' | 'update'
+  /** Typed hierarchy lets the renderer own icons and breadcrumb presentation. */
+  context: RichTextDocumentContextSegment[]
+  /** Exact Subject attribution for scoped Updates; null means unscoped. */
+  subject: RichTextDocumentSubjectContext | null
+  /** Editable record metadata is available only for Update observations. */
+  updateMetadata: RichTextDocumentUpdateMetadata | null
   value: string
   revision: number
   updatedAt: string

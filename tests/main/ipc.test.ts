@@ -336,16 +336,24 @@ describe('registerAppIpc', () => {
         richTextDocuments: {
           get: vi.fn((reference) => ({
             reference,
-            title: 'Launch — Goal',
-            contextPath: ['Portfolio', 'Launch', 'Goal'],
+            title: 'Launch — Description',
+            kind: reference.type === 'update' ? 'update' : 'description',
+            context: [{ kind: 'focus', title: 'Launch' }],
+            subject: null,
+            updateMetadata: reference.type === 'update'
+              ? { date: '2026-08-10', state: 'yellow', sensitive: false }
+              : null,
             value: 'Ship',
             revision: 1,
             updatedAt: '2026-08-09T12:00:00.000Z'
           })),
           save: vi.fn((reference, value) => ({
             reference,
-            title: 'Launch — Goal',
-            contextPath: ['Portfolio', 'Launch', 'Goal'],
+            title: 'Launch — Description',
+            kind: 'description',
+            context: [{ kind: 'focus', title: 'Launch' }],
+            subject: null,
+            updateMetadata: null,
             value,
             revision: 2,
             updatedAt: '2026-08-09T12:01:00.000Z'
@@ -356,13 +364,18 @@ describe('registerAppIpc', () => {
     const shell = { showItemInFolder: vi.fn(), openPath: vi.fn().mockResolvedValue('') }
     const invalidateNavigationBadges = vi.fn()
     const notifyRoutinesChanged = vi.fn()
+    const richTextWindows = {
+      open: vi.fn(),
+      targetFor: vi.fn(() => null),
+      broadcast: vi.fn()
+    }
 
     const cleanup = registerAppIpc(
       ipcMain as never,
       database as never,
       shell as never,
       () => true,
-      undefined,
+      richTextWindows,
       invalidateNavigationBadges,
       notifyRoutinesChanged
     )
@@ -567,10 +580,17 @@ describe('registerAppIpc', () => {
       observation: 'Created update',
       state: 'green'
     })).toMatchObject({ id: 44, state: 'green' })
-    expect(await handlers.get(IPC_CHANNELS.updateUpdate)?.(undefined, 43, {
+    expect(await handlers.get(IPC_CHANNELS.updateUpdate)?.({ sender: { id: 17 } }, 43, {
       observation: 'Edited update',
       state: 'yellow'
     })).toMatchObject({ id: 43, observation: 'Edited update', state: 'yellow' })
+    expect(richTextWindows.broadcast).toHaveBeenCalledWith(expect.objectContaining({
+      sourceWindowId: 17,
+      document: expect.objectContaining({
+        reference: { type: 'update', id: 43, field: 'observation' },
+        updateMetadata: expect.objectContaining({ state: 'yellow' })
+      })
+    }))
     expect(await handlers.get(IPC_CHANNELS.deleteUpdate)?.(undefined, 43)).toBe(true)
     expect(await handlers.get(IPC_CHANNELS.getArchivedUpdateOverview)?.()).toMatchObject({
       retentionDays: 30,

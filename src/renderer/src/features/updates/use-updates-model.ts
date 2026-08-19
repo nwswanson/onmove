@@ -109,17 +109,24 @@ export function useUpdatesModel(
     // The synchronous local save is followed by an asynchronous broadcast to
     // this renderer. Ignore that delayed echo (and any older queued event), or
     // the active editor will interpret its own keystroke as an external edit.
-    if (document.revision <= latestRevision) return
-    latestObservationRevisionsRef.current.set(updateId, document.revision)
-    setExternalObservationRevisions((current) => {
-      if (current.get(updateId) === document.revision) return current
-      const next = new Map(current)
-      next.set(updateId, document.revision)
-      return next
-    })
+    const observationChangedExternally = document.revision > latestRevision
+    if (observationChangedExternally) {
+      latestObservationRevisionsRef.current.set(updateId, document.revision)
+      setExternalObservationRevisions((current) => {
+        if (current.get(updateId) === document.revision) return current
+        const next = new Map(current)
+        next.set(updateId, document.revision)
+        return next
+      })
+    }
     setUpdates((current) => sortUpdates(current.map((update) =>
       update.id === updateId
-        ? { ...update, observation: document.value, updatedAt: document.updatedAt }
+        ? {
+            ...update,
+            observation: observationChangedExternally ? document.value : update.observation,
+            ...(document.updateMetadata ?? {}),
+            updatedAt: document.updatedAt
+          }
         : update
     )))
   }), [])

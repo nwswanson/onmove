@@ -1,4 +1,5 @@
 import type {
+  RichTextDocumentContextSegment,
   RichTextDocumentReference,
   RichTextDocumentSnapshot
 } from '../../shared/contracts'
@@ -14,6 +15,12 @@ interface RichTextRow {
   focus_title: string | null
   thread_title: string | null
   commitment_title: string | null
+  scope_id: number | null
+  subject_id: number | null
+  subject_name: string | null
+  update_date: string | null
+  update_state: string | null
+  update_sensitive: number | null
 }
 
 function assertReference(reference: RichTextDocumentReference): void {
@@ -36,34 +43,20 @@ function referenceTitle(reference: RichTextDocumentReference, row: RichTextRow):
     return `${row.owner_title} — Description`
   }
   if (reference.type === 'update') return `${row.owner_title} — Update`
-  return `${row.owner_title} — ${row.document_title ?? 'Note'}`
+  return `${row.owner_title} — ${row.document_title === 'Default'
+    ? 'Default Note'
+    : (row.document_title ?? 'Note')}`
 }
 
-function hierarchyPath(row: RichTextRow): string[] {
+function hierarchyContext(row: RichTextRow): RichTextDocumentContextSegment[] {
+  const context: RichTextDocumentContextSegment[] = []
+  if (row.focus_title) context.push({ kind: 'focus', title: row.focus_title })
+  if (row.thread_title) context.push({ kind: 'thread', title: row.thread_title })
   if (row.commitment_title) {
-    return [
-      row.focus_title ?? row.owner_title,
-      row.thread_title ?? 'Overall',
-      row.commitment_title
-    ]
+    context.push({ kind: 'commitment', title: row.commitment_title })
   }
-  if (row.thread_title) {
-    return [row.focus_title ?? row.owner_title, row.thread_title]
-  }
-  if (row.focus_title) return ['Portfolio', row.focus_title]
-  return [row.owner_title]
-}
-
-function referenceContextPath(
-  reference: RichTextDocumentReference,
-  row: RichTextRow
-): string[] {
-  const leaf = reference.type === 'focus'
-    ? 'Description'
-    : reference.type === 'update'
-      ? 'Update'
-      : (row.document_title ?? 'Note')
-  return [...hierarchyPath(row), leaf]
+  if (context.length === 0) context.push({ kind: 'focus', title: row.owner_title })
+  return context
 }
 
 /**
@@ -80,7 +73,22 @@ export class RichTextDocumentRepository {
     return {
       reference: structuredClone(reference),
       title: referenceTitle(reference, row),
-      contextPath: referenceContextPath(reference, row),
+      kind: reference.type === 'focus' ? 'description' : reference.type,
+      context: hierarchyContext(row),
+      subject: row.subject_id === null
+        ? null
+        : { id: Number(row.subject_id), name: row.subject_name ?? `Subject ${row.subject_id}` },
+      updateMetadata: reference.type === 'update'
+        ? {
+            date: row.update_date ?? '',
+            state: row.update_state === 'red' ||
+              row.update_state === 'yellow' ||
+              row.update_state === 'green'
+              ? row.update_state
+              : 'none',
+            sensitive: Boolean(row.update_sensitive)
+          }
+        : null,
       value: row.value ?? '',
       revision: Number(row.revision),
       updatedAt: row.updated_at
@@ -130,7 +138,9 @@ export class RichTextDocumentRepository {
       return this.database.get<RichTextRow>(
         `SELECT description AS value, description_revision AS revision,
                 updated_at, title AS owner_title, NULL AS document_title,
-                title AS focus_title, NULL AS thread_title, NULL AS commitment_title
+                title AS focus_title, NULL AS thread_title, NULL AS commitment_title,
+                NULL AS scope_id, NULL AS subject_id, NULL AS subject_name,
+                NULL AS update_date, NULL AS update_state, NULL AS update_sensitive
          FROM focuses WHERE id = ?`,
         [reference.id]
       )
@@ -147,7 +157,13 @@ export class RichTextDocumentRepository {
                   commitment_thread_focus.title
                 ) AS focus_title,
                 COALESCE(thread.title, commitment_thread.title) AS thread_title,
-                commitment.title AS commitment_title
+                commitment.title AS commitment_title,
+                update_record.scope_id,
+                update_record.subject_id,
+                subject.name AS subject_name,
+                update_record.recorded_on AS update_date,
+                update_record.state AS update_state,
+                update_record.sensitive AS update_sensitive
          FROM updates update_record
          LEFT JOIN focuses focus ON focus.id = update_record.focus_id
          LEFT JOIN threads thread ON thread.id = update_record.thread_id
@@ -157,6 +173,7 @@ export class RichTextDocumentRepository {
          LEFT JOIN threads commitment_thread ON commitment_thread.id = commitment.thread_id
          LEFT JOIN focuses commitment_thread_focus
            ON commitment_thread_focus.id = commitment_thread.focus_id
+         LEFT JOIN subjects subject ON subject.id = update_record.subject_id
          WHERE update_record.id = ?`,
         [reference.id]
       )
@@ -170,7 +187,9 @@ export class RichTextDocumentRepository {
                 commitment_thread_focus.title
               ) AS focus_title,
               COALESCE(thread.title, commitment_thread.title) AS thread_title,
-              commitment.title AS commitment_title
+              commitment.title AS commitment_title,
+              NULL AS scope_id, NULL AS subject_id, NULL AS subject_name,
+              NULL AS update_date, NULL AS update_state, NULL AS update_sensitive
        FROM notes note
        LEFT JOIN focuses focus ON focus.id = note.focus_id
        LEFT JOIN threads thread ON thread.id = note.thread_id

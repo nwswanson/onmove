@@ -482,10 +482,15 @@ function installApi(
     domain,
     richText: {
       getDocument: vi.fn(() => new Promise<RichTextDocumentSnapshot>(() => undefined)),
-      saveDocument: vi.fn((reference, value) => ({
+      saveDocument: vi.fn((reference, value): RichTextDocumentSnapshot => ({
         reference,
         title: 'Test document',
-        contextPath: ['Test document'],
+        kind: reference.type === 'focus' ? 'description' : reference.type,
+        context: [{ kind: 'focus' as const, title: 'Test document' }],
+        subject: null,
+        updateMetadata: reference.type === 'update'
+          ? { date: '2026-01-01', state: 'none', sensitive: false }
+          : null,
         value,
         revision: 1,
         updatedAt: '2026-01-01T00:00:01.000Z'
@@ -4534,7 +4539,18 @@ describe('App', () => {
     const saveDocument = vi.fn((reference, value: string): RichTextDocumentSnapshot => ({
       reference,
       title: 'Keep sponsors aligned — Update',
-      contextPath: ['Quarterly plan', 'Sprint execution', 'Keep sponsors aligned'],
+      kind: 'update',
+      context: [
+        { kind: 'focus', title: 'Quarterly plan' },
+        { kind: 'thread', title: 'Sprint execution' },
+        { kind: 'commitment', title: 'Keep sponsors aligned' }
+      ],
+      subject: null,
+      updateMetadata: {
+        date: existingUpdate.date,
+        state: existingUpdate.state,
+        sensitive: existingUpdate.sensitive
+      },
       value,
       revision: ++revision,
       updatedAt: `2026-08-01T12:00:${String(revision).padStart(2, '0')}.000Z`
@@ -4578,7 +4594,18 @@ describe('App', () => {
           document: {
             reference: { type: 'update', id: existingUpdate.id, field: 'observation' },
             title: 'Keep sponsors aligned — Update',
-            contextPath: ['Quarterly plan', 'Sprint execution', 'Keep sponsors aligned'],
+            kind: 'update',
+            context: [
+              { kind: 'focus', title: 'Quarterly plan' },
+              { kind: 'thread', title: 'Sprint execution' },
+              { kind: 'commitment', title: 'Keep sponsors aligned' }
+            ],
+            subject: null,
+            updateMetadata: {
+              date: existingUpdate.date,
+              state: existingUpdate.state,
+              sensitive: existingUpdate.sensitive
+            },
             value: existingUpdate.observation,
             revision: 4,
             updatedAt: '2026-08-01T12:00:30.000Z'

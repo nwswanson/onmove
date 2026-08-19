@@ -1,10 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { ChevronDown, Plus, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { RichTextEditor } from '@/components/ui/rich-text-editor'
-import { StateLabel } from '@/components/ui/state-label'
-import { SensitivityToggle } from '@/features/shared/sensitivity-toggle'
 import {
   validateUpdateListModel,
   type UpdateListDraft,
@@ -12,6 +9,7 @@ import {
   type UpdateListProps,
   type UpdateListStateOptionModel
 } from '@/features/updates/update-list-contract'
+import { UpdateMetadataBar } from '@/features/updates/update-metadata-bar'
 import { useRevealElement } from '@/lib/use-reveal-element'
 import { useThrottledAutosave } from '@/lib/use-throttled-autosave'
 
@@ -70,9 +68,6 @@ function UpdateEditorCard({
     setDraft(nextDraft)
   }, [item.date, item.observation, item.sensitive, item.state])
 
-  const selectedState =
-    stateOptions.find((option) => option.value === draft.state) ?? stateOptions.at(-1)
-
   function updateDraft(changes: Partial<UpdateListDraft>): void {
     const nextDraft = { ...draftRef.current, ...changes }
     draftRef.current = nextDraft
@@ -125,52 +120,15 @@ function UpdateEditorCard({
         }
       }}
     >
-      <div className="flex flex-wrap items-end gap-3 border-b border-border/65 bg-muted/20 p-3">
-        {item.contextLabel && (
-          <span className="self-center rounded-full border border-primary/45 bg-primary/15 px-2 py-1 text-[0.6875rem] font-semibold">
-            {item.contextLabel}
-          </span>
-        )}
-        <label className="flex min-w-0 flex-[1_1_9rem] flex-col gap-1 sm:max-w-48">
-          <span className="text-[0.6875rem] font-medium text-muted-foreground">Date</span>
-          <Input
-            id={`${fieldPrefix}-date`}
-            type="date"
-            aria-label="Update date"
-            value={draft.date}
-            onChange={(event) => updateDraft({ date: event.target.value })}
-          />
-        </label>
-
-        <div className="flex min-w-0 flex-[1_1_12rem] flex-col gap-1">
-          <label
-            htmlFor={`${fieldPrefix}-state`}
-            className="text-[0.6875rem] font-medium text-muted-foreground"
-          >
-            State
-          </label>
-          <div className="flex min-w-0 items-center gap-2">
-            <select
-              id={`${fieldPrefix}-state`}
-              aria-label="Update state"
-              className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background/75 px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/35"
-              value={draft.state}
-              onChange={(event) => updateDraft({ state: event.target.value })}
-            >
-              {stateOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-            {selectedState && <StateLabel model={selectedState} />}
-          </div>
-        </div>
-
-        <div className="ml-auto flex shrink-0 items-center justify-end gap-1">
-          <SensitivityToggle
-            checked={draft.sensitive}
-            disabled={autosave.saving || deleting}
-            onCheckedChange={(sensitive) => updateDraft({ sensitive })}
-          />
+      <UpdateMetadataBar
+        idPrefix={fieldPrefix}
+        value={draft}
+        stateOptions={stateOptions}
+        contextLabel={item.contextLabel}
+        disabled={deleting}
+        sensitivityDisabled={autosave.saving || deleting}
+        onValueChange={updateDraft}
+        actions={(
           <Button
             type="button"
             variant="ghost"
@@ -182,8 +140,8 @@ function UpdateEditorCard({
           >
             <X aria-hidden="true" />
           </Button>
-        </div>
-      </div>
+        )}
+      />
 
       <div className="p-3">
         <div className="mb-1.5 flex min-h-4 items-center justify-between gap-3">

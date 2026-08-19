@@ -124,8 +124,11 @@ describe('Note and durable rich-text models', () => {
     })
   })
 
-  it('materializes complete hierarchy breadcrumbs for popped Notes', () => {
-    const focus = database!.domain.focuses.create({ title: 'Project Atlas' })
+  it('materializes typed hierarchy breadcrumbs without presentation-only leaf labels', () => {
+    const focus = database!.domain.focuses.create({
+      title: 'Project Atlas',
+      sensitive: true
+    })
     const thread = database!.domain.threads.create({
       focusId: focus.id,
       title: 'Sprint execution',
@@ -142,24 +145,79 @@ describe('Note and durable rich-text models', () => {
       title: 'Keep sponsors aligned'
     })
 
-    const notePath = (noteId: number): string[] => database!.domain.richTextDocuments.get({
+    const noteContext = (noteId: number) => database!.domain.richTextDocuments.get({
       type: 'note',
       id: noteId,
       field: 'content'
-    }).contextPath
+    })
 
-    expect(notePath(focus.toSnapshot().notes[0].id)).toEqual([
-      'Portfolio', 'Project Atlas', 'Default'
+    expect(noteContext(focus.toSnapshot().notes[0].id)).toMatchObject({
+      kind: 'note',
+      context: [{ kind: 'focus', title: 'Project Atlas' }],
+      subject: null,
+      updateMetadata: null
+    })
+    expect(noteContext(thread.snapshot().notes[0].id).context).toEqual([
+      { kind: 'focus', title: 'Project Atlas' },
+      { kind: 'thread', title: 'Sprint execution' }
     ])
-    expect(notePath(thread.snapshot().notes[0].id)).toEqual([
-      'Project Atlas', 'Sprint execution', 'Default'
+    expect(noteContext(threadedCommitment.snapshot().notes[0].id).context).toEqual([
+      { kind: 'focus', title: 'Project Atlas' },
+      { kind: 'thread', title: 'Sprint execution' },
+      { kind: 'commitment', title: 'Improve ticket quality' }
     ])
-    expect(notePath(threadedCommitment.snapshot().notes[0].id)).toEqual([
-      'Project Atlas', 'Sprint execution', 'Improve ticket quality', 'Default'
+    expect(noteContext(overallCommitment.snapshot().notes[0].id).context).toEqual([
+      { kind: 'focus', title: 'Project Atlas' },
+      { kind: 'thread', title: 'Sprint execution' },
+      { kind: 'commitment', title: 'Keep sponsors aligned' }
     ])
-    expect(notePath(overallCommitment.snapshot().notes[0].id)).toEqual([
-      'Project Atlas', 'Sprint execution', 'Keep sponsors aligned', 'Default'
-    ])
+    // Detached Notes are direct document reads, not collection projections;
+    // a hidden-sensitive-content preference must never redact their contents.
+    expect(noteContext(focus.toSnapshot().notes[0].id).title).toBe(
+      'Project Atlas — Default Note'
+    )
+  })
+
+  it('places an Update Subject after its typed owner hierarchy and exposes its metadata', () => {
+    const focus = database!.domain.focuses.create({ title: 'Scoped project' })
+    const subject = database!.domain.subjects.create({ kind: 'team', name: 'Platform Team' })
+    const scope = database!.domain.scopes.create({
+      focusId: focus.id,
+      name: 'Teams',
+      dimension: 'team'
+    })
+    database!.domain.scopeMemberships.create({
+      scopeId: scope.id,
+      subjectId: subject.id,
+      effectiveFrom: '2026-01-01'
+    })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Delivery',
+      reviewFrequencyDays: 7,
+      scope: { mode: 'explicit', scopeId: scope.id }
+    })
+    const update = database!.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2026-08-19',
+      state: 'yellow',
+      sensitive: true,
+      scope: { scopeId: scope.id, subjectId: subject.id }
+    })
+
+    expect(database!.domain.richTextDocuments.get({
+      type: 'update',
+      id: update.id,
+      field: 'observation'
+    })).toMatchObject({
+      kind: 'update',
+      context: [
+        { kind: 'focus', title: 'Scoped project' },
+        { kind: 'thread', title: 'Delivery' }
+      ],
+      subject: { id: subject.id, name: 'Platform Team' },
+      updateMetadata: { date: '2026-08-19', state: 'yellow', sensitive: true }
+    })
   })
 
   it('cascades Notes and their revision history with deleted parents', () => {
