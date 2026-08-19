@@ -7,6 +7,15 @@ import { runMigrations } from './data/migrations'
 import { SqliteAdapter } from './data/sqlite-adapter'
 import { RollingBackupRepository } from './data/rolling-backup'
 import { WindowPreferenceRepository } from './data/window-preferences'
+import {
+  EffectiveSensitivityRepository,
+  McpSettingsRepository
+} from './application/access-policy'
+import {
+  McpMutationAuditRepository,
+  OnMoveCommandService,
+  OnMoveQueryService
+} from './application/services'
 
 interface CountRow {
   count: number
@@ -22,6 +31,9 @@ export class AppDatabase {
   readonly dataArchive: DataArchiveRepository
   readonly backups: RollingBackupRepository
   readonly windowPreferences: WindowPreferenceRepository
+  readonly mcpSettings: McpSettingsRepository
+  readonly queries: OnMoveQueryService
+  readonly commands: OnMoveCommandService
 
   constructor(private readonly databasePath: string) {
     mkdirSync(dirname(databasePath), { recursive: true })
@@ -32,6 +44,15 @@ export class AppDatabase {
       this.dataArchive = new DataArchiveRepository(this.database)
       this.backups = new RollingBackupRepository(this.database, databasePath)
       this.windowPreferences = new WindowPreferenceRepository(this.database)
+      this.mcpSettings = new McpSettingsRepository(this.database)
+      const sensitivity = new EffectiveSensitivityRepository(this.database)
+      this.queries = new OnMoveQueryService(this.domain, sensitivity, this.database)
+      this.commands = new OnMoveCommandService(
+        this.database,
+        this.domain,
+        sensitivity,
+        new McpMutationAuditRepository(this.database)
+      )
     } catch (error) {
       this.database.close()
       throw error
@@ -78,4 +99,5 @@ export class AppDatabase {
   close(): void {
     this.database.close()
   }
+
 }

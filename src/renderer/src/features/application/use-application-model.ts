@@ -97,6 +97,16 @@ export function useApplicationModel(): ApplicationModel {
         return next
       })
     })
+    const unsubscribeDomain = window.onmove.onDomainChanged(() => {
+      void window.onmove.domain.listFocuses().then((nextFocuses) => {
+        focusesRef.current = nextFocuses
+        setFocuses(nextFocuses)
+        void Promise.all(nextFocuses.map(async (focus) => [
+          focus.id,
+          await loadFocusStatusSummary(window.onmove.domain, focus.id)
+        ] as const)).then((entries) => setFocusStatusSummaries(Object.fromEntries(entries)))
+      }).catch(() => undefined)
+    })
 
     Promise.all([
       window.onmove.getAppState(),
@@ -134,6 +144,7 @@ export function useApplicationModel(): ApplicationModel {
       active = false
       unsubscribe()
       unsubscribeRichText()
+      unsubscribeDomain()
     }
   }, [])
 

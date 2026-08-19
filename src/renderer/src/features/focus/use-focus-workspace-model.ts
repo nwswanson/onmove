@@ -264,6 +264,21 @@ export function useFocusWorkspaceModel({
     }).catch(() => undefined)
   }), [focus.id])
 
+  useEffect(() => window.onmove.onDomainChanged(() => {
+    const requestId = ++threadProjectionRequest.current
+    void Promise.all([
+      loadFocusThreadWorkspaceData(focus.id),
+      window.onmove.domain.getFocusScope(focus.id),
+      window.onmove.domain.getFocusOverviewTimeline(focus.id)
+    ]).then(([threadData, nextScope, nextTimeline]) => {
+      if (requestId !== threadProjectionRequest.current) return
+      applyFocusThreadWorkspaceData(threadData)
+      setFocusScope(nextScope)
+      setFocusTimeline(nextTimeline)
+      setLoadError(null)
+    }).catch(() => undefined)
+  }), [focus.id])
+
   useEffect(() => subscribeToUpdateCreated(({ focusId }) => {
     if (focusId !== focus.id) return
     const requestId = ++threadProjectionRequest.current

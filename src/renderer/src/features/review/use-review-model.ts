@@ -108,6 +108,13 @@ export function useReviewModel({ onReviewChanged }: ReviewModelOptions = {}): Re
     }
   }, [])
 
+  useEffect(() => window.onmove.onDomainChanged(() => {
+    void window.onmove.domain.getReviewOverview().then((next) => {
+      setOverview(next)
+      setError(null)
+    }).catch(() => undefined)
+  }), [])
+
   useEffect(() => subscribeToUpdateCreated(({ update }) => {
     const item = overview?.items.find((candidate) => updateMatchesReviewItem(update, candidate))
     if (!item) return

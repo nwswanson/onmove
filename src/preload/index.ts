@@ -25,12 +25,27 @@ const api: OnMoveApi = {
     ipcRenderer.on(IPC_EVENTS.routinesChanged, handler)
     return () => ipcRenderer.removeListener(IPC_EVENTS.routinesChanged, handler)
   },
+  onDomainChanged: (listener) => {
+    const handler = (): void => listener()
+    ipcRenderer.on(IPC_EVENTS.domainChanged, handler)
+    return () => ipcRenderer.removeListener(IPC_EVENTS.domainChanged, handler)
+  },
   recordGreeting: () => ipcRenderer.invoke(IPC_CHANNELS.recordGreeting),
   showDataFolder: () => ipcRenderer.invoke(IPC_CHANNELS.showDataFolder),
   backups: {
     getState: () => ipcRenderer.invoke(IPC_CHANNELS.getBackupState),
     createNow: () => ipcRenderer.invoke(IPC_CHANNELS.createBackup),
     showFolder: () => ipcRenderer.invoke(IPC_CHANNELS.showBackupFolder)
+  },
+  mcp: {
+    get: () => ipcRenderer.invoke(IPC_CHANNELS.getMcpSettings),
+    update: (input) => ipcRenderer.invoke(IPC_CHANNELS.updateMcpSettings, input),
+    onChanged: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, settings: Parameters<typeof listener>[0]): void =>
+        listener(settings)
+      ipcRenderer.on(IPC_EVENTS.mcpSettingsChanged, handler)
+      return () => ipcRenderer.removeListener(IPC_EVENTS.mcpSettingsChanged, handler)
+    }
   },
   domain: {
     createRelation: (input) => ipcRenderer.invoke(IPC_CHANNELS.createRelation, input),

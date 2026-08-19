@@ -26,6 +26,34 @@ describe('registerAppIpc', () => {
     const database = {
       getState: vi.fn(() => state),
       recordGreeting: vi.fn(() => ({ ...state, greetingCount: 3 })),
+      mcpSettings: {
+        get: vi.fn(() => ({ allowSensitive: false, allowMutations: false })),
+        update: vi.fn((input) => ({
+          allowSensitive: Boolean((input as { allowSensitive?: boolean }).allowSensitive),
+          allowMutations: Boolean((input as { allowMutations?: boolean }).allowMutations)
+        }))
+      },
+      queries: {
+        listFocusSnapshots: vi.fn(() => [{ id: 12, title: 'Launch', status: 'active' }]),
+        todoOverview: vi.fn(() => ({
+          items: [{ id: 72, name: 'Cross-context Todo' }],
+          recentlyCompletedDays: 7
+        })),
+        tagSummaries: vi.fn(() => [
+          { name: 'launch', useCount: 2, sensitiveUseCount: 0 }
+        ]),
+        tagUses: vi.fn(() => [
+          { id: 'focus:12:description:launch', name: 'launch', snippet: 'Ship @Launch' }
+        ]),
+        reviewOverview: vi.fn(() => ({
+          asOf: '2026-08-10',
+          items: [{ key: 'focus:12', kind: 'focus' }]
+        })),
+        dueOverview: vi.fn(() => ({
+          asOf: '2026-08-10',
+          items: [{ key: 'focus:12', kind: 'focus', dueDate: '2026-09-01' }]
+        }))
+      },
       backups: {
         getState: vi.fn(() => ({ retentionLimit: 10, backups: [{ fileName: 'backup.sqlite3' }] })),
         create: vi.fn(() => ({ retentionLimit: 10, backups: [{ fileName: 'new.sqlite3' }] })),
@@ -364,25 +392,62 @@ describe('registerAppIpc', () => {
     const shell = { showItemInFolder: vi.fn(), openPath: vi.fn().mockResolvedValue('') }
     const invalidateNavigationBadges = vi.fn()
     const notifyRoutinesChanged = vi.fn()
+    const notifyMcpSettingsChanged = vi.fn()
     const richTextWindows = {
       open: vi.fn(),
       targetFor: vi.fn(() => null),
       broadcast: vi.fn()
     }
+    const mcpRuntime = {
+      snapshot: vi.fn(() => ({
+        serverEnabled: false,
+        serverPort: 47_832,
+        allowSensitive: false,
+        allowMutations: false,
+        updatedAt: '2026-08-10T12:00:00.000Z',
+        status: 'stopped' as const,
+        endpoint: null,
+        error: null
+      })),
+      update: vi.fn(async () => ({
+        serverEnabled: true,
+        serverPort: 47_832,
+        allowSensitive: false,
+        allowMutations: true,
+        updatedAt: '2026-08-10T12:01:00.000Z',
+        status: 'running' as const,
+        endpoint: 'http://127.0.0.1:47832/mcp',
+        error: null
+      }))
+    }
 
     const cleanup = registerAppIpc(
       ipcMain as never,
       database as never,
+      mcpRuntime,
       shell as never,
       () => true,
       richTextWindows,
       invalidateNavigationBadges,
-      notifyRoutinesChanged
+      notifyRoutinesChanged,
+      notifyMcpSettingsChanged
     )
 
     expect(ipcMain.handle).toHaveBeenCalledTimes(Object.keys(IPC_CHANNELS).length)
     expect(await handlers.get(IPC_CHANNELS.getAppState)?.()).toEqual(state)
     expect(await handlers.get(IPC_CHANNELS.getSensitiveContentHidden)?.()).toBe(true)
+    expect(await handlers.get(IPC_CHANNELS.getMcpSettings)?.()).toMatchObject({
+      allowSensitive: false,
+      allowMutations: false
+    })
+    expect(await handlers.get(IPC_CHANNELS.updateMcpSettings)?.(
+      undefined,
+      { serverEnabled: true, allowMutations: true }
+    )).toMatchObject({ status: 'running', allowMutations: true })
+    expect(notifyMcpSettingsChanged).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'running',
+      allowMutations: true
+    }))
     expect(await handlers.get(IPC_CHANNELS.recordGreeting)?.()).toMatchObject({ greetingCount: 3 })
     await handlers.get(IPC_CHANNELS.showDataFolder)?.()
     expect(shell.showItemInFolder).toHaveBeenCalledWith('/tmp/onmove.sqlite3')

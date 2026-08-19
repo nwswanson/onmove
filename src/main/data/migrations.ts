@@ -3260,6 +3260,152 @@ const migrations: readonly Migration[] = [
         END;
       `)
     }
+  },
+  {
+    version: 34,
+    name: 'mcp_services_and_full_text_search',
+    up(database) {
+      database.exec(`
+        CREATE TABLE mcp_settings (
+          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+          allow_sensitive INTEGER NOT NULL DEFAULT 0 CHECK (allow_sensitive IN (0, 1)),
+          allow_mutations INTEGER NOT NULL DEFAULT 0 CHECK (allow_mutations IN (0, 1)),
+          updated_at TEXT NOT NULL
+        ) STRICT;
+
+        INSERT INTO mcp_settings (singleton, allow_sensitive, allow_mutations, updated_at)
+        VALUES (1, 0, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+        CREATE TABLE mcp_mutation_audit (
+          id INTEGER PRIMARY KEY,
+          occurred_at TEXT NOT NULL,
+          tool_name TEXT NOT NULL,
+          entity_type TEXT NOT NULL,
+          entity_id INTEGER NOT NULL CHECK (entity_id > 0),
+          category TEXT NOT NULL,
+          client_name TEXT,
+          affected_sensitive INTEGER NOT NULL CHECK (affected_sensitive IN (0, 1))
+        ) STRICT;
+
+        CREATE INDEX mcp_mutation_audit_time_index
+          ON mcp_mutation_audit(occurred_at DESC, id DESC);
+
+        CREATE TABLE search_documents (
+          id INTEGER PRIMARY KEY,
+          source_key TEXT NOT NULL UNIQUE,
+          entity_type TEXT NOT NULL CHECK (entity_type IN (
+            'focus', 'thread', 'commitment', 'routine', 'update', 'todo', 'note', 'subject'
+          )),
+          entity_id INTEGER NOT NULL CHECK (entity_id > 0),
+          field_name TEXT NOT NULL,
+          title TEXT NOT NULL,
+          body TEXT NOT NULL,
+          focus_id INTEGER,
+          thread_id INTEGER,
+          commitment_id INTEGER,
+          subject_id INTEGER,
+          scope_id INTEGER,
+          direct_sensitive INTEGER NOT NULL DEFAULT 0 CHECK (direct_sensitive IN (0, 1)),
+          status TEXT,
+          state TEXT,
+          due_on TEXT,
+          review_due INTEGER CHECK (review_due IS NULL OR review_due IN (0, 1)),
+          updated_at TEXT NOT NULL
+        ) STRICT;
+
+        CREATE INDEX search_documents_entity_index
+          ON search_documents(entity_type, entity_id);
+        CREATE INDEX search_documents_context_index
+          ON search_documents(focus_id, thread_id, commitment_id, subject_id);
+
+        CREATE VIRTUAL TABLE search_documents_fts USING fts5(
+          title,
+          body,
+          content = 'search_documents',
+          content_rowid = 'id',
+          tokenize = 'unicode61 remove_diacritics 2'
+        );
+
+        CREATE TRIGGER search_documents_fts_insert
+        AFTER INSERT ON search_documents BEGIN
+          INSERT INTO search_documents_fts(rowid, title, body)
+          VALUES (NEW.id, NEW.title, NEW.body);
+        END;
+
+        CREATE TRIGGER search_documents_fts_delete
+        AFTER DELETE ON search_documents BEGIN
+          INSERT INTO search_documents_fts(search_documents_fts, rowid, title, body)
+          VALUES ('delete', OLD.id, OLD.title, OLD.body);
+        END;
+
+        CREATE TRIGGER search_documents_fts_update
+        AFTER UPDATE ON search_documents BEGIN
+          INSERT INTO search_documents_fts(search_documents_fts, rowid, title, body)
+          VALUES ('delete', OLD.id, OLD.title, OLD.body);
+          INSERT INTO search_documents_fts(rowid, title, body)
+          VALUES (NEW.id, NEW.title, NEW.body);
+        END;
+
+        CREATE TABLE search_index_state (
+          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+          dirty INTEGER NOT NULL CHECK (dirty IN (0, 1)),
+          indexed_at TEXT
+        ) STRICT;
+
+        INSERT INTO search_index_state(singleton, dirty, indexed_at) VALUES (1, 1, NULL);
+      `)
+
+      const sourceTables = [
+        'focuses',
+        'threads',
+        'commitments',
+        'updates',
+        'todos',
+        'notes',
+        'subjects',
+        'scopes',
+        'scope_memberships',
+        'focus_scope_applications',
+        'thread_scope_applications',
+        'commitment_scope_applications',
+        'routine_definitions',
+        'routine_template_versions',
+        'routine_template_items',
+        'routine_review_runs',
+        'routine_review_cells',
+        'routine_review_cell_attestations',
+        'routine_review_cell_issues'
+      ]
+      for (const table of sourceTables) {
+        const exists = database.get<{ found: number }>(
+          "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?",
+          [table]
+        )
+        if (!exists) continue
+        for (const action of ['INSERT', 'UPDATE', 'DELETE'] as const) {
+          database.exec(`
+            CREATE TRIGGER mcp_search_dirty_${table}_${action.toLowerCase()}
+            AFTER ${action} ON ${table} BEGIN
+              UPDATE search_index_state SET dirty = 1 WHERE singleton = 1;
+            END;
+          `)
+        }
+      }
+    }
+  },
+  {
+    version: 35,
+    name: 'live_application_mcp_server',
+    up(database) {
+      database.exec(`
+        ALTER TABLE mcp_settings
+          ADD COLUMN server_enabled INTEGER NOT NULL DEFAULT 0
+          CHECK (server_enabled IN (0, 1));
+        ALTER TABLE mcp_settings
+          ADD COLUMN server_port INTEGER NOT NULL DEFAULT 47832
+          CHECK (server_port BETWEEN 1024 AND 65535);
+      `)
+    }
   }
 ]
 
@@ -3270,34 +3416,35 @@ interface MigrationRow {
 export const LATEST_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0
 
 export function runMigrations(database: SqliteAdapter, now = new Date()): void {
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      version INTEGER PRIMARY KEY,
-      applied_at TEXT NOT NULL
-    ) STRICT;
-  `)
+  // BEGIN IMMEDIATE makes migration ownership explicit and prevents another
+  // connection from observing a partially applied schema.
+  database.transaction(() => {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at TEXT NOT NULL
+      ) STRICT;
+    `)
 
-  const appliedRows = database.all<MigrationRow>(
-    'SELECT version FROM schema_migrations ORDER BY version'
-  )
-  const applied = new Set(appliedRows.map(({ version }) => Number(version)))
-  const futureVersion = appliedRows.find(({ version }) => Number(version) > LATEST_SCHEMA_VERSION)
-
-  if (futureVersion) {
-    throw new Error(
-      `Database schema version ${futureVersion.version} is newer than supported version ${LATEST_SCHEMA_VERSION}`
+    const appliedRows = database.all<MigrationRow>(
+      'SELECT version FROM schema_migrations ORDER BY version'
     )
-  }
+    const applied = new Set(appliedRows.map(({ version }) => Number(version)))
+    const futureVersion = appliedRows.find(({ version }) => Number(version) > LATEST_SCHEMA_VERSION)
 
-  for (const migration of migrations) {
-    if (applied.has(migration.version)) continue
+    if (futureVersion) {
+      throw new Error(
+        `Database schema version ${futureVersion.version} is newer than supported version ${LATEST_SCHEMA_VERSION}`
+      )
+    }
 
-    database.transaction(() => {
+    for (const migration of migrations) {
+      if (applied.has(migration.version)) continue
       migration.up(database)
       database.run(
         'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)',
         [migration.version, now.toISOString()]
       )
-    })
-  }
+    }
+  })
 }

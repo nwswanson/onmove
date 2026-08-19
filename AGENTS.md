@@ -693,6 +693,28 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - Return UI-ready snapshots through named IPC methods. Do not expose generic SQL or arbitrary model
   dispatch to the renderer.
 
+## MCP boundary
+
+- Keep the loopback Streamable HTTP adapter in `src/mcp` transport-only. It is owned by the running
+  Electron main process and uses that process's existing `AppDatabase`; it must never open SQLite or
+  run migrations independently. MCP and Electron call the typed application boundary in
+  `src/main/application`; neither exposes SQL, raw tables, renderer models, or migration column names.
+- Re-read persisted MCP permissions on every request. Sensitive access and safe-write access are
+  independent and default off; the View-menu preference never grants MCP access.
+- Apply effective sensitivity before assembling output, including ancestors, Scope, and Subject
+  cells. Hidden and missing IDs must have identical externally visible errors, and hidden records
+  must not affect returned counts, tag uses, snippets, resources, or review items.
+- Maintain natural-language discovery through the migration-backed FTS5 projection. Parse rich text
+  to plain text, keep queries bounded, and resolve effective sensitivity against live hierarchy
+  records at query time. Never accept SQL or field expressions from an MCP caller.
+- MCP writes must go through `OnMoveCommandService`, preserve exact Scope × Subject attribution, and
+  emit metadata-only mutation audits. Do not add destructive MCP tools without an explicit product
+  decision and confirmation design.
+- Start and stop MCP through the persisted Settings toggle. Bind only to `127.0.0.1`, validate
+  localhost Host and Origin headers, expose the configured `/mcp` endpoint only while OnMove is
+  running, and stop the listener before closing the shared database. Successful MCP mutations must
+  broadcast the generic in-process domain-change event to every open renderer window.
+
 ## Required verification
 
 Run `pnpm check` for every change. Run `pnpm test:e2e` for navigation, preload, persistence, window,

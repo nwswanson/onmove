@@ -1,7 +1,5 @@
 # OnMove MCP server implementation plan
 
-Status: Proposed  
-Last updated: 2026-08-19
 
 ## Executive decision
 
@@ -12,7 +10,7 @@ It does need a typed application-query facade between protocol adapters and the 
 repositories. Electron IPC and MCP should both call this facade so they share hierarchy resolution,
 Scope rules, sensitivity policy, mutation invariants, and result contracts.
 
-Broad natural-language discovery can later use a bounded SQLite FTS5 projection. That would be a
+Broad natural-language discovery uses a bounded SQLite FTS5 projection. That is a
 search index, not a general query engine.
 
 ## Goals
@@ -22,10 +20,10 @@ search index, not a general query engine.
 - Add useful Updates, Todos, and review actions without bypassing domain validation.
 - Preserve exact Thread/Commitment Subject-cell semantics for scoped work.
 - Prevent accidental disclosure of sensitive records by default.
-- Work whether the Electron UI is open or closed.
+- Run as an explicitly enabled capability of the open Electron application.
 - Keep SQLite as the only durable source of truth.
-- Ship the MCP server as part of the macOS distribution without requiring a separately installed
-  Node runtime.
+- Ship the MCP server inside the macOS application without a helper process or separately installed
+  runtime.
 - Keep the MCP protocol adapter thin enough that another adapter could be added later.
 
 ## Non-goals
@@ -56,25 +54,23 @@ The missing pieces are:
 - A shared application service above the repositories.
 - Server-side effective-sensitivity filtering.
 - An MCP protocol and transport entry point.
-- A packaged helper executable.
-- Cross-process write contention handling.
-- UI invalidation after a different process changes SQLite.
+- A live server controller owned by the Electron main process.
+- Loopback transport lifecycle, port-conflict handling, and UI invalidation after MCP writes.
 - Optional full-text search over plain-text rich-text projections.
 
 ## Architecture
 
 ```text
-Electron renderer
-      |
-Electron IPC adapter ---------+
-                              |
-MCP tools/resources adapter --+--> OnMoveQueryService
-                              |    OnMoveCommandService
-                              |    OnMoveAccessPolicy
-                              |             |
-                              +--------> DomainStore
-                                            |
-                                          SQLite
+Electron renderer -- IPC -------+
+                                |
+MCP client -- loopback HTTP -----+--> running Electron main process
+                                      |  OnMoveQueryService
+                                      |  OnMoveCommandService
+                                      |  OnMoveAccessPolicy
+                                      |           |
+                                      +------> one AppDatabase / DomainStore
+                                                   |
+                                                 SQLite
 ```
 
 The adapters own transport-specific concerns only:
@@ -322,47 +318,32 @@ granted to another tool.
 
 ## Transport and packaging
 
-### Recommended first transport: stdio
+### Transport: application-owned Streamable HTTP
 
-Use the official TypeScript MCP server SDK and a local stdio transport:
+Use the official TypeScript MCP server SDK and its Streamable HTTP handler:
 
 - `@modelcontextprotocol/server`
+- `@modelcontextprotocol/node`
 - `zod`
-- A dedicated `src/mcp` entry point.
-- Protocol logging only on `stderr`; `stdout` is reserved for MCP JSON-RPC.
+- A dedicated transport adapter in `src/mcp`.
+- A runtime controller initialized by Electron after its `AppDatabase` is ready.
 
-Stdio is appropriate because a local MCP host owns the child-process lifetime and no network
-listener or OAuth deployment is required.
+The listener binds explicitly to `127.0.0.1`, exposes only `/mcp`, and applies localhost Host and
+Origin validation. The server starts and stops from a persisted Settings toggle, remains unavailable
+while OnMove is closed, and uses the exact application-service and database instances backing the UI.
 
 ### macOS packaging
 
-The production `.app` must not assume Node is installed globally. Package a stable helper command,
-for example:
+No standalone executable is packaged. MCP is part of the existing signed Electron main bundle, so
+there is no second runtime, database opener, migration owner, or helper-signing surface. MCP clients
+connect to the URL shown in OnMove Settings, for example:
 
 ```text
-/Applications/OnMove.app/Contents/MacOS/onmove-mcp
+http://127.0.0.1:47832/mcp
 ```
 
-Candidate packaging approaches, in preferred evaluation order:
-
-1. A bundled standalone executable built from the MCP entry point.
-2. A small signed launcher backed by a bundled runtime.
-3. A documented Electron `--mcp-stdio` mode only if stdout remains clean and no GUI lifecycle or
-   single-instance behavior interferes with MCP.
-
-The MCP host configuration should invoke the stable packaged path. Development may use the built JS
-entry through the workspace runtime.
-
-The helper should accept an explicit `--database` path for testing and advanced use, while defaulting
-to OnMove's macOS Application Support database. Preserve the existing test override for isolated
-user-data directories.
-
-### Alternative transport
-
-A loopback Streamable HTTP server inside the running Electron process would share the existing
-database connection and notification system, but it would require OnMove to be running and would add
-host/origin validation plus authorization decisions. Keep it as a later option rather than the first
-local implementation.
+The port is configurable so a collision does not require changing application code. Enabling the
+server is independent from granting sensitive reads or safe writes.
 
 Relevant protocol references:
 
@@ -372,42 +353,35 @@ Relevant protocol references:
 - [MCP transports](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports)
 - [Official TypeScript server guide](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/server.md)
 
-## SQLite concurrency and migration ownership
+## In-process coordination and migration ownership
 
-A stdio MCP helper may open the same database while Electron is running. WAL mode already permits
-concurrent readers and serializes writers, but OnMove needs explicit behavior for contention.
+MCP does not open SQLite. Electron runs migrations once and constructs one `AppDatabase`; UI IPC and
+MCP requests call the application services on that same instance. WAL mode and a bounded busy timeout
+remain useful database safeguards, but they are not the MCP coordination mechanism.
 
 Before enabling MCP writes:
 
 - Add a bounded SQLite `busy_timeout` or equivalent retry policy.
 - Keep write transactions short.
-- Test Electron and MCP connections writing concurrently.
-- Define one migration owner or make migration startup locking explicit.
-- Do not let two processes partially run the same migration.
-- Refuse startup with a clear compatibility error when the database schema is newer than the
-  packaged MCP helper understands.
-- Close the SQLite connection cleanly when the MCP transport closes.
+- Serialize domain writes through the existing synchronous repositories and short transactions.
+- Keep Electron as the sole migration and database-lifecycle owner.
+- Stop accepting HTTP requests before closing the application database.
 
 The read-only server may still need a schema compatibility check, but should not mutate schema merely
 because an MCP client listed tools.
 
-## Cross-process change propagation
+## Live change propagation
 
-Direct MCP writes will not trigger Electron's current in-process IPC invalidations. Add one of:
-
-1. Poll `PRAGMA data_version` in the Electron main process and broadcast a generic domain-change
-   invalidation when another connection commits.
-2. Add a durable monotonically ordered domain-change journal and have Electron consume it.
-
-Start with `data_version` if a full refresh of the active model and badges is inexpensive. Move to a
-typed journal only when targeted invalidation or observability is necessary.
+After a successful `OnMoveCommandService` mutation, the MCP adapter invokes the main process's generic
+domain-change callback. Electron then refreshes every open renderer's active projections and badges.
+No polling or second-connection detection is involved.
 
 Requirements:
 
 - MCP-created Updates and Todos appear without restarting OnMove.
 - Review, Due, Todo, Routine, Tag, and navigation badges refresh.
 - A deleted or moved active selection resolves through the existing navigation defaults.
-- Rich-text editors do not lose local selection due to unrelated external refreshes.
+- Rich-text editors do not lose local selection due to unrelated MCP refreshes.
 - Multiple OnMove windows observe the same committed change.
 
 ## Mutation auditing
@@ -487,28 +461,28 @@ Exit criteria:
 
 Exit criteria:
 
-- The server can inspect the complete visible hierarchy without Electron running.
+- The enabled server can inspect the complete visible hierarchy through the running application.
 - Sensitive records, derived counts, errors, and logs do not leak while access is denied.
 - No read tool mutates SQLite.
 
-### Phase 3: Packaged macOS helper
+### Phase 3: Live macOS application host
 
-- Produce the standalone `onmove-mcp` executable.
-- Include it in `.app` packaging and signing/notarization inputs.
-- Document MCP-host configuration.
-- Verify paths with spaces and a clean machine without Node installed.
-- Add packaged-process protocol smoke tests.
+- Add the persisted Run MCP server toggle and configurable loopback port.
+- Start the HTTP server only after the application's database and services are ready.
+- Apply localhost Host and Origin validation and expose only the MCP route.
+- Show the active endpoint and startup errors in Settings.
+- Add runtime lifecycle and port-conflict tests.
 
 Exit criteria:
 
-- A client can launch the helper from the exported `.app`.
-- The helper finds the durable Application Support database.
-- stdout contains only valid MCP messages.
+- A client can connect to the URL shown by the exported `.app` while it is open.
+- Disabling or quitting OnMove removes the endpoint.
+- The server and UI use one `AppDatabase` instance.
 
 ### Phase 4: Safe writes and live invalidation
 
-- Add SQLite busy handling and concurrent-writer tests.
-- Add external database-change detection in Electron.
+- Keep SQLite transactions short and bounded.
+- Add a generic in-process domain-change notification from MCP to Electron windows.
 - Add the initial non-destructive write tools.
 - Resolve Subject input to exact effective Scope cells in the command service.
 - Add mutation origin auditing.
@@ -521,7 +495,7 @@ Exit criteria:
 - Existing archive and transition invariants remain intact.
 - Read-only and sensitive-access settings are enforced on every write path.
 
-### Phase 5: Full-text search, if justified
+### Phase 5: Full-text search
 
 - Add the FTS5/plain-text projection migration.
 - Backfill current documents.
@@ -546,29 +520,29 @@ Exit criteria:
 
 - Every tool against a temporary migrated SQLite database.
 - Old and newer compatible schema handling.
-- Simultaneous Electron-style and MCP-style readers.
-- Concurrent writers, busy timeout, rollback, and retry behavior.
+- Electron-style and MCP-style calls against one application service instance.
+- Runtime enable/disable, restart, port conflict, and rollback behavior.
 - Update rescue after MCP-triggered cascades.
 - Status-transition and review audit preservation.
-- External-change invalidation after commit.
+- In-process domain-change invalidation after commit.
 
 ### Protocol tests
 
 - Initialize and capability negotiation.
 - `tools/list`, `tools/call`, resource listing, templates, and resource reads.
 - Structured output validation.
-- No non-protocol stdout output.
-- Graceful shutdown and database close.
+- Streamable HTTP negotiation over the loopback endpoint.
+- Host and Origin rejection for non-local browser traffic.
+- Graceful listener shutdown before database close.
 - Legacy-client behavior only if explicitly supported by the selected SDK configuration.
 
 ### Packaged E2E tests
 
-- Launch the helper from `OnMove.app` on macOS.
-- Read the same fixture database used by Electron.
-- Write an Update/Todo and observe it live in the UI.
+- Enable the endpoint in `OnMove.app` on macOS.
+- Connect to the running application's configured loopback URL.
+- Write an Update/Todo and observe it immediately in the same live UI.
 - Toggle MCP sensitive access and verify immediate enforcement.
-- Run with spaces in the application path.
-- Run on a machine without a global Node installation.
+- Disable the server and verify the endpoint closes.
 
 ## Acceptance criteria
 
@@ -577,22 +551,21 @@ Exit criteria:
 - Sensitive access defaults to denied and cannot be overridden by a tool argument.
 - Effective sensitivity includes ancestors and the scoped Subject.
 - Hidden content does not leak through counts, tags, snippets, errors, resources, or logs.
-- MCP reads work with Electron open or closed.
-- MCP writes serialize safely with Electron writes.
+- MCP reads work only while the explicitly enabled Electron application is open.
+- MCP and Electron writes use the same database and application-service instances.
 - The open UI observes MCP writes without restart.
 - Scoped commands preserve exact `Scope x Subject` attribution.
 - Rich text is model-readable and remains durable in its current versioned storage format.
-- The packaged MCP helper requires no external runtime installation.
+- The packaged application requires no external MCP runtime installation.
 - All new behavior has unit, integration, protocol, and packaged E2E coverage appropriate to its
   phase.
 
 ## Open decisions
 
 - Whether the first public release is read-only or includes the initial safe writes.
-- Whether the packaged helper is a standalone executable or an Electron command mode.
-- Whether `data_version` invalidation is sufficient or a typed change journal is needed immediately.
+- Whether remote, authenticated transport should ever supplement the loopback-only endpoint.
+- Whether generic full refresh remains sufficient or a typed change journal becomes worthwhile.
 - Whether MCP sensitive access is one checkbox or separate read/write-sensitive permissions.
 - Whether mutation audit history is user-visible in the first MCP release.
 - Which MCP hosts must be verified before release.
 - What result limits and pagination defaults are appropriate for real OnMove databases.
-

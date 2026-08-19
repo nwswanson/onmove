@@ -7,8 +7,10 @@ import { createMenuTemplate } from './menu'
 import { resolveDatabasePath } from './paths'
 import { isAllowedExternalLink } from './external-links'
 import { installTextContextMenu } from './text-context-menu'
+import { OnMoveMcpRuntime } from '../mcp/live-server'
 import {
   IPC_EVENTS,
+  type McpSettingsSnapshot,
   type RichTextDocumentChange,
   type RichTextDocumentReference
 } from '../shared/contracts'
@@ -20,6 +22,7 @@ if (process.env.ONMOVE_USER_DATA_DIR) {
 }
 
 let database: AppDatabase | undefined
+let mcpRuntime: OnMoveMcpRuntime | undefined
 let unregisterIpc: (() => void) | undefined
 let sensitiveContentHidden = false
 const richTextWindowTargets = new Map<number, RichTextDocumentReference>()
@@ -153,6 +156,24 @@ function broadcastRoutinesChanged(): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
       window.webContents.send(IPC_EVENTS.routinesChanged)
+    }
+  }
+}
+
+function broadcastDomainChanged(): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(IPC_EVENTS.domainChanged)
+    }
+  }
+  invalidateNavigationBadges()
+  broadcastRoutinesChanged()
+}
+
+function broadcastMcpSettingsChanged(settings: McpSettingsSnapshot): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(IPC_EVENTS.mcpSettingsChanged, settings)
     }
   }
 }
@@ -300,15 +321,18 @@ function setSensitiveContentHidden(hidden: boolean): void {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   database = new AppDatabase(resolveDatabasePath(app.getPath('userData')))
   database.recordLaunch()
   maintainRollingBackup()
   backupMaintenanceTimer = setInterval(maintainRollingBackup, BACKUP_MAINTENANCE_CHECK_MS)
   backupMaintenanceTimer.unref()
+  mcpRuntime = new OnMoveMcpRuntime(database, broadcastDomainChanged)
+  await mcpRuntime.initialize()
   unregisterIpc = registerAppIpc(
     ipcMain,
     database,
+    mcpRuntime,
     shell,
     () => sensitiveContentHidden,
     {
@@ -317,7 +341,8 @@ app.whenReady().then(() => {
       broadcast: broadcastRichTextChange
     },
     invalidateNavigationBadges,
-    broadcastRoutinesChanged
+    broadcastRoutinesChanged,
+    broadcastMcpSettingsChanged
   )
 
   Menu.setApplicationMenu(
@@ -347,12 +372,22 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', () => {
+let shutdownInProgress = false
+app.on('before-quit', (event) => {
+  if (shutdownInProgress) return
+  event.preventDefault()
+  shutdownInProgress = true
   flushMainWindowSize()
   if (backupMaintenanceTimer) clearInterval(backupMaintenanceTimer)
   backupMaintenanceTimer = undefined
   unregisterIpc?.()
   unregisterIpc = undefined
-  database?.close()
-  database = undefined
+
+  const runtime = mcpRuntime
+  mcpRuntime = undefined
+  void (runtime?.close() ?? Promise.resolve()).finally(() => {
+    database?.close()
+    database = undefined
+    app.quit()
+  })
 })

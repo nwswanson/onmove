@@ -1,6 +1,8 @@
 export const IPC_CHANNELS = {
   getAppState: 'app:get-state',
   getSensitiveContentHidden: 'app:get-sensitive-content-hidden',
+  getMcpSettings: 'app:get-mcp-settings',
+  updateMcpSettings: 'app:update-mcp-settings',
   recordGreeting: 'app:record-greeting',
   showDataFolder: 'app:show-data-folder',
   getBackupState: 'backup:get-state',
@@ -89,6 +91,8 @@ export const IPC_EVENTS = {
   sensitiveContentVisibilityChanged: 'app:sensitive-content-visibility-changed',
   navigationBadgesInvalidated: 'app:navigation-badges-invalidated',
   routinesChanged: 'app:routines-changed',
+  domainChanged: 'app:domain-changed',
+  mcpSettingsChanged: 'app:mcp-settings-changed',
   richTextDocumentChanged: 'rich-text:document-changed'
 } as const
 
@@ -1329,15 +1333,41 @@ export interface BackupApi {
   showFolder: () => Promise<void>
 }
 
+export interface McpSettingsSnapshot {
+  serverEnabled: boolean
+  serverPort: number
+  allowSensitive: boolean
+  allowMutations: boolean
+  updatedAt: string
+  status: 'stopped' | 'starting' | 'running' | 'error'
+  endpoint: string | null
+  error: string | null
+}
+
+export interface UpdateMcpSettingsInput {
+  serverEnabled?: boolean
+  serverPort?: number
+  allowSensitive?: boolean
+  allowMutations?: boolean
+}
+
+export interface McpSettingsApi {
+  get: () => Promise<McpSettingsSnapshot>
+  update: (input: UpdateMcpSettingsInput) => Promise<McpSettingsSnapshot>
+  onChanged: (listener: (settings: McpSettingsSnapshot) => void) => () => void
+}
+
 export interface OnMoveApi {
   getAppState: () => Promise<AppState>
   getSensitiveContentHidden: () => Promise<boolean>
   onSensitiveContentVisibilityChanged: (listener: (hidden: boolean) => void) => () => void
   onNavigationBadgesInvalidated: (listener: () => void) => () => void
   onRoutinesChanged: (listener: () => void) => () => void
+  onDomainChanged: (listener: () => void) => () => void
   recordGreeting: () => Promise<AppState>
   showDataFolder: () => Promise<void>
   backups: BackupApi
+  mcp: McpSettingsApi
   domain: DomainApi
   richText: RichTextApi
 }

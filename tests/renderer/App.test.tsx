@@ -8,6 +8,7 @@ import type {
   CommitmentSnapshot,
   DomainApi,
   FocusSnapshot,
+  McpSettingsSnapshot,
   NoteSnapshot,
   OnMoveApi,
   ReviewQueueItemSnapshot,
@@ -442,12 +443,23 @@ function installApi(
     }),
     ...domainOverrides
   }
+  let mcpState: McpSettingsSnapshot = {
+    serverEnabled: false,
+    serverPort: 47_832,
+    allowSensitive: false,
+    allowMutations: false,
+    updatedAt: '2026-08-10T12:00:00.000Z',
+    status: 'stopped',
+    endpoint: null,
+    error: null
+  }
   const api: OnMoveApi = {
     getAppState: vi.fn().mockResolvedValue(initialState),
     getSensitiveContentHidden: vi.fn().mockResolvedValue(false),
     onSensitiveContentVisibilityChanged: vi.fn(() => () => undefined),
     onNavigationBadgesInvalidated: vi.fn(() => () => undefined),
     onRoutinesChanged: vi.fn(() => () => undefined),
+    onDomainChanged: vi.fn(() => () => undefined),
     recordGreeting: vi.fn().mockResolvedValue(initialState),
     showDataFolder: vi.fn().mockResolvedValue(undefined),
     backups: {
@@ -478,6 +490,25 @@ function installApi(
         }]
       }),
       showFolder: vi.fn().mockResolvedValue(undefined)
+    },
+    mcp: {
+      get: vi.fn(async () => mcpState),
+      update: vi.fn(async (input) => {
+        const serverEnabled = input.serverEnabled ?? mcpState.serverEnabled
+        const serverPort = input.serverPort ?? mcpState.serverPort
+        mcpState = {
+          ...mcpState,
+          ...input,
+          serverEnabled,
+          serverPort,
+          updatedAt: '2026-08-10T12:01:00.000Z',
+          status: serverEnabled ? 'running' : 'stopped',
+          endpoint: serverEnabled ? `http://127.0.0.1:${serverPort}/mcp` : null,
+          error: null
+        }
+        return mcpState
+      }),
+      onChanged: vi.fn(() => () => undefined)
     },
     domain,
     richText: {
@@ -5228,6 +5259,23 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: 'Settings' })).toBeVisible()
     expect(settings).toHaveAttribute('aria-current', 'page')
     expect(screen.getByText('Automatic database backups')).toBeVisible()
+    expect(screen.getByText('Model Context Protocol')).toBeVisible()
+    const serverEnabled = screen.getByRole('checkbox', { name: /Run MCP server/i })
+    const sensitiveAccess = screen.getByRole('checkbox', { name: /Allow sensitive content/i })
+    const mutationAccess = screen.getByRole('checkbox', { name: /Allow safe MCP writes/i })
+    expect(sensitiveAccess).not.toBeChecked()
+    expect(mutationAccess).not.toBeChecked()
+    await user.click(serverEnabled)
+    expect(api.mcp.update).toHaveBeenCalledWith({ serverEnabled: true })
+    expect(await screen.findByText('http://127.0.0.1:47832/mcp')).toBeVisible()
+    const serverPort = screen.getByRole('spinbutton', { name: 'MCP server port' })
+    await user.clear(serverPort)
+    await user.type(serverPort, '47833')
+    await user.tab()
+    expect(api.mcp.update).toHaveBeenCalledWith({ serverPort: 47_833 })
+    expect(await screen.findByText('http://127.0.0.1:47833/mcp')).toBeVisible()
+    await user.click(mutationAccess)
+    expect(api.mcp.update).toHaveBeenCalledWith({ allowMutations: true })
     expect(screen.getByText('1 of 10 snapshots')).toBeVisible()
     expect(screen.getByRole('list', { name: 'Recent backups' })).toBeVisible()
 

@@ -70,6 +70,12 @@ export function useTodosModel(context: TodoParent, refreshKey = ''): TodosModel 
     }
   }, [key, refreshKey, stableContext])
 
+  useEffect(() => window.onmove.onDomainChanged(() => {
+    void window.onmove.domain.listTodos(stableContext).then((nextTodos) => {
+      setState({ key, todos: nextTodos, loadError: null })
+    }).catch(() => undefined)
+  }), [key, stableContext])
+
   async function createTodo(input: CreateTodoInput): Promise<TodoSnapshot> {
     const created = await window.onmove.domain.createTodo(input)
     setState((current) => ({

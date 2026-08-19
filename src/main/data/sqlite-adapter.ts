@@ -13,7 +13,9 @@ export class SqliteAdapter {
 
   constructor(readonly path: string) {
     this.connection = new DatabaseSync(path)
-    this.connection.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;')
+    this.connection.exec(
+      'PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;'
+    )
   }
 
   exec(sql: string): void {

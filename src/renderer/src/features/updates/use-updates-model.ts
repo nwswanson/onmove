@@ -139,6 +139,13 @@ export function useUpdatesModel(
       : sortUpdates([...current, created]))
   }), [parentId, parentType])
 
+  useEffect(() => window.onmove.onDomainChanged(() => {
+    void window.onmove.domain.listUpdates(updateParent(parentType, parentId)).then((next) => {
+      setUpdates(sortUpdates(next))
+      setLoadError(null)
+    }).catch(() => undefined)
+  }), [parentId, parentType])
+
   async function createUpdate(
     input: Omit<CreateUpdateInput, 'parent'>
   ): Promise<UpdateSnapshot> {

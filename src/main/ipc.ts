@@ -17,6 +17,7 @@ import {
   type MoveCommitmentInput,
   type MoveRoutineInput,
   type MoveThreadInput,
+  type McpSettingsSnapshot,
   type FocusStatus,
   type SetItemStatusInput,
   type TodoListOptions,
@@ -30,7 +31,8 @@ import {
   type UpdateFocusInput,
   type UpdateRoutineInput,
   type UpdateThreadInput,
-  type UpdateTodoInput
+  type UpdateTodoInput,
+  type UpdateMcpSettingsInput
 } from '../shared/contracts'
 import type { AppDatabase } from './database'
 
@@ -43,6 +45,11 @@ export interface RichTextWindowCoordinator {
   broadcast: (change: RichTextDocumentChange) => void
 }
 
+export interface McpRuntimeCoordinator {
+  snapshot: () => McpSettingsSnapshot
+  update: (input: UpdateMcpSettingsInput) => Promise<McpSettingsSnapshot>
+}
+
 const emptyRichTextWindows: RichTextWindowCoordinator = {
   open: () => undefined,
   targetFor: () => null,
@@ -52,11 +59,13 @@ const emptyRichTextWindows: RichTextWindowCoordinator = {
 export function registerAppIpc(
   ipcMain: IpcRegistrar,
   database: AppDatabase,
+  mcpRuntime: McpRuntimeCoordinator,
   shell: FolderOpener,
   getSensitiveContentHidden: () => boolean = () => false,
   richTextWindows: RichTextWindowCoordinator = emptyRichTextWindows,
   invalidateNavigationBadges: () => void = () => undefined,
-  notifyRoutinesChanged: () => void = () => undefined
+  notifyRoutinesChanged: () => void = () => undefined,
+  notifyMcpSettingsChanged: (settings: McpSettingsSnapshot) => void = () => undefined
 ): () => void {
   function mutation<T>(operation: () => T): T {
     const result = operation()
@@ -72,6 +81,15 @@ export function registerAppIpc(
 
   ipcMain.handle(IPC_CHANNELS.getAppState, () => database.getState())
   ipcMain.handle(IPC_CHANNELS.getSensitiveContentHidden, getSensitiveContentHidden)
+  ipcMain.handle(IPC_CHANNELS.getMcpSettings, () => mcpRuntime.snapshot())
+  ipcMain.handle(
+    IPC_CHANNELS.updateMcpSettings,
+    async (_event, input: UpdateMcpSettingsInput) => {
+      const settings = await mcpRuntime.update(input)
+      notifyMcpSettingsChanged(settings)
+      return settings
+    }
+  )
   ipcMain.handle(IPC_CHANNELS.recordGreeting, () => database.recordGreeting())
   ipcMain.handle(IPC_CHANNELS.showDataFolder, () => shell.showItemInFolder(database.getState().databasePath))
   ipcMain.handle(IPC_CHANNELS.getBackupState, () => database.backups.getState())
@@ -109,7 +127,7 @@ export function registerAppIpc(
   ipcMain.handle(IPC_CHANNELS.getItemStatusHistory, (_event, id: number) =>
     database.domain.items.statusHistory(id)
   )
-  ipcMain.handle(IPC_CHANNELS.listFocuses, () => database.domain.focuses.list())
+  ipcMain.handle(IPC_CHANNELS.listFocuses, () => database.queries.listFocusSnapshots())
   ipcMain.handle(IPC_CHANNELS.createFocus, (_event, input: CreateFocusInput) =>
     mutation(() => database.domain.focuses.create(input).toSnapshot())
   )
@@ -296,9 +314,7 @@ export function registerAppIpc(
   ipcMain.handle(IPC_CHANNELS.queryTodos, (_event, options?: TodoListOptions) =>
     database.domain.todos.query(options)
   )
-  ipcMain.handle(IPC_CHANNELS.getTodoOverview, () =>
-    database.domain.todos.overview()
-  )
+  ipcMain.handle(IPC_CHANNELS.getTodoOverview, () => database.queries.todoOverview())
   ipcMain.handle(IPC_CHANNELS.createTodo, (_event, input: CreateTodoInput) =>
     mutation(() => database.domain.todos.create(input).toSnapshot())
   )
@@ -321,18 +337,18 @@ export function registerAppIpc(
   ipcMain.handle(IPC_CHANNELS.listNotes, (_event, parent: NoteParent) =>
     database.domain.notes.list(parent)
   )
-  ipcMain.handle(IPC_CHANNELS.listTags, () => database.domain.tags.list())
+  ipcMain.handle(IPC_CHANNELS.listTags, () => database.queries.tagSummaries())
   ipcMain.handle(IPC_CHANNELS.listTagUses, (_event, name: string) =>
-    database.domain.tags.uses(name)
+    database.queries.tagUses(name)
   )
   ipcMain.handle(IPC_CHANNELS.getNavigationBadgeOverview, () =>
     database.domain.navigation.getBadgeOverview()
   )
   ipcMain.handle(IPC_CHANNELS.getReviewOverview, () =>
-    database.domain.reviews.getOverview()
+    database.queries.reviewOverview()
   )
   ipcMain.handle(IPC_CHANNELS.getDueOverview, () =>
-    database.domain.due.getOverview()
+    database.queries.dueOverview()
   )
   ipcMain.handle(
     IPC_CHANNELS.getRichTextDocument,

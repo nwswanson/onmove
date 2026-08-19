@@ -30,6 +30,7 @@ export function useTagsModel(selectedTag: string | null): TagsModel {
   })
 
   useEffect(() => window.onmove.richText.onDocumentChanged(() => refresh()), [])
+  useEffect(() => window.onmove.onDomainChanged(() => refresh()), [])
 
   useEffect(() => {
     let active = true

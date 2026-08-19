@@ -83,6 +83,13 @@ export function useDueModel({ onWorkChanged }: DueModelOptions = {}): DueModel {
     }
   }, [])
 
+  useEffect(() => window.onmove.onDomainChanged(() => {
+    void window.onmove.domain.getDueOverview().then((next) => {
+      setOverview(next)
+      setError(null)
+    }).catch(() => undefined)
+  }), [])
+
   async function mutate(
     key: string,
     operation: (item: DueWorkItemSnapshot) => Promise<void>,

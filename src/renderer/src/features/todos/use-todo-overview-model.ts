@@ -36,6 +36,13 @@ export function useTodoOverviewModel(): TodoOverviewModel {
     }
   }, [])
 
+  useEffect(() => window.onmove.onDomainChanged(() => {
+    void window.onmove.domain.getTodoOverview().then((next) => {
+      setSnapshot(next)
+      setError(null)
+    }).catch(() => undefined)
+  }), [])
+
   async function setDone(todoId: number, done: boolean): Promise<void> {
     setPendingTodoIds((current) => new Set(current).add(todoId))
     setError(null)
