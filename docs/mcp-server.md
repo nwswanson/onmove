@@ -90,21 +90,51 @@ inspection call, allowed choices, and unambiguous retry behavior as Update creat
 ### Updating Notes
 
 Search results and parent contexts expose each Note's own ID. Use `onmove.get_note` with that ID to
-read its hierarchy, content, current revision, and `writeGuide.updateNote`, then call:
+read its hierarchy, current revision, and `writeGuide.updateNote`. The returned `note.content` is a
+read-only plain-text projection for comprehension and search. `note.richText` is the complete,
+lossless document to edit and send back:
 
 ```json
 {
   "id": 81,
   "expectedRevision": 4,
-  "content": "Replacement note content"
+  "document": {
+    "version": 1,
+    "blocks": [
+      {
+        "type": "paragraph",
+        "children": [
+          { "type": "text", "text": "Keep this bold", "marks": ["bold"] },
+          { "type": "text", "text": " and preserve the " },
+          {
+            "type": "link",
+            "url": "https://example.com/evidence",
+            "children": [{ "type": "text", "text": "evidence link" }]
+          }
+        ]
+      }
+    ]
+  }
 }
 ```
 
-`onmove.update_note` replaces the complete Note content. Plain text remains valid in the rich-text
-editor, while callers that intentionally produce OnMove's versioned rich-text envelope may retain
-structured formatting. The current revision is mandatory: if the Note changed in the app after it
-was read, the write is rejected as `note_revision_conflict` without changing the database. The
-response instructs the client to read, reconcile, and retry; the server never invents a text merge.
+`onmove.update_note` replaces the complete Note with an editor-neutral document rather than exposing
+the app's internal Lexical JSON. Blocks support paragraphs, bulleted lists, numbered lists,
+checklists, and multi-block quotes. Inline content supports links, soft line breaks, durable `@tag`
+tokens, readable text colors, and bold, italic, underline, strikethrough, and highlight marks. Lists
+may nest. The server validates document shape, size, depth, tag syntax, supported marks and colors,
+and `http`, `https`, or `mailto` link protocols before writing anything.
+
+Clients should copy `note.richText`, change only the intended nodes, and submit the whole document.
+The writable schema deliberately has no plain `content` field: plain-text replacement could erase
+formatting that the caller did not see. Legacy plain-text Notes are projected into paragraph blocks
+when read and become versioned rich text on their next API edit.
+
+The current revision is mandatory. If the Note changed in the app after it was read, the write is
+rejected as `note_revision_conflict` without changing the database. The response instructs the
+client to read, reconcile, and retry; the server never invents a text or structural merge. A
+successful write returns the refreshed Note context, including its new revision and canonical
+`note.richText` document.
 
 A committed Note edit is broadcast through both the domain and rich-text live-change channels, so
 the main application and any open pop-out Note window receive the new revision immediately.

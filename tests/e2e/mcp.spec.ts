@@ -95,20 +95,31 @@ test('serves MCP from the running app and immediately refreshes its open windows
       arguments: {
         id: threadNote.id,
         expectedRevision: threadNote.revision,
-        content: 'MCP content visible in open windows'
+        document: {
+          version: 1,
+          blocks: [{
+            type: 'paragraph',
+            children: [{
+              type: 'text',
+              text: 'MCP content visible in open windows',
+              marks: ['bold']
+            }]
+          }]
+        }
       }
     })
     expect(updatedNote.isError).not.toBe(true)
-    await expect.poll(() => window.evaluate(() => {
+    await expect.poll(() => window.evaluate(({ noteId, revision }) => {
       const testWindow = window as typeof window & {
         __mcpNoteChanges?: Array<{ id: number; value: string; revision: number }>
       }
-      return testWindow.__mcpNoteChanges ?? []
-    })).toContainEqual({
-      id: threadNote.id,
-      value: 'MCP content visible in open windows',
-      revision: threadNote.revision + 1
-    })
+      return (testWindow.__mcpNoteChanges ?? []).some((change) =>
+        change.id === noteId &&
+        change.value.includes('MCP content visible in open windows') &&
+        change.value.includes('"format":1') &&
+        change.revision === revision
+      )
+    }, { noteId: threadNote.id, revision: threadNote.revision + 1 })).toBe(true)
 
     const resolved = await client.callTool({
       name: 'onmove.resolve_target',

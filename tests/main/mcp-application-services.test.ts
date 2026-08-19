@@ -9,7 +9,8 @@ import {
   NoteRevisionConflictError,
   ScopeTargetValidationError
 } from '../../src/main/application/services'
-import { RICH_TEXT_PREFIX } from '../../src/shared/rich-text-value'
+import type { OnMoveRichTextDocument } from '../../src/shared/rich-text-document'
+import { RICH_TEXT_PREFIX, richTextPlainText } from '../../src/shared/rich-text-value'
 
 const denied: OnMoveAccessPolicy = { sensitiveContent: 'deny', mutations: 'read-only' }
 const writable: OnMoveAccessPolicy = { sensitiveContent: 'deny', mutations: 'allow' }
@@ -27,6 +28,13 @@ function lexical(text: string): string {
       version: 1
     }
   })}`
+}
+
+function richText(text: string): OnMoveRichTextDocument {
+  return {
+    version: 1,
+    blocks: [{ type: 'paragraph', children: [{ type: 'text', text }] }]
+  }
 }
 
 describe('OnMove MCP application services', () => {
@@ -286,30 +294,52 @@ describe('OnMove MCP application services', () => {
     }
   })
 
-  it('updates a visible Note with optimistic revision safety and metadata-only auditing', () => {
+  it('updates a visible Note without flattening its rich text and audits only metadata', () => {
     const { threadId } = hierarchy()
     const note = database.domain.notes.list({ type: 'thread', id: threadId })[0]
+    const formatted: OnMoveRichTextDocument = {
+      version: 1,
+      blocks: [{
+        type: 'paragraph',
+        children: [
+          { type: 'text', text: 'Person Y', marks: ['bold'], color: 'blue' },
+          { type: 'text', text: ' has completed the ' },
+          {
+            type: 'link',
+            url: 'https://example.com/readiness',
+            children: [{ type: 'text', text: 'readiness review', marks: ['italic'] }]
+          },
+          { type: 'text', text: '.' }
+        ]
+      }]
+    }
     expect(database.queries.getNote(note.id, denied)).toMatchObject({
       reference: { type: 'note', id: note.id },
       contextPath: [
         { type: 'focus', title: 'Project Atlas' },
         { type: 'thread', title: 'Sprint execution' }
       ],
-      note: { id: note.id, content: '', revision: note.revision }
+      note: {
+        id: note.id,
+        content: '',
+        revision: note.revision,
+        richText: { version: 1, blocks: [] }
+      }
     })
 
     const updated = database.commands.updateNote({
       id: note.id,
       expectedRevision: note.revision,
-      content: 'Person Y has completed the readiness review.'
+      document: formatted
     }, writable, 'note-test')
     expect(updated).toMatchObject({
       reference: { type: 'note', id: note.id, field: 'content' },
-      value: 'Person Y has completed the readiness review.',
       revision: note.revision + 1
     })
+    expect(richTextPlainText(updated.value)).toBe('Person Y has completed the readiness review.')
     expect(database.queries.getNote(note.id, denied)?.note).toMatchObject({
       content: 'Person Y has completed the readiness review.',
+      richText: formatted,
       revision: note.revision + 1
     })
 
@@ -317,7 +347,7 @@ describe('OnMove MCP application services', () => {
       database.commands.updateNote({
         id: note.id,
         expectedRevision: note.revision,
-        content: 'Stale replacement'
+        document: richText('Stale replacement')
       }, writable)
       throw new Error('Expected a stale Note write to be rejected')
     } catch (error) {
@@ -331,9 +361,9 @@ describe('OnMove MCP application services', () => {
         }
       })
     }
-    expect(database.domain.notes.find(note.id)?.content).toBe(
-      'Person Y has completed the readiness review.'
-    )
+    expect(database.domain.notes.find(note.id)?.content).toBe(updated.value)
+    expect(database.domain.notes.find(note.id)?.content).toContain('"type":"link"')
+    expect(database.domain.notes.find(note.id)?.content).toContain('"format":1')
 
     const raw = new DatabaseSync(databasePath, { readOnly: true })
     const audit = raw.prepare(
@@ -360,13 +390,13 @@ describe('OnMove MCP application services', () => {
     expect(() => database.commands.updateNote({
       id: note.id,
       expectedRevision: note.revision,
-      content: 'Hidden content'
+      document: richText('Hidden content')
     }, writable)).toThrow('Note')
 
     expect(database.commands.updateNote({
       id: note.id,
       expectedRevision: note.revision,
-      content: 'Authorized content'
-    }, sensitiveWritable)).toMatchObject({ value: 'Authorized content' })
+      document: richText('Authorized content')
+    }, sensitiveWritable)).toMatchObject({ revision: note.revision + 1 })
   })
 })

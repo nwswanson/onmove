@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createRef, useState } from 'react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
+import { onMoveRichTextDocumentToStored } from '../../src/shared/rich-text-document'
 import {
   isRichText,
   RichTextContent,
@@ -44,6 +45,51 @@ function selectText(editor: HTMLElement, start: number, end: number): void {
 }
 
 describe('RichTextEditor', () => {
+  it('renders the complete editor-neutral MCP document without flattening it', async () => {
+    const value = onMoveRichTextDocumentToStored({
+      version: 1,
+      blocks: [
+        {
+          type: 'paragraph',
+          children: [
+            { type: 'text', text: 'Important', marks: ['bold', 'highlight'], color: 'red' },
+            { type: 'text', text: ' ' },
+            {
+              type: 'link',
+              url: 'https://example.com/evidence',
+              children: [{ type: 'text', text: 'evidence', marks: ['italic'] }]
+            },
+            { type: 'text', text: ' ' },
+            { type: 'text', text: '@Person1', tag: true }
+          ]
+        },
+        {
+          type: 'quote',
+          blocks: [{
+            type: 'checklist',
+            items: [{ content: [{ type: 'text', text: 'Verify it' }], checked: true }]
+          }]
+        },
+        {
+          type: 'numbered-list',
+          start: 4,
+          items: [{ content: [{ type: 'text', text: 'Fourth item' }] }]
+        }
+      ]
+    })
+
+    render(<RichTextContent value={value} ariaLabel="MCP rich text" />)
+    const content = screen.getByLabelText('MCP rich text')
+    await waitFor(() => expect(content).toHaveTextContent('Important evidence @Person1'))
+    expect(content.querySelector('strong')).toHaveTextContent('Important')
+    expect(content.querySelector('.onmove-rich-text-highlight')).toHaveTextContent('Important')
+    expect(content.querySelector('a')).toHaveAttribute('href', 'https://example.com/evidence')
+    expect(content.querySelector('a em')).toHaveTextContent('evidence')
+    expect(content.querySelector('.onmove-text-tag')).toHaveTextContent('@Person1')
+    expect(content.querySelector('blockquote [role="checkbox"]')).toHaveAttribute('aria-checked', 'true')
+    expect(content.querySelector('ol')).toHaveAttribute('start', '4')
+  })
+
   it('exposes the latest committed value for confirmation-based forms', async () => {
     const editorRef = createRef<RichTextEditorHandle>()
     const user = userEvent.setup()

@@ -6,6 +6,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AppDatabase } from '../../src/main/database'
 import { createOnMoveMcpServer } from '../../src/mcp/server'
 import type { McpUiContextSnapshot } from '../../src/shared/contracts'
+import type { OnMoveRichTextDocument } from '../../src/shared/rich-text-document'
+
+function richText(text: string): OnMoveRichTextDocument {
+  return {
+    version: 1,
+    blocks: [{ type: 'paragraph', children: [{ type: 'text', text }] }]
+  }
+}
 
 describe('OnMove MCP protocol adapter', () => {
   let directory: string
@@ -418,7 +426,7 @@ describe('OnMove MCP protocol adapter', () => {
     })
   })
 
-  it('reads and safely updates a Note while returning structured stale-write recovery', async () => {
+  it('reads and safely updates a rich-text Note while returning structured stale-write recovery', async () => {
     const focus = database.domain.focuses.requireModel(1).toSnapshot()
     const thread = database.domain.threads.create({
       focusId: focus.id,
@@ -438,7 +446,13 @@ describe('OnMove MCP protocol adapter', () => {
         { type: 'focus', id: focus.id, title: 'Launch readiness' },
         { type: 'thread', id: thread.id, title: 'Note owner' }
       ],
-      note: { id: note.id, title: 'Default', content: '', revision: note.revision },
+      note: {
+        id: note.id,
+        title: 'Default',
+        content: '',
+        revision: note.revision,
+        richText: { version: 1, blocks: [] }
+      },
       writeGuide: {
         updateNote: {
           tool: 'onmove.update_note',
@@ -457,14 +471,17 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: {
         id: note.id,
         expectedRevision: note.revision,
-        content: 'Updated live through MCP'
+        document: richText('Updated live through MCP')
       }
     })
     expect(updated.isError).not.toBe(true)
     expect(updated.structuredContent).toMatchObject({
-      reference: { type: 'note', id: note.id, field: 'content' },
-      value: 'Updated live through MCP',
-      revision: note.revision + 1
+      reference: { type: 'note', id: note.id },
+      note: {
+        content: 'Updated live through MCP',
+        revision: note.revision + 1,
+        richText: richText('Updated live through MCP')
+      }
     })
 
     const stale = await client.callTool({
@@ -472,7 +489,7 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: {
         id: note.id,
         expectedRevision: note.revision,
-        content: 'This must not overwrite the newer value'
+        document: richText('This must not overwrite the newer value')
       }
     })
     expect(stale.isError).toBe(true)
@@ -489,7 +506,44 @@ describe('OnMove MCP protocol adapter', () => {
       }
     })
     expect(JSON.stringify(stale.content)).toContain('Read the Note again')
-    expect(database.domain.notes.find(note.id)?.content).toBe('Updated live through MCP')
+    expect(database.domain.notes.find(note.id)?.content).toContain('Updated live through MCP')
+  })
+
+  it('advertises a structured Note document and rejects unsafe rich-text input', async () => {
+    const tools = (await client.listTools()).tools
+    const updateNote = tools.find(({ name }) => name === 'onmove.update_note')!
+    const schema = JSON.stringify(updateNote.inputSchema)
+    expect(schema).toContain('bullet-list')
+    expect(schema).toContain('checklist')
+    expect(schema).toContain('strikethrough')
+    expect(schema).toContain('rich-text')
+    expect((updateNote.inputSchema as { properties?: Record<string, unknown> }).properties)
+      .not.toHaveProperty('content')
+
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const note = database.domain.notes.list({ type: 'focus', id: focus.id })[0]
+    database.mcpSettings.update({ allowMutations: true })
+    const rejected = await client.callTool({
+      name: 'onmove.update_note',
+      arguments: {
+        id: note.id,
+        expectedRevision: note.revision,
+        document: {
+          version: 1,
+          blocks: [{
+            type: 'paragraph',
+            children: [{
+              type: 'link',
+              url: 'javascript:alert(1)',
+              children: [{ type: 'text', text: 'unsafe' }]
+            }]
+          }]
+        }
+      }
+    })
+    expect(rejected.isError).toBe(true)
+    expect(database.domain.notes.find(note.id)?.content).toBe('')
+    expect(database.domain.notes.find(note.id)?.revision).toBe(note.revision)
   })
 
   it('guides and recovers an agent that incorrectly targets a Subject on an Open Thread', async () => {

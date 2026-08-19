@@ -15,6 +15,11 @@ import type {
   UpdateScopeCell,
   UpdateSnapshot
 } from '../../shared/contracts'
+import {
+  onMoveRichTextDocumentFromStored,
+  onMoveRichTextDocumentToStored,
+  type OnMoveRichTextDocument
+} from '../../shared/rich-text-document'
 import { richTextPlainText } from '../../shared/rich-text-value'
 import type { DomainStore } from '../data/domain'
 import { ModelNotFoundError, ModelValidationError } from '../data/model'
@@ -58,7 +63,7 @@ export interface ApplicationNoteContext {
   uri: string
   contextPath: Array<{ type: 'focus' | 'thread' | 'commitment'; id: number; title: string }>
   effectiveSensitive: boolean
-  note: NoteSnapshot
+  note: NoteSnapshot & { richText: OnMoveRichTextDocument }
 }
 
 export interface CreateApplicationUpdate {
@@ -88,7 +93,7 @@ export interface UpdateApplicationTodo {
 export interface UpdateApplicationNote {
   id: number
   expectedRevision: number
-  content: string
+  document: OnMoveRichTextDocument
 }
 
 export interface PokeApplicationReview {
@@ -471,7 +476,10 @@ export class OnMoveQueryService {
       uri: `onmove://note/${id}`,
       contextPath,
       effectiveSensitive: Boolean(this.sensitivity.isSensitive('note', id)),
-      note: plainProjection(note) as NoteSnapshot
+      note: {
+        ...plainProjection(note) as NoteSnapshot,
+        richText: onMoveRichTextDocumentFromStored(note.content)
+      }
     }
   }
 
@@ -808,9 +816,6 @@ export class OnMoveCommandService {
     if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) {
       throw new ModelValidationError('expected Note revision must be a non-negative integer')
     }
-    if (typeof input.content !== 'string') {
-      throw new ModelValidationError('Note content must be text')
-    }
     if (!this.sensitivity.canRead('note', input.id, access)) {
       throw new ModelNotFoundError('Note', input.id)
     }
@@ -831,7 +836,15 @@ export class OnMoveCommandService {
       }
       const document = this.domain.richTextDocuments.save({
         type: 'note', id: input.id, field: 'content'
-      }, input.content)
+      }, (() => {
+        try {
+          return onMoveRichTextDocumentToStored(input.document)
+        } catch (error) {
+          throw new ModelValidationError(
+            `Note rich-text document is invalid: ${error instanceof Error ? error.message : String(error)}`
+          )
+        }
+      })())
       this.audit.record({
         toolName: 'onmove.update_note', entityType: 'note', entityId: input.id,
         category: 'update', clientName,

@@ -67,14 +67,20 @@ describe('running-application MCP server', () => {
         arguments: {
           id: note.id,
           expectedRevision: note.revision,
-          content: 'Live Note content'
+          document: {
+            version: 1,
+            blocks: [{
+              type: 'paragraph',
+              children: [{ type: 'text', text: 'Live Note content', marks: ['bold'] }]
+            }]
+          }
         }
       })
       expect(updatedNote.isError).not.toBe(true)
       expect(changed).toHaveBeenCalledOnce()
       expect(richTextChanged).toHaveBeenCalledWith(expect.objectContaining({
         reference: { type: 'note', id: note.id, field: 'content' },
-        value: 'Live Note content',
+        value: expect.stringContaining('Live Note content'),
         revision: note.revision + 1
       }))
 

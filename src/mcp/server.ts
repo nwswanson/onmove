@@ -12,6 +12,11 @@ import {
   type SearchQuery
 } from '../main/application/search-index'
 import type { McpUiContextSnapshot, RichTextDocumentSnapshot } from '../shared/contracts'
+import {
+  ONMOVE_RICH_TEXT_COLORS,
+  ONMOVE_RICH_TEXT_MARKS,
+  type OnMoveRichTextDocument
+} from '../shared/rich-text-document'
 
 export interface OnMoveMcpServerOptions {
   /** Called after a committed MCP mutation so the live application can refresh its windows. */
@@ -81,6 +86,71 @@ const searchScopeSchema = z.object({
   'An explicit named search scope. Null or omitted means mode=all; the current UI is never used implicitly.'
 )
 
+const richTextTextSchema = z.strictObject({
+  type: z.literal('text'),
+  text: z.string().describe('The text in this run.'),
+  marks: z.array(z.enum(ONMOVE_RICH_TEXT_MARKS)).optional().describe(
+    'Optional formatting marks. Marks must be unique.'
+  ),
+  color: z.enum(ONMOVE_RICH_TEXT_COLORS).optional().describe(
+    'Optional readable editor text color.'
+  ),
+  tag: z.literal(true).optional().describe(
+    'Set only when text is a durable @tag token of @ followed by alphanumeric characters.'
+  )
+}).describe('One text run with its complete formatting.')
+
+const richTextLineBreakSchema = z.strictObject({
+  type: z.literal('line-break')
+}).describe('An intentional soft line break inside one block.')
+
+const richTextLinkSchema = z.strictObject({
+  type: z.literal('link'),
+  url: z.url().describe('An http, https, or mailto URL.'),
+  children: z.array(richTextTextSchema).min(1).describe(
+    'Formatted visible text for the link.'
+  )
+}).describe('A clickable link whose text formatting is preserved.')
+
+const richTextInlineSchema = z.union([
+  richTextTextSchema,
+  richTextLinkSchema,
+  richTextLineBreakSchema
+])
+
+const richTextListSchema: z.ZodType = z.lazy(() => z.strictObject({
+  type: z.enum(['bullet-list', 'numbered-list', 'checklist']),
+  start: z.number().int().positive().optional().describe(
+    'Optional starting number, valid only for a numbered-list. One is canonical and may be omitted.'
+  ),
+  items: z.array(z.strictObject({
+    content: z.array(richTextInlineSchema).describe('Inline content of this list item.'),
+    checked: z.boolean().optional().describe('Completion state; valid only for checklist items.'),
+    children: z.array(richTextListSchema).optional().describe('Nested lists under this item.')
+  })).min(1)
+}).describe('A bulleted, numbered, or checklist block.'))
+
+const richTextBlockSchema: z.ZodType = z.lazy(() => z.union([
+  z.strictObject({
+    type: z.literal('paragraph'),
+    children: z.array(richTextInlineSchema)
+  }).describe('A paragraph block.'),
+  richTextListSchema,
+  z.strictObject({
+    type: z.literal('quote'),
+    blocks: z.array(richTextBlockSchema).min(1)
+  }).describe('A quote containing paragraphs, lists, or nested quotes.')
+]))
+
+const richTextDocumentSchema = z.strictObject({
+  version: z.literal(1).describe('The OnMove rich-text API document version.'),
+  blocks: z.array(richTextBlockSchema).describe(
+    'Ordered paragraphs, lists, checklists, and quote blocks. An empty array is an empty Note.'
+  )
+}).describe(
+  'A complete editor-neutral OnMove rich-text document. Read note.richText, edit this structure, and submit the whole document without flattening it to note.content.'
+)
+
 function diagnosticsScope(scope: AppliedSearchScope = GLOBAL_SCOPE): McpDiagnostics {
   return { appliedScope: scope, warnings: [] }
 }
@@ -109,7 +179,7 @@ interface NoteWriteGuide {
   noteId: number
   expectedRevision: number
   instruction: string
-  requestExample: { id: number; expectedRevision: number; content: string }
+  requestExample: { id: number; expectedRevision: number; document: OnMoveRichTextDocument }
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -264,11 +334,18 @@ function noteWriteGuide(value: unknown): NoteWriteGuide | null {
     expectedRevision,
     instruction:
       'Send the revision just read as expectedRevision. A stale revision is rejected; ' +
-      'read the Note again and reconcile before retrying.',
+      'read the Note again and reconcile before retrying. Copy note.richText, edit that ' +
+      'document, and submit it whole; note.content is a read-only plain-text projection.',
     requestExample: {
       id: noteId,
       expectedRevision,
-      content: 'Replacement Note content.'
+      document: {
+        version: 1,
+        blocks: [{
+          type: 'paragraph',
+          children: [{ type: 'text', text: 'Replacement Note content.' }]
+        }]
+      }
     }
   }
 }
@@ -666,7 +743,7 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Use onmove.search for literal information that may appear anywhere in titles, Updates, Notes, Todos, Subjects, or other indexed text. Search is global by default: never assume the current UI Focus is applied. For a hierarchy-shaped request such as "do X for Person Y\'s 1:1 in Team", use onmove.resolve_target with Thread, Commitment, and Subject selectors, then follow its recommendedTodoRequest or writeGuide.createTodo. Each search result includes hierarchy IDs; use hierarchy.thread.id with onmove.get_thread, not the ID of a matching Update or Note. Before updating a Note, call onmove.get_note and send its revision as expectedRevision; stale writes are rejected rather than merged or overwritten. Before other mutations, inspect the matching writeGuide: Open parents must be unscoped, while scoped parents require a listed Subject or an explicitly shared Todo. Inspect diagnostics and warnings on every response. Sensitive content and mutations are controlled only in OnMove Settings.'
+        'Use onmove.search for literal information that may appear anywhere in titles, Updates, Notes, Todos, Subjects, or other indexed text. Search is global by default: never assume the current UI Focus is applied. For a hierarchy-shaped request such as "do X for Person Y\'s 1:1 in Team", use onmove.resolve_target with Thread, Commitment, and Subject selectors, then follow its recommendedTodoRequest or writeGuide.createTodo. Each search result includes hierarchy IDs; use hierarchy.thread.id with onmove.get_thread, not the ID of a matching Update or Note. Before updating a Note, call onmove.get_note, edit note.richText without flattening it, and send its revision as expectedRevision; stale writes are rejected rather than merged or overwritten. Before other mutations, inspect the matching writeGuide: Open parents must be unscoped, while scoped parents require a listed Subject or an explicitly shared Todo. Inspect diagnostics and warnings on every response. Sensitive content and mutations are controlled only in OnMove Settings.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -726,7 +803,7 @@ export function createOnMoveMcpServer(
     'onmove.get_note',
     {
       title: 'Get an OnMove note',
-      description: 'Read one visible Note by its own ID, including hierarchy context, plain-text content, current revision, and the safe update contract. Use a note searchResult.reference.id or an ID from a parent context\'s notes array.',
+      description: 'Read one visible Note by its own ID, including hierarchy context, a read-only plain-text content projection, the lossless editor-neutral note.richText document, current revision, and the safe update contract. Use a note searchResult.reference.id or an ID from a parent context\'s notes array.',
       inputSchema: z.object({
         id: idSchema.describe(
           'The Note\'s own positive ID from searchResult.reference.id or a parent context\'s notes array.'
@@ -1082,7 +1159,7 @@ export function createOnMoveMcpServer(
     'onmove.update_note',
     {
       title: 'Update an OnMove note',
-      description: 'Replace the content of one existing visible Note using optimistic concurrency. Call onmove.get_note first and pass its current revision as expectedRevision. Plain text is accepted as legacy rich text; a versioned OnMove rich-text envelope can be supplied when preserving structured formatting.',
+      description: 'Replace one visible Note with a complete editor-neutral rich-text document using optimistic concurrency. Call onmove.get_note first, edit note.richText, and pass its current revision. The plain note.content projection is intentionally not writable, so formatting cannot be flattened accidentally.',
       inputSchema: z.object({
         id: idSchema.describe(
           'The Note\'s own positive ID from onmove.get_note, a Note search hit, or a parent context.'
@@ -1090,8 +1167,8 @@ export function createOnMoveMcpServer(
         expectedRevision: z.number().int().nonnegative().describe(
           'The exact Note revision returned by onmove.get_note. Stale revisions are rejected without changing content.'
         ),
-        content: z.string().describe(
-          'Complete replacement Note content. Plain text is supported; existing formatting is preserved only when the caller submits a valid versioned OnMove rich-text envelope.'
+        document: richTextDocumentSchema.describe(
+          'Complete replacement document. Begin with note.richText from onmove.get_note and preserve blocks, links, colors, marks, checklists, quotes, and tags that are not intentionally changed.'
         )
       }),
       annotations: { readOnlyHint: false, destructiveHint: false }
@@ -1099,13 +1176,13 @@ export function createOnMoveMcpServer(
     async (input) => {
       try {
         const document = database.commands.updateNote(
-          input,
+          { ...input, document: input.document as OnMoveRichTextDocument },
           policy(),
           server.server.getClientVersion()?.name
         )
         options.onRichTextMutation?.(document)
         options.onMutation?.()
-        return result(document)
+        return result(withNoteWriteGuide(found(database.queries.getNote(input.id, policy()))))
       } catch (error) {
         if (!(error instanceof NoteRevisionConflictError)) throw error
         return noteRevisionConflictResult(error)
@@ -1179,7 +1256,7 @@ function registerResources(server: McpServer, database: AppDatabase): void {
     new ResourceTemplate('onmove://note/{id}', { list: undefined }),
     {
       title: 'OnMove note',
-      description: 'Hierarchy-aware Note content and revision.',
+      description: 'Hierarchy-aware Note with plain-text projection, lossless rich-text document, revision, and safe write guide.',
       mimeType: 'application/json'
     },
     async (uri, variables) => resource(
