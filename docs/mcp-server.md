@@ -52,6 +52,40 @@ structured error with an inspection call, allowed Subjects, and a ready-to-run r
 choice is unambiguous. It never silently drops a supplied Subject because that would change the
 meaning of the evidence.
 
+### Resolving a hierarchy and creating Todos
+
+Use `onmove.resolve_target` when a request names related records, rather than searching each name
+as an unrelated global term. For example, “Do X for Person Y's 1:1 in Leadership Team” resolves
+with:
+
+```json
+{
+  "thread": { "title": "Leadership Team" },
+  "commitment": { "title": "1:1" },
+  "subject": { "name": "Person Y" }
+}
+```
+
+Resolution proceeds in hierarchy order: optional Focus, required Thread, optional child
+Commitment, then optional Subject within that target's current effective Scope. Names are exact,
+case-insensitive matches, so punctuation-bearing titles such as `1:1` do not suffer from FTS token
+splitting. Every selector also accepts its entity's own ID. Duplicate matches return
+`status: "ambiguous"` with candidates and a warning; the resolver never guesses. A resolved target
+includes `recommendedTodoRequest`, which is directly executable after adding the Todo `name`.
+
+`onmove.get_thread`, `onmove.get_commitment`, and resolved candidates expose
+`writeGuide.createTodo`:
+
+- Open parents allow only `attribution: { "mode": "unscoped" }`.
+- Scoped parents allow an individual
+  `attribution: { "mode": "subject", "subjectId": 34 }` using `allowedSubjects`.
+- Scoped parents also allow `attribution: { "mode": "all-subjects" }`, which creates one shared
+  Todo with an independently completable cell for every current Subject.
+
+The older top-level `subjectId` and `sharedAcrossSubjects` fields remain accepted for compatibility,
+but named `attribution` is preferred. Invalid Todo attribution returns the same structured
+inspection call, allowed choices, and unambiguous retry behavior as Update creation.
+
 ## Search
 
 `onmove.search` is backed by a durable SQLite FTS5 index, not by raw `LIKE` queries or arbitrary
@@ -93,8 +127,9 @@ the Update's `reference.id`. This distinction is also described directly in the 
 
 ## Tools and resources
 
-Read tools cover Focuses, Threads, Commitments, Routines, Reviews, Due work, Todos, Tags, and search.
-Write tools cover the safe mutations described above. Stable resource templates use:
+Read tools cover Focuses, Threads, Commitments, Routines, Reviews, Due work, Todos, Tags, search,
+and hierarchy-aware target resolution. Write tools cover the safe mutations described above.
+Stable resource templates use:
 
 ```text
 onmove://focus/{id}

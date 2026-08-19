@@ -40,11 +40,12 @@ describe('OnMove MCP protocol adapter', () => {
     expect(listed.tools.map(({ name }) => name)).toEqual(expect.arrayContaining([
       'onmove.list_focuses',
       'onmove.get_thread',
+      'onmove.resolve_target',
       'onmove.search',
       'onmove.create_update',
       'onmove.poke_review'
     ]))
-    expect(listed.tools).toHaveLength(16)
+    expect(listed.tools).toHaveLength(17)
 
     const templates = await client.listResourceTemplates()
     expect(templates.resourceTemplates.map(({ uriTemplate }) => uriTemplate)).toEqual(
@@ -86,7 +87,9 @@ describe('OnMove MCP protocol adapter', () => {
     const tools = (await client.listTools()).tools
     const search = tools.find(({ name }) => name === 'onmove.search')!
     const getThread = tools.find(({ name }) => name === 'onmove.get_thread')!
+    const resolveTarget = tools.find(({ name }) => name === 'onmove.resolve_target')!
     const createUpdate = tools.find(({ name }) => name === 'onmove.create_update')!
+    const createTodo = tools.find(({ name }) => name === 'onmove.create_todo')!
     const searchSchema = JSON.stringify(search.inputSchema)
     const threadSchema = JSON.stringify(getThread.inputSchema)
     const updateSchema = JSON.stringify(createUpdate.inputSchema)
@@ -100,6 +103,137 @@ describe('OnMove MCP protocol adapter', () => {
     expect(createUpdate.description).toContain('Open parents require unscoped attribution')
     expect(updateSchema).toContain('writeGuide.createUpdate.allowedSubjects')
     expect(updateSchema).toContain('Null or omitted means unscoped')
+    expect(resolveTarget.description).toContain('Thread → Commitment → Subject')
+    expect(JSON.stringify(resolveTarget.inputSchema)).toContain('1:1')
+    expect(createTodo.description).toContain('writeGuide.createTodo')
+    expect(JSON.stringify(createTodo.inputSchema)).toContain('all-subjects')
+  })
+
+  it('resolves Team → 1:1 → Person Y and supplies an executable subject Todo request', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const team = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Leadership Team',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const oneToOne = database.domain.commitments.create({
+      type: 'tracking',
+      parent: { type: 'thread', id: team.id },
+      title: '1:1'
+    }).snapshot()
+    const scope = database.domain.threadScopes.addSubject(team.id, { name: 'Person Y' })
+    const person = scope.subjects[0]
+    database.mcpSettings.update({ allowMutations: true })
+
+    const resolved = await client.callTool({
+      name: 'onmove.resolve_target',
+      arguments: {
+        thread: { title: 'leadership team' },
+        commitment: { title: '1:1' },
+        subject: { name: 'person y' }
+      }
+    })
+    expect(resolved.isError).not.toBe(true)
+    expect(resolved.structuredContent).toMatchObject({
+      status: 'resolved',
+      target: {
+        parent: { type: 'commitment', id: oneToOne.id },
+        hierarchy: {
+          focus: { id: focus.id, title: 'Launch readiness' },
+          thread: { id: team.id, title: 'Leadership Team' },
+          commitment: { id: oneToOne.id, title: '1:1' }
+        },
+        subject: { id: person.id, name: 'Person Y' },
+        writeGuide: {
+          createTodo: {
+            allowedAttributions: ['subject', 'all-subjects'],
+            allowedSubjects: [{ id: person.id, name: 'Person Y' }]
+          }
+        },
+        recommendedTodoRequest: {
+          tool: 'onmove.create_todo',
+          arguments: {
+            parent: { type: 'commitment', id: oneToOne.id },
+            attribution: { mode: 'subject', subjectId: person.id }
+          }
+        }
+      },
+      candidates: [expect.objectContaining({
+        parent: { type: 'commitment', id: oneToOne.id }
+      })],
+      diagnostics: {
+        resolutionStatus: 'resolved',
+        candidateCount: 1,
+        warnings: []
+      }
+    })
+
+    const recommendation = resolved.structuredContent as {
+      target: {
+        recommendedTodoRequest: {
+          tool: string
+          arguments: Record<string, unknown>
+        }
+      }
+    }
+    const created = await client.callTool({
+      name: recommendation.target.recommendedTodoRequest.tool,
+      arguments: {
+        ...recommendation.target.recommendedTodoRequest.arguments,
+        name: 'Do X'
+      }
+    })
+    expect(created.isError).not.toBe(true)
+    expect(created.structuredContent).toMatchObject({
+      name: 'Do X',
+      parent: {
+        type: 'commitment-scope',
+        id: oneToOne.id,
+        scope: { scopeId: scope.scopeId, subjectId: person.id }
+      },
+      subject: { id: person.id, name: 'Person Y' }
+    })
+  })
+
+  it('returns hierarchy ambiguity instead of guessing between duplicate Team and 1:1 names', async () => {
+    const firstFocus = database.domain.focuses.requireModel(1).toSnapshot()
+    const secondFocus = database.domain.focuses.create({ title: 'Other portfolio' }).toSnapshot()
+    for (const focus of [firstFocus, secondFocus]) {
+      const thread = database.domain.threads.create({
+        focusId: focus.id,
+        title: 'Team',
+        reviewFrequencyDays: 7
+      }).snapshot()
+      database.domain.commitments.create({
+        type: 'tracking', parent: { type: 'thread', id: thread.id }, title: '1:1'
+      })
+    }
+
+    const ambiguous = await client.callTool({
+      name: 'onmove.resolve_target',
+      arguments: { thread: { title: 'Team' }, commitment: { title: '1:1' } }
+    })
+    expect(ambiguous.structuredContent).toMatchObject({
+      status: 'ambiguous',
+      target: null,
+      candidates: [
+        expect.objectContaining({
+          hierarchy: expect.objectContaining({
+            focus: expect.objectContaining({ id: firstFocus.id })
+          })
+        }),
+        expect.objectContaining({
+          hierarchy: expect.objectContaining({
+            focus: expect.objectContaining({ id: secondFocus.id })
+          })
+        })
+      ],
+      diagnostics: {
+        resolutionStatus: 'ambiguous',
+        candidateCount: 2,
+        warnings: [expect.stringContaining('Focus selector or use an ID')]
+      }
+    })
   })
 
   it('searches globally by default and only uses the UI context when mode=current is explicit', async () => {
@@ -357,6 +491,64 @@ describe('OnMove MCP protocol adapter', () => {
       scope: null,
       observation: 'Open Thread evidence',
       state: 'green'
+    })
+  })
+
+  it('guides and recovers Todo attribution with the same receiver-owned contract', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Open Todo target',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const unrelated = database.domain.subjects.create({ name: 'Person Y' }).toSnapshot()
+    database.mcpSettings.update({ allowMutations: true })
+
+    const context = await client.callTool({
+      name: 'onmove.get_thread', arguments: { id: thread.id }
+    })
+    expect(context.structuredContent).toMatchObject({
+      writeGuide: {
+        createTodo: {
+          tool: 'onmove.create_todo',
+          parent: { type: 'thread', id: thread.id },
+          allowedAttributions: ['unscoped'],
+          allowedSubjects: [],
+          requestExamples: {
+            unscoped: { attribution: { mode: 'unscoped' } }
+          }
+        }
+      }
+    })
+
+    const rejected = await client.callTool({
+      name: 'onmove.create_todo',
+      arguments: {
+        parent: { type: 'thread', id: thread.id },
+        attribution: { mode: 'subject', subjectId: unrelated.id },
+        name: 'Do X'
+      }
+    })
+    expect(rejected.isError).toBe(true)
+    expect(rejected.structuredContent).toMatchObject({
+      error: { code: 'open_parent_cannot_target_subject' },
+      recovery: {
+        inspect: {
+          tool: 'onmove.get_thread',
+          arguments: { id: thread.id },
+          path: 'writeGuide.createTodo'
+        },
+        allowedAttributions: ['unscoped'],
+        allowedSubjects: [],
+        retry: {
+          tool: 'onmove.create_todo',
+          arguments: {
+            parent: { type: 'thread', id: thread.id },
+            attribution: { mode: 'unscoped' },
+            name: 'Do X'
+          }
+        }
+      }
     })
   })
 

@@ -2,7 +2,8 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
 import type { AppDatabase } from '../main/database'
 import {
-  ScopeTargetValidationError
+  ScopeTargetValidationError,
+  type ApplicationResolvedTargetCandidate
 } from '../main/application/services'
 import {
   SEARCH_ENTITY_TYPES,
@@ -38,6 +39,8 @@ interface McpDiagnostics {
   warnings: string[]
   appliedKinds?: SearchEntityType[] | 'all'
   resultCount?: number
+  resolutionStatus?: 'resolved' | 'ambiguous' | 'not_found'
+  candidateCount?: number
 }
 
 const EMPTY_UI_CONTEXT: McpUiContextSnapshot = { focusId: null, subjectId: null }
@@ -89,6 +92,15 @@ interface UpdateWriteGuide {
   requestExample: Record<string, unknown>
 }
 
+interface TodoWriteGuide {
+  tool: 'onmove.create_todo'
+  parent: { type: 'thread' | 'commitment'; id: number }
+  allowedAttributions: Array<'unscoped' | 'subject' | 'all-subjects'>
+  allowedSubjects: Array<{ id: number; name: string }>
+  instruction: string
+  requestExamples: Record<string, Record<string, unknown>>
+}
+
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -102,7 +114,11 @@ function subjectRecord(value: unknown): { id: number; name: string } | null {
     : null
 }
 
-function updateWriteGuide(value: unknown): UpdateWriteGuide | null {
+function contextWriteTarget(value: unknown): {
+  parent: { type: 'thread' | 'commitment'; id: number }
+  scopeId: number | null
+  allowedSubjects: Array<{ id: number; name: string }>
+} | null {
   const context = record(value)
   const reference = record(context?.reference)
   if (
@@ -110,21 +126,27 @@ function updateWriteGuide(value: unknown): UpdateWriteGuide | null {
     (reference.type !== 'thread' && reference.type !== 'commitment') ||
     !Number.isSafeInteger(reference.id)
   ) return null
-  const parent = {
-    type: reference.type,
-    id: Number(reference.id)
-  } as const
+  const parent = { type: reference.type, id: Number(reference.id) } as const
   const scope = record(context.scope)
-  const scopeId = typeof scope?.scopeId === 'number' ? scope.scopeId : null
   const candidates = parent.type === 'thread'
     ? (Array.isArray(scope?.subjects) ? scope.subjects : [])
     : (Array.isArray(scope?.cells)
         ? scope.cells.map((cell) => record(cell)?.subject)
         : [])
-  const allowedSubjects = [...new Map(candidates.flatMap((candidate) => {
-    const subject = subjectRecord(candidate)
-    return subject ? [[subject.id, subject] as const] : []
-  })).values()]
+  return {
+    parent,
+    scopeId: typeof scope?.scopeId === 'number' ? scope.scopeId : null,
+    allowedSubjects: [...new Map(candidates.flatMap((candidate) => {
+      const subject = subjectRecord(candidate)
+      return subject ? [[subject.id, subject] as const] : []
+    })).values()]
+  }
+}
+
+function updateWriteGuide(value: unknown): UpdateWriteGuide | null {
+  const target = contextWriteTarget(value)
+  if (!target) return null
+  const { parent, scopeId, allowedSubjects } = target
   const subjectRequired = scopeId !== null && allowedSubjects.length > 0
   if (!subjectRequired) {
     return {
@@ -160,11 +182,58 @@ function updateWriteGuide(value: unknown): UpdateWriteGuide | null {
   }
 }
 
+function todoWriteGuide(value: unknown): TodoWriteGuide | null {
+  const target = contextWriteTarget(value)
+  if (!target) return null
+  const { parent, scopeId, allowedSubjects } = target
+  if (scopeId === null || allowedSubjects.length === 0) {
+    return {
+      tool: 'onmove.create_todo',
+      parent,
+      allowedAttributions: ['unscoped'],
+      allowedSubjects: [],
+      instruction:
+        `${parent.type === 'thread' ? 'Thread' : 'Commitment'} ${parent.id} accepts an ` +
+        'unscoped Todo. Omit attribution or use attribution.mode="unscoped".',
+      requestExamples: {
+        unscoped: {
+          parent,
+          attribution: { mode: 'unscoped' },
+          name: 'Describe the action.'
+        }
+      }
+    }
+  }
+  return {
+    tool: 'onmove.create_todo',
+    parent,
+    allowedAttributions: ['subject', 'all-subjects'],
+    allowedSubjects,
+    instruction:
+      `${parent.type === 'thread' ? 'Thread' : 'Commitment'} ${parent.id} is scoped. ` +
+      'Choose one allowed Subject for an individual Todo, or all-subjects for one shared Todo ' +
+      'with independently completable Subject cells.',
+    requestExamples: {
+      subject: {
+        parent,
+        attribution: { mode: 'subject', subjectId: allowedSubjects[0].id },
+        name: 'Describe the action.'
+      },
+      allSubjects: {
+        parent,
+        attribution: { mode: 'all-subjects' },
+        name: 'Describe the shared action.'
+      }
+    }
+  }
+}
+
 function withWriteGuide(value: unknown): unknown {
   const context = record(value)
-  const guide = updateWriteGuide(value)
-  return context && guide
-    ? { ...context, writeGuide: { createUpdate: guide } }
+  const createUpdate = updateWriteGuide(value)
+  const createTodo = todoWriteGuide(value)
+  return context && createUpdate && createTodo
+    ? { ...context, writeGuide: { createUpdate, createTodo } }
     : value
 }
 
@@ -308,6 +377,20 @@ interface CreateUpdateToolInput {
   sensitive?: boolean
 }
 
+interface CreateTodoToolInput {
+  parent: { type: 'thread' | 'commitment'; id: number }
+  attribution?: null |
+    { mode: 'unscoped' } |
+    { mode: 'subject'; subjectId: number } |
+    { mode: 'all-subjects' }
+  /** Backward-compatible shorthand. Prefer attribution. */
+  subjectId?: number | null
+  /** Backward-compatible shorthand. Prefer attribution. */
+  sharedAcrossSubjects?: boolean
+  name: string
+  dueDate?: string | null
+}
+
 function normalizedUpdateSubject(input: CreateUpdateToolInput): number | undefined {
   const legacySubjectId = input.subjectId ?? undefined
   if (!input.attribution) return legacySubjectId
@@ -325,6 +408,42 @@ function normalizedUpdateSubject(input: CreateUpdateToolInput): number | undefin
     )
   }
   return input.attribution.subjectId
+}
+
+function normalizedTodoAttribution(input: CreateTodoToolInput): {
+  subjectId?: number
+  sharedAcrossSubjects?: boolean
+} {
+  const legacySubjectId = input.subjectId ?? undefined
+  const legacyShared = input.sharedAcrossSubjects
+  if (!input.attribution) {
+    return { subjectId: legacySubjectId, sharedAcrossSubjects: legacyShared }
+  }
+  if (input.attribution.mode === 'unscoped') {
+    if (legacySubjectId !== undefined || legacyShared === true) {
+      throw new Error(
+        'attribution.mode="unscoped" conflicts with subjectId or sharedAcrossSubjects.'
+      )
+    }
+    return {}
+  }
+  if (input.attribution.mode === 'all-subjects') {
+    if (legacySubjectId !== undefined || legacyShared === false) {
+      throw new Error(
+        'attribution.mode="all-subjects" conflicts with subjectId or sharedAcrossSubjects=false.'
+      )
+    }
+    return { sharedAcrossSubjects: true }
+  }
+  if (legacyShared === true) {
+    throw new Error('attribution.mode="subject" conflicts with sharedAcrossSubjects=true.')
+  }
+  if (legacySubjectId !== undefined && legacySubjectId !== input.attribution.subjectId) {
+    throw new Error(
+      'attribution.subjectId conflicts with the top-level subjectId. Use attribution only.'
+    )
+  }
+  return { subjectId: input.attribution.subjectId }
 }
 
 function scopeTargetErrorResult(
@@ -375,6 +494,94 @@ function scopeTargetErrorResult(
   }
 }
 
+function todoScopeTargetErrorResult(
+  error: ScopeTargetValidationError,
+  input: CreateTodoToolInput,
+  guide: TodoWriteGuide | null
+): {
+  isError: true
+  content: Array<{ type: 'text'; text: string }>
+  structuredContent: Record<string, unknown>
+} {
+  const base: Record<string, unknown> = { ...input }
+  delete base.subjectId
+  delete base.sharedAcrossSubjects
+  delete base.attribution
+  const unscoped = [
+    'open_parent_cannot_target_subject',
+    'empty_scope_cannot_target_subject',
+    'open_parent_cannot_share_across_subjects',
+    'empty_scope_cannot_share_across_subjects'
+  ].includes(error.issue.code)
+  const retryArguments = unscoped
+    ? { ...base, attribution: { mode: 'unscoped' } }
+    : guide?.allowedSubjects.length === 1
+      ? {
+          ...base,
+          attribution: { mode: 'subject', subjectId: guide.allowedSubjects[0].id }
+        }
+      : null
+  const recovery = {
+    inspect: {
+      tool: `onmove.get_${error.issue.parent.type}`,
+      arguments: { id: error.issue.parent.id },
+      path: 'writeGuide.createTodo'
+    },
+    allowedAttributions: guide?.allowedAttributions ?? [],
+    allowedSubjects: guide?.allowedSubjects ?? [],
+    retry: retryArguments === null
+      ? null
+      : { tool: 'onmove.create_todo', arguments: retryArguments }
+  }
+  const structuredContent = {
+    error: { code: error.issue.code, message: error.message, target: error.issue },
+    recovery,
+    diagnostics: diagnosticsScope()
+  }
+  return {
+    isError: true,
+    content: [{
+      type: 'text',
+      text: retryArguments === null
+        ? `${error.message}\nInspect the parent and choose one allowed Todo attribution.`
+        : `${error.message}\nSuggested retry: ${JSON.stringify(recovery.retry)}`
+    }],
+    structuredContent
+  }
+}
+
+function decorateResolvedTarget(
+  database: AppDatabase,
+  candidate: ApplicationResolvedTargetCandidate,
+  access: ReturnType<AppDatabase['mcpSettings']['accessPolicy']>
+): Record<string, unknown> {
+  const context = candidate.parent.type === 'thread'
+    ? database.queries.getThread(candidate.parent.id, access)
+    : database.queries.getCommitment(candidate.parent.id, access)
+  const createUpdate = updateWriteGuide(context)
+  const createTodo = todoWriteGuide(context)
+  const recommendedTodoRequest = candidate.subject
+    ? {
+        tool: 'onmove.create_todo',
+        arguments: {
+          parent: candidate.parent,
+          attribution: { mode: 'subject', subjectId: candidate.subject.id }
+        }
+      }
+    : createTodo?.allowedAttributions.length === 1 &&
+        createTodo.allowedAttributions[0] === 'unscoped'
+      ? {
+          tool: 'onmove.create_todo',
+          arguments: { parent: candidate.parent, attribution: { mode: 'unscoped' } }
+        }
+      : null
+  return {
+    ...candidate,
+    writeGuide: createUpdate && createTodo ? { createUpdate, createTodo } : null,
+    recommendedTodoRequest
+  }
+}
+
 /** Registers the complete typed MCP surface against one application-service boundary. */
 export function createOnMoveMcpServer(
   database: AppDatabase,
@@ -384,7 +591,7 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Use onmove.search for literal information that may appear anywhere in titles, Updates, Notes, Todos, Subjects, or other indexed text. Search is global by default: never assume the current UI Focus is applied. Use the explicit named scope only when narrowing is intended. Each result includes hierarchy IDs; use hierarchy.thread.id with onmove.get_thread, not the ID of a matching Update or Note. Before onmove.create_update, inspect writeGuide.createUpdate on onmove.get_thread or onmove.get_commitment: Open parents must be unscoped, while scoped parents require one listed Subject. Inspect diagnostics.appliedScope and warnings on every response. Sensitive content and mutations are controlled only in OnMove Settings.'
+        'Use onmove.search for literal information that may appear anywhere in titles, Updates, Notes, Todos, Subjects, or other indexed text. Search is global by default: never assume the current UI Focus is applied. For a hierarchy-shaped request such as "do X for Person Y\'s 1:1 in Team", use onmove.resolve_target with Thread, Commitment, and Subject selectors, then follow its recommendedTodoRequest or writeGuide.createTodo. Each search result includes hierarchy IDs; use hierarchy.thread.id with onmove.get_thread, not the ID of a matching Update or Note. Before mutations, inspect the matching writeGuide: Open parents must be unscoped, while scoped parents require a listed Subject or an explicitly shared Todo. Inspect diagnostics and warnings on every response. Sensitive content and mutations are controlled only in OnMove Settings.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -546,6 +753,85 @@ export function createOnMoveMcpServer(
     }
   )
 
+  const entitySelectorSchema = (entity: string, example: string) => z.object({
+    id: idSchema.optional().describe(
+      `Optional ${entity} ID. Prefer an ID from search hierarchy metadata when already known.`
+    ),
+    title: z.string().min(1).optional().describe(
+      `Optional exact ${entity} title, matched case-insensitively. Example: ${example}.`
+    )
+  }).refine(({ id, title }) => id !== undefined || title !== undefined, {
+    message: `${entity} selector requires id or title`
+  })
+  const subjectSelectorSchema = z.object({
+    id: idSchema.optional().describe(
+      'Optional canonical Subject ID from Scope data or a search result.'
+    ),
+    name: z.string().min(1).optional().describe(
+      'Optional exact Subject name, matched case-insensitively. Example: Person Y.'
+    )
+  }).refine(({ id, name }) => id !== undefined || name !== undefined, {
+    message: 'Subject selector requires id or name'
+  })
+  server.registerTool(
+    'onmove.resolve_target',
+    {
+      title: 'Resolve an OnMove hierarchy target',
+      description: 'Resolve a Thread → Commitment → Subject path in hierarchy order before creating an Update or Todo. Exact punctuation-bearing titles such as 1:1 are preserved, duplicate names are returned as ambiguity rather than guessed, and Subjects are limited to the target\'s current effective Scope.',
+      inputSchema: z.object({
+        focus: entitySelectorSchema('Focus', 'Leadership portfolio').optional().describe(
+          'Optional top-level Focus constraint. Add it when Thread names are duplicated.'
+        ),
+        thread: entitySelectorSchema('Thread', 'Team').describe(
+          'Required Thread workstream selector; resolution starts here inside any optional Focus.'
+        ),
+        commitment: entitySelectorSchema('Commitment', '1:1').optional().describe(
+          'Optional Commitment selector resolved only among children of the matched Thread.'
+        ),
+        subject: subjectSelectorSchema.optional().describe(
+          'Optional Subject selector resolved only among the target parent\'s currently applicable Subjects.'
+        )
+      }),
+      annotations: { readOnlyHint: true }
+    },
+    async (input) => {
+      const access = policy()
+      const resolution = database.queries.resolveTarget(input, access)
+      const candidates = resolution.candidates.map((candidate) =>
+        decorateResolvedTarget(database, candidate, access))
+      const parentCandidates = resolution.parentCandidates.map((candidate) =>
+        decorateResolvedTarget(database, candidate, access))
+      const warnings: string[] = []
+      if (resolution.status === 'ambiguous') {
+        warnings.push(
+          'Multiple hierarchy targets matched. Add a Focus selector or use an ID at an ambiguous level; do not guess.'
+        )
+      } else if (resolution.status === 'not_found' && parentCandidates.length > 0) {
+        warnings.push(
+          'The hierarchy matched, but the requested Subject is not currently applicable. Choose a Subject from parentCandidates.allowedSubjects or update Scope in OnMove.'
+        )
+      } else if (resolution.status === 'not_found') {
+        warnings.push(
+          'No visible hierarchy target matched. Retry with exact names or IDs; use onmove.search to discover hierarchy candidates.'
+        )
+      }
+      return result({
+        status: resolution.status,
+        requested: resolution.requested,
+        target: resolution.status === 'resolved' ? candidates[0] : null,
+        candidates,
+        ...(resolution.status === 'not_found' && parentCandidates.length > 0
+          ? { parentCandidates }
+          : {})
+      }, {
+        ...diagnosticsScope(),
+        warnings,
+        resolutionStatus: resolution.status,
+        candidateCount: candidates.length
+      })
+    }
+  )
+
   const parentSchema = z.object({
     type: z.enum(['thread', 'commitment']).describe(
       'The exact parent entity type: Thread is a Focus workstream; Commitment is a tracked obligation inside a Thread.'
@@ -570,6 +856,28 @@ export function createOnMoveMcpServer(
     })
   ]).nullable().optional().describe(
     'Preferred explicit Update attribution. Inspect the parent\'s writeGuide.createUpdate first. Omit or use unscoped for an Open parent; use subject with one allowed Subject for a scoped parent.'
+  )
+  const todoAttributionSchema = z.discriminatedUnion('mode', [
+    z.object({
+      mode: z.literal('unscoped').describe(
+        'Create one general Todo on an Open parent or a Scope with no current Subjects.'
+      )
+    }),
+    z.object({
+      mode: z.literal('subject').describe(
+        'Create one Todo for exactly one currently applicable Subject.'
+      ),
+      subjectId: idSchema.describe(
+        'A Subject ID from writeGuide.createTodo.allowedSubjects or resolve_target.'
+      )
+    }),
+    z.object({
+      mode: z.literal('all-subjects').describe(
+        'Create one shared Todo with a separately completable cell for every current Subject.'
+      )
+    })
+  ]).nullable().optional().describe(
+    'Preferred explicit Todo attribution. Inspect writeGuide.createTodo. Open parents use unscoped; scoped parents use one subject or all-subjects.'
   )
   server.registerTool(
     'onmove.create_update',
@@ -625,21 +933,41 @@ export function createOnMoveMcpServer(
     'onmove.create_todo',
     {
       title: 'Create OnMove todo',
-      description: 'Create a Todo on a Thread or Commitment, optionally for one Subject or shared across all current Subjects.',
+      description: 'Create an actionable Todo on a Thread or Commitment. Inspect writeGuide.createTodo from get_thread, get_commitment, or resolve_target: Open parents use unscoped attribution; scoped parents use one allowed Subject or all-subjects for independently completable Subject cells.',
       inputSchema: z.object({
         parent: parentSchema,
-        subjectId: idSchema.optional().describe(
-          'The canonical Subject ID for one scoped Todo; omit for an unscoped or shared Todo.'
+        attribution: todoAttributionSchema,
+        subjectId: idSchema.nullable().optional().describe(
+          'Backward-compatible shorthand for attribution.mode="subject". Prefer attribution. Null or omitted means unscoped.'
         ),
-        sharedAcrossSubjects: z.boolean().optional(),
-        name: z.string().min(1),
-        dueDate: dateSchema.nullable().optional()
+        sharedAcrossSubjects: z.boolean().optional().describe(
+          'Backward-compatible shorthand for attribution.mode="all-subjects". Prefer attribution.'
+        ),
+        name: z.string().min(1).describe('The concrete action to perform, such as Do X.'),
+        dueDate: dateSchema.nullable().optional().describe(
+          'Optional Todo due date, or null for no due date.'
+        )
       }),
       annotations: { readOnlyHint: false, destructiveHint: false }
     },
-    async (input) => mutationResult(() =>
-      database.commands.createTodo(input, policy(), server.server.getClientVersion()?.name)
-    )
+    async (input) => {
+      const normalized: CreateTodoToolInput = input
+      const attribution = normalizedTodoAttribution(normalized)
+      try {
+        return mutationResult(() => database.commands.createTodo({
+          parent: normalized.parent,
+          ...attribution,
+          name: normalized.name,
+          dueDate: normalized.dueDate
+        }, policy(), server.server.getClientVersion()?.name))
+      } catch (error) {
+        if (!(error instanceof ScopeTargetValidationError)) throw error
+        const context = error.issue.parent.type === 'thread'
+          ? database.queries.getThread(error.issue.parent.id, policy())
+          : database.queries.getCommitment(error.issue.parent.id, policy())
+        return todoScopeTargetErrorResult(error, normalized, todoWriteGuide(context))
+      }
+    }
   )
 
   server.registerTool(

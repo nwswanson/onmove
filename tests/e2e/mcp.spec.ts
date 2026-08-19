@@ -36,6 +36,18 @@ test('serves MCP from the running app and immediately refreshes its open windows
     title: 'MCP delivery',
     reviewFrequencyDays: 7
   }).snapshot()
+  const team = seeded.domain.threads.create({
+    focusId: focus.id,
+    title: 'Leadership Team',
+    reviewFrequencyDays: 7
+  }).snapshot()
+  const oneToOne = seeded.domain.commitments.create({
+    type: 'tracking',
+    parent: { type: 'thread', id: team.id },
+    title: '1:1'
+  }).snapshot()
+  const teamScope = seeded.domain.threadScopes.addSubject(team.id, { name: 'Person Y' })
+  const person = teamScope.subjects[0]
   const unrelatedSubject = seeded.domain.subjects.create({ name: 'Unrelated Subject' }).toSnapshot()
   seeded.mcpSettings.update({ serverEnabled: true, serverPort, allowMutations: true })
   seeded.close()
@@ -60,6 +72,53 @@ test('serves MCP from the running app and immediately refreshes its open windows
 
     const tools = await client.listTools()
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.search')
+    expect(tools.tools.map(({ name }) => name)).toContain('onmove.resolve_target')
+
+    const resolved = await client.callTool({
+      name: 'onmove.resolve_target',
+      arguments: {
+        thread: { title: 'Leadership Team' },
+        commitment: { title: '1:1' },
+        subject: { name: 'Person Y' }
+      }
+    })
+    expect(resolved.structuredContent).toMatchObject({
+      status: 'resolved',
+      target: {
+        parent: { type: 'commitment', id: oneToOne.id },
+        subject: { id: person.id, name: 'Person Y' },
+        recommendedTodoRequest: {
+          tool: 'onmove.create_todo',
+          arguments: {
+            parent: { type: 'commitment', id: oneToOne.id },
+            attribution: { mode: 'subject', subjectId: person.id }
+          }
+        }
+      }
+    })
+    const recommendation = resolved.structuredContent as {
+      target: {
+        recommendedTodoRequest: {
+          tool: string
+          arguments: Record<string, unknown>
+        }
+      }
+    }
+    const scopedTodo = await client.callTool({
+      name: recommendation.target.recommendedTodoRequest.tool,
+      arguments: {
+        ...recommendation.target.recommendedTodoRequest.arguments,
+        name: 'Do X for Person Y'
+      }
+    })
+    expect(scopedTodo.isError).not.toBe(true)
+    expect(scopedTodo.structuredContent).toMatchObject({
+      parent: {
+        type: 'commitment-scope',
+        id: oneToOne.id,
+        scope: { scopeId: teamScope.scopeId, subjectId: person.id }
+      }
+    })
 
     await window.evaluate(async ({ threadId }) => {
       await window.onmove.domain.updateThread(threadId, { title: 'Edited in the live app' })

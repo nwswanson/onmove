@@ -79,11 +79,49 @@ export interface PokeApplicationReview {
   subjectId?: number
 }
 
+export interface ApplicationEntitySelector {
+  id?: number
+  title?: string
+}
+
+export interface ApplicationSubjectSelector {
+  id?: number
+  name?: string
+}
+
+export interface ResolveApplicationTargetQuery {
+  focus?: ApplicationEntitySelector
+  thread: ApplicationEntitySelector
+  commitment?: ApplicationEntitySelector
+  subject?: ApplicationSubjectSelector
+}
+
+export interface ApplicationResolvedTargetCandidate {
+  parent: { type: 'thread' | 'commitment'; id: number }
+  hierarchy: {
+    focus: { id: number; title: string }
+    thread: { id: number; title: string }
+    commitment: { id: number; title: string } | null
+  }
+  subject: { id: number; name: string } | null
+  allowedSubjects: Array<{ id: number; name: string }>
+}
+
+export interface ApplicationTargetResolution {
+  status: 'resolved' | 'ambiguous' | 'not_found'
+  requested: ResolveApplicationTargetQuery
+  candidates: ApplicationResolvedTargetCandidate[]
+  /** Parent matches before applying an optional Subject selector, for safe recovery hints. */
+  parentCandidates: ApplicationResolvedTargetCandidate[]
+}
+
 export type ScopeTargetIssueCode =
   | 'open_parent_cannot_target_subject'
   | 'empty_scope_cannot_target_subject'
   | 'scoped_parent_requires_subject'
   | 'subject_not_applicable'
+  | 'open_parent_cannot_share_across_subjects'
+  | 'empty_scope_cannot_share_across_subjects'
 
 export interface ScopeTargetIssue {
   code: ScopeTargetIssueCode
@@ -147,6 +185,51 @@ function uri(reference: ApplicationEntityReference): string {
 
 function trackingCommitment(record: { type: string }): boolean {
   return record.type === 'tracking'
+}
+
+function normalizedLookup(value: string): string {
+  return value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLocaleLowerCase()
+}
+
+function assertEntitySelector(
+  selector: ApplicationEntitySelector,
+  label: string
+): void {
+  if (selector.id === undefined && selector.title === undefined) {
+    throw new ModelValidationError(`${label} selector requires an id or title`)
+  }
+  if (selector.id !== undefined) assertPositiveId(selector.id, `${label} id`)
+  if (selector.title !== undefined && normalizedLookup(selector.title).length === 0) {
+    throw new ModelValidationError(`${label} title cannot be empty`)
+  }
+}
+
+function assertSubjectSelector(selector: ApplicationSubjectSelector): void {
+  if (selector.id === undefined && selector.name === undefined) {
+    throw new ModelValidationError('subject selector requires an id or name')
+  }
+  if (selector.id !== undefined) assertPositiveId(selector.id, 'subject id')
+  if (selector.name !== undefined && normalizedLookup(selector.name).length === 0) {
+    throw new ModelValidationError('subject name cannot be empty')
+  }
+}
+
+function matchesEntitySelector(
+  record: { id: number; title: string },
+  selector: ApplicationEntitySelector
+): boolean {
+  return (selector.id === undefined || record.id === selector.id) &&
+    (selector.title === undefined ||
+      normalizedLookup(record.title) === normalizedLookup(selector.title))
+}
+
+function matchesSubjectSelector(
+  record: { id: number; name: string },
+  selector: ApplicationSubjectSelector
+): boolean {
+  return (selector.id === undefined || record.id === selector.id) &&
+    (selector.name === undefined ||
+      normalizedLookup(record.name) === normalizedLookup(selector.name))
 }
 
 export class McpMutationAuditRepository {
@@ -431,6 +514,84 @@ export class OnMoveQueryService {
     return this.searchIndex.search(query, access)
   }
 
+  /**
+   * Resolves a write target in hierarchy order instead of treating names as
+   * unrelated global search terms. Exact names are case-insensitive and IDs
+   * can be supplied at any level to disambiguate duplicates.
+   */
+  resolveTarget(
+    query: ResolveApplicationTargetQuery,
+    access: OnMoveAccessPolicy
+  ): ApplicationTargetResolution {
+    if (!query || typeof query !== 'object') {
+      throw new ModelValidationError('target query is required')
+    }
+    assertEntitySelector(query.thread, 'thread')
+    if (query.focus) assertEntitySelector(query.focus, 'focus')
+    if (query.commitment) assertEntitySelector(query.commitment, 'commitment')
+    if (query.subject) assertSubjectSelector(query.subject)
+
+    const focuses = this.domain.focuses.list()
+      .filter((focus) => this.sensitivity.canRead('focus', focus.id, access))
+      .filter((focus) => !query.focus || matchesEntitySelector(focus, query.focus))
+    const parents: ApplicationResolvedTargetCandidate[] = []
+    for (const focus of focuses) {
+      const threads = this.domain.threads.listForFocus(focus.id)
+        .filter((thread) => this.sensitivity.canRead('thread', thread.id, access))
+        .filter((thread) => matchesEntitySelector(thread, query.thread))
+      for (const thread of threads) {
+        const targets = query.commitment
+          ? this.domain.commitments.listForThread(thread.id)
+              .filter(trackingCommitment)
+              .filter((commitment) =>
+                this.sensitivity.canRead('commitment', commitment.id, access))
+              .filter((commitment) =>
+                matchesEntitySelector(commitment, query.commitment as ApplicationEntitySelector))
+              .map((commitment) => ({
+                parent: { type: 'commitment' as const, id: commitment.id },
+                commitment: { id: commitment.id, title: commitment.title },
+                subjects: this.domain.commitments.scopeMatrix(commitment.id)
+                  .map(({ subject }) => subject)
+              }))
+          : [{
+              parent: { type: 'thread' as const, id: thread.id },
+              commitment: null,
+              subjects: this.domain.threadScopes.get(thread.id).subjects
+            }]
+        for (const target of targets) {
+          const allowedSubjects = [...new Map(target.subjects
+            .filter((subject) => this.sensitivity.canRead('subject', subject.id, access))
+            .map((subject) => [subject.id, { id: subject.id, name: subject.name }] as const))
+            .values()]
+          parents.push({
+            parent: target.parent,
+            hierarchy: {
+              focus: { id: focus.id, title: focus.title },
+              thread: { id: thread.id, title: thread.title },
+              commitment: target.commitment
+            },
+            subject: null,
+            allowedSubjects
+          })
+        }
+      }
+    }
+
+    const candidates = query.subject
+      ? parents.flatMap((candidate) => candidate.allowedSubjects
+          .filter((subject) => matchesSubjectSelector(subject, query.subject as ApplicationSubjectSelector))
+          .map((subject) => ({ ...candidate, subject })))
+      : parents
+    return {
+      status: candidates.length === 1
+        ? 'resolved'
+        : candidates.length === 0 ? 'not_found' : 'ambiguous',
+      requested: query,
+      candidates,
+      parentCandidates: parents
+    }
+  }
+
   private visibleUpdates(
     parent: { type: 'thread' | 'commitment'; id: number },
     access: OnMoveAccessPolicy
@@ -477,7 +638,12 @@ export class OnMoveCommandService {
     if (input.sensitive && access.sensitiveContent === 'deny') {
       throw new ModelValidationError('MCP sensitive-content access is disabled')
     }
-    const scope = this.resolveScopeCell(input.parent, input.subjectId, input.date)
+    const scope = this.resolveScopeCell(
+      input.parent,
+      input.subjectId,
+      input.date,
+      'writeGuide.createUpdate'
+    )
     const result = this.database.transaction(() => {
       const created = this.domain.updates.create({
         parent: input.parent,
@@ -507,9 +673,10 @@ export class OnMoveCommandService {
     if (input.subjectId !== undefined && input.sharedAcrossSubjects) {
       throw new ModelValidationError('a Todo cannot be both shared and assigned to one Subject')
     }
+    if (input.sharedAcrossSubjects) this.assertSharedScope(input.parent)
     const scope = input.sharedAcrossSubjects
       ? null
-      : this.resolveScopeCell(input.parent, input.subjectId)
+      : this.resolveScopeCell(input.parent, input.subjectId, undefined, 'writeGuide.createTodo')
     const parent: CreateTodoInput['parent'] = scope
       ? { type: `${input.parent.type}-scope`, id: input.parent.id, scope }
       : input.parent
@@ -592,15 +759,20 @@ export class OnMoveCommandService {
   private resolveScopeCell(
     parent: { type: 'thread' | 'commitment'; id: number },
     subjectId?: number,
-    on?: string
+    on?: string,
+    writeGuidePath?: string
   ): UpdateScopeCell | null {
     const application = this.domain.scopeApplications.get(parent)
     const parentName = `${parent.type === 'thread' ? 'Thread' : 'Commitment'} ${parent.id}`
+    const inspect = writeGuidePath
+      ? ` Call onmove.get_${parent.type} with id ${parent.id} and inspect ${writeGuidePath}.`
+      : ''
     if (application.effectiveScopeId === null) {
       if (subjectId !== undefined) {
         throw new ScopeTargetValidationError(
           `${parentName} is Open (unscoped), so it cannot target Subject ${subjectId}. ` +
-          'Retry without subjectId (or set subjectId to null) to create an unscoped record.',
+          'Retry without subjectId (or set subjectId to null) to create an unscoped record.' +
+          inspect,
           {
             code: 'open_parent_cannot_target_subject', parent, subjectId,
             effectiveScopeId: null
@@ -614,7 +786,7 @@ export class OnMoveCommandService {
       if (subjectId !== undefined) {
         throw new ScopeTargetValidationError(
           `${parentName}'s Scope currently has no applicable Subjects, so it cannot target ` +
-          `Subject ${subjectId}. Retry without subjectId (or set subjectId to null).`,
+          `Subject ${subjectId}. Retry without subjectId (or set subjectId to null).${inspect}`,
           {
             code: 'empty_scope_cannot_target_subject', parent, subjectId,
             effectiveScopeId: application.effectiveScopeId
@@ -626,8 +798,7 @@ export class OnMoveCommandService {
     if (subjectId === undefined) {
       throw new ScopeTargetValidationError(
         `${parentName} is scoped and requires one currently applicable subjectId. ` +
-        `Call onmove.get_${parent.type} with id ${parent.id}, inspect ` +
-        'writeGuide.createUpdate.allowedSubjects, and retry with one of those IDs.',
+        `${inspect.trim()} Retry with one of its allowed Subject IDs.`,
         {
           code: 'scoped_parent_requires_subject', parent, subjectId: null,
           effectiveScopeId: application.effectiveScopeId
@@ -638,8 +809,7 @@ export class OnMoveCommandService {
     if (!subjects.some((subject) => subject.id === subjectId)) {
       throw new ScopeTargetValidationError(
         `Subject ${subjectId} is not currently applicable to ${parentName}. ` +
-        `Call onmove.get_${parent.type} with id ${parent.id}, inspect ` +
-        'writeGuide.createUpdate.allowedSubjects, and retry with one of those IDs.',
+        `${inspect.trim()} Retry with one of its allowed Subject IDs.`,
         {
           code: 'subject_not_applicable', parent, subjectId,
           effectiveScopeId: application.effectiveScopeId
@@ -647,5 +817,30 @@ export class OnMoveCommandService {
       )
     }
     return { scopeId: application.effectiveScopeId, subjectId }
+  }
+
+  private assertSharedScope(parent: { type: 'thread' | 'commitment'; id: number }): void {
+    const application = this.domain.scopeApplications.get(parent)
+    const parentName = `${parent.type === 'thread' ? 'Thread' : 'Commitment'} ${parent.id}`
+    if (application.effectiveScopeId === null) {
+      throw new ScopeTargetValidationError(
+        `${parentName} is Open (unscoped), so it cannot create a Todo shared across Subjects. ` +
+        `Use attribution.mode="unscoped", or inspect writeGuide.createTodo after adding a Scope.`,
+        {
+          code: 'open_parent_cannot_share_across_subjects', parent, subjectId: null,
+          effectiveScopeId: null
+        }
+      )
+    }
+    if (this.domain.scopes.effectiveSubjects(application.effectiveScopeId).length === 0) {
+      throw new ScopeTargetValidationError(
+        `${parentName}'s Scope has no applicable Subjects, so it cannot create a shared Todo. ` +
+        'Use attribution.mode="unscoped" until the Scope has Subjects.',
+        {
+          code: 'empty_scope_cannot_share_across_subjects', parent, subjectId: null,
+          effectiveScopeId: application.effectiveScopeId
+        }
+      )
+    }
   }
 }

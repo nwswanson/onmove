@@ -232,4 +232,54 @@ describe('OnMove MCP application services', () => {
     )
     expect(completed.done).toBe(true)
   })
+
+  it('resolves a named hierarchy and limits its Subject to the target Scope', () => {
+    const { focusId, threadId, commitmentId } = hierarchy()
+    const scope = database.domain.threadScopes.addSubject(threadId, { name: 'Person Y' })
+    const person = scope.subjects[0]
+    database.domain.subjects.create({ name: 'Unrelated Person' })
+
+    expect(database.queries.resolveTarget({
+      focus: { title: 'project atlas' },
+      thread: { title: 'sprint execution' },
+      commitment: { title: 'verify delivery risks' },
+      subject: { name: 'person y' }
+    }, denied)).toMatchObject({
+      status: 'resolved',
+      candidates: [{
+        parent: { type: 'commitment', id: commitmentId },
+        hierarchy: {
+          focus: { id: focusId, title: 'Project Atlas' },
+          thread: { id: threadId, title: 'Sprint execution' },
+          commitment: { id: commitmentId, title: 'Verify delivery risks' }
+        },
+        subject: { id: person.id, name: 'Person Y' },
+        allowedSubjects: [{ id: person.id, name: 'Person Y' }]
+      }]
+    })
+  })
+
+  it('returns a typed Todo attribution failure that can be recovered without guessing', () => {
+    const { threadId } = hierarchy()
+    const unrelated = database.domain.subjects.create({ name: 'Unrelated Person' }).toSnapshot()
+
+    try {
+      database.commands.createTodo({
+        parent: { type: 'thread', id: threadId },
+        subjectId: unrelated.id,
+        name: 'Do X'
+      }, writable)
+      throw new Error('Expected Open-parent Todo attribution to be rejected')
+    } catch (error) {
+      expect(error).toBeInstanceOf(ScopeTargetValidationError)
+      expect(error).toMatchObject({
+        issue: {
+          code: 'open_parent_cannot_target_subject',
+          parent: { type: 'thread', id: threadId },
+          subjectId: unrelated.id
+        }
+      })
+      expect((error as Error).message).toContain('writeGuide.createTodo')
+    }
+  })
 })
