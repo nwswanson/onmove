@@ -3,6 +3,7 @@ export const IPC_CHANNELS = {
   getSensitiveContentHidden: 'app:get-sensitive-content-hidden',
   getMcpSettings: 'app:get-mcp-settings',
   updateMcpSettings: 'app:update-mcp-settings',
+  setMcpUiContext: 'app:set-mcp-ui-context',
   recordGreeting: 'app:record-greeting',
   showDataFolder: 'app:show-data-folder',
   getBackupState: 'backup:get-state',
@@ -1351,9 +1352,16 @@ export interface UpdateMcpSettingsInput {
   allowMutations?: boolean
 }
 
+/** The small, non-persistent UI selection exposed only to an explicitly scoped MCP search. */
+export interface McpUiContextSnapshot {
+  focusId: number | null
+  subjectId: number | null
+}
+
 export interface McpSettingsApi {
   get: () => Promise<McpSettingsSnapshot>
   update: (input: UpdateMcpSettingsInput) => Promise<McpSettingsSnapshot>
+  setUiContext: (context: McpUiContextSnapshot) => Promise<void>
   onChanged: (listener: (settings: McpSettingsSnapshot) => void) => () => void
 }
 

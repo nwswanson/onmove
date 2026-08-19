@@ -72,7 +72,14 @@ describe('running-application MCP server', () => {
 
   it('starts and stops from persisted settings and reports port conflicts without crashing', async () => {
     const port = await availablePort()
+    const focus = database.domain.focuses.create({ title: 'Current UI owner' }).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'runtimecurrentasdfasdf Thread',
+      reviewFrequencyDays: 7
+    }).snapshot()
     const runtime = new OnMoveMcpRuntime(database, vi.fn())
+    runtime.setUiContext({ focusId: focus.id, subjectId: null })
     expect(await runtime.initialize()).toMatchObject({ status: 'stopped', endpoint: null })
 
     const running = await runtime.update({ serverEnabled: true, serverPort: port })
@@ -84,6 +91,22 @@ describe('running-application MCP server', () => {
       error: null
     })
     expect(database.mcpSettings.get()).toMatchObject({ serverEnabled: true, serverPort: port })
+
+    const client = new Client({ name: 'runtime-context-test', version: '1.0.0' })
+    await client.connect(new StreamableHTTPClientTransport(new URL(running.endpoint as string)))
+    const scoped = await client.callTool({
+      name: 'onmove.search',
+      arguments: {
+        text: 'runtimecurrentasdfasdf',
+        scope: { mode: 'current' },
+        kinds: ['thread']
+      }
+    })
+    expect(scoped.structuredContent).toMatchObject({
+      items: [expect.objectContaining({ reference: { type: 'thread', id: thread.id } })],
+      diagnostics: { appliedScope: { mode: 'current', focusId: focus.id } }
+    })
+    await client.close()
 
     const stopped = await runtime.update({ serverEnabled: false })
     expect(stopped).toMatchObject({ status: 'stopped', endpoint: null, error: null })

@@ -5,15 +5,24 @@ import {
   localhostOriginValidation,
   toNodeHandler
 } from '@modelcontextprotocol/node'
-import type { McpSettingsSnapshot, UpdateMcpSettingsInput } from '../shared/contracts'
+import type {
+  McpSettingsSnapshot,
+  McpUiContextSnapshot,
+  UpdateMcpSettingsInput
+} from '../shared/contracts'
 import type { AppDatabase } from '../main/database'
 import { createOnMoveMcpServer } from './server'
 
 const LOOPBACK_HOST = '127.0.0.1'
+const EMPTY_UI_CONTEXT: McpUiContextSnapshot = { focusId: null, subjectId: null }
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message
   return 'The MCP server could not start.'
+}
+
+function validContextId(value: number | null): number | null {
+  return Number.isSafeInteger(value) && Number(value) > 0 ? value : null
 }
 
 /** Transport-only loopback HTTP host. It never opens its own database connection. */
@@ -24,7 +33,8 @@ export class OnMoveMcpHttpServer {
 
   constructor(
     private readonly database: AppDatabase,
-    private readonly onMutation: () => void
+    private readonly onMutation: () => void,
+    private readonly getUiContext: () => McpUiContextSnapshot = () => EMPTY_UI_CONTEXT
   ) {}
 
   endpoint(): string | null {
@@ -36,7 +46,10 @@ export class OnMoveMcpHttpServer {
     await this.stop()
 
     const handler = createMcpHandler(
-      () => createOnMoveMcpServer(this.database, { onMutation: this.onMutation }),
+      () => createOnMoveMcpServer(this.database, {
+        onMutation: this.onMutation,
+        getCurrentUiContext: this.getUiContext
+      }),
       {
         onerror: (error) => console.error('OnMove MCP protocol error:', error.message)
       }
@@ -106,12 +119,20 @@ export class OnMoveMcpRuntime {
   private lastError: string | null = null
   private operation = Promise.resolve()
   private readonly http: OnMoveMcpHttpServer
+  private uiContext: McpUiContextSnapshot = EMPTY_UI_CONTEXT
 
   constructor(
     private readonly database: AppDatabase,
     onMutation: () => void
   ) {
-    this.http = new OnMoveMcpHttpServer(database, onMutation)
+    this.http = new OnMoveMcpHttpServer(database, onMutation, () => this.uiContext)
+  }
+
+  setUiContext(context: McpUiContextSnapshot): void {
+    this.uiContext = {
+      focusId: validContextId(context.focusId),
+      subjectId: validContextId(context.subjectId)
+    }
   }
 
   snapshot(): McpSettingsSnapshot {

@@ -40,6 +40,7 @@ const api: OnMoveApi = {
   mcp: {
     get: () => ipcRenderer.invoke(IPC_CHANNELS.getMcpSettings),
     update: (input) => ipcRenderer.invoke(IPC_CHANNELS.updateMcpSettings, input),
+    setUiContext: (context) => ipcRenderer.invoke(IPC_CHANNELS.setMcpUiContext, context),
     onChanged: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, settings: Parameters<typeof listener>[0]): void =>
         listener(settings)

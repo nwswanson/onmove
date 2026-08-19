@@ -319,6 +319,10 @@ export function App(): React.JSX.Element {
   const focusDestinationRequest = useRef(0)
   const tagsDestinationRequest = useRef(0)
   const selectedFocus = application.selectedFocus
+  const reportMcpUiContext = application.reportMcpUiContext
+  const selectedSubjectId = selectedFocus
+    ? (focusSubjectSelections[selectedFocus.id] ?? null)
+    : null
   const focusItems = focusPrimaryNavigationItems(
     application.navigableFocuses,
     application.focusStatusSummaries,
@@ -369,6 +373,13 @@ export function App(): React.JSX.Element {
     document.addEventListener('keydown', handleCommandPaletteShortcut)
     return () => document.removeEventListener('keydown', handleCommandPaletteShortcut)
   }, [application.enabled])
+
+  useEffect(() => {
+    reportMcpUiContext({
+      focusId: selectedFocus?.id ?? null,
+      subjectId: selectedSubjectId
+    })
+  }, [reportMcpUiContext, selectedFocus?.id, selectedSubjectId])
 
   async function deleteFocus(focusId: number): Promise<void> {
     await application.deleteFocus(focusId)
@@ -568,7 +579,7 @@ export function App(): React.JSX.Element {
                 application.refreshFocusStatusSummary(selectedFocus.id)
               }
               onDeleteFocus={() => deleteFocus(selectedFocus.id)}
-              selectedSubjectId={focusSubjectSelections[selectedFocus.id] ?? null}
+              selectedSubjectId={selectedSubjectId}
               onSelectedSubjectChange={(subjectId) =>
                 setFocusSubjectSelections((current) => ({
                   ...current,

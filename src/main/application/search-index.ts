@@ -17,10 +17,17 @@ export type SearchEntityType = (typeof SEARCH_ENTITY_TYPES)[number]
 export interface SearchQuery {
   text: string
   kinds?: readonly SearchEntityType[]
-  focusId?: number
-  subjectId?: number
+  /** Null and omission are both explicitly global; callers must opt into narrowing. */
+  focusId?: number | null
+  subjectId?: number | null
   limit?: number
   offset?: number
+}
+
+export interface SearchHierarchyReference {
+  focus: { id: number; title: string } | null
+  thread: { id: number; title: string } | null
+  commitment: { id: number; title: string } | null
 }
 
 export interface SearchResult {
@@ -29,6 +36,8 @@ export interface SearchResult {
   field: string
   title: string
   contextPath: string[]
+  /** Self-describing owner IDs for safe follow-up get_focus/get_thread/get_commitment calls. */
+  hierarchy: SearchHierarchyReference
   subject: { id: number; name: string } | null
   snippet: string
   rank: number
@@ -145,11 +154,11 @@ export class SearchIndexRepository {
       conditions.push(`document.entity_type IN (${kinds.map(() => '?').join(', ')})`)
       parameters.push(...kinds)
     }
-    if (query.focusId !== undefined) {
+    if (query.focusId !== undefined && query.focusId !== null) {
       conditions.push('document.focus_id = ?')
       parameters.push(query.focusId)
     }
-    if (query.subjectId !== undefined) {
+    if (query.subjectId !== undefined && query.subjectId !== null) {
       conditions.push('document.subject_id = ?')
       parameters.push(query.subjectId)
     }
@@ -190,6 +199,17 @@ export class SearchIndexRepository {
       title: row.title,
       contextPath: [row.focus_title, row.thread_title, row.commitment_title]
         .filter((value): value is string => Boolean(value)),
+      hierarchy: {
+        focus: row.focus_id === null
+          ? null
+          : { id: Number(row.focus_id), title: row.focus_title as string },
+        thread: row.thread_id === null
+          ? null
+          : { id: Number(row.thread_id), title: row.thread_title as string },
+        commitment: row.commitment_id === null
+          ? null
+          : { id: Number(row.commitment_id), title: row.commitment_title as string }
+      },
       subject: row.subject_id === null
         ? null
         : { id: Number(row.subject_id), name: row.subject_name as string },

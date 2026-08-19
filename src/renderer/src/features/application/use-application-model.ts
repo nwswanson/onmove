@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   AppState,
   CreateFocusInput,
   FocusSnapshot,
+  McpUiContextSnapshot,
   UpdateFocusInput
 } from '../../../../shared/contracts'
 import { isVisibleFocus } from '@/features/focus/focus-utils'
@@ -33,6 +34,7 @@ export interface ApplicationModel {
   goDue: () => void
   goArchive: () => void
   goSettings: () => void
+  reportMcpUiContext: (context: McpUiContextSnapshot) => void
   selectFocus: (focusId: number, options?: { includeClosed?: boolean }) => boolean
   createFocus: (input: CreateFocusInput) => Promise<void>
   updateFocus: (focusId: number, input: UpdateFocusInput) => Promise<void>
@@ -200,6 +202,10 @@ export function useApplicationModel(): ApplicationModel {
     setSelectedView('settings')
   }
 
+  const reportMcpUiContext = useCallback((context: McpUiContextSnapshot): void => {
+    void window.onmove.mcp.setUiContext(context)
+  }, [])
+
   function selectFocus(focusId: number, options: { includeClosed?: boolean } = {}): boolean {
     const focus = focuses.find((candidate) => candidate.id === focusId)
     if (
@@ -321,6 +327,7 @@ export function useApplicationModel(): ApplicationModel {
     goDue,
     goArchive,
     goSettings,
+    reportMcpUiContext,
     selectFocus,
     createFocus,
     updateFocus,

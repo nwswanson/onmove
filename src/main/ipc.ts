@@ -18,6 +18,7 @@ import {
   type MoveRoutineInput,
   type MoveThreadInput,
   type McpSettingsSnapshot,
+  type McpUiContextSnapshot,
   type FocusStatus,
   type SetItemStatusInput,
   type TodoListOptions,
@@ -48,6 +49,7 @@ export interface RichTextWindowCoordinator {
 export interface McpRuntimeCoordinator {
   snapshot: () => McpSettingsSnapshot
   update: (input: UpdateMcpSettingsInput) => Promise<McpSettingsSnapshot>
+  setUiContext: (context: McpUiContextSnapshot) => void
 }
 
 const emptyRichTextWindows: RichTextWindowCoordinator = {
@@ -89,6 +91,10 @@ export function registerAppIpc(
       notifyMcpSettingsChanged(settings)
       return settings
     }
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.setMcpUiContext,
+    (_event, context: McpUiContextSnapshot) => mcpRuntime.setUiContext(context)
   )
   ipcMain.handle(IPC_CHANNELS.recordGreeting, () => database.recordGreeting())
   ipcMain.handle(IPC_CHANNELS.showDataFolder, () => shell.showItemInFolder(database.getState().databasePath))

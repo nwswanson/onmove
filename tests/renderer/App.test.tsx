@@ -508,6 +508,7 @@ function installApi(
         }
         return mcpState
       }),
+      setUiContext: vi.fn().mockResolvedValue(undefined),
       onChanged: vi.fn(() => () => undefined)
     },
     domain,
@@ -568,6 +569,25 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'New focus' })).toBeEnabled()
     expect(screen.queryByText('Placeholder')).not.toBeInTheDocument()
     expect(screen.queryByText('Overview')).not.toBeInTheDocument()
+  })
+
+  it('reports UI Focus context to MCP without making it an implicit search default', async () => {
+    const currentFocus = focus({ id: 41, title: 'MCP context Focus' })
+    const api = installApi({
+      listFocuses: vi.fn().mockResolvedValue([currentFocus])
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await waitFor(() => expect(api.mcp.setUiContext).toHaveBeenCalledWith({
+      focusId: null,
+      subjectId: null
+    }))
+    await user.click(await screen.findByRole('button', { name: 'MCP context Focus' }))
+    await waitFor(() => expect(api.mcp.setUiContext).toHaveBeenLastCalledWith({
+      focusId: currentFocus.id,
+      subjectId: null
+    }))
   })
 
   it('manages Routines only from their owning Thread context', async () => {

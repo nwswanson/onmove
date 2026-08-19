@@ -418,7 +418,8 @@ describe('registerAppIpc', () => {
         status: 'running' as const,
         endpoint: 'http://127.0.0.1:47832/mcp',
         error: null
-      }))
+      })),
+      setUiContext: vi.fn()
     }
 
     const cleanup = registerAppIpc(
@@ -448,6 +449,11 @@ describe('registerAppIpc', () => {
       status: 'running',
       allowMutations: true
     }))
+    await handlers.get(IPC_CHANNELS.setMcpUiContext)?.(
+      undefined,
+      { focusId: 12, subjectId: 61 }
+    )
+    expect(mcpRuntime.setUiContext).toHaveBeenCalledWith({ focusId: 12, subjectId: 61 })
     expect(await handlers.get(IPC_CHANNELS.recordGreeting)?.()).toMatchObject({ greetingCount: 3 })
     await handlers.get(IPC_CHANNELS.showDataFolder)?.()
     expect(shell.showItemInFolder).toHaveBeenCalledWith('/tmp/onmove.sqlite3')

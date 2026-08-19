@@ -49,10 +49,30 @@ SQL. It indexes readable plain-text projections of:
 - Subject names and descriptions
 
 The index uses Unicode tokenization, prefix matching, BM25 ranking, bounded result sets, stable
-entity references, hierarchy paths, and Subject context. Rich-text Lexical envelopes are parsed to
-plain text before indexing. Database triggers mark the projection dirty after relevant writes; the
-index rebuild is transactional and effective sensitivity is still resolved against the live
-hierarchy at query time.
+entity references, self-describing hierarchy IDs, hierarchy paths, and Subject context. Rich-text
+Lexical envelopes are parsed to plain text before indexing. Database triggers mark the projection
+dirty after relevant writes; the index rebuild is transactional and effective sensitivity is still
+resolved against the live hierarchy at query time.
+
+Search is global by default. Omitting `scope`, passing `scope: null`, or using null/omitted hierarchy
+IDs never inherits the Focus currently selected in OnMove. Narrowing is always named and explicit:
+
+```json
+{ "text": "person x", "scope": { "mode": "all" } }
+{ "text": "migration", "scope": { "mode": "focus", "focusId": 12 } }
+{ "text": "escalation", "scope": { "mode": "subject", "subjectId": 34 } }
+{ "text": "risk", "scope": { "mode": "current" }, "kinds": ["thread", "update"] }
+```
+
+`all` searches the entire visible workspace, `focus` searches one Focus hierarchy, `subject`
+searches records attributed to one canonical Subject, and `current` explicitly reads the live UI
+Focus and Subject selection. Every MCP response includes `diagnostics.appliedScope`. Search also
+returns applied kinds, result count, and textual warnings. A narrowly filtered empty result tells
+the client how to retry globally.
+
+Each search hit identifies the matched record under `reference` and its owners under `hierarchy`.
+For example, when an Update matches, pass `hierarchy.thread.id` to `onmove.get_thread`; do not pass
+the Update's `reference.id`. This distinction is also described directly in the tool schemas.
 
 ## Tools and resources
 
