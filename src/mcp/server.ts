@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
 import type { AppDatabase } from '../main/database'
@@ -16,9 +17,13 @@ import {
 } from '../main/application/services'
 import {
   SEARCH_ENTITY_TYPES,
+  type SearchLocalDateRange,
+  type SearchPageCursor,
   type SearchEntityType,
   type SearchQuery,
-  type SearchResult
+  type SearchResult,
+  type SearchSortDirection,
+  type SearchSortField
 } from '../main/application/search-index'
 import type { McpUiContextSnapshot, RichTextDocumentSnapshot } from '../shared/contracts'
 import {
@@ -124,25 +129,40 @@ const searchScopeSchema = z.object({
   'An explicit named search scope. Null or omitted means mode=all; the current UI is never used implicitly. For follow-ups, preserve the Subject, Thread, or Focus scope returned by the prior result and broaden only when the user requests wider results.'
 )
 
-type SearchResponseView = 'compact' | 'hierarchy-only'
+interface SearchProjectionInput {
+  hierarchy: boolean
+  subjects: boolean
+  scopes: boolean
+  richText: boolean
+}
 
 interface SearchContinuationPayload {
-  version: 1
+  version: 2
+  text: string | null
   query: Pick<SearchQuery, 'focusId' | 'threadId' | 'subjectId'>
   appliedScope: AppliedSearchScope
   kinds?: SearchEntityType[]
-  includeThreads: boolean
-  includeCommitments: boolean
-  includeSubjects: boolean
-  includeScopes: boolean
-  view: SearchResponseView
-  limit: number
+  date?: SearchLocalDateRange
+  createdAt?: SearchLocalDateRange
+  updatedAt?: SearchLocalDateRange
+  timeZone: string
+  sort: { field: SearchSortField; direction: SearchSortDirection }
+  projection: SearchProjectionInput
+  pageSize: number
+  maxBytes: number
+  /** Null is valid only for a preconfigured first page emitted by another MCP tool. */
+  cursor: SearchPageCursor | null
 }
 
-const SEARCH_CONTINUATION_PREFIX = 'onmove-search-v1.'
+const SEARCH_CONTINUATION_PREFIX = 'onmove-search-v2.'
+const SEARCH_CONTINUATION_SECRET = randomBytes(32)
 
 function encodeSearchContinuation(payload: SearchContinuationPayload): string {
-  return SEARCH_CONTINUATION_PREFIX + Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
+  const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
+  const signature = createHmac('sha256', SEARCH_CONTINUATION_SECRET)
+    .update(encoded)
+    .digest('base64url')
+  return `${SEARCH_CONTINUATION_PREFIX}${encoded}.${signature}`
 }
 
 function decodeSearchContinuation(token: string): SearchContinuationPayload {
@@ -150,17 +170,38 @@ function decodeSearchContinuation(token: string): SearchContinuationPayload {
     throw new TypeError('continuationToken is not a valid OnMove search continuation token')
   }
   try {
+    const signed = token.slice(SEARCH_CONTINUATION_PREFIX.length)
+    const separator = signed.lastIndexOf('.')
+    if (separator <= 0) throw new Error('missing continuation signature')
+    const encoded = signed.slice(0, separator)
+    const received = Buffer.from(signed.slice(separator + 1), 'base64url')
+    const expected = createHmac('sha256', SEARCH_CONTINUATION_SECRET)
+      .update(encoded)
+      .digest()
+    if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
+      throw new Error('invalid continuation signature')
+    }
     const parsed = JSON.parse(Buffer.from(
-      token.slice(SEARCH_CONTINUATION_PREFIX.length),
+      encoded,
       'base64url'
     ).toString('utf8')) as Partial<SearchContinuationPayload>
     const query = parsed.query
     const appliedScope = parsed.appliedScope
     if (
-      parsed.version !== 1 || !query || !appliedScope ||
+      parsed.version !== 2 || !query || !appliedScope || !parsed.projection ||
+      !parsed.sort || parsed.cursor === undefined ||
+      (typeof parsed.text !== 'string' && parsed.text !== null) ||
       !['all', 'focus', 'thread', 'subject', 'current'].includes(appliedScope.mode) ||
-      !['compact', 'hierarchy-only'].includes(String(parsed.view)) ||
-      !Number.isSafeInteger(parsed.limit) || Number(parsed.limit) < 1 || Number(parsed.limit) > 100
+      !['relevance', 'date', 'createdAt', 'updatedAt'].includes(parsed.sort.field) ||
+      !['asc', 'desc'].includes(parsed.sort.direction) ||
+      typeof parsed.timeZone !== 'string' || parsed.timeZone.length === 0 ||
+      !Number.isSafeInteger(parsed.pageSize) || Number(parsed.pageSize) < 1 ||
+      Number(parsed.pageSize) > 25 || !Number.isSafeInteger(parsed.maxBytes) ||
+      Number(parsed.maxBytes) < 4_096 || Number(parsed.maxBytes) > 131_072 ||
+      (parsed.cursor !== null && (
+        typeof parsed.cursor.sourceKey !== 'string' || parsed.cursor.sourceKey.length === 0 ||
+        !['string', 'number'].includes(typeof parsed.cursor.sortValue)
+      ))
     ) throw new Error('invalid continuation payload')
     for (const value of [query.focusId, query.threadId, query.subjectId]) {
       if (value !== null && value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
@@ -502,6 +543,10 @@ function searchableRichText(
       value.reference.id,
       access
     )))
+    const contextWarnings = Array.isArray(context?.warnings)
+      ? context.warnings.filter((warning): warning is string => typeof warning === 'string')
+      : []
+    if (contextWarnings.length > 0) throw new Error(contextWarnings.join(' '))
     const update = record(context?.update)
     if (!update || !Number.isSafeInteger(update.observationRevision) ||
         !('observationRichText' in update)) return null
@@ -1631,7 +1676,7 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Use onmove.search for discovery and hierarchy browsing. INITIAL SEARCH: send the user\'s specific entity/Subject name as text, omit scope or set scope={mode:"all"}, and omit continuationToken or set it to null. Never invent or synthesize a continuationToken; only reuse the exact non-null token returned by OnMove. When a request names an entity or Subject, preserve it as the primary filter: search that specific name first, inspect namedSubjectDiscovery and subjectUses, and treat Subject-attributed uses as authoritative. namedSubjectDiscovery includes canonical Subject, Focus, and Thread IDs plus ready review_subject requests. If relevant records are returned, obey searchStatus.sufficient or searchStatus.doNotBroaden, stop discovery, and fetch those IDs directly—never follow with a global search for a generic container label. For follow-ups, use the exact returned continuationToken or retain scope.mode=subject/thread/focus; broaden globally only when the user explicitly asks for all people or all records. Use onmove.review_subject for a compact person/entity situation inside one Thread instead of chaining searches. Search is global only when scope is omitted. Set hierarchy flags to expand structural paths; text=null browses, and view=hierarchy-only omits contents. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution and use recommendedUpdateRequest. Use onmove.resolve_target for exact hierarchy names. Selectors use either an ID or a name/title, never both. For text mutation, set includeRichText=true; use onmove.resolve_note for Notes and semantic patch tools for localized edits. Rich-text writes use only richText. Before mutations inspect writeGuide. create_update semanticPath is required whenever the user names a Subject. Use onmove.reparent_update to repair wrong placement. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and View/Edit grants by resource, Focus, and Thread.'
+        'Use onmove.search for discovery, structured listing, and optional hierarchy projection. INITIAL SEARCH: send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility and omit continuationToken. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Use projection={hierarchy,subjects,scopes,richText}; omitted projection fields are false. Never invent or alter a continuationToken. A next-page request sends only the exact non-null signed token, which preserves the complete query and cursor. When a request names an entity or Subject, preserve it as the primary filter: search that specific name first, inspect namedSubjectDiscovery and subjectUses, and treat Subject-attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop discovery and fetch returned IDs directly. Use onmove.get_updates for multiple Update IDs and onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_target for exact hierarchy names. Selectors use either an ID or a name/title, never both. For text mutation request rich text through projection.richText or the entity getter; use onmove.resolve_note and semantic patch tools for localized edits. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and View/Edit grants by resource, Focus, and Thread.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -1754,9 +1799,32 @@ export function createOnMoveMcpServer(
       }),
       annotations: { readOnlyHint: true }
     },
-    async ({ id }) => result(withUpdateContextWriteGuide(
-      found(database.queries.getUpdate(id, policy()))
-    ))
+    async ({ id }) => {
+      const context = found(database.queries.getUpdate(id, policy()))
+      return result(withUpdateContextWriteGuide(context), entityReadDiagnostics(context))
+    }
+  )
+
+  server.registerTool(
+    'onmove.get_updates',
+    {
+      title: 'Get multiple OnMove updates',
+      description: 'Read up to 50 Updates by their own IDs in one database-backed call. This avoids one get_update call per search result and preserves input order. Missing and non-visible IDs are reported together as unavailableIds.',
+      inputSchema: z.strictObject({
+        ids: z.array(idSchema).min(1).max(50).describe(
+          'One to 50 Update IDs from searchResult.reference.id, subjectUses, review_subject, or parent update arrays.'
+        )
+      }),
+      annotations: { readOnlyHint: true }
+    },
+    async ({ ids }) => {
+      const contexts = database.queries.getUpdates(ids, policy())
+      const warnings = contexts.items.flatMap((context) => context.warnings ?? [])
+      return result({
+        items: contexts.items.map(withUpdateContextWriteGuide),
+        unavailableIds: contexts.unavailableIds
+      }, { ...diagnosticsScope(), warnings, resultCount: contexts.items.length })
+    }
   )
 
   server.registerTool(
@@ -1823,159 +1891,203 @@ export function createOnMoveMcpServer(
       result(database.queries.getTagUses(name, policy(), limit, offset))
   )
 
+  const localDateRangeSchema = z.strictObject({
+    from: dateSchema.optional().describe('Inclusive first local calendar date.'),
+    to: dateSchema.optional().describe('Inclusive last local calendar date.')
+  }).refine(({ from, to }) => from !== undefined || to !== undefined, {
+    message: 'A local-date range requires from, to, or both.'
+  }).describe('Inclusive local-date range. Supply from, to, or both in YYYY-MM-DD form.')
+  const searchProjectionSchema = z.strictObject({
+    hierarchy: z.boolean().optional().describe(
+      'Include each record\'s containing Focus/Thread/Commitment IDs. Does not recursively expand unrelated descendants.'
+    ),
+    subjects: z.boolean().optional().describe(
+      'Include Subject attribution, authoritative subjectUses, and named Subject applicability paths.'
+    ),
+    scopes: z.boolean().optional().describe(
+      'Include bounded Scope metadata on applicable Subject paths.'
+    ),
+    richText: z.boolean().optional().describe(
+      'Include lossless editable rich text where supported; malformed documents degrade to plain text with warnings.'
+    )
+  }).optional().describe(
+    'Response projection. Omitted fields default false. Example: {hierarchy:true,subjects:true,scopes:false,richText:false}.'
+  )
+  const searchPageSchema = z.strictObject({
+    size: z.number().int().min(1).max(25).optional().describe(
+      'Maximum records in this page. Defaults to 10 and never exceeds 25.'
+    ),
+    maxBytes: z.number().int().min(4_096).max(131_072).optional().describe(
+      'Hard structured-response UTF-8 byte budget. Defaults to 32768. Oversized auxiliary projections are removed before records.'
+    )
+  }).optional()
+
   server.registerTool(
     'onmove.search',
     {
-      title: 'Search OnMove',
-      description: 'Use this tool for discovery and hierarchy browsing. INITIAL SEARCH: send the user\'s specific name as text, use scope={mode:"all"} or omit scope, and OMIT continuationToken (or send null). Never invent, guess, copy from documentation, or synthesize a continuation token; only reuse the exact non-null token returned by an earlier response. If the request names a Subject or entity, search for that specific name first and inspect namedSubjectDiscovery and subjectUses. When relevant records are returned in the requested context, stop discovery and fetch those record IDs directly; do not issue a second global search for a generic Thread or Commitment label. For additional discovery, retain the returned Subject, Thread, or Focus scope with the exact returned continuationToken before broadening. Broaden to global only when the user asks for all people or all records. searchStatus.sufficient or searchStatus.doNotBroaden is an explicit stopping signal. text may be null for structural browsing; hierarchy-only omits record contents.',
-      inputSchema: z.object({
+      title: 'Search or list OnMove records',
+      description: 'Use for both FTS discovery and queryless structured listing. INITIAL REQUEST: send text for language search, or text=null with kinds to list records without FTS. Date filters are database predicates, never search terms. Request optional expansion only through projection. Responses always contain records, hasMore, a hard byte-budget report, and a signed continuationToken only when another record page exists. A continuation request sends only that exact token; it preserves text, local-date filters, timezone, scope, sort, kinds, projection, page size, byte budget, and stable cursor. Never invent or alter a token.',
+      inputSchema: z.strictObject({
         text: z.string().min(1).nullable().optional().describe(
-          'Use for text discovery and hierarchy browsing. Search the specific entity or Subject name from the user request first. Do not replace a specific person query with a generic Thread or Commitment label. Null or omitted means structural browsing; with scope.mode=subject it lists records attributed to that Subject without another text term.'
+          'Non-null uses full-text search. Null or omitted is queryless list mode and returns records selected by kinds, scope, and date filters.'
+        ),
+        kinds: z.array(z.enum(SEARCH_ENTITY_TYPES)).min(1).max(8).optional().describe(
+          'Record kinds to return: focus, thread, commitment, routine, update, todo, note, subject. Omit for all kinds.'
         ),
         scope: searchScopeSchema,
-        kinds: z.array(z.enum(SEARCH_ENTITY_TYPES)).optional().describe(
-          'Optional entity-type filter. Omit to search every indexed kind: focus, thread, commitment, routine, update, todo, note, and subject.'
+        date: localDateRangeSchema.optional().describe(
+          'Filter the semantic local date: Update recorded date, or due date for dated Focuses, Threads, Commitments, and Todos. Timezone does not shift this field.'
         ),
+        createdAt: localDateRangeSchema.optional().describe(
+          'Filter creation instants by inclusive local calendar dates in timeZone.'
+        ),
+        updatedAt: localDateRangeSchema.optional().describe(
+          'Filter modification instants by inclusive local calendar dates in timeZone.'
+        ),
+        timeZone: z.string().min(1).optional().describe(
+          'IANA timezone for createdAt and updatedAt boundaries, such as America/Chicago. Defaults to the running app timezone.'
+        ),
+        sort: z.strictObject({
+          field: z.enum(['relevance', 'date', 'createdAt', 'updatedAt']).describe(
+            'relevance requires non-null text; queryless listing defaults to updatedAt.'
+          ),
+          direction: z.enum(['asc', 'desc']).describe('Stable primary sort direction.')
+        }).optional(),
+        projection: searchProjectionSchema,
+        page: searchPageSchema,
         continuationToken: z.string().min(1).nullable().optional().describe(
-          'Optional follow-up-only token. For an initial search, omit this field or send null. Never hallucinate or construct a token. Only pass the exact non-null continuationToken returned by a previous OnMove search/review response. When using one, omit scope because the token preserves the prior Subject, Thread, or Focus boundary.'
-        ),
-        view: z.enum(['compact', 'hierarchy-only']).optional().describe(
-          'compact returns bounded record summaries plus paths and is the default. hierarchy-only returns paths and stopping metadata without item or subject-use contents; use it when locating a destination rather than reviewing evidence.'
-        ),
-        includeRichText: z.boolean().optional().describe(
-          'When true, each Focus, Update, or Note hit includes editableRichText with its full document, revision, self-describing target, and patch/full-write guides. Defaults to false.'
-        ),
-        includeThreads: z.boolean().optional().describe(
-          'Include Thread hierarchy paths. When an ancestor matches text, include its child Threads even when their own text does not match.'
-        ),
-        includeCommitments: z.boolean().optional().describe(
-          'Include tracking Commitment paths under matched Focuses or Threads, even when those Commitments contain no matching text.'
-        ),
-        includeSubjects: z.boolean().optional().describe(
-          'Include one applicable path per canonical Subject on each included Thread and Commitment. Usually leave this false for entity-specific reviews because it can produce many unrelated hierarchy paths. A direct Subject-name match enables only that Subject\'s applicable paths automatically.'
-        ),
-        includeScopes: z.boolean().optional().describe(
-          'Attach the effective Scope ID, name, dimension, and application mode to returned hierarchy paths. Scopes describe applicability; Subject is the exact evidence cell.'
-        ),
-        ...pageSchema
+          'Initial request: omit or null. Next page: send only the exact non-null token returned by OnMove; do not send text, filters, scope, sort, kinds, projection, or page again.'
+        )
       }),
       annotations: { readOnlyHint: true }
     },
-    async ({
-      scope,
-      continuationToken,
-      view,
-      includeRichText,
-      includeThreads,
-      includeCommitments,
-      includeSubjects,
-      includeScopes,
-      kinds,
-      limit,
-      offset,
-      text,
-    }) => {
-      const continuation = continuationToken === undefined || continuationToken === null
+    async (input) => {
+      const continuation = input.continuationToken === undefined ||
+        input.continuationToken === null
         ? null
-        : decodeSearchContinuation(continuationToken)
-      if (continuation && scope !== undefined && scope !== null) {
-        throw new TypeError(
-          'Omit scope when using continuationToken. Start a new search without the token to change scope.'
-        )
+        : decodeSearchContinuation(input.continuationToken)
+      if (continuation) {
+        const conflicting = Object.entries(input).filter(([key, value]) =>
+          key !== 'continuationToken' && value !== undefined)
+        if (conflicting.length > 0) {
+          throw new TypeError(
+            `A continuation request must contain only continuationToken; remove ${conflicting
+              .map(([key]) => key).join(', ')}. The signed token already preserves the full query.`
+          )
+        }
       }
       const resolved = continuation
         ? {
             query: continuation.query,
             diagnostics: {
               appliedScope: continuation.appliedScope,
-              warnings: ['Search scope was preserved from continuationToken.']
+              warnings: ['The complete search request and stable cursor were verified from continuationToken.']
             }
           }
-        : resolveSearchScope(scope, options.getCurrentUiContext?.() ?? EMPTY_UI_CONTEXT)
-      const effectiveKinds = kinds ?? continuation?.kinds
-      const effectiveIncludeThreads = includeThreads ?? continuation?.includeThreads ?? false
-      const effectiveIncludeCommitments =
-        includeCommitments ?? continuation?.includeCommitments ?? false
-      const effectiveIncludeSubjects = includeSubjects ?? continuation?.includeSubjects ?? false
-      const effectiveIncludeScopes = includeScopes ?? continuation?.includeScopes ?? false
-      const effectiveView = view ?? continuation?.view ?? 'compact'
-      const effectiveLimit = limit ?? continuation?.limit ?? 10
-      const normalizedText = text ?? null
-      const query = {
+        : resolveSearchScope(input.scope, options.getCurrentUiContext?.() ?? EMPTY_UI_CONTEXT)
+      const normalizedText = continuation?.text ?? input.text ?? null
+      const effectiveKinds = continuation?.kinds ?? input.kinds
+      const effectiveDate = continuation?.date ?? input.date
+      const effectiveCreatedAt = continuation?.createdAt ?? input.createdAt
+      const effectiveUpdatedAt = continuation?.updatedAt ?? input.updatedAt
+      const effectiveTimeZone = continuation?.timeZone ?? input.timeZone ??
+        Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC'
+      const effectiveSort = continuation?.sort ?? input.sort ?? (normalizedText === null
+        ? { field: 'updatedAt' as const, direction: 'desc' as const }
+        : { field: 'relevance' as const, direction: 'asc' as const })
+      const projection: SearchProjectionInput = continuation?.projection ?? {
+        hierarchy: input.projection?.hierarchy ?? false,
+        subjects: input.projection?.subjects ?? false,
+        scopes: input.projection?.scopes ?? false,
+        richText: input.projection?.richText ?? false
+      }
+      const pageSize = continuation?.pageSize ?? input.page?.size ?? 10
+      const maxBytes = continuation?.maxBytes ?? input.page?.maxBytes ?? 32_768
+      const query: SearchQuery = {
         text: normalizedText,
         kinds: effectiveKinds,
-        limit: effectiveLimit,
-        offset,
+        date: effectiveDate,
+        createdAt: effectiveCreatedAt,
+        updatedAt: effectiveUpdatedAt,
+        timeZone: effectiveTimeZone,
+        sort: effectiveSort,
+        cursor: continuation?.cursor,
+        limit: pageSize,
         ...resolved.query
       }
       const access = policy()
-      const matches = normalizedText !== null || resolved.query.subjectId !== null
-        ? database.queries.search(query, access)
-        : []
-      const decorateSearchItems = (values: readonly SearchResult[]) => includeRichText === true
-        ? values.map((match) => {
-            const editableRichText = searchableRichText(database, match, access)
-            return editableRichText ? { ...match, editableRichText } : match
-          })
-        : values
-      const items = decorateSearchItems(matches)
-      const matchedSubjects = normalizedText === null
+      const searched = database.queries.searchPage(query, access)
+      const matches = searched.items
+      const warnings = [...resolved.diagnostics.warnings]
+      const decorateSearchItems = (values: readonly SearchResult[]) => values.map((match) => {
+        let editableRichText: Record<string, unknown> | null = null
+        if (projection.richText) {
+          try {
+            editableRichText = searchableRichText(database, match, access)
+          } catch (error) {
+            warnings.push(
+              `${match.reference.type} ${match.reference.id} rich text could not be expanded; ` +
+              `plain text was retained. Detail: ${error instanceof Error ? error.message : String(error)}`
+            )
+          }
+        }
+        const projected: Record<string, unknown> = {
+          ...match,
+          ...(editableRichText ? { editableRichText } : {})
+        }
+        if (!projection.hierarchy) {
+          delete projected.hierarchy
+          delete projected.contextPath
+        }
+        if (!projection.subjects) delete projected.subject
+        return projected
+      })
+      const matchedSubjects = !projection.subjects || normalizedText === null
         ? []
         : [...new Map(matches.flatMap((match) => {
             if (match.reference.type !== 'subject') return []
-            const subject = match.subject ?? {
-              id: match.reference.id,
-              name: match.title
-            }
+            const subject = match.subject ?? { id: match.reference.id, name: match.title }
             return [[subject.id, subject] as const]
-          })).values()].slice(0, 10)
+          })).values()].slice(0, pageSize)
       const rawSubjectUses = matchedSubjects.flatMap((subject) =>
         database.queries.search({
           text: null,
           focusId: resolved.query.focusId,
           threadId: resolved.query.threadId,
           subjectId: subject.id,
-          limit: effectiveLimit,
-          offset: 0
+          date: effectiveDate,
+          createdAt: effectiveCreatedAt,
+          updatedAt: effectiveUpdatedAt,
+          timeZone: effectiveTimeZone,
+          sort: { field: 'updatedAt', direction: 'desc' },
+          limit: pageSize
         }, access)
           .filter(({ reference }) => reference.type !== 'subject')
           .map((use) => ({ ...use, matchedSubject: subject })))
-        .slice(0, effectiveLimit)
-      const subjectUses = decorateSearchItems(rawSubjectUses)
-      const explicitHierarchyFlags = [
-        effectiveIncludeThreads,
-        effectiveIncludeCommitments,
-        effectiveIncludeSubjects,
-        effectiveIncludeScopes
-      ].some(Boolean)
-      const subjectMatched = matches.some(({ reference }) => reference.type === 'subject')
-      const defaultStructuralBrowse = normalizedText === null && !explicitHierarchyFlags
-      const hierarchyRequested = normalizedText === null || subjectMatched ||
-        effectiveIncludeThreads || effectiveIncludeCommitments || effectiveIncludeSubjects ||
-        effectiveIncludeScopes
+        .slice(0, pageSize)
+      let subjectUses = decorateSearchItems(rawSubjectUses)
+      const subjectMatched = matchedSubjects.length > 0 || resolved.query.subjectId !== null
+      const hierarchyRequested = projection.scopes || (projection.subjects && subjectMatched)
       const hierarchy = hierarchyRequested
         ? database.queries.browseHierarchy({
             text: normalizedText,
             ...resolved.query,
-            includeThreads: defaultStructuralBrowse || effectiveIncludeThreads ||
-              effectiveIncludeScopes,
-            includeCommitments: defaultStructuralBrowse || effectiveIncludeCommitments ||
-              effectiveIncludeScopes,
-            includeSubjects: defaultStructuralBrowse || subjectMatched || effectiveIncludeSubjects,
-            includeScopes: defaultStructuralBrowse || effectiveIncludeScopes,
-            limit: effectiveLimit,
-            offset
+            includeThreads: projection.scopes || projection.subjects,
+            includeCommitments: projection.scopes || projection.subjects,
+            includeSubjects: projection.subjects,
+            includeScopes: projection.scopes,
+            limit: pageSize,
+            offset: 0
           }, matches, access)
         : { paths: [], total: 0 }
-      const hierarchyPaths = hierarchy.paths.map(decorateHierarchyPath)
-      const namedSubjectDiscovery = matchedSubjects.map((subject) => {
+      let hierarchyPaths = hierarchy.paths.map(decorateHierarchyPath)
+      let namedSubjectDiscovery = matchedSubjects.map((subject) => {
         const applicablePaths = hierarchyPaths.filter((path) =>
           path.subject?.id === subject.id && path.hierarchy.thread !== null)
         const reviewContexts = [...new Map(applicablePaths.flatMap((path) => {
           const thread = path.hierarchy.thread
           if (!thread) return []
-          const key = `${path.hierarchy.focus.id}:${thread.id}`
-          return [[key, {
+          return [[`${path.hierarchy.focus.id}:${thread.id}`, {
             focus: path.hierarchy.focus,
             thread,
             displayPath: `${path.hierarchy.focus.title} > ${thread.title}[${subject.name}]`,
@@ -1991,95 +2103,96 @@ export function createOnMoveMcpServer(
         })).values()]
         return { subject, applicablePaths, reviewContexts }
       })
-      const itemsWithDiscovery = items.map((item) => {
-        if (item.reference.type !== 'subject') return item
+      let items = decorateSearchItems(matches).map((item) => {
+        const reference = item.reference as { type: string; id: number }
+        if (reference.type !== 'subject') return item
         const discovery = namedSubjectDiscovery.find(({ subject }) =>
-          subject.id === item.reference.id)
+          subject.id === reference.id)
         return discovery ? { ...item, subjectDiscovery: discovery } : item
       })
+      const itemCursors = [...searched.itemCursors]
       const appliedKinds = effectiveKinds?.length ? [...effectiveKinds] : 'all'
-      const warnings = [...resolved.diagnostics.warnings]
-      if (matches.length === 0 && hierarchyPaths.length === 0 && (
-        resolved.diagnostics.appliedScope.mode !== 'all' || appliedKinds !== 'all'
+      if (matches.length === 0 && (
+        resolved.diagnostics.appliedScope.mode !== 'all' || appliedKinds !== 'all' ||
+        effectiveDate || effectiveCreatedAt || effectiveUpdatedAt
       )) {
         warnings.push(
-          'No matches were found with the applied filters. Retain a named Subject, Thread, or Focus scope for the next query. Retry globally only if the user requested all people or all records.'
+          'No records matched the applied structured filters. Retain the named boundary and adjust only the intended date or kind filter.'
         )
-      }
-      if (normalizedText === null && resolved.query.subjectId === null && !hierarchyRequested) {
-        warnings.push('Supply text or enable hierarchy inclusion flags.')
       }
       const relevantSubjectUpdates = rawSubjectUses.filter(({ reference }) =>
         reference.type === 'update')
       const subjectScopedResults = resolved.query.subjectId !== null && matches.length > 0
-      const doNotBroaden = rawSubjectUses.length > 0 || subjectScopedResults
-      const matchedNamedEntity = matches.some(({ reference }) =>
-        ['focus', 'thread', 'commitment', 'subject'].includes(reference.type))
-      const sufficient = doNotBroaden || (matchedNamedEntity && hierarchyPaths.length > 0)
-      const foundSubjectNames = [...new Set(matchedSubjects.map(({ name }) => name))]
-      const searchStatus = {
-        sufficient,
-        doNotBroaden,
-        reason: doNotBroaden
-          ? relevantSubjectUpdates.length > 0
-            ? `Relevant Subject-attributed Updates were found for ${foundSubjectNames.join(', ') || `Subject ${resolved.query.subjectId}`}; subjectUses is authoritative. Fetch those Update IDs directly.`
-            : rawSubjectUses.length > 0
-              ? `Relevant Subject-attributed records were found for ${foundSubjectNames.join(', ') || `Subject ${resolved.query.subjectId}`}; subjectUses is authoritative. Fetch those record IDs directly.`
-              : `Relevant records attributed to Subject ${resolved.query.subjectId} were found in the preserved Subject scope.`
-          : sufficient
-            ? 'The named hierarchy entity was resolved with applicable paths; use those IDs directly.'
-            : 'No authoritative scoped result was found. Refine within the current scope before considering a broader search.',
-        nextAction: doNotBroaden
-          ? 'Stop discovery and fetch the relevant IDs from subjectUses or items directly.'
-          : sufficient
-            ? 'Use hierarchyPaths directly.'
-            : 'Refine the specific entity name while preserving scope.'
-      }
-      const continuationSubjectId = matchedSubjects.length === 1
-        ? matchedSubjects[0].id
-        : resolved.query.subjectId
-      const continuationQuery = continuationSubjectId === null || continuationSubjectId === undefined
-        ? resolved.query
-        : { ...resolved.query, subjectId: continuationSubjectId }
-      const continuationAppliedScope = continuationSubjectId === null ||
-        continuationSubjectId === undefined
-        ? resolved.diagnostics.appliedScope
-        : {
-            requestedMode: 'subject' as const,
-            mode: 'subject' as const,
-            focusId: continuationQuery.focusId ?? null,
-            threadId: continuationQuery.threadId ?? null,
-            subjectId: continuationSubjectId,
-            source: 'explicit' as const,
-            description:
-              `Preserved Subject ${continuationSubjectId}` +
-              `${continuationQuery.threadId ? ` within Thread ${continuationQuery.threadId}` : ''}` +
-              `${continuationQuery.focusId ? ` within Focus ${continuationQuery.focusId}` : ''}.`
+      const authoritativeSubjectResult = rawSubjectUses.length > 0 || subjectScopedResults
+      let recordsTruncatedByBudget = false
+      let projectionTruncatedByBudget = false
+
+      const continuationFor = (cursor: SearchPageCursor | null): string | null => cursor
+        ? encodeSearchContinuation({
+            version: 2,
+            text: normalizedText,
+            query: resolved.query,
+            appliedScope: resolved.diagnostics.appliedScope,
+            ...(effectiveKinds ? { kinds: [...effectiveKinds] } : {}),
+            ...(effectiveDate ? { date: effectiveDate } : {}),
+            ...(effectiveCreatedAt ? { createdAt: effectiveCreatedAt } : {}),
+            ...(effectiveUpdatedAt ? { updatedAt: effectiveUpdatedAt } : {}),
+            timeZone: effectiveTimeZone,
+            sort: effectiveSort,
+            projection,
+            pageSize,
+            maxBytes,
+            cursor
+          })
+        : null
+      const response = (): Record<string, unknown> => {
+        const hasMore = searched.hasMore || recordsTruncatedByBudget
+        const lastCursor = itemCursors.at(-1) ?? null
+        const globalComplete = resolved.diagnostics.appliedScope.mode === 'all' && !hasMore
+        const doNotBroaden = authoritativeSubjectResult || globalComplete
+        const foundSubjectNames = [...new Set(matchedSubjects.map(({ name }) => name))]
+        const searchStatus = {
+          sufficient: doNotBroaden,
+          doNotBroaden,
+          reason: authoritativeSubjectResult
+            ? relevantSubjectUpdates.length > 0
+              ? `Relevant Subject-attributed Updates were found for ${foundSubjectNames.join(', ') || `Subject ${resolved.query.subjectId}`}; subjectUses is authoritative.`
+              : 'The requested Subject boundary returned authoritative attributed records.'
+            : globalComplete
+              ? 'The global structured query is complete; every matching visible record was returned.'
+              : 'Another bounded page remains; continue with the exact signed continuationToken.',
+          nextAction: doNotBroaden
+            ? 'Stop discovery and use the returned record IDs directly.'
+            : 'Call onmove.search again with only continuationToken.'
+        }
+        return {
+          items,
+          subjectUses,
+          namedSubjectDiscovery,
+          hierarchyPaths,
+          hierarchyNotation: HIERARCHY_NOTATION_GUIDE,
+          searchStatus,
+          hasMore,
+          continuationToken: hasMore ? continuationFor(lastCursor) : null,
+          appliedQuery: {
+            text: normalizedText,
+            kinds: appliedKinds,
+            date: effectiveDate ?? null,
+            createdAt: effectiveCreatedAt ?? null,
+            updatedAt: effectiveUpdatedAt ?? null,
+            timeZone: effectiveTimeZone,
+            sort: effectiveSort,
+            projection
+          },
+          budget: {
+            maxBytes,
+            responseBytes: 0,
+            recordsTruncated: recordsTruncatedByBudget,
+            projectionTruncated: projectionTruncatedByBudget
           }
-      const nextContinuationToken = encodeSearchContinuation({
-        version: 1,
-        query: continuationQuery,
-        appliedScope: continuationAppliedScope,
-        ...(effectiveKinds && matchedSubjects.length !== 1
-          ? { kinds: [...effectiveKinds] }
-          : {}),
-        includeThreads: effectiveIncludeThreads,
-        includeCommitments: effectiveIncludeCommitments,
-        includeSubjects: effectiveIncludeSubjects,
-        includeScopes: effectiveIncludeScopes,
-        view: effectiveView,
-        limit: effectiveLimit
-      })
-      return result({
-        items: effectiveView === 'hierarchy-only' ? [] : itemsWithDiscovery,
-        subjectUses: effectiveView === 'hierarchy-only' ? [] : subjectUses,
-        namedSubjectDiscovery,
-        hierarchyPaths,
-        hierarchyNotation: HIERARCHY_NOTATION_GUIDE,
-        searchStatus,
-        continuationScope: continuationAppliedScope,
-        continuationToken: nextContinuationToken
-      }, {
+        }
+      }
+      const diagnostics = (): McpDiagnostics => ({
         ...resolved.diagnostics,
         warnings,
         appliedKinds,
@@ -2088,6 +2201,80 @@ export function createOnMoveMcpServer(
         hierarchyPathCount: hierarchyPaths.length,
         hierarchyPathTotal: hierarchy.total
       })
+      const measuredBytes = (): number => Buffer.byteLength(JSON.stringify({
+        ...response(), diagnostics: diagnostics()
+      }), 'utf8')
+      // Leave room for final truncation warnings and the decimal byte count itself.
+      const exceedsBudget = (): boolean => measuredBytes() + 768 > maxBytes
+      while (exceedsBudget() && hierarchyPaths.length > 0) {
+        hierarchyPaths = hierarchyPaths.slice(0, -1)
+        projectionTruncatedByBudget = true
+      }
+      while (exceedsBudget() && namedSubjectDiscovery.length > 0) {
+        namedSubjectDiscovery = namedSubjectDiscovery.slice(0, -1)
+        projectionTruncatedByBudget = true
+      }
+      while (exceedsBudget() && subjectUses.length > 0) {
+        subjectUses = subjectUses.slice(0, -1)
+        projectionTruncatedByBudget = true
+      }
+      if (exceedsBudget()) {
+        items = items.map((item) => {
+          const compact = { ...item }
+          delete compact.subjectDiscovery
+          delete compact.editableRichText
+          if (projection.hierarchy) {
+            delete compact.hierarchy
+            delete compact.contextPath
+          }
+          if (projection.subjects) delete compact.subject
+          projectionTruncatedByBudget = true
+          return compact
+        })
+      }
+      while (exceedsBudget() && items.length > 1) {
+        items = items.slice(0, -1)
+        itemCursors.pop()
+        recordsTruncatedByBudget = true
+      }
+      if (exceedsBudget()) {
+        items = items.map((item) => ({
+          ...item,
+          ...(typeof item.snippet === 'string' && item.snippet.length > 80
+            ? { snippet: `${item.snippet.slice(0, 79)}…` }
+            : {})
+        }))
+      }
+      if (measuredBytes() > maxBytes) {
+        throw new TypeError(
+          `page.maxBytes=${maxBytes} is too small for one safe result and required diagnostics`
+        )
+      }
+      if (projectionTruncatedByBudget) {
+        warnings.push('Auxiliary projection data was reduced to honor page.maxBytes.')
+      }
+      if (recordsTruncatedByBudget) {
+        warnings.push('The record page was shortened to honor page.maxBytes; continue with the signed token.')
+      }
+      if (exceedsBudget() && warnings.length > 1) {
+        const omittedWarnings = warnings.length - 1
+        warnings.splice(
+          1,
+          omittedWarnings,
+          `${omittedWarnings} additional diagnostic warning${omittedWarnings === 1 ? ' was' : 's were'} omitted to honor page.maxBytes.`
+        )
+      }
+      const finalResponse = response()
+      const budget = finalResponse.budget as Record<string, unknown>
+      for (let pass = 0; pass < 3; pass += 1) {
+        budget.responseBytes = Buffer.byteLength(JSON.stringify({
+          ...finalResponse, diagnostics: diagnostics()
+        }), 'utf8')
+      }
+      if (Number(budget.responseBytes) > maxBytes) {
+        throw new TypeError(`The safe search response exceeded page.maxBytes=${maxBytes}`)
+      }
+      return result(finalResponse, diagnostics())
     }
   )
 
@@ -2252,7 +2439,8 @@ export function createOnMoveMcpServer(
       }
       const continuationToken = reviewed.review
         ? encodeSearchContinuation({
-            version: 1,
+            version: 2,
+            text: null,
             query: {
               focusId: reviewed.review.hierarchy.focus.id,
               threadId: reviewed.review.hierarchy.thread.id,
@@ -2269,12 +2457,18 @@ export function createOnMoveMcpServer(
                 `Subject ${reviewed.review.subject.id} within Thread ` +
                 `${reviewed.review.hierarchy.thread.id}.`
             },
-            includeThreads: false,
-            includeCommitments: false,
-            includeSubjects: false,
-            includeScopes: false,
-            view: 'compact',
-            limit: input.limit ?? 10
+            kinds: ['update', 'todo', 'commitment'],
+            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC',
+            sort: { field: 'updatedAt', direction: 'desc' },
+            projection: {
+              hierarchy: true,
+              subjects: true,
+              scopes: false,
+              richText: false
+            },
+            pageSize: Math.min(input.limit ?? 10, 25),
+            maxBytes: 32_768,
+            cursor: null
           })
         : null
       return result({
@@ -2972,7 +3166,7 @@ export function createOnMoveMcpServer(
     'onmove.update_rich_text',
     {
       title: 'Replace an OnMove rich-text field',
-      description: 'Replace a Focus description or Update observation with a complete editor-neutral rich-text document using optimistic concurrency. Prefer onmove.search(includeRichText=true) followed by onmove.patch_rich_text for localized changes. Notes use onmove.update_note.',
+      description: 'Replace a Focus description or Update observation with a complete editor-neutral rich-text document using optimistic concurrency. Prefer onmove.search(projection={richText:true}) followed by onmove.patch_rich_text for localized changes. Notes use onmove.update_note.',
       inputSchema: z.strictObject({
         target: richTextFieldTargetSchema,
         expectedRevision: z.number().int().nonnegative().describe(
@@ -3100,7 +3294,7 @@ export function createOnMoveMcpServer(
     'onmove.update_note',
     {
       title: 'Update an OnMove note',
-      description: 'Replace one visible Note with a complete editor-neutral rich-text document using optimistic concurrency. Prefer onmove.search(includeRichText=true) followed by onmove.patch_note_text for localized changes; use get_note when its ID is already known. The plain note.content projection is intentionally not writable, so formatting cannot be flattened accidentally.',
+      description: 'Replace one visible Note with a complete editor-neutral rich-text document using optimistic concurrency. Prefer onmove.search(projection={richText:true}) followed by onmove.patch_note_text for localized changes; use get_note when its ID is already known. The plain note.content projection is intentionally not writable, so formatting cannot be flattened accidentally.',
       inputSchema: z.strictObject({
         id: idSchema.describe(
           'The Note\'s own positive ID from onmove.get_note, a Note search hit, or a parent context.'

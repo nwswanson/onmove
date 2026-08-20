@@ -3672,6 +3672,19 @@ const migrations: readonly Migration[] = [
         ) STRICT, WITHOUT ROWID;
       `)
     }
+  },
+  {
+    version: 39,
+    name: 'search_document_created_timestamps',
+    up(database) {
+      database.exec(`
+        ALTER TABLE search_documents ADD COLUMN created_at TEXT;
+        UPDATE search_documents SET created_at = updated_at WHERE created_at IS NULL;
+        CREATE INDEX search_documents_dates_index
+          ON search_documents(due_on, created_at, updated_at, source_key);
+        UPDATE search_index_state SET dirty = 1 WHERE singleton = 1;
+      `)
+    }
   }
 ]
 

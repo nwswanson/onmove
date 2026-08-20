@@ -92,6 +92,42 @@ describe('database migrations', () => {
     migrated.close()
   })
 
+  it('backfills indexed creation timestamps for existing search documents', () => {
+    const current = new AppDatabase(databasePath)
+    const focus = current.domain.focuses.create({ title: 'Indexed before timestamp migration' })
+    expect(current.queries.search(
+      { text: 'indexed before timestamp migration' },
+      current.mcpSettings.accessPolicy()
+    )).toEqual([expect.objectContaining({ reference: { type: 'focus', id: focus.id } })])
+    current.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      DROP INDEX search_documents_dates_index;
+      ALTER TABLE search_documents DROP COLUMN created_at;
+      DELETE FROM schema_migrations WHERE version = 39;
+    `)
+    const before = legacy.prepare(
+      'SELECT source_key, updated_at FROM search_documents WHERE entity_type = ?'
+    ).get('focus') as { source_key: string; updated_at: string }
+    legacy.close()
+
+    const migrated = new AppDatabase(databasePath)
+    migrated.close()
+
+    const raw = new DatabaseSync(databasePath)
+    expect(raw.prepare(
+      'SELECT source_key, created_at, updated_at FROM search_documents WHERE entity_type = ?'
+    ).get('focus')).toEqual({ ...before, created_at: before.updated_at })
+    expect(raw.prepare(
+      'SELECT dirty FROM search_index_state WHERE singleton = 1'
+    ).get()).toEqual({ dirty: 1 })
+    expect(raw.prepare(
+      'SELECT version FROM schema_migrations WHERE version = 39'
+    ).get()).toEqual({ version: 39 })
+    raw.close()
+  })
+
   it('thins legacy per-edit rich-text history to the newest 30 recovery documents', () => {
     const current = new AppDatabase(databasePath)
     const focus = current.domain.focuses.create({ title: 'Legacy writing' })

@@ -333,14 +333,16 @@ contains the canonical Subject ID, applicable paths with Focus and Thread IDs, a
 `reviewSubjectRequest` calls. That is sufficient to call `onmove.review_subject` without another
 hierarchy lookup. If
 `searchStatus.sufficient` or `searchStatus.doNotBroaden` is true, stop discovery and fetch those IDs
-directly; do not search globally for a generic parent label. Every response includes an opaque
-`continuationToken`. Passing it to a follow-up search while omitting `scope` preserves a discovered
-Subject and any existing Thread or Focus restriction even when the follow-up `text` changes.
-Broaden without the token only when the user requests all people or all records.
+directly; do not search globally for a generic parent label. A paged search response includes an
+opaque `continuationToken` only when another page exists. The token is signed and preserves the complete
+request: text, all local-date filters, timezone, scope, sort, kinds, projection, page size, byte
+budget, and stable cursor. Send only that token on the next-page call; changing the query or scope
+starts a new search. Broaden only when the user requests all people or all records.
 
-Compact responses default to ten results. Set `view: "hierarchy-only"` to return only paths,
-diagnostics, stopping status, and continuation state without item or Subject-use contents.
-`includeSubjects` is intentionally expansive and is usually unnecessary for reviewing one entity.
+Search always returns records. Compact responses default to ten records and cap pages at 25. One
+`projection` object controls optional `hierarchy`, `subjects`, `scopes`, and `richText` output.
+Optional projections are reduced before the record page when necessary to honor `page.maxBytes`;
+every response reports `hasMore` and its measured structured-response byte count.
 
 For “what has Michael been doing in the 1:1s Thread?”, call `onmove.review_subject` with the exact
 Subject and Thread selectors. It resolves that intersection and returns Subject-attributed Updates
@@ -361,11 +363,23 @@ are required. If one stored document uses an unsupported newer structure, the re
 entity and readable plain-text projection, omits only that lossless document, and explains the
 degradation in `diagnostics.warnings`.
 
-For a text mutation, set `includeRichText: true` on `onmove.search`. Focus, Update, and Note hits
+For a text mutation, set `projection: { "richText": true }` on `onmove.search`. Focus, Update, and
+Note hits
 then include `editableRichText` with the complete document, readable projection, revision,
 self-describing target, and semantic patch/full-write guides. This collapses the common
 search → parent read → field read sequence into one read followed by one guarded patch. The option
 applies uniformly to Focus descriptions, Update observations, and Note content.
+
+Set `text` to `null` (or omit it) for a queryless list. Filter records with `kinds`, named `scope`,
+or structured `date`, `createdAt`, and `updatedAt` ranges rather than dummy search text. `date`
+means an Update's recorded local date or a dated entity's due date. Creation and modification
+instants use inclusive local-calendar ranges interpreted through the request's IANA `timeZone`.
+All search records expose `date`, `createdAt`, and `updatedAt`.
+
+Use `onmove.get_updates({ ids: [...] })` to hydrate up to 50 known Update IDs in one bounded read.
+It preserves first-seen order and reports hidden or missing records as `unavailableIds`. A malformed
+or newer rich-text observation degrades to readable plain text with a diagnostic warning rather
+than failing the search, single getter, bulk getter, or containing entity read.
 
 Each search hit identifies the matched record under `reference` and its owners under `hierarchy`.
 For example, when an Update matches, pass `hierarchy.thread.id` to `onmove.get_thread`; do not pass

@@ -50,6 +50,7 @@ describe('OnMove MCP protocol adapter', () => {
       'onmove.list_focuses',
       'onmove.get_thread',
       'onmove.get_update',
+      'onmove.get_updates',
       'onmove.get_note',
       'onmove.resolve_note',
       'onmove.resolve_target',
@@ -72,7 +73,7 @@ describe('OnMove MCP protocol adapter', () => {
       'onmove.update_note',
       'onmove.poke_review'
     ]))
-    expect(listed.tools).toHaveLength(35)
+    expect(listed.tools).toHaveLength(36)
 
     const templates = await client.listResourceTemplates()
     expect(templates.resourceTemplates.map(({ uriTemplate }) => uriTemplate)).toEqual(
@@ -86,7 +87,7 @@ describe('OnMove MCP protocol adapter', () => {
 
     const search = await client.callTool({
       name: 'onmove.search',
-      arguments: { text: 'launch readiness' }
+      arguments: { text: 'launch readiness', projection: { hierarchy: true } }
     })
     expect(search.isError).not.toBe(true)
     expect(search.structuredContent).toMatchObject({
@@ -135,20 +136,28 @@ describe('OnMove MCP protocol adapter', () => {
     expect(searchSchema).toContain('Null or omitted means mode=all')
     expect(searchSchema).toContain('top-level area of work')
     expect(searchSchema).toContain('canonical Subject')
-    expect(searchSchema).toContain('includeThreads')
-    expect(searchSchema).toContain('includeCommitments')
-    expect(searchSchema).toContain('includeSubjects')
-    expect(searchSchema).toContain('includeScopes')
-    expect(searchSchema).toContain('hierarchy browsing')
+    expect(searchSchema).toContain('projection')
+    expect(searchSchema).toContain('hierarchy')
+    expect(searchSchema).toContain('subjects')
+    expect(searchSchema).toContain('scopes')
+    expect(searchSchema).toContain('richText')
+    expect(searchSchema).toContain('queryless list mode')
+    expect(searchSchema).toContain('createdAt')
+    expect(searchSchema).toContain('updatedAt')
+    expect(searchSchema).toContain('IANA timezone')
+    expect(searchSchema).toContain('Hard structured-response')
+    expect(searchSchema).not.toContain('includeThreads')
+    expect(searchSchema).not.toContain('includeCommitments')
+    expect(searchSchema).not.toContain('includeSubjects')
+    expect(searchSchema).not.toContain('includeScopes')
+    expect(searchSchema).not.toContain('hierarchy-only')
     expect(searchSchema).toContain('continuationToken')
-    expect(searchSchema).toContain('For an initial search, omit this field or send null')
-    expect(searchSchema).toContain('Never hallucinate or construct a token')
-    expect(searchSchema).toContain('hierarchy-only')
+    expect(searchSchema).toContain('Initial request: omit or null')
+    expect(searchSchema).toContain('do not send text, filters, scope, sort, kinds, projection, or page again')
     expect(searchSchema).toContain('preserve a previously returned Thread ID')
-    expect(search.description).toContain('stop discovery')
-    expect(search.description).toContain('searchStatus.doNotBroaden')
-    expect(search.description).toContain('INITIAL SEARCH')
-    expect(search.description).toContain('OMIT continuationToken')
+    expect(search.description).toContain('queryless structured listing')
+    expect(search.description).toContain('signed continuationToken')
+    expect(search.description).toContain('INITIAL REQUEST')
     expect(threadSchema).toContain('hierarchy.thread.id')
     expect(threadSchema).toContain('not searchResult.reference.id')
     expect(threadSchema).toContain('Defaults to false')
@@ -231,7 +240,8 @@ describe('OnMove MCP protocol adapter', () => {
         appliedScope: { mode: 'all', source: 'explicit' },
         warnings: []
       },
-      continuationToken: expect.stringMatching(/^onmove-search-v1\./u)
+      continuationToken: null,
+      hasMore: false
     })
 
     const omitted = await client.callTool({
@@ -474,7 +484,7 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: {
         text: 'lookupfocusasdf lookupupdateasdf lookupnoteasdf',
         kinds: ['focus', 'update', 'note'],
-        includeRichText: true
+        projection: { richText: true }
       }
     })
     expect(search.isError).not.toBe(true)
@@ -796,12 +806,10 @@ describe('OnMove MCP protocol adapter', () => {
         appliedScope: { mode: 'focus', focusId: second.id },
         appliedKinds: ['note'],
         resultCount: 0,
-        warnings: [expect.stringContaining('Retain a named Subject, Thread, or Focus scope')]
+        warnings: [expect.stringContaining('Retain the named boundary')]
       }
     })
-    expect(JSON.stringify(narrowEmpty.content)).toContain(
-      'only if the user requested all people or all records'
-    )
+    expect(JSON.stringify(narrowEmpty.content)).toContain('adjust only the intended date or kind filter')
   })
 
   it('falls back to global search when a named hierarchy ID is null', async () => {
@@ -839,7 +847,7 @@ describe('OnMove MCP protocol adapter', () => {
 
     const search = await client.callTool({
       name: 'onmove.search',
-      arguments: { text: 'getthreadasdfasdf' }
+      arguments: { text: 'getthreadasdfasdf', projection: { hierarchy: true } }
     })
     const structured = search.structuredContent as {
       items: Array<{ hierarchy: { thread: { id: number } | null } }>
@@ -1976,10 +1984,11 @@ describe('OnMove MCP protocol adapter', () => {
       name: 'onmove.search',
       arguments: {
         text: 'michael',
-        includeThreads: true,
-        includeCommitments: true,
-        includeSubjects: true,
-        includeScopes: true
+        projection: {
+          hierarchy: true,
+          subjects: true,
+          scopes: true
+        }
       }
     })
     expect(discovery.isError).not.toBe(true)
@@ -2056,13 +2065,9 @@ describe('OnMove MCP protocol adapter', () => {
         sufficient: true,
         doNotBroaden: true,
         reason: expect.stringContaining('subjectUses is authoritative'),
-        nextAction: expect.stringContaining('fetch the relevant IDs')
+        nextAction: expect.stringContaining('returned record IDs')
       },
-      continuationScope: {
-        mode: 'subject',
-        subjectId: michael.id
-      },
-      continuationToken: expect.any(String),
+      continuationToken: null,
       diagnostics: {
         hierarchyPathCount: expect.any(Number),
         hierarchyPathTotal: expect.any(Number),
@@ -2070,12 +2075,12 @@ describe('OnMove MCP protocol adapter', () => {
       }
     })
 
-    const continuationToken = (discovery.structuredContent as {
-      continuationToken: string
-    }).continuationToken
     const scopedFollowUp = await client.callTool({
       name: 'onmove.search',
-      arguments: { text: 'weekly confidence', continuationToken }
+      arguments: {
+        text: 'weekly confidence',
+        scope: { mode: 'subject', subjectId: michael.id }
+      }
     })
     expect(scopedFollowUp.structuredContent).toMatchObject({
       items: [expect.objectContaining({
@@ -2083,8 +2088,7 @@ describe('OnMove MCP protocol adapter', () => {
       })],
       searchStatus: { sufficient: true, doNotBroaden: true },
       diagnostics: {
-        appliedScope: { mode: 'subject', subjectId: michael.id },
-        warnings: [expect.stringContaining('preserved from continuationToken')]
+        appliedScope: { mode: 'subject', subjectId: michael.id }
       }
     })
     expect((scopedFollowUp.structuredContent as {
@@ -2093,19 +2097,20 @@ describe('OnMove MCP protocol adapter', () => {
       expect.objectContaining({ reference: { type: 'update', id: unrelatedGenericUse.id } })
     ]))
 
-    const hierarchyOnly = await client.callTool({
+    const projectedHierarchy = await client.callTool({
       name: 'onmove.search',
       arguments: {
         text: 'michael',
-        view: 'hierarchy-only',
-        includeThreads: true,
-        includeCommitments: true,
-        includeSubjects: true
+        projection: { hierarchy: true, subjects: true }
       }
     })
-    expect(hierarchyOnly.structuredContent).toMatchObject({
-      items: [],
-      subjectUses: [],
+    expect(projectedHierarchy.structuredContent).toMatchObject({
+      items: [expect.objectContaining({
+        reference: { type: 'subject', id: michael.id }
+      })],
+      subjectUses: [expect.objectContaining({
+        reference: { type: 'update', id: existingMichaelUse.id }
+      })],
       hierarchyPaths: expect.arrayContaining([
         expect.objectContaining({ relativePath: 'Team management > 1:1s[Michael]' })
       ]),
@@ -2117,7 +2122,8 @@ describe('OnMove MCP protocol adapter', () => {
       name: 'onmove.search',
       arguments: {
         text: null,
-        scope: { mode: 'subject', subjectId: michael.id }
+        scope: { mode: 'subject', subjectId: michael.id },
+        projection: { hierarchy: true, subjects: true }
       }
     })
     expect(subjectListing.isError).not.toBe(true)
@@ -2341,7 +2347,7 @@ describe('OnMove MCP protocol adapter', () => {
     }).continuationToken
     const followUp = await client.callTool({
       name: 'onmove.search',
-      arguments: { text: 'observation', continuationToken }
+      arguments: { continuationToken }
     })
     expect(followUp.structuredContent).toMatchObject({
       items: expect.arrayContaining([
@@ -2370,7 +2376,7 @@ describe('OnMove MCP protocol adapter', () => {
 
     const discovery = await client.callTool({
       name: 'onmove.search',
-      arguments: { text: 'my Xs', includeThreads: true }
+      arguments: { text: 'my Xs', projection: { hierarchy: true } }
     })
     expect(discovery.isError).not.toBe(true)
     expect(discovery.structuredContent).toMatchObject({
@@ -2455,6 +2461,369 @@ describe('OnMove MCP protocol adapter', () => {
         }
       }
     })
+  })
+
+  it('lists records querylessly for one semantic calendar date without using FTS', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Calendar evidence',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const included = database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2026-08-20',
+      observation: 'Included without a text query'
+    }, new Date('2026-08-20T16:00:00.000Z')).toSnapshot()
+    database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2026-08-19',
+      observation: 'Different semantic date'
+    }, new Date('2026-08-19T16:00:00.000Z'))
+
+    const listed = await client.callTool({
+      name: 'onmove.search',
+      arguments: {
+        text: null,
+        kinds: ['update'],
+        date: { from: '2026-08-20', to: '2026-08-20' }
+      }
+    })
+
+    expect(listed.isError).not.toBe(true)
+    expect(listed.structuredContent).toMatchObject({
+      items: [expect.objectContaining({
+        reference: { type: 'update', id: included.id },
+        date: '2026-08-20',
+        createdAt: '2026-08-20T16:00:00.000Z',
+        updatedAt: '2026-08-20T16:00:00.000Z'
+      })],
+      hasMore: false,
+      appliedQuery: {
+        text: null,
+        kinds: ['update'],
+        date: { from: '2026-08-20', to: '2026-08-20' }
+      }
+    })
+  })
+
+  it('keeps semantic date, createdAt, and updatedAt as independent predicates', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Timestamp distinctions',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const changed = database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2030-01-03',
+      observation: 'Changed later'
+    }, new Date('2026-08-18T10:00:00.000Z')).toSnapshot()
+    const untouched = database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2030-01-04',
+      observation: 'Not changed later'
+    }, new Date('2026-08-18T11:00:00.000Z')).toSnapshot()
+    database.domain.richTextDocuments.save(
+      { type: 'update', id: changed.id, field: 'observation' },
+      'Changed on a later day',
+      new Date('2026-08-20T12:00:00.000Z')
+    )
+
+    const created = await client.callTool({
+      name: 'onmove.search',
+      arguments: {
+        text: null,
+        kinds: ['update'],
+        createdAt: { from: '2026-08-18', to: '2026-08-18' },
+        timeZone: 'UTC',
+        sort: { field: 'createdAt', direction: 'asc' }
+      }
+    })
+    expect((created.structuredContent as {
+      items: Array<{ reference: { id: number } }>
+    }).items.map(({ reference }) => reference.id)).toEqual([changed.id, untouched.id])
+
+    const updated = await client.callTool({
+      name: 'onmove.search',
+      arguments: {
+        text: null,
+        kinds: ['update'],
+        updatedAt: { from: '2026-08-20', to: '2026-08-20' },
+        timeZone: 'UTC'
+      }
+    })
+    expect(updated.structuredContent).toMatchObject({
+      items: [expect.objectContaining({
+        reference: { type: 'update', id: changed.id },
+        date: '2030-01-03',
+        createdAt: '2026-08-18T10:00:00.000Z',
+        updatedAt: '2026-08-20T12:00:00.000Z'
+      })]
+    })
+  })
+
+  it('applies IANA local-calendar boundaries around UTC midnight', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Timezone boundary',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const lateChicago = database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2026-08-21',
+      observation: 'Still August twentieth in Chicago'
+    }, new Date('2026-08-21T04:30:00.000Z')).toSnapshot()
+    database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2026-08-21',
+      observation: 'Now August twenty first in Chicago'
+    }, new Date('2026-08-21T05:30:00.000Z'))
+
+    const localDay = await client.callTool({
+      name: 'onmove.search',
+      arguments: {
+        text: null,
+        kinds: ['update'],
+        createdAt: { from: '2026-08-20', to: '2026-08-20' },
+        timeZone: 'America/Chicago'
+      }
+    })
+    expect(localDay.isError).not.toBe(true)
+    expect((localDay.structuredContent as {
+      items: Array<{ reference: { id: number } }>
+    }).items.map(({ reference }) => reference.id)).toEqual([lateChicago.id])
+  })
+
+  it('paginates with a stable signed cursor and never repeats a record ID', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Cursor owner',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const expectedIds = Array.from({ length: 7 }, (_, index) =>
+      database.domain.updates.create({
+        parent: { type: 'thread', id: thread.id },
+        date: '2026-08-20',
+        observation: `Cursor record ${index}`
+      }, new Date('2026-08-20T12:00:00.000Z')).id)
+
+    const seen: number[] = []
+    let response = await client.callTool({
+      name: 'onmove.search',
+      arguments: {
+        text: null,
+        kinds: ['update'],
+        scope: { mode: 'thread', threadId: thread.id },
+        date: { from: '2026-08-20', to: '2026-08-20' },
+        createdAt: { from: '2026-08-20', to: '2026-08-20' },
+        timeZone: 'UTC',
+        sort: { field: 'createdAt', direction: 'asc' },
+        projection: { hierarchy: true },
+        page: { size: 2, maxBytes: 8192 }
+      }
+    })
+    for (;;) {
+      expect(response.isError).not.toBe(true)
+      const page = response.structuredContent as {
+        items: Array<{ reference: { id: number } }>
+        hasMore: boolean
+        continuationToken: string | null
+        appliedQuery: {
+          kinds: string[]
+          date: { from: string; to: string }
+          createdAt: { from: string; to: string }
+          timeZone: string
+          sort: { field: string; direction: string }
+          projection: { hierarchy: boolean }
+        }
+      }
+      seen.push(...page.items.map(({ reference }) => reference.id))
+      expect(page.appliedQuery).toMatchObject({
+        kinds: ['update'],
+        date: { from: '2026-08-20', to: '2026-08-20' },
+        createdAt: { from: '2026-08-20', to: '2026-08-20' },
+        timeZone: 'UTC',
+        sort: { field: 'createdAt', direction: 'asc' },
+        projection: { hierarchy: true }
+      })
+      if (!page.hasMore) {
+        expect(page.continuationToken).toBeNull()
+        break
+      }
+      expect(page.continuationToken).toMatch(/^onmove-search-v2\./u)
+      response = await client.callTool({
+        name: 'onmove.search',
+        arguments: { continuationToken: page.continuationToken }
+      })
+    }
+    expect(new Set(seen).size).toBe(seen.length)
+    expect(new Set(seen)).toEqual(new Set(expectedIds))
+
+    const firstPage = await client.callTool({
+      name: 'onmove.search',
+      arguments: { text: null, kinds: ['update'], page: { size: 1 } }
+    })
+    const token = (firstPage.structuredContent as { continuationToken: string }).continuationToken
+    const last = token.at(-1) as string
+    const tampered = `${token.slice(0, -1)}${last === 'a' ? 'b' : 'a'}`
+    const rejected = await client.callTool({
+      name: 'onmove.search',
+      arguments: { continuationToken: tampered }
+    })
+    expect(rejected.isError).toBe(true)
+    expect(JSON.stringify(rejected)).toContain('invalid or incompatible')
+  })
+
+  it('keeps compact pages below the configured response byte limit', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Budget owner',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    for (let index = 0; index < 12; index += 1) {
+      database.domain.updates.create({
+        parent: { type: 'thread', id: thread.id },
+        date: '2026-08-20',
+        observation: `Budget ${index} ${'long evidence '.repeat(100)}`
+      })
+    }
+
+    const compact = await client.callTool({
+      name: 'onmove.search',
+      arguments: {
+        text: null,
+        kinds: ['update'],
+        page: { size: 25, maxBytes: 4096 }
+      }
+    })
+    expect(compact.isError).not.toBe(true)
+    const bytes = Buffer.byteLength(JSON.stringify(compact.structuredContent), 'utf8')
+    expect(bytes).toBeLessThanOrEqual(4096)
+    expect(compact.structuredContent).toMatchObject({
+      hasMore: true,
+      budget: {
+        maxBytes: 4096,
+        responseBytes: bytes,
+        recordsTruncated: true
+      }
+    })
+  })
+
+  it('degrades malformed rich text to plain Update text with warnings in search and bulk reads', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Future document owner',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const malformed = database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      observation: 'Initial observation'
+    }).toSnapshot()
+    const ordinary = database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      observation: 'Ordinary observation'
+    }).toSnapshot()
+    database.domain.richTextDocuments.save(
+      { type: 'update', id: malformed.id, field: 'observation' },
+      `${RICH_TEXT_PREFIX}${JSON.stringify({
+        root: {
+          type: 'root',
+          children: [{
+            type: 'future-widget',
+            children: [{ type: 'text', text: 'Readable malformed evidence', version: 1 }],
+            version: 1
+          }],
+          version: 1
+        }
+      })}`
+    )
+
+    const searched = await client.callTool({
+      name: 'onmove.search',
+      arguments: {
+        text: 'readable malformed evidence',
+        kinds: ['update'],
+        projection: { richText: true }
+      }
+    })
+    expect(searched.isError).not.toBe(true)
+    expect(searched.structuredContent).toMatchObject({
+      items: [expect.objectContaining({
+        reference: { type: 'update', id: malformed.id },
+        snippet: 'Readable malformed evidence'
+      })],
+      diagnostics: {
+        warnings: [expect.stringContaining('plain text was retained')]
+      }
+    })
+    expect((searched.structuredContent as {
+      items: Array<Record<string, unknown>>
+    }).items[0]).not.toHaveProperty('editableRichText')
+
+    const bulk = await client.callTool({
+      name: 'onmove.get_updates',
+      arguments: { ids: [ordinary.id, malformed.id, ordinary.id, 999_999] }
+    })
+    expect(bulk.isError).not.toBe(true)
+    expect(bulk.structuredContent).toMatchObject({
+      unavailableIds: [999_999],
+      diagnostics: { warnings: [expect.stringContaining('unsupported rich text')] }
+    })
+    const bulkItems = (bulk.structuredContent as {
+      items: Array<{ reference: { id: number }; update: { observation: string } }>
+    }).items
+    expect(bulkItems.map(({ reference }) => reference.id)).toEqual([ordinary.id, malformed.id])
+    expect(bulkItems[1].update.observation).toContain('Readable malformed evidence')
+  })
+
+  it('marks a complete global result sufficient and bounds hierarchy expansion', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Hierarchy fanout',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const scope = database.domain.threadScopes.addSubject(thread.id, { name: 'Matrixpersonunique' })
+    for (let index = 0; index < 18; index += 1) {
+      database.domain.commitments.create({
+        type: 'tracking',
+        parent: { type: 'thread', id: thread.id },
+        title: `Matrix commitment ${index}`
+      })
+    }
+
+    const response = await client.callTool({
+      name: 'onmove.search',
+      arguments: {
+        text: 'matrixpersonunique',
+        kinds: ['subject'],
+        projection: { hierarchy: true, subjects: true, scopes: true },
+        page: { size: 5, maxBytes: 4096 }
+      }
+    })
+    expect(response.isError).not.toBe(true)
+    const structured = response.structuredContent as {
+      items: unknown[]
+      hierarchyPaths: unknown[]
+      subjectUses: unknown[]
+      hasMore: boolean
+      searchStatus: { sufficient: boolean; doNotBroaden: boolean }
+      diagnostics: { hierarchyPathTotal: number }
+    }
+    expect(structured.items).toHaveLength(1)
+    expect(structured.hierarchyPaths.length).toBeLessThanOrEqual(5)
+    expect(structured.subjectUses.length).toBeLessThanOrEqual(5)
+    expect(structured.hasMore).toBe(false)
+    expect(structured.searchStatus).toMatchObject({ sufficient: true, doNotBroaden: true })
+    expect(structured.diagnostics.hierarchyPathTotal).toBeGreaterThan(5)
+    expect(scope.subjects[0].name).toBe('Matrixpersonunique')
+    expect(Buffer.byteLength(JSON.stringify(response.structuredContent), 'utf8'))
+      .toBeLessThanOrEqual(4096)
   })
 
   it('canonicalizes accidental tag markers out of link text before storing and indexing', async () => {

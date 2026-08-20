@@ -177,6 +177,8 @@ method.
 - `onmove.get_focus`
 - `onmove.get_thread`
 - `onmove.get_commitment`
+- `onmove.get_update`
+- `onmove.get_updates`
 - `onmove.list_routines`
 - `onmove.get_reviews`
 - `onmove.get_due`
@@ -186,30 +188,32 @@ method.
 - `onmove.search`
 - `onmove.review_subject`
 
-`onmove.search` is also the bounded hierarchy browser. `text=null` performs structural browsing;
-the `includeThreads`, `includeCommitments`, `includeSubjects`, and `includeScopes` flags expand
-matched ancestors into child paths even when those children contain no searchable text. A Subject
+`onmove.search` is also a queryless structured list and bounded hierarchy browser. `text=null`
+lists records without FTS; one `projection` object controls hierarchy, Subject, Scope, and rich-text
+expansion. A Subject
 name match automatically returns bounded attributed `subjectUses` plus every currently applicable
 Subject-cell path. Responses define
 both explicit object notation and a readable form such as `Team management > 1:1s[Michael]`.
-Subject mode accepts `text=null` to list attributed records and current applicability paths without
-inventing a dummy text term.
+Subject mode accepts `text=null` to list attributed records without inventing a dummy text term;
+request the Subject projection when current applicability paths are also needed.
 
 Discovery is Subject-first when the request names a person or other canonical Subject. The initial
 name search returns `subjectUses`, which is authoritative for attributed records, plus an explicit
 `searchStatus`. `sufficient=true` or `doNotBroaden=true` tells the client to stop discovery and fetch
 the returned IDs directly rather than searching globally for a generic hierarchy label. A response
 also returns `namedSubjectDiscovery`, colocating the canonical Subject ID, applicable Focus/Thread
-paths, and ready Subject-review calls. It returns an opaque continuation token as well. Initial
+paths, and ready Subject-review calls. It returns an opaque signed continuation token when another
+page exists. Initial
 searches omit that field or send null; clients must never synthesize it, and validation rejects only
-a supplied non-null invalid token. Follow-up searches may change their text while the exact token
-preserves the discovered Subject and any existing Thread or Focus restriction. Starting without the
-token is required to intentionally change scope. Named scopes support `all`, `focus`, `thread`,
+a supplied non-null invalid token. A next-page request contains only the exact token; it preserves
+text, date ranges, timezone, scope, sort, kinds, projection, byte budget, and stable cursor.
+Starting without the token is required to intentionally change the query. Named scopes support
+`all`, `focus`, `thread`,
 `subject`, and the explicitly requested live `current` context.
 
-`view=hierarchy-only` keeps hierarchy paths, stopping status, diagnostics, and continuation while
-omitting item and Subject-use contents. Compact search defaults to ten results, with an explicit
-bounded limit available when more are required.
+Search always returns records. Optional projections are trimmed before record pages to enforce the
+configured byte budget. Compact search defaults to ten records, caps pages at 25, and returns
+explicit `hasMore`.
 
 `onmove.review_subject` is the high-level alternative to a multi-query agent workflow. It resolves
 an exact Subject inside an exact Thread and returns one compact projection containing that Subject's

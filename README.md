@@ -85,7 +85,7 @@ sensitive content** only when the connected client should be able to access effe
 records. If the default port is occupied, change **Local port** and update the client URL.
 
 For hierarchy-shaped requests such as “Add an Update for Michael's 1:1,” use `onmove.search` with
-`includeThreads`, `includeCommitments`, `includeSubjects`, and optionally `includeScopes`. A Subject
+`projection: { "hierarchy": true, "subjects": true, "scopes": true }`. A Subject
 match returns `subjectUses` plus every applicable path even when the child title or evidence does
 not contain the search text. The
 API defines those paths both as readable notation—`Team management > 1:1s[Michael]`—and as an
@@ -97,10 +97,9 @@ disambiguation.
 Treat a named Subject as the primary discovery filter. Search the Subject's name first, inspect
 `subjectUses`, and stop when `searchStatus.sufficient` or `searchStatus.doNotBroaden` is true.
 Those uses are authoritative for records attributed to that Subject; fetch their IDs directly
-instead of globally searching a generic container label such as “1:1s.” Follow-up searches should
-pass the returned `continuationToken`, which preserves a discovered Subject and any existing Focus
-or Thread restriction. Alternatively, use `scope.mode` with `subject`, `thread`, or `focus` and the
-returned ID. Broaden to `all` only when the user actually requests every person or record.
+instead of globally searching a generic container label such as “1:1s.” Use `scope.mode` with
+`subject`, `thread`, or `focus` and the returned ID for a new narrowed query. Broaden to `all` only
+when the user actually requests every person or record.
 
 For the initial lookup, omit `continuationToken` or explicitly send `null`; never invent one:
 
@@ -112,14 +111,16 @@ For the initial lookup, omit `continuationToken` or explicitly send `null`; neve
 }
 ```
 
-Only reuse the exact non-null token from an OnMove response. A named Subject result includes
+Only reuse the exact non-null token from an OnMove response, and send it as the only argument on the
+next-page call. The signed token preserves the complete query and stable cursor. A named Subject result includes
 `namedSubjectDiscovery`, which puts the canonical Subject ID and every applicable Focus/Thread path
 beside ready `review_subject` arguments. Selectors use either an ID or a title/name, never both.
 
 For a compact situation review, call `onmove.review_subject` with an exact Subject and Thread (plus
 an optional Focus for disambiguation). One response resolves the path and returns that Subject's
 Updates in the Thread, sorted by `updatedAt`, together with open Subject Todos and applicable open
-Commitments. It also returns a scope-preserving continuation token. This replaces separate Subject,
+Commitments. It also returns a preconfigured continuation token for further bounded listing. This
+replaces separate Subject,
 Thread, Update, Todo, and Commitment searches.
 If an informal Thread phrase does not exactly match, the resolver returns `threadCandidates` with
 exact titles and IDs for an explicit retry; it does not guess. Direct `get_thread` and
@@ -127,13 +128,16 @@ exact titles and IDs for an explicit retry; it does not guess. Direct `get_threa
 documents are needed; unsupported newer rich-text structures become per-document warnings rather
 than aborting the entity read.
 
-Set `text` to `null` for hierarchy-only browsing. In particular,
-`{ text: null, scope: { mode: "subject", subjectId: 28 } }` returns records already attributed to
-that Subject plus every currently applicable Focus, Thread, and Commitment path. If an Update was
+Set `text` to `null` for queryless listing. For example,
+`{ text: null, kinds: ["update"], date: { from: "2026-08-20", to: "2026-08-20" } }`
+lists Updates recorded on one date without FTS. Add a Subject scope and the Subjects projection to
+return attributed records plus currently applicable hierarchy paths. `createdAt` and `updatedAt`
+accept the same inclusive local-date range along with an IANA `timeZone`. If an Update was
 created in the wrong place, `onmove.reparent_update` moves that existing record without replacing
 its rich text, revision, date, state, or sensitivity. Its response also supplies an undo request.
-For the smallest discovery response, set `view: "hierarchy-only"`; OnMove still returns paths,
-diagnostics, stopping status, and a continuation token but omits item and Subject-use contents.
+Search pages default to ten records, return explicit `hasMore`, honor `page.maxBytes`, and provide a
+signed continuation token only when another page exists. Use `onmove.get_updates` to hydrate several
+returned Update IDs in one call.
 
 For a localized Note edit, resolve and read it with `onmove.resolve_note` (or `onmove.get_note` when
 its ID is known), then call `onmove.patch_note_text` with its revision, exact `findText`, and
@@ -147,7 +151,8 @@ Focus descriptions and existing Update observations expose the same safety model
 `descriptionWriteGuide` or `observationWriteGuide`. Use `onmove.patch_rich_text` for exact localized
 changes and `onmove.update_rich_text` only for structural replacement. Full-document tools accept
 the document only through the root-level `richText` field; there is no `document` compatibility
-alias. For the shortest text-edit path, call `onmove.search` with `includeRichText: true`; matching
+alias. For the shortest text-edit path, call `onmove.search` with
+`projection: { "richText": true }`; matching
 Focus descriptions, Update observations, and Notes return their complete document, revision,
 self-describing target, and write guides directly in the search result.
 

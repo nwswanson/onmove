@@ -40,7 +40,12 @@ import {
   type OnMoveAccessPolicy,
   type SensitiveEntityType
 } from './access-policy'
-import { SearchIndexRepository, type SearchQuery, type SearchResult } from './search-index'
+import {
+  SearchIndexRepository,
+  type SearchPage,
+  type SearchQuery,
+  type SearchResult
+} from './search-index'
 
 export type ApplicationEntityReference =
   | { type: 'focus'; id: number }
@@ -128,7 +133,14 @@ export interface ApplicationUpdateContext {
   uri: string
   contextPath: Array<{ type: 'focus' | 'thread' | 'commitment'; id: number; title: string }>
   effectiveSensitive: boolean
-  update: ApplicationUpdateSnapshot
+  update: ApplicationUpdateSnapshot | UpdateSnapshot
+  warnings?: string[]
+}
+
+export interface ApplicationUpdatesResult {
+  items: ApplicationUpdateContext[]
+  /** Missing and non-visible IDs intentionally share one externally indistinguishable bucket. */
+  unavailableIds: number[]
 }
 
 export interface CreateApplicationTodo {
@@ -812,7 +824,34 @@ export class OnMoveQueryService {
   getUpdate(id: number, access: OnMoveAccessPolicy): ApplicationUpdateContext | null {
     assertPositiveId(id, 'update id')
     const update = this.domain.updates.find(id)
-    if (!update || !this.sensitivity.canRead('update', id, access)) return null
+    return update ? this.updateContext(update, access) : null
+  }
+
+  getUpdates(ids: readonly number[], access: OnMoveAccessPolicy): ApplicationUpdatesResult {
+    if (ids.length < 1 || ids.length > 50) {
+      throw new ModelValidationError('Update ids must contain between 1 and 50 values')
+    }
+    for (const id of ids) assertPositiveId(id, 'update id')
+    const uniqueIds = [...new Set(ids)]
+    const records = this.domain.updates.findMany(uniqueIds)
+    const byId = new Map(records.map((update) => [update.id, update] as const))
+    const items: ApplicationUpdateContext[] = []
+    const unavailableIds: number[] = []
+    for (const id of uniqueIds) {
+      const update = byId.get(id)
+      const context = update ? this.updateContext(update, access) : null
+      if (context) items.push(context)
+      else unavailableIds.push(id)
+    }
+    return { items, unavailableIds }
+  }
+
+  private updateContext(
+    update: UpdateSnapshot,
+    access: OnMoveAccessPolicy
+  ): ApplicationUpdateContext | null {
+    const id = update.id
+    if (!this.sensitivity.canRead('update', id, access)) return null
     const contextPath: ApplicationUpdateContext['contextPath'] = []
     if (update.parent.type === 'focus') {
       const focus = this.domain.focuses.find(update.parent.id)
@@ -847,15 +886,27 @@ export class OnMoveQueryService {
         )
       }
     }
-    const document = this.domain.richTextDocuments.get({
-      type: 'update', id, field: 'observation'
-    })
-    return {
+    const base = {
       reference: { type: 'update', id },
       uri: `onmove://update/${id}`,
       contextPath,
-      effectiveSensitive: Boolean(this.sensitivity.isSensitive('update', id)),
-      update: updateProjection(update, document)
+      effectiveSensitive: Boolean(this.sensitivity.isSensitive('update', id))
+    } as const
+    try {
+      const document = this.domain.richTextDocuments.get({
+        type: 'update', id, field: 'observation'
+      })
+      return { ...base, update: updateProjection(update, document) }
+    } catch (error) {
+      return {
+        ...base,
+        update: plainProjection(update) as UpdateSnapshot,
+        warnings: [
+          `Update ${id} contains unsupported rich text. Plain observation text was returned ` +
+          `without a lossless rich-text document. Detail: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+        ]
+      }
     }
   }
 
@@ -1032,6 +1083,10 @@ export class OnMoveQueryService {
 
   search(query: SearchQuery, access: OnMoveAccessPolicy): SearchResult[] {
     return this.searchIndex.search(query, access)
+  }
+
+  searchPage(query: SearchQuery, access: OnMoveAccessPolicy): SearchPage {
+    return this.searchIndex.searchPage(query, access)
   }
 
   /**

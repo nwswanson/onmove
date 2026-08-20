@@ -1751,6 +1751,24 @@ export class UpdateRepository extends BaseRepository<UpdateRecord, UpdateModel> 
     return row ? this.fromRow(row) : null
   }
 
+  /** One bounded SQL read for MCP/API callers that already resolved several Update IDs. */
+  findMany(ids: readonly number[]): UpdateRecord[] {
+    if (ids.length === 0) return []
+    for (const id of ids) assertId(id, 'update')
+    const uniqueIds = [...new Set(ids)]
+    const rows = this.database.all<UpdateRow>(
+      `SELECT id, focus_id, thread_id, commitment_id, scope_id, subject_id, recorded_on,
+              observation, state, sensitive, created_at, updated_at
+       FROM updates WHERE id IN (${uniqueIds.map(() => '?').join(', ')})`,
+      uniqueIds
+    )
+    const byId = new Map(rows.map((row) => [Number(row.id), this.fromRow(row)] as const))
+    return uniqueIds.flatMap((id) => {
+      const record = byId.get(id)
+      return record ? [record] : []
+    })
+  }
+
   listForFocus(focusId: number): UpdateSnapshot[] {
     return this.listFor('focus_id', focusId)
   }

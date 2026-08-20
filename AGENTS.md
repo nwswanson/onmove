@@ -762,13 +762,16 @@ foreground colors and do not rely on color alone to communicate selection or sta
   with the maintained FTS5 projection and readable rich-text extraction, not a collection of
   entity-specific `LIKE` queries. `get_thread` and other direct getters retrieve known entity ids;
   they are not substitutes for global search.
-- Treat hierarchy discovery as a first-class part of `onmove.search`, not as text matching alone.
-  `text=null` performs bounded structural browsing, while `includeThreads`, `includeCommitments`,
-  `includeSubjects`, and `includeScopes` expand matched ancestors into requested child paths even
-  when those children contain no matching text. A Subject-name match must return every currently
-  applicable Focus/Thread/Commitment path plus bounded `subjectUses` for that canonical Subject,
-  even when those attributed records do not repeat the Subject name. Explicit Subject scope with
-  `text=null` returns both already-attributed records and current applicability paths.
+- Treat structured listing and hierarchy discovery as first-class parts of `onmove.search`, not as
+  text matching alone. A null or omitted `text` performs a queryless record list selected by
+  `kinds`, named scope, and structured date predicates; it must never invent an FTS term. Control
+  auxiliary output through one receiver-owned `projection` object with `hierarchy`, `subjects`,
+  `scopes`, and `richText` booleans. Never restore the overlapping `includeThreads`,
+  `includeCommitments`, `includeSubjects`, `includeScopes`, or `view=hierarchy-only` controls.
+  Records are the stable primary result; projections may add their containing IDs and bounded
+  applicability paths without recursively multiplying unrelated descendants. A Subject-name match
+  with the Subject projection must return current applicable Focus/Thread/Commitment paths plus
+  bounded `subjectUses`, even when attributed records do not repeat the Subject name.
 - Make Subject-first discovery the default agent workflow whenever the user's request names a
   person or other canonical Subject. Search the specific name before generic hierarchy labels;
   treat returned `subjectUses` as authoritative for attributed records. When relevant uses exist,
@@ -778,15 +781,20 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - Make `continuationToken` optional and nullable. An initial search must omit it or send null, and
   tool instructions must explicitly forbid inventing or synthesizing a value. Decode and reject
   only a supplied non-null token; follow-ups may use only the exact opaque token returned by
-  OnMove. Return a scope-preserving continuation token from search. A unique Subject-name match
-  promotes the token to Subject scope while retaining any existing Thread or Focus restriction;
-  follow-up text may change without losing that boundary. Reject an explicit replacement scope in
-  the same request as a continuation token. Deliberate broadening starts a new search without the
-  token and is appropriate only when the user asks for all people or all records.
-- Keep search output bounded and purpose-specific. Compact search defaults to ten results. A
-  `hierarchy-only` view still computes matches and returns paths, diagnostics, stopping status, and
-  continuation state but omits record contents and `subjectUses`. Describe `includeSubjects` as an
-  expansive option that is usually unnecessary for a specific entity review.
+  OnMove. Sign every token and preserve the complete immutable request: text, all three local-date
+  predicates, timezone, named scope, sort, kinds, projection, page size, byte budget, and stable
+  `(sort value, source key)` cursor. A next-page request contains only that token; reject sibling
+  filters rather than ambiguously merging them. Return explicit `hasMore`; return no token when the
+  bounded query is complete. Deliberate query or scope changes start a fresh request.
+- Keep search output bounded and purpose-specific. Default to ten records and cap a requested page
+  at 25. Enforce the caller's structured-response byte budget by dropping optional projection data
+  before shortening the record page, and emit a token from the last record actually returned.
+  Never return an unbounded hierarchy fanout merely because one Subject or parent matched.
+- Expose `date`, `createdAt`, and `updatedAt` on every search record. `date` is the Update's recorded
+  local date or a dated entity's due date and is compared directly; `createdAt` and `updatedAt` are
+  instants filtered by inclusive local calendar ranges using an explicit IANA timezone. These are
+  SQL predicates over indexed columns, never full-text terms. Preserve regression coverage around
+  UTC midnight and DST-capable timezone conversion.
 - Define hierarchy notation in every relevant schema and response. The object
   `{ thread: "Team management", commitment: "1:1s", subject: "Michael" }` and readable
   `Team management > 1:1s[Michael]` form identify one semantic path; IDs in the accompanying
@@ -813,6 +821,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
   rich text. Also test omitted and explicit-null scope, a deliberately narrow empty result, applied
   scope diagnostics, Unicode/case behavior, and sensitive ancestors. These tests exist because
   simple searches previously disappeared behind an implicit current-Focus filter.
+- Preserve cursor regression tests across equal sort values, verify that page IDs never repeat,
+  reject signed-token tampering, and test queryless exact-date lists, created-vs-updated filtering,
+  compact byte ceilings, malformed-rich-text fallback, global completion stopping signals, and
+  bounded hierarchy projection.
 - Use `onmove.resolve_target` for relational language such as “do X for Person Y's 1:1 in Team.”
   Resolve in hierarchy order—optional Focus, Thread, optional child Commitment, then optional
   Subject in the target's effective Scope—and return a directly usable recommended write request.
@@ -917,10 +929,15 @@ foreground colors and do not rely on color alone to communicate selection or sta
   across the running HTTP endpoint with bounded state; the third unchanged failure must explicitly
   identify persistent payload features and tell the caller what to change instead of enabling a
   blind retry loop.
-- Let `onmove.search(includeRichText=true)` return edit-ready state for every searchable MCP-writable
+- Let `onmove.search(projection={richText:true})` return edit-ready state for every searchable MCP-writable
   rich-text field: Focus descriptions, Update observations, and Note content. Each matching hit
   must include its full lossless document, revision, self-describing target, and write guides so a
   common text mutation is one search plus one guarded semantic patch.
+- Keep Update hydration free of agent-visible N+1 calls. `onmove.get_updates` accepts up to 50
+  Update IDs, performs one bounded repository read, preserves first-seen input order, and returns
+  hidden and missing IDs together as `unavailableIds`. Unsupported or malformed rich text must
+  retain the readable plain observation and add a warning rather than aborting either the single or
+  bulk read.
 - Validate semantic rich-text details in the handler when doing so produces a more actionable error
   than an opaque MCP SDK “invalid arguments” response. Test invalid requests through a real MCP
   client, not only the converter, because transport schema validation can reject input before the
