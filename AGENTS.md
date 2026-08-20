@@ -769,20 +769,37 @@ foreground colors and do not rely on color alone to communicate selection or sta
   applicable Focus/Thread/Commitment path plus bounded `subjectUses` for that canonical Subject,
   even when those attributed records do not repeat the Subject name. Explicit Subject scope with
   `text=null` returns both already-attributed records and current applicability paths.
+- Make Subject-first discovery the default agent workflow whenever the user's request names a
+  person or other canonical Subject. Search the specific name before generic hierarchy labels;
+  treat returned `subjectUses` as authoritative for attributed records. When relevant uses exist,
+  return `searchStatus.sufficient=true` and `doNotBroaden=true` with textual instructions to stop
+  discovery and fetch those record IDs directly. Never encourage a second global search for a
+  generic Thread/Commitment term after a sufficient Subject match.
+- Return an opaque scope-preserving continuation token from search. A unique Subject-name match
+  promotes the token to Subject scope while retaining any existing Thread or Focus restriction;
+  follow-up text may change without losing that boundary. Reject an explicit replacement scope in
+  the same request as a continuation token. Deliberate broadening starts a new search without the
+  token and is appropriate only when the user asks for all people or all records.
+- Keep search output bounded and purpose-specific. Compact search defaults to ten results. A
+  `hierarchy-only` view still computes matches and returns paths, diagnostics, stopping status, and
+  continuation state but omits record contents and `subjectUses`. Describe `includeSubjects` as an
+  expansive option that is usually unnecessary for a specific entity review.
 - Define hierarchy notation in every relevant schema and response. The object
   `{ thread: "Team management", commitment: "1:1s", subject: "Michael" }` and readable
   `Team management > 1:1s[Michael]` form identify one semantic path; IDs in the accompanying
   hierarchy references remain authoritative. Every executable Subject path supplies a complete
   recommended Update request rather than requiring the caller to reconstruct parent attribution.
-- Search globally by default. Omitted or null `scope`, `focusId`, and `subjectId` must never inherit
+- Search globally by default. Omitted or null `scope`, `focusId`, `threadId`, and `subjectId` must never inherit
   the current UI selection. Use one named `scope` object with explicit modes: `all` for the visible
-  workspace, `focus` for one Focus hierarchy, `subject` for one canonical Subject, and `current`
-  only when the caller deliberately requests the live UI context. Return the normalized
+  workspace, `focus` for one Focus hierarchy, `thread` for one Thread and its children, `subject`
+  for one canonical Subject, and `current` only when the caller deliberately requests the live UI
+  context. Return the normalized
   `diagnostics.appliedScope` on every response, plus applied kinds and result counts where relevant,
   so an agent can tell what the server actually searched.
-- Treat an empty narrow search as diagnosable, not conclusive. A focus-, subject-, current-, or
-  kinds-filtered empty result must include a plain-language warning such as “Retry with scope mode
-  all to search globally.” Put important recovery guidance in textual MCP content as well as
+- Treat an empty narrow search as diagnosable, not conclusive. A focus-, thread-, subject-, current-,
+  or kinds-filtered empty result must say to refine while retaining the named boundary and to search
+  globally only when the user requests all people or all records. Put important recovery guidance
+  in textual MCP content as well as
   structured metadata because clients and models do not all inspect structured output reliably.
 - Preserve regression tests for arbitrary literal strings globally, inside the matching Focus,
   inside the matching Subject, against unrelated records, and embedded within longer titles or
@@ -794,6 +811,11 @@ foreground colors and do not rely on color alone to communicate selection or sta
   Subject in the target's effective Scope—and return a directly usable recommended write request.
   Match names exactly and case-insensitively so punctuation-bearing names such as `1:1` are not
   damaged by FTS tokenization. Return candidates for duplicates and never guess through ambiguity.
+- Use `onmove.review_subject` for a high-level “what has Person X been doing in Thread Y?” request.
+  Resolve one exact Subject × Thread path and return, in one bounded read, Subject-attributed Updates
+  ordered by `updatedAt`, open exact/shared Todos, and currently applicable open Commitments with
+  Subject-cell state. A resolved review is sufficient and `doNotBroaden`; return a continuation token
+  for the same Subject × Thread intersection instead of requiring follow-up discovery calls.
 - Keep applicability and the UI selection separate at the API boundary. A write target is a typed
   parent `{ type, id }`; Subject attribution is a separate named object. An Open parent accepts only
   `attribution: { mode: "unscoped" }`. A bounded parent accepts exactly one currently allowed

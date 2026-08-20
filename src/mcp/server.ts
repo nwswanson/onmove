@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
 import type { AppDatabase } from '../main/database'
@@ -42,8 +43,9 @@ export interface OnMoveMcpServerOptions {
 }
 
 export interface SearchScopeInput {
-  mode: 'all' | 'focus' | 'subject' | 'current'
+  mode: 'all' | 'focus' | 'thread' | 'subject' | 'current'
   focusId?: number | null
+  threadId?: number | null
   subjectId?: number | null
 }
 
@@ -51,6 +53,7 @@ export interface AppliedSearchScope {
   requestedMode: SearchScopeInput['mode']
   mode: SearchScopeInput['mode']
   focusId: number | null
+  threadId: number | null
   subjectId: number | null
   source: 'default' | 'explicit' | 'current-ui'
   description: string
@@ -87,6 +90,7 @@ const GLOBAL_SCOPE: AppliedSearchScope = {
   requestedMode: 'all',
   mode: 'all',
   focusId: null,
+  threadId: null,
   subjectId: null,
   source: 'default',
   description: 'Global search across the visible OnMove workspace.'
@@ -104,18 +108,73 @@ const pageSchema = {
 }
 
 const searchScopeSchema = z.object({
-  mode: z.enum(['all', 'focus', 'subject', 'current']).describe(
-    'all searches the entire visible workspace; focus searches one Focus hierarchy; subject searches records attributed to one Subject; current explicitly uses the current OnMove UI Focus and Subject selection.'
+  mode: z.enum(['all', 'focus', 'thread', 'subject', 'current']).describe(
+    'all searches the entire visible workspace; focus searches one Focus hierarchy; thread searches one Thread and its children; subject searches records attributed to one Subject; current explicitly uses the current OnMove UI Focus and Subject selection.'
   ),
   focusId: idSchema.nullable().optional().describe(
     'The ID of a Focus, OnMove\'s top-level area of work. Used only when mode is focus. Null or omitted never narrows the search.'
+  ),
+  threadId: idSchema.nullable().optional().describe(
+    'The ID of a Thread, a workstream inside a Focus. Used only when mode is thread. For follow-up discovery, preserve a previously returned Thread ID instead of replacing it with a broad text query.'
   ),
   subjectId: idSchema.nullable().optional().describe(
     'The ID of a canonical Subject used in scoped work. Used only when mode is subject. Null or omitted never narrows the search.'
   )
 }).nullable().optional().describe(
-  'An explicit named search scope. Null or omitted means mode=all; the current UI is never used implicitly.'
+  'An explicit named search scope. Null or omitted means mode=all; the current UI is never used implicitly. For follow-ups, preserve the Subject, Thread, or Focus scope returned by the prior result and broaden only when the user requests wider results.'
 )
+
+type SearchResponseView = 'compact' | 'hierarchy-only'
+
+interface SearchContinuationPayload {
+  version: 1
+  query: Pick<SearchQuery, 'focusId' | 'threadId' | 'subjectId'>
+  appliedScope: AppliedSearchScope
+  kinds?: SearchEntityType[]
+  includeThreads: boolean
+  includeCommitments: boolean
+  includeSubjects: boolean
+  includeScopes: boolean
+  view: SearchResponseView
+  limit: number
+}
+
+const SEARCH_CONTINUATION_PREFIX = 'onmove-search-v1.'
+
+function encodeSearchContinuation(payload: SearchContinuationPayload): string {
+  return SEARCH_CONTINUATION_PREFIX + Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
+}
+
+function decodeSearchContinuation(token: string): SearchContinuationPayload {
+  if (!token.startsWith(SEARCH_CONTINUATION_PREFIX) || token.length > 8_192) {
+    throw new TypeError('continuationToken is not a valid OnMove search continuation token')
+  }
+  try {
+    const parsed = JSON.parse(Buffer.from(
+      token.slice(SEARCH_CONTINUATION_PREFIX.length),
+      'base64url'
+    ).toString('utf8')) as Partial<SearchContinuationPayload>
+    const query = parsed.query
+    const appliedScope = parsed.appliedScope
+    if (
+      parsed.version !== 1 || !query || !appliedScope ||
+      !['all', 'focus', 'thread', 'subject', 'current'].includes(appliedScope.mode) ||
+      !['compact', 'hierarchy-only'].includes(String(parsed.view)) ||
+      !Number.isSafeInteger(parsed.limit) || Number(parsed.limit) < 1 || Number(parsed.limit) > 100
+    ) throw new Error('invalid continuation payload')
+    for (const value of [query.focusId, query.threadId, query.subjectId]) {
+      if (value !== null && value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
+        throw new Error('invalid continuation scope')
+      }
+    }
+    if (parsed.kinds?.some((kind) => !SEARCH_ENTITY_TYPES.includes(kind))) {
+      throw new Error('invalid continuation kinds')
+    }
+    return parsed as SearchContinuationPayload
+  } catch {
+    throw new TypeError('continuationToken is invalid or incompatible; start a new search')
+  }
+}
 
 function plainRichTextDocument(text: string): OnMoveRichTextDocument {
   return {
@@ -729,18 +788,19 @@ function withoutNoteRichText(value: unknown): unknown {
 function resolveSearchScope(
   input: SearchScopeInput | null | undefined,
   currentUiContext: McpUiContextSnapshot
-): { query: Pick<SearchQuery, 'focusId' | 'subjectId'>; diagnostics: McpDiagnostics } {
+): { query: Pick<SearchQuery, 'focusId' | 'threadId' | 'subjectId'>; diagnostics: McpDiagnostics } {
   const requested = input ?? { mode: 'all' }
   const warnings: string[] = []
   const explicitFocusId = requested.focusId ?? null
+  const explicitThreadId = requested.threadId ?? null
   const explicitSubjectId = requested.subjectId ?? null
 
   if (requested.mode === 'all') {
-    if (explicitFocusId !== null || explicitSubjectId !== null) {
-      warnings.push('scope.mode is all, so focusId and subjectId were ignored.')
+    if (explicitFocusId !== null || explicitThreadId !== null || explicitSubjectId !== null) {
+      warnings.push('scope.mode is all, so focusId, threadId, and subjectId were ignored.')
     }
     return {
-      query: { focusId: null, subjectId: null },
+      query: { focusId: null, threadId: null, subjectId: null },
       diagnostics: {
         appliedScope: {
           ...GLOBAL_SCOPE,
@@ -755,26 +815,55 @@ function resolveSearchScope(
     if (explicitFocusId === null) {
       warnings.push('scope.mode was focus but focusId was null or omitted, so the search was global.')
       return {
-        query: { focusId: null, subjectId: null },
+        query: { focusId: null, threadId: null, subjectId: null },
         diagnostics: {
           appliedScope: { ...GLOBAL_SCOPE, requestedMode: 'focus', source: 'explicit' },
           warnings
         }
       }
     }
+    if (explicitThreadId !== null) warnings.push('threadId was ignored because scope.mode is focus.')
     if (explicitSubjectId !== null) warnings.push('subjectId was ignored because scope.mode is focus.')
     const appliedScope: AppliedSearchScope = {
-      requestedMode: 'focus', mode: 'focus', focusId: explicitFocusId, subjectId: null,
+      requestedMode: 'focus', mode: 'focus', focusId: explicitFocusId, threadId: null,
+      subjectId: null,
       source: 'explicit', description: `Search within Focus ${explicitFocusId} and its descendants.`
     }
-    return { query: { focusId: explicitFocusId, subjectId: null }, diagnostics: { appliedScope, warnings } }
+    return {
+      query: { focusId: explicitFocusId, threadId: null, subjectId: null },
+      diagnostics: { appliedScope, warnings }
+    }
+  }
+
+  if (requested.mode === 'thread') {
+    if (explicitThreadId === null) {
+      warnings.push('scope.mode was thread but threadId was null or omitted, so the search was global.')
+      return {
+        query: { focusId: null, threadId: null, subjectId: null },
+        diagnostics: {
+          appliedScope: { ...GLOBAL_SCOPE, requestedMode: 'thread', source: 'explicit' },
+          warnings
+        }
+      }
+    }
+    if (explicitFocusId !== null) warnings.push('focusId was ignored because scope.mode is thread.')
+    if (explicitSubjectId !== null) warnings.push('subjectId was ignored because scope.mode is thread.')
+    const appliedScope: AppliedSearchScope = {
+      requestedMode: 'thread', mode: 'thread', focusId: null, threadId: explicitThreadId,
+      subjectId: null, source: 'explicit',
+      description: `Search within Thread ${explicitThreadId} and its children.`
+    }
+    return {
+      query: { focusId: null, threadId: explicitThreadId, subjectId: null },
+      diagnostics: { appliedScope, warnings }
+    }
   }
 
   if (requested.mode === 'subject') {
     if (explicitSubjectId === null) {
       warnings.push('scope.mode was subject but subjectId was null or omitted, so the search was global.')
       return {
-        query: { focusId: null, subjectId: null },
+        query: { focusId: null, threadId: null, subjectId: null },
         diagnostics: {
           appliedScope: { ...GLOBAL_SCOPE, requestedMode: 'subject', source: 'explicit' },
           warnings
@@ -782,15 +871,20 @@ function resolveSearchScope(
       }
     }
     if (explicitFocusId !== null) warnings.push('focusId was ignored because scope.mode is subject.')
+    if (explicitThreadId !== null) warnings.push('threadId was ignored because scope.mode is subject.')
     const appliedScope: AppliedSearchScope = {
-      requestedMode: 'subject', mode: 'subject', focusId: null, subjectId: explicitSubjectId,
+      requestedMode: 'subject', mode: 'subject', focusId: null, threadId: null,
+      subjectId: explicitSubjectId,
       source: 'explicit', description: `Search records attributed to Subject ${explicitSubjectId}.`
     }
-    return { query: { focusId: null, subjectId: explicitSubjectId }, diagnostics: { appliedScope, warnings } }
+    return {
+      query: { focusId: null, threadId: null, subjectId: explicitSubjectId },
+      diagnostics: { appliedScope, warnings }
+    }
   }
 
-  if (explicitFocusId !== null || explicitSubjectId !== null) {
-    warnings.push('focusId and subjectId were ignored because scope.mode=current reads the live OnMove UI selection.')
+  if (explicitFocusId !== null || explicitThreadId !== null || explicitSubjectId !== null) {
+    warnings.push('focusId, threadId, and subjectId were ignored because scope.mode=current reads the live OnMove UI selection.')
   }
   const focusId = currentUiContext.focusId ?? null
   const subjectId = currentUiContext.subjectId ?? null
@@ -804,10 +898,11 @@ function resolveSearchScope(
     requestedMode: 'current',
     mode: focusId === null && subjectId === null ? 'all' : 'current',
     focusId,
+    threadId: null,
     subjectId,
     source: 'current-ui', description
   }
-  return { query: { focusId, subjectId }, diagnostics: { appliedScope, warnings } }
+  return { query: { focusId, threadId: null, subjectId }, diagnostics: { appliedScope, warnings } }
 }
 
 function result(value: unknown, diagnostics: McpDiagnostics = diagnosticsScope()): {
@@ -1518,7 +1613,7 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Use onmove.search for both literal discovery and hierarchy browsing. Search is global by default: never assume the current UI Focus is applied. Set includeThreads/includeCommitments/includeSubjects/includeScopes to expand matched ancestors into structural paths even when children contain no matching text; text=null performs structural browsing, and scope.mode=subject with text=null lists that Subject\'s attributed records and applicable paths. Paths use explicit notation such as {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve a bracketed Subject as subject attribution and use a path\'s recommendedUpdateRequest. For a hierarchy-shaped request, onmove.resolve_target remains the exact-name resolver. For a text mutation, set includeRichText=true. Use onmove.resolve_note for directly owned Notes. Prefer semantic rich-text patch tools for localized edits. Rich-text writes use only richText. Before mutations inspect writeGuide: scoped parents require a listed Subject. create_update semanticPath is required whenever the user names a Subject and prevents an unscoped or wrong-parent write. Use onmove.reparent_update to repair an Update placed at the wrong path without recreating its content. Inspect diagnostics and warnings on every response. OnMove Settings independently controls sensitive access and effective View/Edit grants by resource, Focus, and Thread; permission changes apply on the next call.'
+        'Use onmove.search for discovery and hierarchy browsing. When a request names an entity or Subject, preserve it as the primary filter: search that specific name first, inspect subjectUses, and treat Subject-attributed uses as authoritative. If relevant records are returned, obey searchStatus.sufficient or searchStatus.doNotBroaden, stop discovery, and fetch those IDs directly—never follow with a global search for a generic container label. For follow-ups, use continuationToken or retain scope.mode=subject/thread/focus; broaden globally only when the user explicitly asks for all people or all records. Use onmove.review_subject for a compact person/entity situation inside one Thread instead of chaining searches. Search is global only when scope is omitted. Set hierarchy flags to expand structural paths; text=null browses, and view=hierarchy-only omits contents. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution and use recommendedUpdateRequest. Use onmove.resolve_target for exact hierarchy names. For text mutation, set includeRichText=true; use onmove.resolve_note for Notes and semantic patch tools for localized edits. Rich-text writes use only richText. Before mutations inspect writeGuide. create_update semanticPath is required whenever the user names a Subject. Use onmove.reparent_update to repair wrong placement. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and View/Edit grants by resource, Focus, and Thread.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -1702,14 +1797,20 @@ export function createOnMoveMcpServer(
     'onmove.search',
     {
       title: 'Search OnMove',
-      description: 'Search text and browse visible hierarchy paths. text may be null for structural browsing. includeThreads/includeCommitments/includeSubjects expand a matched ancestor into every requested child path even when the child has no searchable text; includeScopes adds effective Scope metadata. A Subject name match automatically returns subjectUses plus every currently applicable Thread[Subject] and Commitment[Subject] path. Omitted scope is global and never inherits the UI.',
+      description: 'Use this tool for discovery and hierarchy browsing. If the request names a Subject or entity, search for that specific name first and inspect subjectUses. When relevant records are returned in the requested context, stop discovery and fetch those record IDs directly; do not issue a second global search for a generic Thread or Commitment label. For additional discovery, retain the returned Subject, Thread, or Focus scope—prefer continuationToken—before broadening. Broaden to global only when the user asks for all people or all records. searchStatus.sufficient or searchStatus.doNotBroaden is an explicit stopping signal. text may be null for structural browsing; hierarchy-only omits record contents.',
       inputSchema: z.object({
         text: z.string().min(1).nullable().optional().describe(
-          'Literal ordinary-language words to find anywhere. Null or omitted means hierarchy browsing. With scope.mode=subject it also lists records already attributed to that Subject without requiring a text term.'
+          'Use for text discovery and hierarchy browsing. Search the specific entity or Subject name from the user request first. Do not replace a specific person query with a generic Thread or Commitment label. Null or omitted means structural browsing; with scope.mode=subject it lists records attributed to that Subject without another text term.'
         ),
         scope: searchScopeSchema,
         kinds: z.array(z.enum(SEARCH_ENTITY_TYPES)).optional().describe(
           'Optional entity-type filter. Omit to search every indexed kind: focus, thread, commitment, routine, update, todo, note, and subject.'
+        ),
+        continuationToken: z.string().min(1).optional().describe(
+          'Opaque token from a prior search. Omit scope when using it: the token preserves the prior Subject, Thread, or Focus scope and search-shape defaults so follow-up discovery does not accidentally broaden.'
+        ),
+        view: z.enum(['compact', 'hierarchy-only']).optional().describe(
+          'compact returns bounded record summaries plus paths and is the default. hierarchy-only returns paths and stopping metadata without item or subject-use contents; use it when locating a destination rather than reviewing evidence.'
         ),
         includeRichText: z.boolean().optional().describe(
           'When true, each Focus, Update, or Note hit includes editableRichText with its full document, revision, self-describing target, and patch/full-write guides. Defaults to false.'
@@ -1721,7 +1822,7 @@ export function createOnMoveMcpServer(
           'Include tracking Commitment paths under matched Focuses or Threads, even when those Commitments contain no matching text.'
         ),
         includeSubjects: z.boolean().optional().describe(
-          'Include one applicable path per canonical Subject on each included Thread and Commitment. Subject text matches enable these paths automatically.'
+          'Include one applicable path per canonical Subject on each included Thread and Commitment. Usually leave this false for entity-specific reviews because it can produce many unrelated hierarchy paths. A direct Subject-name match enables only that Subject\'s applicable paths automatically.'
         ),
         includeScopes: z.boolean().optional().describe(
           'Attach the effective Scope ID, name, dimension, and application mode to returned hierarchy paths. Scopes describe applicability; Subject is the exact evidence cell.'
@@ -1732,20 +1833,51 @@ export function createOnMoveMcpServer(
     },
     async ({
       scope,
+      continuationToken,
+      view,
       includeRichText,
       includeThreads,
       includeCommitments,
       includeSubjects,
       includeScopes,
+      kinds,
+      limit,
+      offset,
       text,
-      ...input
     }) => {
-      const resolved = resolveSearchScope(
-        scope,
-        options.getCurrentUiContext?.() ?? EMPTY_UI_CONTEXT
-      )
+      const continuation = continuationToken
+        ? decodeSearchContinuation(continuationToken)
+        : null
+      if (continuation && scope !== undefined && scope !== null) {
+        throw new TypeError(
+          'Omit scope when using continuationToken. Start a new search without the token to change scope.'
+        )
+      }
+      const resolved = continuation
+        ? {
+            query: continuation.query,
+            diagnostics: {
+              appliedScope: continuation.appliedScope,
+              warnings: ['Search scope was preserved from continuationToken.']
+            }
+          }
+        : resolveSearchScope(scope, options.getCurrentUiContext?.() ?? EMPTY_UI_CONTEXT)
+      const effectiveKinds = kinds ?? continuation?.kinds
+      const effectiveIncludeThreads = includeThreads ?? continuation?.includeThreads ?? false
+      const effectiveIncludeCommitments =
+        includeCommitments ?? continuation?.includeCommitments ?? false
+      const effectiveIncludeSubjects = includeSubjects ?? continuation?.includeSubjects ?? false
+      const effectiveIncludeScopes = includeScopes ?? continuation?.includeScopes ?? false
+      const effectiveView = view ?? continuation?.view ?? 'compact'
+      const effectiveLimit = limit ?? continuation?.limit ?? 10
       const normalizedText = text ?? null
-      const query = { ...input, text: normalizedText, ...resolved.query }
+      const query = {
+        text: normalizedText,
+        kinds: effectiveKinds,
+        limit: effectiveLimit,
+        offset,
+        ...resolved.query
+      }
       const access = policy()
       const matches = normalizedText !== null || resolved.query.subjectId !== null
         ? database.queries.search(query, access)
@@ -1767,63 +1899,132 @@ export function createOnMoveMcpServer(
             }
             return [[subject.id, subject] as const]
           })).values()].slice(0, 10)
-      const subjectUses = decorateSearchItems(matchedSubjects.flatMap((subject) =>
+      const rawSubjectUses = matchedSubjects.flatMap((subject) =>
         database.queries.search({
           text: null,
+          focusId: resolved.query.focusId,
+          threadId: resolved.query.threadId,
           subjectId: subject.id,
-          kinds: input.kinds,
-          limit: input.limit,
+          limit: effectiveLimit,
           offset: 0
         }, access)
           .filter(({ reference }) => reference.type !== 'subject')
-          .map((use) => ({ ...use, matchedSubject: subject }))))
-        .slice(0, input.limit ?? 25)
+          .map((use) => ({ ...use, matchedSubject: subject })))
+        .slice(0, effectiveLimit)
+      const subjectUses = decorateSearchItems(rawSubjectUses)
       const explicitHierarchyFlags = [
-        includeThreads, includeCommitments, includeSubjects, includeScopes
-      ].some((value) => value !== undefined)
+        effectiveIncludeThreads,
+        effectiveIncludeCommitments,
+        effectiveIncludeSubjects,
+        effectiveIncludeScopes
+      ].some(Boolean)
       const subjectMatched = matches.some(({ reference }) => reference.type === 'subject')
       const defaultStructuralBrowse = normalizedText === null && !explicitHierarchyFlags
       const hierarchyRequested = normalizedText === null || subjectMatched ||
-        includeThreads === true || includeCommitments === true || includeSubjects === true ||
-        includeScopes === true
+        effectiveIncludeThreads || effectiveIncludeCommitments || effectiveIncludeSubjects ||
+        effectiveIncludeScopes
       const hierarchy = hierarchyRequested
         ? database.queries.browseHierarchy({
             text: normalizedText,
             ...resolved.query,
-            includeThreads: defaultStructuralBrowse || includeThreads === true ||
-              includeScopes === true,
-            includeCommitments: defaultStructuralBrowse || includeCommitments === true ||
-              includeScopes === true,
-            includeSubjects: defaultStructuralBrowse || subjectMatched || includeSubjects === true,
-            includeScopes: defaultStructuralBrowse ? true : includeScopes === true,
-            limit: input.limit,
-            offset: input.offset
+            includeThreads: defaultStructuralBrowse || effectiveIncludeThreads ||
+              effectiveIncludeScopes,
+            includeCommitments: defaultStructuralBrowse || effectiveIncludeCommitments ||
+              effectiveIncludeScopes,
+            includeSubjects: defaultStructuralBrowse || subjectMatched || effectiveIncludeSubjects,
+            includeScopes: defaultStructuralBrowse || effectiveIncludeScopes,
+            limit: effectiveLimit,
+            offset
           }, matches, access)
         : { paths: [], total: 0 }
       const hierarchyPaths = hierarchy.paths.map(decorateHierarchyPath)
-      const appliedKinds = input.kinds?.length ? [...input.kinds] : 'all'
+      const appliedKinds = effectiveKinds?.length ? [...effectiveKinds] : 'all'
       const warnings = [...resolved.diagnostics.warnings]
-      if (items.length === 0 && hierarchyPaths.length === 0 && (
+      if (matches.length === 0 && hierarchyPaths.length === 0 && (
         resolved.diagnostics.appliedScope.mode !== 'all' || appliedKinds !== 'all'
       )) {
         warnings.push(
-          'No matches were found with the applied filters. Retry with scope.mode="all", no focusId or subjectId, and omit kinds to search globally within the visible workspace.'
+          'No matches were found with the applied filters. Retain a named Subject, Thread, or Focus scope for the next query. Retry globally only if the user requested all people or all records.'
         )
       }
       if (normalizedText === null && resolved.query.subjectId === null && !hierarchyRequested) {
         warnings.push('Supply text or enable hierarchy inclusion flags.')
       }
+      const relevantSubjectUpdates = rawSubjectUses.filter(({ reference }) =>
+        reference.type === 'update')
+      const subjectScopedResults = resolved.query.subjectId !== null && matches.length > 0
+      const doNotBroaden = rawSubjectUses.length > 0 || subjectScopedResults
+      const matchedNamedEntity = matches.some(({ reference }) =>
+        ['focus', 'thread', 'commitment', 'subject'].includes(reference.type))
+      const sufficient = doNotBroaden || (matchedNamedEntity && hierarchyPaths.length > 0)
+      const foundSubjectNames = [...new Set(matchedSubjects.map(({ name }) => name))]
+      const searchStatus = {
+        sufficient,
+        doNotBroaden,
+        reason: doNotBroaden
+          ? relevantSubjectUpdates.length > 0
+            ? `Relevant Subject-attributed Updates were found for ${foundSubjectNames.join(', ') || `Subject ${resolved.query.subjectId}`}; subjectUses is authoritative. Fetch those Update IDs directly.`
+            : rawSubjectUses.length > 0
+              ? `Relevant Subject-attributed records were found for ${foundSubjectNames.join(', ') || `Subject ${resolved.query.subjectId}`}; subjectUses is authoritative. Fetch those record IDs directly.`
+              : `Relevant records attributed to Subject ${resolved.query.subjectId} were found in the preserved Subject scope.`
+          : sufficient
+            ? 'The named hierarchy entity was resolved with applicable paths; use those IDs directly.'
+            : 'No authoritative scoped result was found. Refine within the current scope before considering a broader search.',
+        nextAction: doNotBroaden
+          ? 'Stop discovery and fetch the relevant IDs from subjectUses or items directly.'
+          : sufficient
+            ? 'Use hierarchyPaths directly.'
+            : 'Refine the specific entity name while preserving scope.'
+      }
+      const continuationSubjectId = matchedSubjects.length === 1
+        ? matchedSubjects[0].id
+        : resolved.query.subjectId
+      const continuationQuery = continuationSubjectId === null || continuationSubjectId === undefined
+        ? resolved.query
+        : { ...resolved.query, subjectId: continuationSubjectId }
+      const continuationAppliedScope = continuationSubjectId === null ||
+        continuationSubjectId === undefined
+        ? resolved.diagnostics.appliedScope
+        : {
+            requestedMode: 'subject' as const,
+            mode: 'subject' as const,
+            focusId: continuationQuery.focusId ?? null,
+            threadId: continuationQuery.threadId ?? null,
+            subjectId: continuationSubjectId,
+            source: 'explicit' as const,
+            description:
+              `Preserved Subject ${continuationSubjectId}` +
+              `${continuationQuery.threadId ? ` within Thread ${continuationQuery.threadId}` : ''}` +
+              `${continuationQuery.focusId ? ` within Focus ${continuationQuery.focusId}` : ''}.`
+          }
+      const nextContinuationToken = encodeSearchContinuation({
+        version: 1,
+        query: continuationQuery,
+        appliedScope: continuationAppliedScope,
+        ...(effectiveKinds && matchedSubjects.length !== 1
+          ? { kinds: [...effectiveKinds] }
+          : {}),
+        includeThreads: effectiveIncludeThreads,
+        includeCommitments: effectiveIncludeCommitments,
+        includeSubjects: effectiveIncludeSubjects,
+        includeScopes: effectiveIncludeScopes,
+        view: effectiveView,
+        limit: effectiveLimit
+      })
       return result({
-        items,
-        subjectUses,
+        items: effectiveView === 'hierarchy-only' ? [] : items,
+        subjectUses: effectiveView === 'hierarchy-only' ? [] : subjectUses,
         hierarchyPaths,
-        hierarchyNotation: HIERARCHY_NOTATION_GUIDE
+        hierarchyNotation: HIERARCHY_NOTATION_GUIDE,
+        searchStatus,
+        continuationScope: continuationAppliedScope,
+        continuationToken: nextContinuationToken
       }, {
         ...resolved.diagnostics,
         warnings,
         appliedKinds,
-        resultCount: items.length,
-        subjectUseCount: subjectUses.length,
+        resultCount: matches.length,
+        subjectUseCount: rawSubjectUses.length,
         hierarchyPathCount: hierarchyPaths.length,
         hierarchyPathTotal: hierarchy.total
       })
@@ -1906,6 +2107,89 @@ export function createOnMoveMcpServer(
         warnings,
         resolutionStatus: resolution.status,
         candidateCount: candidates.length
+      })
+    }
+  )
+
+  server.registerTool(
+    'onmove.review_subject',
+    {
+      title: 'Review one Subject in one OnMove Thread',
+      description: 'Resolve a named Subject inside a named Thread and return one compact current-situation view: Subject-attributed Updates sorted by updatedAt, open Subject Todos, and open applicable Commitments with their Subject-cell state. Use this instead of separate searches for a person, Thread label, Updates, Todos, and Commitments. A resolved response is sufficient and must stop discovery; fetch returned IDs directly.',
+      inputSchema: z.strictObject({
+        subject: subjectSelectorSchema.describe(
+          'The exact canonical Subject to review. Prefer a returned Subject ID; otherwise provide the person or entity name exactly as the user named it.'
+        ),
+        thread: entitySelectorSchema('Thread', '1:1s').describe(
+          'The Thread that bounds this review. This prevents same-named Subjects or generic labels from pulling records from unrelated workstreams.'
+        ),
+        focus: entitySelectorSchema('Focus', 'Team management').optional().describe(
+          'Optional Focus constraint for duplicate Thread titles. Preserve the named Focus from prior hierarchy discovery when available.'
+        ),
+        limit: z.number().int().min(1).max(50).optional().describe(
+          'Maximum Updates, open Todos, and open Commitments in each compact section. Defaults to 10.'
+        )
+      }),
+      annotations: { readOnlyHint: true }
+    },
+    async (input) => {
+      const reviewed = database.queries.reviewSubject(input, policy())
+      const warnings: string[] = []
+      if (reviewed.status === 'ambiguous') {
+        warnings.push(
+          'Multiple Subject/Thread paths matched. Add the Focus ID or use returned Subject and Thread IDs; do not broaden globally.'
+        )
+      } else if (reviewed.status === 'not_found') {
+        warnings.push(
+          'The Subject is not currently applicable to the selected Thread. Verify the exact hierarchy path before broadening.'
+        )
+      }
+      const continuationToken = reviewed.review
+        ? encodeSearchContinuation({
+            version: 1,
+            query: {
+              focusId: reviewed.review.hierarchy.focus.id,
+              threadId: reviewed.review.hierarchy.thread.id,
+              subjectId: reviewed.review.subject.id
+            },
+            appliedScope: {
+              requestedMode: 'subject',
+              mode: 'subject',
+              focusId: reviewed.review.hierarchy.focus.id,
+              threadId: reviewed.review.hierarchy.thread.id,
+              subjectId: reviewed.review.subject.id,
+              source: 'explicit',
+              description:
+                `Subject ${reviewed.review.subject.id} within Thread ` +
+                `${reviewed.review.hierarchy.thread.id}.`
+            },
+            includeThreads: false,
+            includeCommitments: false,
+            includeSubjects: false,
+            includeScopes: false,
+            view: 'compact',
+            limit: input.limit ?? 10
+          })
+        : null
+      return result({
+        ...reviewed,
+        searchStatus: {
+          sufficient: reviewed.status === 'resolved',
+          doNotBroaden: reviewed.status === 'resolved',
+          reason: reviewed.status === 'resolved'
+            ? `The requested Subject was resolved within ${reviewed.review?.displayPath}; the returned Updates, Todos, and Commitments are authoritative for this review.`
+            : 'No unique Subject/Thread context was resolved.',
+          nextAction: reviewed.status === 'resolved'
+            ? 'Stop discovery and fetch or mutate the returned record IDs directly.'
+            : 'Disambiguate with returned IDs while preserving the named hierarchy.'
+        },
+        continuationToken
+      }, {
+        ...diagnosticsScope(),
+        warnings,
+        resolutionStatus: reviewed.status,
+        candidateCount: reviewed.candidates.length,
+        resultCount: reviewed.review?.updates.length ?? 0
       })
     }
   )

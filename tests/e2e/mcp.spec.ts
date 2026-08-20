@@ -87,6 +87,7 @@ test('serves MCP from the running app and immediately refreshes its open windows
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.search')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.resolve_note')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.resolve_target')
+    expect(tools.tools.map(({ name }) => name)).toContain('onmove.review_subject')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.patch_note_text')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.update_note')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.get_update')
@@ -338,6 +339,32 @@ test('serves MCP from the running app and immediately refreshes its open windows
         scope: { scopeId: teamScope.scopeId, subjectId: person.id },
         observation: 'Live MCP Update observation'
       }
+    })
+    const subjectReview = await client.callTool({
+      name: 'onmove.review_subject',
+      arguments: {
+        focus: { id: focus.id },
+        thread: { id: team.id },
+        subject: { id: person.id }
+      }
+    })
+    expect(subjectReview.isError).not.toBe(true)
+    expect(subjectReview.structuredContent).toMatchObject({
+      status: 'resolved',
+      review: {
+        subject: { id: person.id, name: person.name },
+        hierarchy: {
+          focus: { id: focus.id, title: focus.title },
+          thread: { id: team.id, title: team.title }
+        },
+        updates: [expect.objectContaining({
+          id: threadUpdate.id,
+          displayPath: 'Leadership Team > 1:1[Person Y]'
+        })],
+        openCommitments: [expect.objectContaining({ id: oneToOne.id, title: oneToOne.title })]
+      },
+      searchStatus: { sufficient: true, doNotBroaden: true },
+      continuationToken: expect.any(String)
     })
     const recommendation = resolved.structuredContent as {
       target: {

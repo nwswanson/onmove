@@ -20,6 +20,7 @@ export interface SearchQuery {
   kinds?: readonly SearchEntityType[]
   /** Null and omission are both explicitly global; callers must opt into narrowing. */
   focusId?: number | null
+  threadId?: number | null
   subjectId?: number | null
   limit?: number
   offset?: number
@@ -160,6 +161,10 @@ export class SearchIndexRepository {
       conditions.push('document.focus_id = ?')
       parameters.push(query.focusId)
     }
+    if (query.threadId !== undefined && query.threadId !== null) {
+      conditions.push('document.thread_id = ?')
+      parameters.push(query.threadId)
+    }
     if (query.subjectId !== undefined && query.subjectId !== null) {
       conditions.push('document.subject_id = ?')
       parameters.push(query.subjectId)
@@ -266,6 +271,14 @@ export class SearchIndexRepository {
 
     const conditions = ['document.subject_id = ?']
     const parameters: SqlValue[] = [query.subjectId]
+    if (query.focusId !== undefined && query.focusId !== null) {
+      conditions.push('document.focus_id = ?')
+      parameters.push(query.focusId)
+    }
+    if (query.threadId !== undefined && query.threadId !== null) {
+      conditions.push('document.thread_id = ?')
+      parameters.push(query.threadId)
+    }
     if (kinds.length > 0) {
       conditions.push(`document.entity_type IN (${kinds.map(() => '?').join(', ')})`)
       parameters.push(...kinds)

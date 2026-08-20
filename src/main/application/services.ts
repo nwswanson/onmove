@@ -275,6 +275,7 @@ export interface BrowseApplicationHierarchyQuery {
   /** Null means structural browsing rather than text-match expansion. */
   text: string | null
   focusId?: number | null
+  threadId?: number | null
   subjectId?: number | null
   includeThreads?: boolean
   includeCommitments?: boolean
@@ -317,6 +318,37 @@ export interface ApplicationHierarchyPath {
 export interface ApplicationHierarchyBrowseResult {
   paths: ApplicationHierarchyPath[]
   total: number
+}
+
+export interface ReviewApplicationSubjectQuery {
+  subject: ApplicationSubjectSelector
+  thread: ApplicationEntitySelector
+  focus?: ApplicationEntitySelector
+  limit?: number
+}
+
+export interface ApplicationSubjectReviewCandidate {
+  subject: { id: number; name: string }
+  hierarchy: {
+    focus: { id: number; title: string }
+    thread: { id: number; title: string }
+  }
+  displayPath: string
+}
+
+export interface ApplicationSubjectReviewResult {
+  status: 'resolved' | 'ambiguous' | 'not_found'
+  requested: ReviewApplicationSubjectQuery
+  candidates: ApplicationSubjectReviewCandidate[]
+  review: null | {
+    subject: { id: number; name: string }
+    hierarchy: ApplicationSubjectReviewCandidate['hierarchy']
+    displayPath: string
+    thread: unknown
+    updates: unknown[]
+    openTodos: unknown[]
+    openCommitments: unknown[]
+  }
 }
 
 export type ScopeTargetIssueCode =
@@ -458,6 +490,11 @@ function plainProjection(value: unknown, key = ''): unknown {
       plainProjection(entryValue, entryKey)
     ])
   )
+}
+
+function compactPlainText(value: string, maximum = 280): string {
+  const plain = richTextPlainText(value).replace(/\s+/gu, ' ').trim()
+  return plain.length <= maximum ? plain : `${plain.slice(0, maximum - 1).trimEnd()}…`
 }
 
 function uri(reference: ApplicationEntityReference): string {
@@ -949,6 +986,7 @@ export class OnMoveQueryService {
     const page = boundedPage(query.limit, query.offset)
     const structuralBrowse = query.text === null
     const requestedFocusId = query.focusId ?? null
+    const requestedThreadId = query.threadId ?? null
     const requestedSubjectId = query.subjectId ?? null
     const hierarchyTokens = query.text?.normalize('NFKC').toLocaleLowerCase()
       .match(/[\p{L}\p{N}_]+/gu) ?? []
@@ -1063,17 +1101,17 @@ export class OnMoveQueryService {
       const focusMatched = structuralBrowse || matchedFocusIds.has(focus.id) || focusScopeMatched
       if (
         this.sensitivity.canRead('focus', focus.id, access) &&
-        focusMatched && requestedSubjectId === null &&
+        focusMatched && requestedThreadId === null && requestedSubjectId === null &&
         (query.includeThreads || query.includeCommitments || query.includeSubjects ||
           query.includeScopes)
       ) {
         append(makePath('focus', focus, null, null, null, focusScopeSummary, null))
       }
       const focusSubjectMatched = focusSubjects.some((subject) => matchedSubjectIds.has(subject.id))
-      if (
+      if (requestedThreadId === null && (
         query.includeSubjects || focusSubjectMatched ||
         (structuralBrowse && requestedSubjectId !== null)
-      ) {
+      )) {
         for (const subject of focusSubjects) {
           if (!structuralBrowse && !focusMatched && !matchedSubjectIds.has(subject.id)) continue
           append(makePath(
@@ -1084,6 +1122,7 @@ export class OnMoveQueryService {
       }
 
       for (const threadRecord of threadRecords) {
+        if (requestedThreadId !== null && threadRecord.id !== requestedThreadId) continue
         const thread = { id: threadRecord.id, title: threadRecord.title }
         const threadScope = this.domain.threadScopes.get(thread.id)
         const scopeRecord = threadScope.scopeId === null
@@ -1236,6 +1275,178 @@ export class OnMoveQueryService {
     return {
       paths: paths.slice(page.offset, page.offset + page.limit),
       total: paths.length
+    }
+  }
+
+  /**
+   * Resolves one Subject inside one Thread and materializes the compact current
+   * situation in one read. This deliberately replaces a chain of generic text
+   * searches for the Subject, Thread, Updates, Todos, and Commitments.
+   */
+  reviewSubject(
+    query: ReviewApplicationSubjectQuery,
+    access: OnMoveAccessPolicy
+  ): ApplicationSubjectReviewResult {
+    if (!query || typeof query !== 'object') {
+      throw new ModelValidationError('Subject review query is required')
+    }
+    assertSubjectSelector(query.subject)
+    assertEntitySelector(query.thread, 'thread')
+    if (query.focus) assertEntitySelector(query.focus, 'focus')
+    const page = boundedPage(query.limit ?? 10, 0)
+    const subjects = this.domain.subjects.list()
+      .filter((subject) => matchesSubjectSelector(subject, query.subject))
+    const candidates: ApplicationSubjectReviewCandidate[] = []
+    for (const focus of this.domain.focuses.list()) {
+      if (query.focus && !matchesEntitySelector(focus, query.focus)) continue
+      if (!this.sensitivity.canRead('focus', focus.id, access)) continue
+      for (const thread of this.domain.threads.listForFocus(focus.id)) {
+        if (!matchesEntitySelector(thread, query.thread)) continue
+        if (!this.sensitivity.canRead('thread', thread.id, access)) continue
+        const effectiveSubjectIds = new Set(
+          this.domain.threadScopes.get(thread.id).subjects.map(({ id }) => id)
+        )
+        for (const subject of subjects) {
+          if (!effectiveSubjectIds.has(subject.id)) continue
+          if (!this.sensitivity.canReadInContext('subject', subject.id, access, {
+            focusId: focus.id,
+            threadId: thread.id
+          })) continue
+          candidates.push({
+            subject: { id: subject.id, name: subject.name },
+            hierarchy: {
+              focus: { id: focus.id, title: focus.title },
+              thread: { id: thread.id, title: thread.title }
+            },
+            displayPath: `${focus.title} > ${thread.title}[${subject.name}]`
+          })
+        }
+      }
+    }
+    const status = candidates.length === 1
+      ? 'resolved'
+      : candidates.length === 0 ? 'not_found' : 'ambiguous'
+    if (status !== 'resolved') {
+      return { status, requested: structuredClone(query), candidates, review: null }
+    }
+
+    const target = candidates[0]
+    const { subject, hierarchy } = target
+    const thread = this.domain.threads.find(hierarchy.thread.id)
+    if (!thread) {
+      return { status: 'not_found', requested: structuredClone(query), candidates: [], review: null }
+    }
+    const commitments = this.domain.commitments.listForThread(thread.id)
+      .filter(trackingCommitment)
+      .filter((commitment) => this.sensitivity.canRead('commitment', commitment.id, access))
+    const applicableCommitments = commitments.flatMap((commitment) => {
+      const cell = this.domain.commitments.scopeMatrix(commitment.id)
+        .find(({ subjectId }) => subjectId === subject.id)
+      return cell ? [{ commitment, cell }] : []
+    })
+    const commitmentIds = new Set(applicableCommitments.map(({ commitment }) => commitment.id))
+
+    const updates = [
+      ...this.domain.updates.listForThread(thread.id).map((update) => ({
+        update,
+        commitment: null
+      })),
+      ...applicableCommitments.flatMap(({ commitment }) =>
+        this.domain.updates.listForCommitment(commitment.id).map((update) => ({
+          update,
+          commitment: { id: commitment.id, title: commitment.title }
+        })))
+    ]
+      .filter(({ update }) => update.scope?.subjectId === subject.id)
+      .filter(({ update }) => this.sensitivity.canRead('update', update.id, access))
+      .sort((left, right) =>
+        right.update.updatedAt.localeCompare(left.update.updatedAt) ||
+        right.update.id - left.update.id)
+      .slice(0, page.limit)
+      .map(({ update, commitment }) => ({
+        id: update.id,
+        uri: `onmove://update/${update.id}`,
+        parent: update.parent,
+        hierarchy: { ...hierarchy, commitment },
+        subject,
+        displayPath: commitment
+          ? `${hierarchy.thread.title} > ${commitment.title}[${subject.name}]`
+          : `${hierarchy.thread.title}[${subject.name}]`,
+        date: update.date,
+        state: update.state,
+        snippet: compactPlainText(update.observation),
+        sensitive: update.sensitive,
+        updatedAt: update.updatedAt
+      }))
+
+    const openTodos = this.domain.todos.query({ done: false })
+      .filter((todo) => this.sensitivity.canRead('todo', todo.id, access))
+      .filter((todo) => {
+        const inThread = (todo.parent.type === 'thread' || todo.parent.type === 'thread-scope') &&
+          todo.parent.id === thread.id
+        const inCommitment =
+          (todo.parent.type === 'commitment' || todo.parent.type === 'commitment-scope') &&
+          commitmentIds.has(todo.parent.id)
+        if (!inThread && !inCommitment) return false
+        if (todo.sharedAcrossSubjects) {
+          return todo.subjectCompletions.some((completion) =>
+            completion.subject.id === subject.id && !completion.done)
+        }
+        return todo.subject?.id === subject.id
+      })
+      .slice(0, page.limit)
+      .map((todo) => ({
+        id: todo.id,
+        uri: `onmove://todo/${todo.id}`,
+        name: todo.name,
+        parent: todo.parent,
+        subject,
+        sharedAcrossSubjects: todo.sharedAcrossSubjects,
+        dueDate: todo.dueDate,
+        updatedAt: todo.updatedAt
+      }))
+
+    const openCommitments = applicableCommitments
+      .filter(({ commitment }) =>
+        commitment.status === 'active' || commitment.status === 'paused')
+      .slice(0, page.limit)
+      .map(({ commitment, cell }) => ({
+        id: commitment.id,
+        uri: `onmove://commitment/${commitment.id}`,
+        title: commitment.title,
+        status: commitment.status,
+        state: cell.state,
+        dueDate: commitment.dueDate,
+        lastUpdateDate: cell.lastUpdateDate,
+        nextUpdateDate: cell.nextUpdateDate,
+        subject,
+        displayPath: `${hierarchy.thread.title} > ${commitment.title}[${subject.name}]`,
+        updatedAt: commitment.updatedAt
+      }))
+    const threadCell = this.domain.threads.scopeMatrix(thread.id)
+      .find(({ subjectId }) => subjectId === subject.id)
+    return {
+      status,
+      requested: structuredClone(query),
+      candidates,
+      review: {
+        subject,
+        hierarchy,
+        displayPath: target.displayPath,
+        thread: {
+          id: thread.id,
+          uri: `onmove://thread/${thread.id}`,
+          title: thread.title,
+          status: thread.status,
+          state: threadCell?.state ?? 'none',
+          dueDate: thread.dueDate,
+          lastReviewDate: threadCell?.lastReviewDate ?? thread.lastReviewDate,
+          updatedAt: thread.updatedAt
+        },
+        updates,
+        openTodos,
+        openCommitments
+      }
     }
   }
 

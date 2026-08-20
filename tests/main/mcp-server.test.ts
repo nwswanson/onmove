@@ -52,6 +52,7 @@ describe('OnMove MCP protocol adapter', () => {
       'onmove.get_note',
       'onmove.resolve_note',
       'onmove.resolve_target',
+      'onmove.review_subject',
       'onmove.search',
       'onmove.create_focus',
       'onmove.update_focus',
@@ -70,7 +71,7 @@ describe('OnMove MCP protocol adapter', () => {
       'onmove.update_note',
       'onmove.poke_review'
     ]))
-    expect(listed.tools).toHaveLength(34)
+    expect(listed.tools).toHaveLength(35)
 
     const templates = await client.listResourceTemplates()
     expect(templates.resourceTemplates.map(({ uriTemplate }) => uriTemplate)).toEqual(
@@ -135,6 +136,11 @@ describe('OnMove MCP protocol adapter', () => {
     expect(searchSchema).toContain('includeSubjects')
     expect(searchSchema).toContain('includeScopes')
     expect(searchSchema).toContain('hierarchy browsing')
+    expect(searchSchema).toContain('continuationToken')
+    expect(searchSchema).toContain('hierarchy-only')
+    expect(searchSchema).toContain('preserve a previously returned Thread ID')
+    expect(search.description).toContain('stop discovery')
+    expect(search.description).toContain('searchStatus.doNotBroaden')
     expect(threadSchema).toContain('hierarchy.thread.id')
     expect(threadSchema).toContain('not searchResult.reference.id')
     expect(createUpdate.description).toContain('Open parents require unscoped attribution')
@@ -552,7 +558,7 @@ describe('OnMove MCP protocol adapter', () => {
     })
   })
 
-  it('supports named Focus and Subject scopes and explains suspiciously narrow empty results', async () => {
+  it('supports named Focus, Thread, and Subject scopes and explains narrow empty results', async () => {
     const first = database.domain.focuses.requireModel(1).toSnapshot()
     const second = database.domain.focuses.create({ title: 'Other hierarchy' }).toSnapshot()
     const firstThread = database.domain.threads.create({
@@ -589,6 +595,21 @@ describe('OnMove MCP protocol adapter', () => {
       diagnostics: { appliedScope: { mode: 'focus', focusId: second.id }, resultCount: 1 }
     })
 
+    const threadSearch = await client.callTool({
+      name: 'onmove.search',
+      arguments: {
+        text: 'namedscopeasdfasdf',
+        scope: { mode: 'thread', threadId: secondThread.id }
+      }
+    })
+    expect(threadSearch.structuredContent).toMatchObject({
+      items: [expect.objectContaining({ reference: { type: 'update', id: secondUpdate.id } })],
+      diagnostics: {
+        appliedScope: { mode: 'thread', threadId: secondThread.id },
+        resultCount: 1
+      }
+    })
+
     const subjectSearch = await client.callTool({
       name: 'onmove.search',
       arguments: {
@@ -615,10 +636,12 @@ describe('OnMove MCP protocol adapter', () => {
         appliedScope: { mode: 'focus', focusId: second.id },
         appliedKinds: ['note'],
         resultCount: 0,
-        warnings: [expect.stringContaining('Retry with scope.mode="all"')]
+        warnings: [expect.stringContaining('Retain a named Subject, Thread, or Focus scope')]
       }
     })
-    expect(JSON.stringify(narrowEmpty.content)).toContain('no focusId or subjectId')
+    expect(JSON.stringify(narrowEmpty.content)).toContain(
+      'only if the user requested all people or all records'
+    )
   })
 
   it('falls back to global search when a named hierarchy ID is null', async () => {
@@ -1778,6 +1801,10 @@ describe('OnMove MCP protocol adapter', () => {
       title: 'Database clarity',
       reviewFrequencyDays: 7
     }).snapshot()
+    const unrelatedGenericUse = database.domain.updates.create({
+      parent: { type: 'thread', id: wrongThread.id },
+      observation: 'Weekly confidence belongs to an unrelated container.'
+    }).toSnapshot()
     const misplaced = database.domain.updates.create({
       parent: { type: 'thread', id: wrongThread.id },
       observation: 'Preserve this rich observation while moving it.',
@@ -1828,11 +1855,65 @@ describe('OnMove MCP protocol adapter', () => {
           })
         })
       ]),
+      searchStatus: {
+        sufficient: true,
+        doNotBroaden: true,
+        reason: expect.stringContaining('subjectUses is authoritative'),
+        nextAction: expect.stringContaining('fetch the relevant IDs')
+      },
+      continuationScope: {
+        mode: 'subject',
+        subjectId: michael.id
+      },
+      continuationToken: expect.any(String),
       diagnostics: {
         hierarchyPathCount: expect.any(Number),
         hierarchyPathTotal: expect.any(Number),
         subjectUseCount: 1
       }
+    })
+
+    const continuationToken = (discovery.structuredContent as {
+      continuationToken: string
+    }).continuationToken
+    const scopedFollowUp = await client.callTool({
+      name: 'onmove.search',
+      arguments: { text: 'weekly confidence', continuationToken }
+    })
+    expect(scopedFollowUp.structuredContent).toMatchObject({
+      items: [expect.objectContaining({
+        reference: { type: 'update', id: existingMichaelUse.id }
+      })],
+      searchStatus: { sufficient: true, doNotBroaden: true },
+      diagnostics: {
+        appliedScope: { mode: 'subject', subjectId: michael.id },
+        warnings: [expect.stringContaining('preserved from continuationToken')]
+      }
+    })
+    expect((scopedFollowUp.structuredContent as {
+      items: Array<{ reference: { type: string; id: number } }>
+    }).items).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ reference: { type: 'update', id: unrelatedGenericUse.id } })
+    ]))
+
+    const hierarchyOnly = await client.callTool({
+      name: 'onmove.search',
+      arguments: {
+        text: 'michael',
+        view: 'hierarchy-only',
+        includeThreads: true,
+        includeCommitments: true,
+        includeSubjects: true
+      }
+    })
+    expect(hierarchyOnly.structuredContent).toMatchObject({
+      items: [],
+      subjectUses: [],
+      hierarchyPaths: expect.arrayContaining([
+        expect.objectContaining({ relativePath: 'Team management > 1:1s[Michael]' })
+      ]),
+      searchStatus: { sufficient: true, doNotBroaden: true },
+      diagnostics: { subjectUseCount: 1 }
     })
 
     const subjectListing = await client.callTool({
@@ -1907,7 +1988,7 @@ describe('OnMove MCP protocol adapter', () => {
         }
       }
     })
-    expect(database.domain.updates.listForThread(wrongThread.id)).toHaveLength(1)
+    expect(database.domain.updates.listForThread(wrongThread.id)).toHaveLength(2)
 
     const repaired = await client.callTool({
       name: 'onmove.reparent_update',
@@ -1944,7 +2025,9 @@ describe('OnMove MCP protocol adapter', () => {
         undo: { tool: 'onmove.reparent_update' }
       }
     })
-    expect(database.domain.updates.listForThread(wrongThread.id)).toEqual([])
+    expect(database.domain.updates.listForThread(wrongThread.id)).toEqual([
+      expect.objectContaining({ id: unrelatedGenericUse.id })
+    ])
     expect(database.domain.updates.listForCommitment(oneToOnes.id)).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: misplaced.id, state: 'yellow' })
     ]))
@@ -1960,6 +2043,120 @@ describe('OnMove MCP protocol adapter', () => {
         scope: null,
         observation: 'Preserve this rich observation while moving it.',
         observationRevision: 0
+      }
+    })
+  })
+
+  it('reviews one Subject in one Thread without chaining broad searches', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'People leadership',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const oneToOnes = database.domain.commitments.create({
+      type: 'tracking',
+      parent: { type: 'thread', id: thread.id },
+      title: '1:1s'
+    }).snapshot()
+    const scope = database.domain.threadScopes.addSubject(thread.id, { name: 'Michael' })
+    const michael = scope.subjects[0]
+    const directUpdate = database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      scope: { scopeId: scope.scopeId as number, subjectId: michael.id },
+      observation: 'Earlier leadership observation.'
+    }, new Date('2026-08-20T10:00:00.000Z')).toSnapshot()
+    const commitmentUpdate = database.domain.updates.create({
+      parent: { type: 'commitment', id: oneToOnes.id },
+      scope: { scopeId: scope.scopeId as number, subjectId: michael.id },
+      observation: 'Latest one to one observation.',
+      state: 'green'
+    }, new Date('2026-08-20T11:00:00.000Z')).toSnapshot()
+    const todo = database.domain.todos.create({
+      name: 'Prepare next coaching question',
+      parent: {
+        type: 'commitment-scope',
+        id: oneToOnes.id,
+        scope: { scopeId: scope.scopeId as number, subjectId: michael.id }
+      }
+    }).toSnapshot()
+    database.domain.todos.create({
+      name: 'Already handled',
+      done: true,
+      parent: {
+        type: 'thread-scope',
+        id: thread.id,
+        scope: { scopeId: scope.scopeId as number, subjectId: michael.id }
+      }
+    })
+
+    const reviewed = await client.callTool({
+      name: 'onmove.review_subject',
+      arguments: {
+        focus: { id: focus.id },
+        thread: { title: 'People leadership' },
+        subject: { name: 'Michael' }
+      }
+    })
+    expect(reviewed.isError).not.toBe(true)
+    expect(reviewed.structuredContent).toMatchObject({
+      status: 'resolved',
+      review: {
+        subject: { id: michael.id, name: 'Michael' },
+        hierarchy: {
+          focus: { id: focus.id, title: focus.title },
+          thread: { id: thread.id, title: thread.title }
+        },
+        displayPath: `${focus.title} > ${thread.title}[Michael]`,
+        updates: [
+          expect.objectContaining({
+            id: commitmentUpdate.id,
+            displayPath: 'People leadership > 1:1s[Michael]',
+            snippet: 'Latest one to one observation.'
+          }),
+          expect.objectContaining({
+            id: directUpdate.id,
+            displayPath: 'People leadership[Michael]'
+          })
+        ],
+        openTodos: [expect.objectContaining({
+          id: todo.id,
+          name: 'Prepare next coaching question'
+        })],
+        openCommitments: [expect.objectContaining({
+          id: oneToOnes.id,
+          title: '1:1s',
+          status: 'active',
+          state: 'green'
+        })]
+      },
+      searchStatus: {
+        sufficient: true,
+        doNotBroaden: true,
+        nextAction: expect.stringContaining('Stop discovery')
+      },
+      continuationToken: expect.any(String),
+      diagnostics: { resolutionStatus: 'resolved', candidateCount: 1 }
+    })
+
+    const continuationToken = (reviewed.structuredContent as {
+      continuationToken: string
+    }).continuationToken
+    const followUp = await client.callTool({
+      name: 'onmove.search',
+      arguments: { text: 'observation', continuationToken }
+    })
+    expect(followUp.structuredContent).toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({ reference: { type: 'update', id: commitmentUpdate.id } }),
+        expect.objectContaining({ reference: { type: 'update', id: directUpdate.id } })
+      ]),
+      diagnostics: {
+        appliedScope: {
+          mode: 'subject',
+          threadId: thread.id,
+          subjectId: michael.id
+        }
       }
     })
   })

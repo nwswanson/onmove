@@ -101,6 +101,7 @@ interface OnMoveQueryService {
   getTags(input: TagQuery, access: OnMoveAccessPolicy): TagOverview
   search(input: SearchQuery, access: OnMoveAccessPolicy): SearchResult[]
   browseHierarchy(input: HierarchyBrowseQuery, access: OnMoveAccessPolicy): HierarchyPath[]
+  reviewSubject(input: SubjectReviewQuery, access: OnMoveAccessPolicy): SubjectReview
 }
 
 interface OnMoveCommandService {
@@ -183,6 +184,7 @@ method.
 - `onmove.list_tags`
 - `onmove.get_tag_uses`
 - `onmove.search`
+- `onmove.review_subject`
 
 `onmove.search` is also the bounded hierarchy browser. `text=null` performs structural browsing;
 the `includeThreads`, `includeCommitments`, `includeSubjects`, and `includeScopes` flags expand
@@ -192,6 +194,25 @@ Subject-cell path. Responses define
 both explicit object notation and a readable form such as `Team management > 1:1s[Michael]`.
 Subject mode accepts `text=null` to list attributed records and current applicability paths without
 inventing a dummy text term.
+
+Discovery is Subject-first when the request names a person or other canonical Subject. The initial
+name search returns `subjectUses`, which is authoritative for attributed records, plus an explicit
+`searchStatus`. `sufficient=true` or `doNotBroaden=true` tells the client to stop discovery and fetch
+the returned IDs directly rather than searching globally for a generic hierarchy label. A response
+also returns an opaque continuation token. Follow-up searches may change their text while the token
+preserves the discovered Subject and any existing Thread or Focus restriction. Starting without the
+token is required to intentionally change scope. Named scopes support `all`, `focus`, `thread`,
+`subject`, and the explicitly requested live `current` context.
+
+`view=hierarchy-only` keeps hierarchy paths, stopping status, diagnostics, and continuation while
+omitting item and Subject-use contents. Compact search defaults to ten results, with an explicit
+bounded limit available when more are required.
+
+`onmove.review_subject` is the high-level alternative to a multi-query agent workflow. It resolves
+an exact Subject inside an exact Thread and returns one compact projection containing that Subject's
+Updates in the Thread and its child Commitments (ordered by `updatedAt`), open exact/shared Todos,
+and currently applicable open Commitments with Subject-cell state. Its resolved response is a hard
+stopping signal and supplies a continuation token restricted to that Subject × Thread intersection.
 
 Read tools should support bounded filters such as status, date range, parent, Subject, open/closed,
 and result limit. They should not accept raw SQL fragments or arbitrary field expressions.

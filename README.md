@@ -94,11 +94,27 @@ Use the path's `recommendedUpdateRequest`; it includes the exact parent, Subject
 semantic safety path. `onmove.resolve_target` remains useful for exact hierarchy names and duplicate
 disambiguation.
 
+Treat a named Subject as the primary discovery filter. Search the Subject's name first, inspect
+`subjectUses`, and stop when `searchStatus.sufficient` or `searchStatus.doNotBroaden` is true.
+Those uses are authoritative for records attributed to that Subject; fetch their IDs directly
+instead of globally searching a generic container label such as “1:1s.” Follow-up searches should
+pass the returned `continuationToken`, which preserves a discovered Subject and any existing Focus
+or Thread restriction. Alternatively, use `scope.mode` with `subject`, `thread`, or `focus` and the
+returned ID. Broaden to `all` only when the user actually requests every person or record.
+
+For a compact situation review, call `onmove.review_subject` with an exact Subject and Thread (plus
+an optional Focus for disambiguation). One response resolves the path and returns that Subject's
+Updates in the Thread, sorted by `updatedAt`, together with open Subject Todos and applicable open
+Commitments. It also returns a scope-preserving continuation token. This replaces separate Subject,
+Thread, Update, Todo, and Commitment searches.
+
 Set `text` to `null` for hierarchy-only browsing. In particular,
 `{ text: null, scope: { mode: "subject", subjectId: 28 } }` returns records already attributed to
 that Subject plus every currently applicable Focus, Thread, and Commitment path. If an Update was
 created in the wrong place, `onmove.reparent_update` moves that existing record without replacing
 its rich text, revision, date, state, or sensitivity. Its response also supplies an undo request.
+For the smallest discovery response, set `view: "hierarchy-only"`; OnMove still returns paths,
+diagnostics, stopping status, and a continuation token but omits item and Subject-use contents.
 
 For a localized Note edit, resolve and read it with `onmove.resolve_note` (or `onmove.get_note` when
 its ID is known), then call `onmove.patch_note_text` with its revision, exact `findText`, and

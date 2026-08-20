@@ -310,15 +310,34 @@ IDs never inherits the Focus currently selected in OnMove. Narrowing is always n
 ```json
 { "text": "person x", "scope": { "mode": "all" } }
 { "text": "migration", "scope": { "mode": "focus", "focusId": 12 } }
+{ "text": "risk", "scope": { "mode": "thread", "threadId": 19 } }
 { "text": "escalation", "scope": { "mode": "subject", "subjectId": 34 } }
 { "text": "risk", "scope": { "mode": "current" }, "kinds": ["thread", "update"] }
 ```
 
-`all` searches the entire visible workspace, `focus` searches one Focus hierarchy, `subject`
-searches records attributed to one canonical Subject, and `current` explicitly reads the live UI
+`all` searches the entire visible workspace, `focus` searches one Focus hierarchy, `thread`
+searches one Thread and its children, `subject` searches records attributed to one canonical Subject,
+and `current` explicitly reads the live UI
 Focus and Subject selection. Every MCP response includes `diagnostics.appliedScope`. Search also
-returns applied kinds, result count, and textual warnings. A narrowly filtered empty result tells
-the client how to retry globally.
+returns applied kinds, result count, and textual warnings.
+
+When the user names a person or other Subject, search that exact name first. The response's
+`subjectUses` is authoritative for records attributed to the matched canonical Subject. If
+`searchStatus.sufficient` or `searchStatus.doNotBroaden` is true, stop discovery and fetch those IDs
+directly; do not search globally for a generic parent label. Every response includes an opaque
+`continuationToken`. Passing it to a follow-up search while omitting `scope` preserves a discovered
+Subject and any existing Thread or Focus restriction even when the follow-up `text` changes.
+Broaden without the token only when the user requests all people or all records.
+
+Compact responses default to ten results. Set `view: "hierarchy-only"` to return only paths,
+diagnostics, stopping status, and continuation state without item or Subject-use contents.
+`includeSubjects` is intentionally expansive and is usually unnecessary for reviewing one entity.
+
+For “what has Michael been doing in the 1:1s Thread?”, call `onmove.review_subject` with the exact
+Subject and Thread selectors. It resolves that intersection and returns Subject-attributed Updates
+sorted by `updatedAt`, open Subject/shared Todos, and currently applicable open Commitments with
+their Subject-cell state. A resolved review is a stopping signal and includes a continuation token
+for the same Subject × Thread boundary.
 
 For a text mutation, set `includeRichText: true` on `onmove.search`. Focus, Update, and Note hits
 then include `editableRichText` with the complete document, readable projection, revision,
@@ -333,7 +352,7 @@ the Update's `reference.id`. This distinction is also described directly in the 
 ## Tools and resources
 
 Read tools cover Focuses, Threads, Commitments, Updates, Routines, Reviews, Due work, Todos, Tags,
-search, Notes, combined Note resolution, and hierarchy-aware work-target resolution. Write tools
+search, Subject review, Notes, combined Note resolution, and hierarchy-aware work-target resolution. Write tools
 cover the safe mutations and semantic rich-text editing described above.
 Stable resource templates use:
 
