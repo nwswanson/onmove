@@ -149,6 +149,215 @@ describe('OnMove MCP protocol adapter', () => {
     }).properties
     expect(replacementProperties).toHaveProperty('richText')
     expect(replacementProperties).not.toHaveProperty('document')
+    const updateNote = tools.find(({ name }) => name === 'onmove.update_note')!
+    const updateNoteProperties = (updateNote.inputSchema as {
+      properties?: Record<string, unknown>
+    }).properties
+    expect(updateNoteProperties).toHaveProperty('clear')
+    expect(updateNoteProperties).toHaveProperty('richText')
+    const noteSchema = JSON.stringify(updateNote.inputSchema)
+    expect(noteSchema).toContain('explicitly by type')
+    expect(noteSchema).toContain('"oneOf"')
+    expect(noteSchema).toContain('"const":"text"')
+    expect(noteSchema).toContain('"const":"line-break"')
+    expect(noteSchema).toContain('"const":"paragraph"')
+    expect(noteSchema).toContain('"const":"quote"')
+    expect(noteSchema).toContain('"additionalProperties":false')
+    expect(noteSchema).toContain('null is accepted and canonicalized to omission')
+    expect(noteSchema).toContain('"type":"null"')
+  })
+
+  it('keeps advertised patch tools callable and breaks repeated invalid-rich-text loops', async () => {
+    const tools = (await client.listTools()).tools
+    expect(tools.find(({ name }) => name === 'onmove.patch_note_text')).toBeDefined()
+    expect(tools.find(({ name }) => name === 'onmove.patch_rich_text')).toBeDefined()
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const note = database.domain.notes.list({ type: 'focus', id: focus.id })[0]
+    database.mcpSettings.update({ allowMutations: true })
+    const invalidArguments = {
+      id: note.id,
+      expectedRevision: note.revision,
+      richText: {
+        version: 1,
+        blocks: [{
+          type: 'paragraph',
+          children: [{
+            type: 'link',
+            url: 'https://example.com',
+            children: [{ type: 'text', text: 'hey there', tag: true }]
+          }]
+        }]
+      }
+    }
+    const rejected = []
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      rejected.push(await client.callTool({
+        name: 'onmove.update_note',
+        arguments: invalidArguments
+      }))
+    }
+    expect(rejected[0].isError).toBe(true)
+    expect(rejected[0].structuredContent).toMatchObject({
+      error: {
+        code: 'invalid_rich_text',
+        pointer: '/richText/blocks/0/children/0/children/0',
+        received: { type: 'text', text: 'hey there', tag: true },
+        correction: {
+          type: 'text', text: 'hey there', marks: ['bold', 'highlight']
+        },
+        message: expect.stringContaining('tagged link text node')
+      },
+      recovery: {
+        instruction: expect.stringContaining('Do not resend'),
+        example: {
+          pointer: '/richText/blocks/0/children/0/children/0',
+          value: { type: 'text', text: 'hey there', marks: ['bold', 'highlight'] }
+        }
+      }
+    })
+    expect(rejected[2].structuredContent).toMatchObject({
+      recovery: {
+        duplicateInvalidCall: {
+          count: 3,
+          warning: expect.stringContaining('third identical rejected request')
+        }
+      }
+    })
+    const thirdText = rejected[2].content
+      .flatMap((entry) => 'text' in entry ? [entry.text] : [])
+      .join('\n')
+    expect(thirdText).toContain('type:"link"')
+    expect(thirdText).toContain('tag:true')
+    expect(database.domain.notes.find(note.id)?.revision).toBe(note.revision)
+
+    const acceptedNullColor = await client.callTool({
+      name: 'onmove.update_note',
+      arguments: {
+        id: note.id,
+        expectedRevision: note.revision,
+        richText: {
+          version: 1,
+          blocks: [{
+            type: 'paragraph',
+            children: [{ type: 'text', text: 'hello world', color: null }]
+          }]
+        }
+      }
+    })
+    expect(acceptedNullColor.isError).not.toBe(true)
+    expect(acceptedNullColor.structuredContent).toMatchObject({
+      note: {
+        content: 'hello world',
+        richText: { blocks: [{ children: [{ type: 'text', text: 'hello world' }] }] },
+        revision: note.revision + 1
+      }
+    })
+
+    const patched = await client.callTool({
+      name: 'onmove.patch_note_text',
+      arguments: {
+        id: note.id,
+        expectedRevision: note.revision + 1,
+        findText: 'hello world',
+        replaceText: 'hi there'
+      }
+    })
+    expect(patched.isError).not.toBe(true)
+    expect(patched.structuredContent).toMatchObject({
+      note: { content: 'hi there', revision: note.revision + 2 }
+    })
+  })
+
+  it('returns every editable rich-text field directly from one expanded search', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Expanded search owner',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const update = database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      observation: 'lookupupdateasdf unique evidence'
+    }).toSnapshot()
+    const note = database.domain.notes.list({ type: 'thread', id: thread.id })[0]
+    database.domain.richTextDocuments.save(
+      { type: 'focus', id: focus.id, field: 'description' },
+      'lookupfocusasdf unique description'
+    )
+    database.domain.richTextDocuments.save(
+      { type: 'note', id: note.id, field: 'content' },
+      'lookupnoteasdf unique note'
+    )
+    database.mcpSettings.update({ allowMutations: true })
+
+    const search = await client.callTool({
+      name: 'onmove.search',
+      arguments: {
+        text: 'lookupfocusasdf lookupupdateasdf lookupnoteasdf',
+        kinds: ['focus', 'update', 'note'],
+        includeRichText: true
+      }
+    })
+    expect(search.isError).not.toBe(true)
+    const items = (search.structuredContent as {
+      items: Array<Record<string, unknown>>
+    }).items
+    expect(items).toHaveLength(3)
+    expect(items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        reference: { type: 'focus', id: focus.id },
+        editableRichText: expect.objectContaining({
+          kind: 'focus-description',
+          target: { type: 'focus-description', focusId: focus.id },
+          plainText: 'lookupfocusasdf unique description',
+          revision: 1,
+          writeGuide: expect.objectContaining({
+            patchRichText: expect.objectContaining({ tool: 'onmove.patch_rich_text' })
+          })
+        })
+      }),
+      expect.objectContaining({
+        reference: { type: 'update', id: update.id },
+        editableRichText: expect.objectContaining({
+          kind: 'update-observation',
+          target: { type: 'update-observation', updateId: update.id },
+          plainText: 'lookupupdateasdf unique evidence',
+          revision: 0,
+          writeGuide: expect.objectContaining({
+            patchRichText: expect.objectContaining({ tool: 'onmove.patch_rich_text' })
+          })
+        })
+      }),
+      expect.objectContaining({
+        reference: { type: 'note', id: note.id },
+        editableRichText: expect.objectContaining({
+          kind: 'note-content',
+          target: { type: 'note-content', noteId: note.id },
+          plainText: 'lookupnoteasdf unique note',
+          revision: 1,
+          writeGuide: expect.objectContaining({
+            patchNoteText: expect.objectContaining({ tool: 'onmove.patch_note_text' })
+          })
+        })
+      })
+    ]))
+
+    const noteHit = items.find((item) =>
+      (item.reference as { type?: string } | undefined)?.type === 'note'
+    ) as { editableRichText: { revision: number } }
+    const patched = await client.callTool({
+      name: 'onmove.patch_note_text',
+      arguments: {
+        id: note.id,
+        expectedRevision: noteHit.editableRichText.revision,
+        findText: 'unique note',
+        replaceText: 'edited note'
+      }
+    })
+    expect(patched.isError).not.toBe(true)
+    expect(patched.structuredContent).toMatchObject({
+      note: { content: 'lookupnoteasdf edited note', revision: 2 }
+    })
   })
 
   it('resolves Team → 1:1 → Person Y and supplies an executable subject Todo request', async () => {

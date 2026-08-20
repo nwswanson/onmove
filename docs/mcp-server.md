@@ -202,6 +202,13 @@ reads. The MCP tool schemas do not expose or accept a second root-level document
 The yellow highlighter is the canonical `highlight` mark. The intuitive `highlight-yellow` input is
 also accepted and reads back as `highlight`; it is not a separate foreground color.
 
+The advertised rich-text JSON Schema and the backend's first-stage validator are the same shared
+definition. Inline and block variants are strict discriminated unions: every node's `type` selects
+exactly one shape (`text`, `link`, `line-break`, `paragraph`, each list type, or `quote`). Ordinary
+text examples omit `color`; callers may also send `color: null`, which is accepted and canonicalized
+to omission. `clear` is explicitly advertised on `onmove.update_note` and
+`onmove.update_rich_text` and is honored by the same command boundary that performs the write.
+
 Clients should copy `note.richText`, change only the intended nodes, and submit the whole document.
 The writable schema deliberately has no plain `content` field: plain-text replacement could erase
 formatting that the caller did not see. Legacy plain-text Notes are projected into paragraph blocks
@@ -219,6 +226,19 @@ operation with `clear: true` only after confirming that intentionally emptying t
 
 Missing or structurally invalid rich text returns an error with `preferredField`, supported marks,
 mark aliases, a recovery instruction, and a minimal valid example.
+
+Semantic validation failures also include a JSON Pointer, the rejected value, and a minimal
+replacement. For example, ordinary words mistakenly marked as a durable tag inside a link identify
+the exact path such as `/richText/blocks/0/children/0/children/0` and return:
+
+```json
+{ "type": "text", "text": "hey there", "marks": ["bold", "highlight"] }
+```
+
+The server tracks identical rejected arguments per connected MCP session. On the third unchanged
+request with the same validation error, both textual and structured recovery explicitly say that
+the payload is unchanged, list persistent features such as `type:"link"` and `tag:true`, and tell
+the caller to edit the identified field instead of retrying the same payload.
 
 A committed Note edit is broadcast through both the domain and rich-text live-change channels, so
 the main application and any open pop-out Note window receive the new revision immediately.
@@ -299,6 +319,12 @@ searches records attributed to one canonical Subject, and `current` explicitly r
 Focus and Subject selection. Every MCP response includes `diagnostics.appliedScope`. Search also
 returns applied kinds, result count, and textual warnings. A narrowly filtered empty result tells
 the client how to retry globally.
+
+For a text mutation, set `includeRichText: true` on `onmove.search`. Focus, Update, and Note hits
+then include `editableRichText` with the complete document, readable projection, revision,
+self-describing target, and semantic patch/full-write guides. This collapses the common
+search → parent read → field read sequence into one read followed by one guarded patch. The option
+applies uniformly to Focus descriptions, Update observations, and Note content.
 
 Each search hit identifies the matched record under `reference` and its owners under `hierarchy`.
 For example, when an Update matches, pass `hierarchy.thread.id` to `onmove.get_thread`; do not pass

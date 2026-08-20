@@ -1,3 +1,4 @@
+import * as z from 'zod/v4'
 import { RICH_TEXT_PREFIX, serializedRichTextEditorState } from './rich-text-value'
 
 export const ONMOVE_RICH_TEXT_DOCUMENT_VERSION = 1 as const
@@ -87,6 +88,116 @@ export interface OnMoveRichTextDocument {
   blocks: OnMoveRichTextBlock[]
 }
 
+const richTextMarkInputSchema = z.string().describe(
+  `One of: ${ONMOVE_RICH_TEXT_INPUT_MARKS.join(', ')}. Runtime validation returns the exact invalid mark path and a correction.`
+)
+const richTextColorInputSchema = z.string().describe(
+  `One of: ${ONMOVE_RICH_TEXT_COLORS.join(', ')}. Runtime validation returns the exact invalid color path and a correction.`
+)
+
+/**
+ * Single structural definition used both for MCP JSON Schema advertisement and
+ * runtime document parsing. Semantic checks that need richer recovery (URL
+ * protocols, tag spelling, budgets) run immediately after this structural parse.
+ */
+export const onMoveRichTextTextSchema = z.strictObject({
+  type: z.literal('text').describe('Discriminator for an ordinary visible text run.'),
+  text: z.string().describe('Visible text. Example text run: {"type":"text","text":"Hello","marks":["bold"]}.'),
+  marks: z.array(richTextMarkInputSchema).optional().describe(
+    'Optional unique marks: bold, italic, underline, strikethrough, or highlight. highlight-yellow is accepted as an input alias.'
+  ),
+  color: richTextColorInputSchema.nullable().optional().describe(
+    'Optional foreground color. Omit it when no color is intended; null is accepted and canonicalized to omission.'
+  ),
+  tag: z.literal(true).optional().describe(
+    'Set only for a durable token whose complete text is @ followed by alphanumeric characters. Omit for ordinary text, including text inside links.'
+  )
+}).describe('rich-text text variant: type, text, optional marks, optional color, and optional valid tag marker.')
+
+export const onMoveRichTextLineBreakSchema = z.strictObject({
+  type: z.literal('line-break').describe('Discriminator for an intentional soft line break.')
+}).describe('A structural soft line break: this variant has only type and never contains ordinary text.')
+
+export const onMoveRichTextLinkSchema = z.strictObject({
+  type: z.literal('link').describe('Discriminator for a clickable link.'),
+  url: z.string().describe('An http, https, or mailto URL.'),
+  children: z.array(onMoveRichTextTextSchema).min(1).describe(
+    'Visible link text runs. Their tag field must be omitted.'
+  )
+}).describe('Link variant: type, URL, and one or more text children.')
+
+export const onMoveRichTextInlineSchema = z.discriminatedUnion('type', [
+  onMoveRichTextTextSchema,
+  onMoveRichTextLinkSchema,
+  onMoveRichTextLineBreakSchema
+]).describe('Inline node discriminated explicitly by type.')
+
+function richTextListVariants() {
+  const ordinaryItem = z.strictObject({
+    content: z.array(onMoveRichTextInlineSchema),
+    children: z.array(onMoveRichTextListSchema).optional()
+  })
+  const checklistItem = z.strictObject({
+    content: z.array(onMoveRichTextInlineSchema),
+    checked: z.boolean().optional(),
+    children: z.array(onMoveRichTextListSchema).optional()
+  })
+  return [
+    z.strictObject({
+      type: z.literal('bullet-list'),
+      items: z.array(ordinaryItem).min(1)
+    }).describe('Bullet-list variant.'),
+    z.strictObject({
+      type: z.literal('numbered-list'),
+      start: z.number().int().positive().optional(),
+      items: z.array(ordinaryItem).min(1)
+    }).describe('Numbered-list variant.'),
+    z.strictObject({
+      type: z.literal('checklist'),
+      items: z.array(checklistItem).min(1)
+    }).describe('Checklist variant.')
+  ] as const
+}
+
+export const onMoveRichTextListSchema: z.ZodType = z.lazy(() => z.discriminatedUnion(
+  'type',
+  richTextListVariants()
+).describe('List block discriminated explicitly by type.'))
+
+export const onMoveRichTextBlockSchema: z.ZodType = z.lazy(() => z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('paragraph'),
+    children: z.array(onMoveRichTextInlineSchema)
+  }).describe('Paragraph variant.'),
+  ...richTextListVariants(),
+  z.strictObject({
+    type: z.literal('quote'),
+    blocks: z.array(onMoveRichTextBlockSchema).min(1)
+  }).describe('Quote variant containing complete blocks.')
+]).describe('Block discriminated explicitly by type.'))
+
+export const onMoveRichTextDocumentSchema = z.strictObject({
+  version: z.literal(ONMOVE_RICH_TEXT_DOCUMENT_VERSION),
+  blocks: z.array(onMoveRichTextBlockSchema)
+}).describe(
+  'Complete editor-neutral rich-text document. Ordinary example: {"version":1,"blocks":[{"type":"paragraph","children":[{"type":"text","text":"Hello world","marks":["bold"]}]}]}.'
+)
+
+export interface OnMoveRichTextValidationIssue {
+  pointer: string
+  message: string
+  received: unknown
+  correction: unknown
+}
+
+/** Structured rich-text validation failure used to produce actionable MCP recovery. */
+export class OnMoveRichTextValidationError extends Error {
+  constructor(readonly issue: OnMoveRichTextValidationIssue) {
+    super(issue.message)
+    this.name = 'OnMoveRichTextValidationError'
+  }
+}
+
 export interface OnMoveRichTextPatch {
   /** Exact, case-sensitive text to locate within one paragraph or list-item flow. */
   findText: string
@@ -136,6 +247,74 @@ const TAG_PATTERN = /^@[A-Za-z0-9]+$/u
 const MAX_DEPTH = 16
 const MAX_NODES = 10_000
 const MAX_TEXT_LENGTH = 1_000_000
+
+type JsonPath = Array<string | number>
+
+function jsonPointer(path: readonly (PropertyKey | number)[]): string {
+  if (path.length === 0) return '/'
+  return `/${path.map((segment) => String(segment)
+    .replace(/~/gu, '~0')
+    .replace(/\//gu, '~1')).join('/')}`
+}
+
+function valueAtPath(value: unknown, path: readonly (PropertyKey | number)[]): unknown {
+  let current = value
+  for (const segment of path) {
+    if (!current || typeof current !== 'object') return undefined
+    current = (current as Record<PropertyKey, unknown>)[segment]
+  }
+  return current
+}
+
+function ordinaryTextCorrection(text = 'hey there'): OnMoveRichTextText {
+  return { type: 'text', text, marks: ['bold', 'highlight'] }
+}
+
+function structuralValidationError(value: unknown, error: z.ZodError): OnMoveRichTextValidationError {
+  const issue = error.issues[0]
+  const received = valueAtPath(value, issue.path)
+  const pointer = jsonPointer(issue.path)
+  const type = received && typeof received === 'object' && !Array.isArray(received)
+    ? (received as Record<string, unknown>).type
+    : undefined
+  const checkedOutsideChecklist = received && typeof received === 'object' &&
+    !Array.isArray(received) && 'checked' in received
+  const detail = checkedOutsideChecklist
+    ? 'checked is valid only on checklist items; remove checked or change the containing list type to checklist.'
+    : type === undefined
+      ? issue.message
+      : `received node type ${JSON.stringify(type)}; ${issue.message}`
+  const correction = checkedOutsideChecklist
+    ? Object.fromEntries(Object.entries(received as Record<string, unknown>)
+        .filter(([key]) => key !== 'checked'))
+    : ordinaryTextCorrection(
+        received && typeof received === 'object' &&
+          typeof (received as Record<string, unknown>).text === 'string'
+          ? String((received as Record<string, unknown>).text)
+          : 'hey there'
+      )
+  return new OnMoveRichTextValidationError({
+    pointer,
+    message: `${pointer} ${detail}`,
+    received,
+    correction
+  })
+}
+
+function semanticValidationError(
+  path: JsonPath,
+  message: string,
+  received: unknown,
+  correction: unknown
+): never {
+  const pointer = jsonPointer(path)
+  throw new OnMoveRichTextValidationError({
+    pointer,
+    message: `${pointer} ${message}`,
+    received,
+    correction
+  })
+}
 
 interface ValidationBudget {
   nodes: number
@@ -311,7 +490,13 @@ export function onMoveRichTextDocumentFromStored(value: string): OnMoveRichTextD
   })
 }
 
-function validateText(value: unknown, budget: ValidationBudget, depth: number): OnMoveRichTextText {
+function validateText(
+  value: unknown,
+  budget: ValidationBudget,
+  depth: number,
+  path: JsonPath,
+  insideLink = false
+): OnMoveRichTextText {
   countNode(budget, depth)
   const text = record(value, 'rich-text text')
   assertAllowedKeys(text, ['type', 'text', 'marks', 'color', 'tag'], 'rich-text text')
@@ -322,29 +507,59 @@ function validateText(value: unknown, budget: ValidationBudget, depth: number): 
   const result: OnMoveRichTextText = { type: 'text', text: text.text }
   if (text.marks !== undefined) {
     const marks = array(text.marks, 'rich-text text marks')
-    if (marks.some((mark) => typeof mark !== 'string' || !INPUT_MARKS.has(mark))) {
-      throw new Error(
-        'rich-text text marks must use bold, italic, underline, strikethrough, or highlight ' +
-        '(highlight-yellow is accepted as an alias for the yellow highlight)'
+    const invalidMark = marks.findIndex((mark) =>
+      typeof mark !== 'string' || !INPUT_MARKS.has(mark))
+    if (invalidMark >= 0) {
+      semanticValidationError(
+        [...path, 'marks', invalidMark],
+        'marks must use bold, italic, underline, strikethrough, or highlight ' +
+        '(highlight-yellow is accepted as an alias).',
+        marks[invalidMark],
+        'highlight'
       )
     }
     const canonicalMarks = marks.map((mark) => mark === 'highlight-yellow' ? 'highlight' : mark)
     if (new Set(canonicalMarks).size !== canonicalMarks.length) {
-      throw new Error('rich-text text marks must not repeat the same formatting')
+      semanticValidationError(
+        [...path, 'marks'],
+        'marks must not repeat the same formatting.',
+        marks,
+        [...new Set(canonicalMarks)]
+      )
     }
     if (canonicalMarks.length > 0) {
       result.marks = ONMOVE_RICH_TEXT_MARKS.filter((mark) => canonicalMarks.includes(mark))
     }
   }
-  if (text.color !== undefined) {
+  if (text.color !== undefined && text.color !== null) {
     if (typeof text.color !== 'string' || !COLORS.has(text.color)) {
-      throw new Error('rich-text text color is unsupported')
+      semanticValidationError(
+        [...path, 'color'],
+        `color must be one of ${ONMOVE_RICH_TEXT_COLORS.join(', ')}, null, or omitted.`,
+        text.color,
+        null
+      )
     }
     result.color = text.color as OnMoveRichTextColor
   }
   if (text.tag !== undefined) {
     if (text.tag !== true || !TAG_PATTERN.test(text.text)) {
-      throw new Error('rich-text tag text must be @ followed by alphanumeric characters')
+      semanticValidationError(
+        path,
+        `${insideLink ? 'received a tagged link text node' : 'received a tagged text node'}, ` +
+        `but ${JSON.stringify(text.text)} is not @ followed only by alphanumeric characters. ` +
+        'Remove tag:true for ordinary text.',
+        text,
+        ordinaryTextCorrection(text.text)
+      )
+    }
+    if (insideLink) {
+      semanticValidationError(
+        path,
+        `received a tagged link text node. Link text cannot also be a durable tag; remove tag:true.`,
+        text,
+        ordinaryTextCorrection(text.text)
+      )
     }
     result.tag = true
   }
@@ -354,10 +569,11 @@ function validateText(value: unknown, budget: ValidationBudget, depth: number): 
 function validateInline(
   value: unknown,
   budget: ValidationBudget,
-  depth: number
+  depth: number,
+  path: JsonPath
 ): OnMoveRichTextInline {
   const inline = record(value, 'rich-text inline')
-  if (inline.type === 'text') return validateText(inline, budget, depth)
+  if (inline.type === 'text') return validateText(inline, budget, depth, path)
   countNode(budget, depth)
   if (inline.type === 'line-break') {
     assertAllowedKeys(inline, ['type'], 'rich-text line break')
@@ -366,10 +582,21 @@ function validateInline(
   if (inline.type === 'link') {
     assertAllowedKeys(inline, ['type', 'url', 'children'], 'rich-text link')
     if (typeof inline.url !== 'string' || !validLinkUrl(inline.url)) {
-      throw new Error('rich-text link URL must use http, https, or mailto')
+      semanticValidationError(
+        [...path, 'url'],
+        'link URL must use http, https, or mailto.',
+        inline.url,
+        'https://example.com'
+      )
     }
     const children = array(inline.children, 'rich-text link children')
-      .map((child) => validateText(child, budget, depth + 1))
+      .map((child, index) => validateText(
+        child,
+        budget,
+        depth + 1,
+        [...path, 'children', index],
+        true
+      ))
     if (children.length === 0) throw new Error('rich-text link requires text')
     return { type: 'link', url: inline.url, children }
   }
@@ -379,7 +606,8 @@ function validateInline(
 function validateList(
   value: LexicalRecord,
   budget: ValidationBudget,
-  depth: number
+  depth: number,
+  path: JsonPath
 ): OnMoveRichTextList {
   countNode(budget, depth)
   assertAllowedKeys(value, ['type', 'items', 'start'], 'rich-text list')
@@ -387,13 +615,18 @@ function validateList(
     throw new Error(`unsupported rich-text list type ${String(value.type)}`)
   }
   const type = value.type as OnMoveRichTextList['type']
-  const items = array(value.items, 'rich-text list items').map((itemValue) => {
+  const items = array(value.items, 'rich-text list items').map((itemValue, itemIndex) => {
     countNode(budget, depth + 1)
     const item = record(itemValue, 'rich-text list item')
     assertAllowedKeys(item, ['content', 'checked', 'children'], 'rich-text list item')
     const result: OnMoveRichTextListItem = {
       content: array(item.content, 'rich-text list item content')
-        .map((child) => validateInline(child, budget, depth + 2))
+        .map((child, childIndex) => validateInline(
+          child,
+          budget,
+          depth + 2,
+          [...path, 'items', itemIndex, 'content', childIndex]
+        ))
     }
     if (type === 'checklist') {
       if (item.checked !== undefined && typeof item.checked !== 'boolean') {
@@ -404,9 +637,14 @@ function validateList(
       throw new Error('checked is valid only on checklist items')
     }
     if (item.children !== undefined) {
-      const children = array(item.children, 'rich-text nested lists').map((child) => {
+      const children = array(item.children, 'rich-text nested lists').map((child, childIndex) => {
         const list = record(child, 'rich-text nested list')
-        return validateList(list, budget, depth + 2)
+        return validateList(
+          list,
+          budget,
+          depth + 2,
+          [...path, 'items', itemIndex, 'children', childIndex]
+        )
       })
       if (children.length > 0) result.children = children
     }
@@ -426,7 +664,8 @@ function validateList(
 function validateBlock(
   value: unknown,
   budget: ValidationBudget,
-  depth: number
+  depth: number,
+  path: JsonPath
 ): OnMoveRichTextBlock {
   const block = record(value, 'rich-text block')
   if (block.type === 'paragraph') {
@@ -435,32 +674,40 @@ function validateBlock(
     return {
       type: 'paragraph',
       children: array(block.children, 'rich-text paragraph children')
-        .map((child) => validateInline(child, budget, depth + 1))
+        .map((child, index) => validateInline(
+          child,
+          budget,
+          depth + 1,
+          [...path, 'children', index]
+        ))
     }
   }
   if (block.type === 'quote') {
     countNode(budget, depth)
     assertAllowedKeys(block, ['type', 'blocks'], 'rich-text quote')
     const blocks = array(block.blocks, 'rich-text quote blocks')
-      .map((child) => validateBlock(child, budget, depth + 1))
+      .map((child, index) => validateBlock(
+        child,
+        budget,
+        depth + 1,
+        [...path, 'blocks', index]
+      ))
     if (blocks.length === 0) throw new Error('rich-text quote requires at least one block')
     return { type: 'quote', blocks }
   }
-  return validateList(block, budget, depth)
+  return validateList(block, budget, depth, path)
 }
 
 /** Validates and canonicalizes an untrusted API document. */
 export function assertOnMoveRichTextDocument(value: unknown): OnMoveRichTextDocument {
-  const document = record(value, 'rich-text document')
-  assertAllowedKeys(document, ['version', 'blocks'], 'rich-text document')
-  if (document.version !== ONMOVE_RICH_TEXT_DOCUMENT_VERSION) {
-    throw new Error(`rich-text document version must be ${ONMOVE_RICH_TEXT_DOCUMENT_VERSION}`)
-  }
+  const parsed = onMoveRichTextDocumentSchema.safeParse(value)
+  if (!parsed.success) throw structuralValidationError(value, parsed.error)
+  const document = record(parsed.data, 'rich-text document')
   const budget: ValidationBudget = { nodes: 0, textLength: 0 }
   return {
     version: ONMOVE_RICH_TEXT_DOCUMENT_VERSION,
     blocks: array(document.blocks, 'rich-text document blocks')
-      .map((block) => validateBlock(block, budget, 1))
+      .map((block, index) => validateBlock(block, budget, 1, ['blocks', index]))
   }
 }
 
@@ -667,7 +914,7 @@ export function patchOnMoveRichTextDocument(
   if (/\r|\n/u.test(patch.findText)) {
     throw new OnMoveRichTextPatchError(
       'NOTE_TEXT_PATCH_INVALID',
-      'findText cannot cross a structural line or block boundary; use onmove.update_note for structural edits.',
+      'findText cannot cross a structural line or block boundary; use the field\'s full-document update tool for structural edits.',
       0
     )
   }
@@ -715,7 +962,7 @@ export function patchOnMoveRichTextDocument(
   if (matches.length === 0) {
     throw new OnMoveRichTextPatchError(
       'NOTE_TEXT_NOT_FOUND',
-      `The exact text ${JSON.stringify(patch.findText)} was not found in the Note.`,
+      `The exact text ${JSON.stringify(patch.findText)} was not found in the rich-text field.`,
       0
     )
   }

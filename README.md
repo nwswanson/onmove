@@ -96,7 +96,9 @@ Focus descriptions and existing Update observations expose the same safety model
 `descriptionWriteGuide` or `observationWriteGuide`. Use `onmove.patch_rich_text` for exact localized
 changes and `onmove.update_rich_text` only for structural replacement. Full-document tools accept
 the document only through the root-level `richText` field; there is no `document` compatibility
-alias.
+alias. For the shortest text-edit path, call `onmove.search` with `includeRichText: true`; matching
+Focus descriptions, Update observations, and Notes return their complete document, revision,
+self-describing target, and write guides directly in the search result.
 
 See [`docs/mcp-server.md`](docs/mcp-server.md) for the available tools, search behavior, and security
 boundary.

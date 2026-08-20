@@ -808,6 +808,19 @@ foreground colors and do not rely on color alone to communicate selection or sta
   `additionalProperties: false` at every object boundary. Give the ordinary `text` run a prominent
   complete example and describe `line-break` as a rare structural node that cannot contain text;
   agents previously selected line-break while trying to supply ordinary content.
+- Generate the advertised MCP rich-text schema and the backend's first structural validation pass
+  from the same shared definition. Keep `clear` explicit on every full-document replacement tool.
+  Ordinary text examples should omit `color`; accept `color: null` as equivalent to omission so an
+  otherwise valid client document cannot fail merely because it serialized an empty optional value.
+- Return semantic rich-text failures with the exact `/richText/...` JSON Pointer, the rejected
+  nested value, and a minimal replacement for that node. Track identical rejected tool arguments
+  across the running HTTP endpoint with bounded state; the third unchanged failure must explicitly
+  identify persistent payload features and tell the caller what to change instead of enabling a
+  blind retry loop.
+- Let `onmove.search(includeRichText=true)` return edit-ready state for every searchable MCP-writable
+  rich-text field: Focus descriptions, Update observations, and Note content. Each matching hit
+  must include its full lossless document, revision, self-describing target, and write guides so a
+  common text mutation is one search plus one guarded semantic patch.
 - Validate semantic rich-text details in the handler when doing so produces a more actionable error
   than an opaque MCP SDK “invalid arguments” response. Test invalid requests through a real MCP
   client, not only the converter, because transport schema validation can reject input before the

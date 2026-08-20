@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   OnMoveRichTextPatchError,
+  OnMoveRichTextValidationError,
   assertOnMoveRichTextDocument,
+  onMoveRichTextDocumentSchema,
   onMoveRichTextDocumentFromStored,
   onMoveRichTextDocumentToStored,
   patchOnMoveRichTextDocument,
@@ -115,6 +117,55 @@ describe('OnMove rich-text API document', () => {
     })).toMatchObject({
       blocks: [{ children: [{ marks: ['italic', 'highlight'] }] }]
     })
+  })
+
+  it('uses the shared discriminated schema and canonicalizes a null color to omission', () => {
+    const input = {
+      version: 1,
+      blocks: [{
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'No explicit color', color: null }]
+      }]
+    }
+    expect(onMoveRichTextDocumentSchema.safeParse(input).success).toBe(true)
+    expect(assertOnMoveRichTextDocument(input)).toEqual({
+      version: 1,
+      blocks: [{
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'No explicit color' }]
+      }]
+    })
+  })
+
+  it('reports the exact tagged-link path and a minimal ordinary-text correction', () => {
+    const input = {
+      version: 1,
+      blocks: [{
+        type: 'paragraph',
+        children: [{
+          type: 'link',
+          url: 'https://example.com',
+          children: [{ type: 'text', text: 'hey there', tag: true }]
+        }]
+      }]
+    }
+    try {
+      assertOnMoveRichTextDocument(input)
+      throw new Error('Expected tagged link text to be rejected')
+    } catch (error) {
+      expect(error).toBeInstanceOf(OnMoveRichTextValidationError)
+      expect(error).toMatchObject({
+        issue: {
+          pointer: '/blocks/0/children/0/children/0',
+          message: expect.stringContaining('"hey there" is not @ followed'),
+          correction: {
+            type: 'text',
+            text: 'hey there',
+            marks: ['bold', 'highlight']
+          }
+        }
+      })
+    }
   })
 
   it('patches one text range while preserving surrounding formatting and color', () => {

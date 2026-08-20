@@ -13,14 +13,16 @@ import {
 import {
   SEARCH_ENTITY_TYPES,
   type SearchEntityType,
-  type SearchQuery
+  type SearchQuery,
+  type SearchResult
 } from '../main/application/search-index'
 import type { McpUiContextSnapshot, RichTextDocumentSnapshot } from '../shared/contracts'
 import {
-  ONMOVE_RICH_TEXT_COLORS,
   ONMOVE_RICH_TEXT_MARKS,
   OnMoveRichTextPatchError,
+  OnMoveRichTextValidationError,
   assertOnMoveRichTextDocument,
+  onMoveRichTextDocumentSchema as richTextDocumentSchema,
   type OnMoveRichTextDocument,
   type OnMoveRichTextMark
 } from '../shared/rich-text-document'
@@ -32,6 +34,8 @@ export interface OnMoveMcpServerOptions {
   onRichTextMutation?: (document: RichTextDocumentSnapshot) => void
   /** Read only for an explicit scope.mode=current search; never an implicit default filter. */
   getCurrentUiContext?: () => McpUiContextSnapshot
+  /** Shared by protocol instances belonging to one running endpoint. */
+  rejectedCallTracker?: RejectedCallTracker
 }
 
 export interface SearchScopeInput {
@@ -93,101 +97,6 @@ const searchScopeSchema = z.object({
   'An explicit named search scope. Null or omitted means mode=all; the current UI is never used implicitly.'
 )
 
-const richTextTextSchema = z.strictObject({
-  type: z.literal('text'),
-  text: z.string().describe(
-    'Ordinary visible text in this run. Example text run: {"type":"text","text":"Hello world","marks":["bold"]}.'
-  ),
-  marks: z.array(z.string()).optional().describe(
-    'Optional unique formatting marks: bold, italic, underline, strikethrough, or highlight. highlight is always yellow; highlight-yellow is accepted as an input alias and reads back as highlight. Other values return an actionable rich-text error.'
-  ),
-  color: z.string().optional().describe(
-    `Optional readable foreground color: ${ONMOVE_RICH_TEXT_COLORS.join(', ')}. Other values return an actionable rich-text error.`
-  ),
-  tag: z.literal(true).optional().describe(
-    'Set only when text is a durable @tag token of @ followed by alphanumeric characters.'
-  )
-}).describe(
-  'The ordinary text-run node. Use this for words and sentences; use line-break only for an intentional soft return.'
-)
-
-const richTextLineBreakSchema = z.strictObject({
-  type: z.literal('line-break')
-}).describe(
-  'A structural soft line break containing no text. Do not choose this node for ordinary characters or an empty paragraph.'
-)
-
-const richTextLinkSchema = z.strictObject({
-  type: z.literal('link'),
-  url: z.string().describe(
-    'An http, https, or mailto URL. Other protocols return an actionable rich-text error.'
-  ),
-  children: z.array(richTextTextSchema).min(1).describe(
-    'Formatted visible text for the link.'
-  )
-}).describe('A clickable link whose text formatting is preserved.')
-
-const richTextInlineSchema = z.discriminatedUnion('type', [
-  richTextTextSchema,
-  richTextLinkSchema,
-  richTextLineBreakSchema
-])
-
-function richTextListVariants() {
-  const ordinaryItem = z.strictObject({
-    content: z.array(richTextInlineSchema).describe('Inline content of this list item.'),
-    children: z.array(richTextListSchema).optional().describe('Nested list blocks under this item.')
-  })
-  const checklistItem = z.strictObject({
-    content: z.array(richTextInlineSchema).describe('Inline content of this checklist item.'),
-    checked: z.boolean().optional().describe('Whether this checklist item is checked.'),
-    children: z.array(richTextListSchema).optional().describe('Nested list blocks under this item.')
-  })
-  return [
-    z.strictObject({
-      type: z.literal('bullet-list'),
-      items: z.array(ordinaryItem).min(1)
-    }).describe('A bulleted-list block.'),
-    z.strictObject({
-      type: z.literal('numbered-list'),
-      start: z.number().int().positive().optional().describe(
-        'Optional first displayed number; omit when it is one.'
-      ),
-      items: z.array(ordinaryItem).min(1)
-    }).describe('A numbered-list block.'),
-    z.strictObject({
-      type: z.literal('checklist'),
-      items: z.array(checklistItem).min(1)
-    }).describe('A checklist block whose items may have checked state.')
-  ] as const
-}
-
-const richTextListSchema: z.ZodType = z.lazy(() => z.discriminatedUnion(
-  'type',
-  richTextListVariants()
-))
-
-const richTextBlockSchema: z.ZodType = z.lazy(() => z.discriminatedUnion('type', [
-  z.strictObject({
-    type: z.literal('paragraph'),
-    children: z.array(richTextInlineSchema)
-  }).describe('A paragraph block containing ordinary text runs, links, or rare soft line breaks.'),
-  ...richTextListVariants(),
-  z.strictObject({
-    type: z.literal('quote'),
-    blocks: z.array(richTextBlockSchema).min(1)
-  }).describe('A quote containing complete paragraphs, lists, or nested quotes.')
-]))
-
-const richTextDocumentSchema = z.strictObject({
-  version: z.literal(1).describe('The OnMove rich-text API document version.'),
-  blocks: z.array(richTextBlockSchema).describe(
-    'Ordered paragraphs, lists, checklists, and quote blocks. An empty array is an empty Note.'
-  )
-}).describe(
-  'A complete editor-neutral OnMove rich-text document. For ordinary content start with {"version":1,"blocks":[{"type":"paragraph","children":[{"type":"text","text":"Hello world"}]}]}. Read note.richText, edit this structure, and submit the whole document without flattening it to note.content.'
-)
-
 function plainRichTextDocument(text: string): OnMoveRichTextDocument {
   return {
     version: 1,
@@ -206,7 +115,8 @@ class RichTextToolInputError extends Error {
   constructor(
     readonly tool: RichTextWriteTool,
     readonly code: 'missing_rich_text' | 'invalid_rich_text',
-    message: string
+    message: string,
+    readonly validationIssue?: OnMoveRichTextValidationError['issue']
   ) {
     super(message)
     this.name = 'RichTextToolInputError'
@@ -235,8 +145,85 @@ function normalizedRichTextToolInput(
     throw new RichTextToolInputError(
       tool,
       'invalid_rich_text',
-      `${tool} received invalid richText: ${error instanceof Error ? error.message : String(error)}`
+      `${tool} received invalid richText: ${error instanceof Error ? error.message : String(error)}`,
+      error instanceof OnMoveRichTextValidationError ? error.issue : undefined
     )
+  }
+}
+
+type McpErrorResult = {
+  isError: true
+  content: Array<{ type: 'text'; text: string }>
+  structuredContent: Record<string, unknown>
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+function payloadFeatures(value: unknown, result = new Set<string>()): Set<string> {
+  if (Array.isArray(value)) {
+    for (const entry of value) payloadFeatures(entry, result)
+    return result
+  }
+  if (!value || typeof value !== 'object') return result
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (key === 'type' && typeof entry === 'string') result.add(`type:${JSON.stringify(entry)}`)
+    if (key === 'tag' && entry === true) result.add('tag:true')
+    payloadFeatures(entry, result)
+  }
+  return result
+}
+
+/** Keeps a stuck client from receiving the same generic rejection indefinitely. */
+export class RejectedCallTracker {
+  private static readonly maximumEntries = 256
+  private readonly counts = new Map<string, number>()
+
+  rejected(
+    tool: string,
+    input: unknown,
+    errorCode: string,
+    response: McpErrorResult
+  ): McpErrorResult {
+    const key = `${tool}\n${errorCode}\n${stableJson(input)}`
+    const previousCount = this.counts.get(key) ?? 0
+    if (previousCount > 0) this.counts.delete(key)
+    const count = previousCount + 1
+    this.counts.set(key, count)
+    if (this.counts.size > RejectedCallTracker.maximumEntries) {
+      this.counts.delete(this.counts.keys().next().value as string)
+    }
+    if (count < 3) return response
+    const features = [...payloadFeatures(input)]
+    const featureText = features.length > 0
+      ? ` The payload still contains ${features.join(' and ')}.`
+      : ''
+    const warning =
+      `This is the ${count === 3 ? 'third' : `${count}th`} identical rejected request. ` +
+      `The arguments and validation error ${errorCode} have not changed.${featureText} ` +
+      'Change the fields identified by recovery before retrying; do not resend this payload.'
+    const recovery = record(response.structuredContent.recovery) ?? {}
+    return {
+      ...response,
+      content: response.content.map((entry, index) => index === 0
+        ? { ...entry, text: `${entry.text}\n${warning}` }
+        : entry),
+      structuredContent: {
+        ...response.structuredContent,
+        recovery: {
+          ...recovery,
+          duplicateInvalidCall: { count, warning }
+        }
+      }
+    }
   }
 }
 
@@ -404,6 +391,65 @@ function withFocusDescriptionWriteGuide(value: unknown): unknown {
       )
     }
   }
+}
+
+function searchableRichText(
+  database: AppDatabase,
+  value: SearchResult,
+  access: ReturnType<AppDatabase['mcpSettings']['accessPolicy']>
+): Record<string, unknown> | null {
+  if (value.reference.type === 'focus') {
+    const context = record(withFocusDescriptionWriteGuide(database.queries.getFocus(
+      value.reference.id,
+      access,
+      { includeRichText: true }
+    )))
+    const entity = record(context?.entity)
+    if (!entity || !Number.isSafeInteger(entity.descriptionRevision) ||
+        !('descriptionRichText' in entity)) return null
+    return {
+      kind: 'focus-description',
+      target: { type: 'focus-description', focusId: value.reference.id },
+      plainText: entity.description ?? '',
+      richText: entity.descriptionRichText,
+      revision: entity.descriptionRevision,
+      writeGuide: entity.descriptionWriteGuide
+    }
+  }
+  if (value.reference.type === 'update') {
+    const context = record(withUpdateContextWriteGuide(database.queries.getUpdate(
+      value.reference.id,
+      access
+    )))
+    const update = record(context?.update)
+    if (!update || !Number.isSafeInteger(update.observationRevision) ||
+        !('observationRichText' in update)) return null
+    return {
+      kind: 'update-observation',
+      target: { type: 'update-observation', updateId: value.reference.id },
+      plainText: update.observation ?? '',
+      richText: update.observationRichText,
+      revision: update.observationRevision,
+      writeGuide: update.observationWriteGuide
+    }
+  }
+  if (value.reference.type === 'note') {
+    const context = record(withNoteWriteGuide(database.queries.getNote(
+      value.reference.id,
+      access
+    )))
+    const note = record(context?.note)
+    if (!note || !Number.isSafeInteger(note.revision) || !('richText' in note)) return null
+    return {
+      kind: 'note-content',
+      target: { type: 'note-content', noteId: value.reference.id },
+      plainText: note.content ?? '',
+      richText: note.richText,
+      revision: note.revision,
+      writeGuide: context?.writeGuide
+    }
+  }
+  return null
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -731,11 +777,23 @@ function richTextInputErrorResult(error: RichTextToolInputError): {
   structuredContent: Record<string, unknown>
 } {
   const example = plainRichTextDocument('Write rich text here.')
+  const pointer = error.validationIssue
+    ? `/richText${error.validationIssue.pointer === '/'
+        ? ''
+        : error.validationIssue.pointer}`
+    : '/richText'
   const structuredContent = {
     error: {
       code: error.code,
       tool: error.tool,
       field: 'richText',
+      pointer,
+      ...(error.validationIssue
+        ? {
+            received: error.validationIssue.received,
+            correction: error.validationIssue.correction
+          }
+        : {}),
       message: error.message
     },
     recovery: {
@@ -743,10 +801,15 @@ function richTextInputErrorResult(error: RichTextToolInputError): {
       supportedMarks: ONMOVE_RICH_TEXT_MARKS,
       acceptedMarkAliases: { 'highlight-yellow': 'highlight' },
       instruction:
-        'Send the complete version=1 document under richText. marks is an array using bold, ' +
-        'italic, underline, strikethrough, or highlight. highlight is the yellow highlighter; ' +
-        'highlight-yellow is accepted and canonicalized to highlight.',
-      example: { richText: example }
+        error.validationIssue
+          ? `Change the node at ${pointer} to the supplied correction before retrying. ` +
+            'Do not resend the unchanged payload.'
+          : 'Send the complete version=1 document under richText. marks is an array using bold, ' +
+            'italic, underline, strikethrough, or highlight. highlight is the yellow highlighter; ' +
+            'highlight-yellow is accepted and canonicalized to highlight.',
+      example: error.validationIssue
+        ? { pointer, value: error.validationIssue.correction }
+        : { richText: example }
     },
     diagnostics: diagnosticsScope()
   }
@@ -1226,10 +1289,17 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Use onmove.search for literal information that may appear anywhere in titles, Updates, Notes, Todos, Subjects, or other indexed text. Search is global by default: never assume the current UI Focus is applied. For a hierarchy-shaped request such as "do X for Person Y\'s 1:1 in Team", use onmove.resolve_target with Thread, Commitment, and Subject selectors, then follow its recommendedTodoRequest or writeGuide.createTodo. Use onmove.resolve_note to read a directly owned Note by hierarchy titles in one call. Each search result includes hierarchy IDs; use hierarchy.thread.id with onmove.get_thread, not the ID of a matching Update or Note. Prefer onmove.patch_note_text for localized Note edits and onmove.patch_rich_text for localized Focus-description or Update-observation edits; use their full-update counterparts only for structural edits. Rich-text writes use the editor-neutral contract only under richText. Use highlight for the yellow highlighter; highlight-yellow is accepted as a mark alias. Before other mutations, inspect the matching writeGuide: Open parents must be unscoped, while scoped parents require a listed Subject or an explicitly shared Todo. Inspect diagnostics and warnings on every response. Sensitive content and mutations are controlled only in OnMove Settings.'
+        'Use onmove.search for literal information that may appear anywhere in titles, Updates, Notes, Todos, Subjects, or other indexed text. Search is global by default: never assume the current UI Focus is applied. For a text mutation, set search includeRichText=true so Focus, Update, and Note hits return complete documents, revisions, targets, and write guides without follow-up getters. For a hierarchy-shaped request such as "do X for Person Y\'s 1:1 in Team", use onmove.resolve_target with Thread, Commitment, and Subject selectors, then follow its recommendedTodoRequest or writeGuide.createTodo. Use onmove.resolve_note to read a directly owned Note by hierarchy titles in one call. Each search result includes hierarchy IDs; use hierarchy.thread.id with onmove.get_thread, not the ID of a matching Update or Note. Prefer onmove.patch_note_text for localized Note edits and onmove.patch_rich_text for localized Focus-description or Update-observation edits; use their full-update counterparts only for structural edits. Rich-text writes use the editor-neutral contract only under richText. Omit color when no foreground color is intended; null is also accepted. Use highlight for the yellow highlighter; highlight-yellow is accepted as a mark alias. Before other mutations, inspect the matching writeGuide: Open parents must be unscoped, while scoped parents require a listed Subject or an explicitly shared Todo. Inspect diagnostics and warnings on every response. Sensitive content and mutations are controlled only in OnMove Settings.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
+  const rejectedCalls = options.rejectedCallTracker ?? new RejectedCallTracker()
+  const rejected = (
+    tool: string,
+    input: unknown,
+    code: string,
+    response: McpErrorResult
+  ): McpErrorResult => rejectedCalls.rejected(tool, input, code, response)
   const mutationResult = <T>(operation: () => T): ReturnType<typeof result> => {
     const value = operation()
     options.onMutation?.()
@@ -1403,7 +1473,7 @@ export function createOnMoveMcpServer(
     'onmove.search',
     {
       title: 'Search OnMove',
-      description: 'Search literal words globally across visible Focus and Thread hierarchies, including titles, rich text, Updates, Todos, Notes, Subjects, and Routine templates. Omitted or null scope is always global and never inherits the current UI. Use scope.mode=current only when the user explicitly wants the live UI context. Results include self-describing owning hierarchy IDs, applied-scope diagnostics, and retry warnings.',
+      description: 'Search literal words globally across visible Focus and Thread hierarchies, including titles, rich text, Updates, Todos, Notes, Subjects, and Routine templates. Omitted or null scope is always global and never inherits the current UI. Set includeRichText=true to return complete edit-ready Focus descriptions, Update observations, and Notes with revisions and write guides in this same call.',
       inputSchema: z.object({
         text: z.string().min(1).describe(
           'Literal ordinary-language words to find anywhere in indexed OnMove content. For a unique token such as asdfasdf, pass that token directly.'
@@ -1412,17 +1482,27 @@ export function createOnMoveMcpServer(
         kinds: z.array(z.enum(SEARCH_ENTITY_TYPES)).optional().describe(
           'Optional entity-type filter. Omit to search every indexed kind: focus, thread, commitment, routine, update, todo, note, and subject.'
         ),
+        includeRichText: z.boolean().optional().describe(
+          'When true, each Focus, Update, or Note hit includes editableRichText with its full document, revision, self-describing target, and patch/full-write guides. Defaults to false.'
+        ),
         ...pageSchema
       }),
       annotations: { readOnlyHint: true }
     },
-    async ({ scope, ...input }) => {
+    async ({ scope, includeRichText, ...input }) => {
       const resolved = resolveSearchScope(
         scope,
         options.getCurrentUiContext?.() ?? EMPTY_UI_CONTEXT
       )
       const query = { ...input, ...resolved.query }
-      const items = database.queries.search(query, policy())
+      const access = policy()
+      const matches = database.queries.search(query, access)
+      const items = includeRichText === true
+        ? matches.map((match) => {
+            const editableRichText = searchableRichText(database, match, access)
+            return editableRichText ? { ...match, editableRichText } : match
+          })
+        : matches
       const appliedKinds = input.kinds?.length ? [...input.kinds] : 'all'
       const warnings = [...resolved.diagnostics.warnings]
       if (items.length === 0 && (
@@ -1651,7 +1731,9 @@ export function createOnMoveMcpServer(
         richText = normalizedRichTextToolInput('onmove.create_update', input, false)
       } catch (error) {
         if (!(error instanceof RichTextToolInputError)) throw error
-        return richTextInputErrorResult(error)
+        return rejected(
+          'onmove.create_update', input, error.code, richTextInputErrorResult(error)
+        )
       }
       const normalized: CreateUpdateToolInput = {
         parent: input.parent,
@@ -1833,13 +1915,21 @@ export function createOnMoveMcpServer(
         return result(readRichTextTarget(input.target))
       } catch (error) {
         if (error instanceof RichTextRevisionConflictError) {
-          return richTextRevisionConflictResult(error, input.target)
+          return rejected(
+            'onmove.patch_rich_text', input, 'rich_text_revision_conflict',
+            richTextRevisionConflictResult(error, input.target)
+          )
         }
         if (error instanceof RichTextDisappearedError) {
-          return richTextDisappearedResult(error, 'onmove.patch_rich_text', input.target, input)
+          return rejected(
+            'onmove.patch_rich_text', input, error.issue.code,
+            richTextDisappearedResult(error, 'onmove.patch_rich_text', input.target, input)
+          )
         }
         if (error instanceof OnMoveRichTextPatchError) {
-          return richTextPatchErrorResult(error, input)
+          return rejected(
+            'onmove.patch_rich_text', input, error.code, richTextPatchErrorResult(error, input)
+          )
         }
         throw error
       }
@@ -1850,7 +1940,7 @@ export function createOnMoveMcpServer(
     'onmove.update_rich_text',
     {
       title: 'Replace an OnMove rich-text field',
-      description: 'Replace a Focus description or Update observation with a complete editor-neutral rich-text document using optimistic concurrency. Prefer onmove.patch_rich_text for localized changes. Notes use onmove.update_note.',
+      description: 'Replace a Focus description or Update observation with a complete editor-neutral rich-text document using optimistic concurrency. Prefer onmove.search(includeRichText=true) followed by onmove.patch_rich_text for localized changes. Notes use onmove.update_note.',
       inputSchema: z.strictObject({
         target: richTextFieldTargetSchema,
         expectedRevision: z.number().int().nonnegative().describe(
@@ -1875,7 +1965,9 @@ export function createOnMoveMcpServer(
         ) as OnMoveRichTextDocument
       } catch (error) {
         if (!(error instanceof RichTextToolInputError)) throw error
-        return richTextInputErrorResult(error)
+        return rejected(
+          'onmove.update_rich_text', input, error.code, richTextInputErrorResult(error)
+        )
       }
       try {
         const document = database.commands.updateRichText({
@@ -1889,10 +1981,16 @@ export function createOnMoveMcpServer(
         return result(readRichTextTarget(input.target))
       } catch (error) {
         if (error instanceof RichTextRevisionConflictError) {
-          return richTextRevisionConflictResult(error, input.target)
+          return rejected(
+            'onmove.update_rich_text', input, 'rich_text_revision_conflict',
+            richTextRevisionConflictResult(error, input.target)
+          )
         }
         if (error instanceof RichTextDisappearedError) {
-          return richTextDisappearedResult(error, 'onmove.update_rich_text', input.target, input)
+          return rejected(
+            'onmove.update_rich_text', input, error.issue.code,
+            richTextDisappearedResult(error, 'onmove.update_rich_text', input.target, input)
+          )
         }
         throw error
       }
@@ -1944,12 +2042,22 @@ export function createOnMoveMcpServer(
         options.onMutation?.()
         return result(withNoteWriteGuide(found(database.queries.getNote(input.id, policy()))))
       } catch (error) {
-        if (error instanceof NoteRevisionConflictError) return noteRevisionConflictResult(error)
+        if (error instanceof NoteRevisionConflictError) {
+          return rejected(
+            'onmove.patch_note_text', input, 'note_revision_conflict',
+            noteRevisionConflictResult(error)
+          )
+        }
         if (error instanceof NoteTextDisappearedError) {
-          return noteTextDisappearedResult(error, 'onmove.patch_note_text', input)
+          return rejected(
+            'onmove.patch_note_text', input, error.issue.code,
+            noteTextDisappearedResult(error, 'onmove.patch_note_text', input)
+          )
         }
         if (error instanceof OnMoveRichTextPatchError) {
-          return noteTextPatchErrorResult(error, input)
+          return rejected(
+            'onmove.patch_note_text', input, error.code, noteTextPatchErrorResult(error, input)
+          )
         }
         throw error
       }
@@ -1960,7 +2068,7 @@ export function createOnMoveMcpServer(
     'onmove.update_note',
     {
       title: 'Update an OnMove note',
-      description: 'Replace one visible Note with a complete editor-neutral rich-text document using optimistic concurrency. Call onmove.get_note first, edit note.richText, and pass its current revision. The plain note.content projection is intentionally not writable, so formatting cannot be flattened accidentally.',
+      description: 'Replace one visible Note with a complete editor-neutral rich-text document using optimistic concurrency. Prefer onmove.search(includeRichText=true) followed by onmove.patch_note_text for localized changes; use get_note when its ID is already known. The plain note.content projection is intentionally not writable, so formatting cannot be flattened accidentally.',
       inputSchema: z.strictObject({
         id: idSchema.describe(
           'The Note\'s own positive ID from onmove.get_note, a Note search hit, or a parent context.'
@@ -1987,7 +2095,9 @@ export function createOnMoveMcpServer(
         ) as OnMoveRichTextDocument
       } catch (error) {
         if (!(error instanceof RichTextToolInputError)) throw error
-        return richTextInputErrorResult(error)
+        return rejected(
+          'onmove.update_note', input, error.code, richTextInputErrorResult(error)
+        )
       }
       try {
         const document = database.commands.updateNote(
@@ -2004,9 +2114,17 @@ export function createOnMoveMcpServer(
         options.onMutation?.()
         return result(withNoteWriteGuide(found(database.queries.getNote(input.id, policy()))))
       } catch (error) {
-        if (error instanceof NoteRevisionConflictError) return noteRevisionConflictResult(error)
+        if (error instanceof NoteRevisionConflictError) {
+          return rejected(
+            'onmove.update_note', input, 'note_revision_conflict',
+            noteRevisionConflictResult(error)
+          )
+        }
         if (error instanceof NoteTextDisappearedError) {
-          return noteTextDisappearedResult(error, 'onmove.update_note', input)
+          return rejected(
+            'onmove.update_note', input, error.issue.code,
+            noteTextDisappearedResult(error, 'onmove.update_note', input)
+          )
         }
         throw error
       }

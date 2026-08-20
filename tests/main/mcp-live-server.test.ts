@@ -126,6 +126,38 @@ describe('running-application MCP server', () => {
         revision: 1
       }))
 
+      const invalidArguments = {
+        id: note.id,
+        expectedRevision: note.revision + 2,
+        richText: {
+          version: 1,
+          blocks: [{
+            type: 'paragraph',
+            children: [{
+              type: 'link',
+              url: 'https://example.com',
+              children: [{ type: 'text', text: 'hey there', tag: true }]
+            }]
+          }]
+        }
+      }
+      let thirdRejected: Awaited<ReturnType<typeof client.callTool>> | null = null
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        thirdRejected = await client.callTool({
+          name: 'onmove.update_note',
+          arguments: invalidArguments
+        })
+      }
+      expect(thirdRejected?.structuredContent).toMatchObject({
+        error: { pointer: '/richText/blocks/0/children/0/children/0' },
+        recovery: {
+          duplicateInvalidCall: {
+            count: 3,
+            warning: expect.stringContaining('third identical rejected request')
+          }
+        }
+      })
+
       const rejected = await fetch(endpoint, {
         method: 'POST',
         headers: { origin: 'https://example.com' }

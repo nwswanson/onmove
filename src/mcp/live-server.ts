@@ -12,7 +12,7 @@ import type {
   UpdateMcpSettingsInput
 } from '../shared/contracts'
 import type { AppDatabase } from '../main/database'
-import { createOnMoveMcpServer } from './server'
+import { createOnMoveMcpServer, RejectedCallTracker } from './server'
 
 const LOOPBACK_HOST = '127.0.0.1'
 const EMPTY_UI_CONTEXT: McpUiContextSnapshot = { focusId: null, subjectId: null }
@@ -31,6 +31,7 @@ export class OnMoveMcpHttpServer {
   private httpServer: HttpServer | null = null
   private handler: McpHttpHandler | null = null
   private activePort: number | null = null
+  private rejectedCallTracker = new RejectedCallTracker()
 
   constructor(
     private readonly database: AppDatabase,
@@ -46,12 +47,14 @@ export class OnMoveMcpHttpServer {
   async start(port: number): Promise<string> {
     if (this.httpServer && this.activePort === port) return this.endpoint() as string
     await this.stop()
+    this.rejectedCallTracker = new RejectedCallTracker()
 
     const handler = createMcpHandler(
       () => createOnMoveMcpServer(this.database, {
         onMutation: this.onMutation,
         onRichTextMutation: this.onRichTextMutation,
-        getCurrentUiContext: this.getUiContext
+        getCurrentUiContext: this.getUiContext,
+        rejectedCallTracker: this.rejectedCallTracker
       }),
       {
         onerror: (error) => console.error('OnMove MCP protocol error:', error.message)
