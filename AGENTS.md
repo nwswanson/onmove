@@ -284,9 +284,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
   `Former scope updates` accordion at the bottom, closed by default. Exact Subject and unscoped
   panes never render that accordion. While current Subject cells exist, the receiver-owned
   creation dropdown lets All Subjects immediately create a blank Update for one chosen Subject and
-  keeps the resulting card editable in place. Selecting one Subject filters to its exact current
-  Scope/Subject cell and retains the ordinary Add Update action. The model hook, not `UpdateList`,
-  injects the exact cell during either creation path. In All Subjects, classify an Update as
+  keeps the resulting card editable in place. Selecting one Subject filters to that parent's
+  durable evidence for the canonical Subject across prior overlay Scope ids and retains the ordinary
+  Add Update action. The model hook, not `UpdateList`, injects the exact current cell during either
+  creation path. In All Subjects, classify an Update as
   `Former scope` only when its canonical Subject is not currently applicable; never compare raw
   Scope ids for this label because every customization creates a replacement overlay. Re-applying
   the Subject moves its evidence back into the main list and restores its current label without
@@ -298,7 +299,8 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - Give a selected Commitment the same operational Working Context tab contract. Open Commitments
   expose one Commitment-wide context and create unscoped Updates. Bounded Commitments expose All
   Subjects plus one tab per current exact Scope/Subject cell: All Subjects uses the choice-based
-  creation control, while a Subject tab uses ordinary immediate creation with that exact cell.
+  creation control, while a Subject tab shows that Commitment's durable canonical-Subject history
+  and uses ordinary immediate creation with the exact current cell.
   A bounded Commitment with zero effective Subjects has no valid current cell, so retain history
   but do not expose Update creation. Never fall back to an unscoped write for a bounded Commitment.
 - Show every Commitment row's derived state using the shared receiver-owned state-label contract.
@@ -632,6 +634,12 @@ foreground colors and do not rely on color alone to communicate selection or sta
   effective Subjects is operationally Thread-wide and may store direct unscoped Updates; this
   exception does not apply to Commitments. Preserve cell attribution when applications or membership
   later change.
+- Treat the canonical Subject as the durable evidence-cell identity within one Thread or Commitment.
+  Custom Subject edits create new immutable overlay Scope ids, so current cell state, review dates,
+  review contents, and Subject-tab Update lists must include that parent's retained scoped evidence
+  for the same Subject across prior overlay ids. Keep the original Scope id as exact write-time
+  attribution; never rewrite it during a Scope edit. A removed Subject's evidence is former until
+  that canonical Subject is applied again.
 - Never accept a Scope declaration when creating or mutating a Commitment. Changing a Thread Scope
   must immediately change the effective working context of all its Commitments regardless of
   whether those Commitments were created before or after the Thread Scope.

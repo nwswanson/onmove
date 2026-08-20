@@ -181,6 +181,28 @@ describe('Review model', () => {
     expect(database!.domain.reviews.getOverview('2026-01-09').items
       .filter(({ kind }) => kind === 'commitment').map(({ cell }) => cell?.subject.name))
       .toEqual([])
+
+    const widened = database!.domain.threadScopes.addSubject(
+      thread.id,
+      { name: 'Morgan' },
+      new Date('2026-01-09T12:00:00.000Z')
+    )
+    const morgan = widened.subjects.find(({ name }) => name === 'Morgan')!
+    expect(widened.scopeId).not.toBe(reports.id)
+    const afterScopeRevision = database!.domain.reviews.getOverview('2026-01-09')
+    expect(afterScopeRevision.items.filter(({ kind }) => kind === 'thread').map(({ cell }) =>
+      cell?.subject.name)).toEqual(['Morgan'])
+    expect(afterScopeRevision.items.filter(({ kind }) => kind === 'commitment').map(({ cell }) =>
+      cell?.subject.name)).toEqual(['Morgan'])
+
+    database!.domain.threadScopes.removeSubject(
+      thread.id,
+      morgan.id,
+      new Date('2026-01-09T13:00:00.000Z')
+    )
+    expect(database!.domain.reviews.getOverview('2026-01-09').items
+      .filter(({ kind }) => kind === 'thread' || kind === 'commitment'))
+      .toEqual([])
   })
 
   it('uses a Commitment review schedule independently of its parent and honors exclusion', () => {

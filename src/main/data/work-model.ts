@@ -854,16 +854,20 @@ export class ThreadRepository extends BaseRepository<ThreadRecord, ThreadModel> 
     const scopeId = application.effectiveScopeId
     const reviewFrequencyDays = Number(row.review_frequency_days)
     return this.scopes.effectiveSubjects(scopeId, asOf).map((subject) => {
+      // A custom Thread edit creates a new immutable overlay Scope. Existing
+      // evidence must retain the Scope id that was effective when it was
+      // recorded, while the canonical Subject remains the durable cell
+      // identity for this Thread across those overlay revisions.
       const latest = this.database.get<LatestUpdateRow>(
         `SELECT recorded_on, state FROM updates
-         WHERE thread_id = ? AND scope_id = ? AND subject_id = ? AND recorded_on <= ?
+         WHERE thread_id = ? AND scope_id IS NOT NULL AND subject_id = ? AND recorded_on <= ?
          ORDER BY recorded_on DESC, id DESC LIMIT 1`,
-        [row.id, scopeId, subject.id, asOf]
+        [row.id, subject.id, asOf]
       )
       const poke = this.database.get<{ reviewed_on: string }>(
-        `SELECT reviewed_on FROM thread_review_cell_pokes
-         WHERE thread_id = ? AND scope_id = ? AND subject_id = ? AND reviewed_on <= ?`,
-        [row.id, scopeId, subject.id, asOf]
+        `SELECT MAX(reviewed_on) AS reviewed_on FROM thread_review_cell_pokes
+         WHERE thread_id = ? AND subject_id = ? AND reviewed_on <= ?`,
+        [row.id, subject.id, asOf]
       )
       const lastReviewDate = latestDate(latest?.recorded_on ?? null, poke?.reviewed_on ?? null)
       const nextReviewDate = addDays(
@@ -1486,17 +1490,20 @@ export class CommitmentRepository extends BaseRepository<CommitmentRecord, Commi
     const cadenceDays = row.cadence_days === null ? null : Number(row.cadence_days)
     const reviewFrequencyDays = Number(row.review_frequency_days)
     return this.scopes.effectiveSubjects(scopeId, date).map((subject) => {
+      // As with Thread cells, a Commitment inherits successive parent Scope
+      // overlays. Preserve exact write attribution but materialize the
+      // Commitment's durable Subject history across those revisions.
       const latest = this.database.get<LatestUpdateRow>(
         `SELECT recorded_on, state FROM updates
-         WHERE commitment_id = ? AND scope_id = ? AND subject_id = ?
+         WHERE commitment_id = ? AND scope_id IS NOT NULL AND subject_id = ?
          ORDER BY recorded_on DESC, id DESC LIMIT 1`,
-        [id, scopeId, subject.id]
+        [id, subject.id]
       )
       const lastUpdateDate = latest?.recorded_on ?? null
       const poke = this.database.get<{ reviewed_on: string }>(
-        `SELECT reviewed_on FROM commitment_review_cell_pokes
-         WHERE commitment_id = ? AND scope_id = ? AND subject_id = ? AND reviewed_on <= ?`,
-        [id, scopeId, subject.id, date]
+        `SELECT MAX(reviewed_on) AS reviewed_on FROM commitment_review_cell_pokes
+         WHERE commitment_id = ? AND subject_id = ? AND reviewed_on <= ?`,
+        [id, subject.id, date]
       )
       const nextUpdateDate = cadenceDays === null
         ? null

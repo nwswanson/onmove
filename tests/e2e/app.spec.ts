@@ -2435,6 +2435,10 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(
       scopeDrawer.getByRole('button', { name: 'Remove Delivery Partners' })
     ).toBeVisible()
+    await window.getByRole('tab', { name: 'Work in Customer Operations' }).click()
+    await expect(window.getByRole('list', { name: 'Thread updates' }))
+      .toContainText('Customer scope review')
+    await window.getByRole('tab', { name: 'All subjects' }).click()
     await scopeDrawer
       .getByRole('button', { name: 'Remove Delivery Partners' })
       .click()
@@ -2471,6 +2475,10 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(customerUpdateCard).toBeVisible()
     await expect(customerUpdateCard).not.toContainText('Former scope')
     await expect(customerUpdateCard).toContainText('Customer Operations')
+    await window.getByRole('tab', { name: 'Work in Customer Operations' }).click()
+    await expect(window.getByRole('list', { name: 'Thread updates' }))
+      .toContainText('Customer scope review')
+    await window.getByRole('tab', { name: 'All subjects' }).click()
     const remainingFormerUpdatesToggle = window.getByRole('button', {
       name: /Former scope updates/
     })
@@ -2642,6 +2650,10 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await expect(reloadedCustomerUpdateCard).toBeVisible()
     await expect(reloadedCustomerUpdateCard).toContainText('Customer Operations')
     await expect(reloadedCustomerUpdateCard).not.toContainText('Former scope')
+    await window.getByRole('tab', { name: 'Work in Customer Operations' }).click()
+    await expect(window.getByRole('list', { name: 'Thread updates' }))
+      .toContainText('Customer scope review')
+    await window.getByRole('tab', { name: 'All subjects' }).click()
     await window.getByRole('button', { name: 'Toggle context drawer' }).click()
     const reloadedScopeDrawer = window.getByRole('complementary', {
       name: 'Thread context drawer'

@@ -27,7 +27,7 @@ describe('updatesForWorkingContext', () => {
     update(4, { scopeId: 11, subjectId: 20 })
   ]
 
-  it('separates unscoped, complete Scope history, and exact-cell evidence', () => {
+  it('separates unscoped, complete Scope history, and durable Subject-cell evidence', () => {
     expect(updatesForWorkingContext(updates, { mode: 'unscoped' }).map(({ id }) => id))
       .toEqual([1])
     expect(updatesForWorkingContext(updates, {
@@ -36,7 +36,7 @@ describe('updatesForWorkingContext', () => {
     expect(updatesForWorkingContext(updates, {
       mode: 'cell',
       cell: { scopeId: 10, subjectId: 20 }
-    }).map(({ id }) => id)).toEqual([2])
+    }).map(({ id }) => id)).toEqual([2, 4])
   })
 
   it('does not mutate the complete retained history', () => {

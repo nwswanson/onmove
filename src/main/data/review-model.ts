@@ -49,7 +49,9 @@ function updatesForCell(
 ): UpdateSnapshot[] {
   return updates.filter((update) => cell === null
     ? update.scope === null
-    : update.scope?.scopeId === cell.scopeId && update.scope.subjectId === cell.subjectId)
+    // Scope ids version applicability at write time. The canonical Subject is
+    // the durable review-cell identity across later custom Scope overlays.
+    : update.scope !== null && update.scope.subjectId === cell.subjectId)
 }
 
 function isUnreviewedToday(item: ReviewQueueItemSnapshot, asOf: string): boolean {

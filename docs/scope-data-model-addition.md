@@ -259,8 +259,9 @@ The Thread main screen contains only the operational **working context**:
   list and a closed-by-default Former scope updates accordion;
 - the All Subjects creation dropdown requires one current Subject and immediately creates a blank,
   exactly attributed Update that remains editable in the overview;
-- selecting a Subject filters direct Updates to the exact current `{scopeId, subjectId}` cell and
-  automatically applies that cell to every new Update; and
+- selecting a Subject filters direct Updates by the durable canonical Subject within that parent,
+  including retained evidence written under prior overlay Scope ids, while automatically applying
+  the exact current `{scopeId, subjectId}` cell to every new Update; and
 - removing the selected Subject returns the screen to All Subjects without deleting its retained
   evidence.
 
@@ -285,7 +286,7 @@ than internal Scope identity: a replacement overlay that still contains, or late
 Subject moves that evidence into the main list and shows its ordinary Subject label. While the
 Subject is absent, the card lives in a bottom accordion that is closed by default; unscoped evidence
 from an earlier Open application follows the same former-evidence path once the owner is bounded.
-The Update retains its immutable original Scope/Subject cell for audit history and current-matrix
-calculations. A fuller historical-evidence surface,
-relationship resolution, attention sets, Commitment series/occurrences, Moves, a Scope Board, and a
-Review workflow remain deferred.
+The Update retains its immutable original Scope/Subject cell for audit history. Current matrices
+materialize that parent's canonical-Subject history across those retained overlay ids. A fuller
+historical-evidence surface, relationship resolution, attention sets, Commitment
+series/occurrences, Moves, a Scope Board, and a Review workflow remain deferred.

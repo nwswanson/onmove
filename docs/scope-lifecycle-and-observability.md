@@ -265,6 +265,13 @@ the supplied date. It is a current-model projection with dated membership, not a
 time travel. To explain a former application, inspect application transitions and the retained
 Updates carrying exact cell attribution.
 
+Within one Thread or Commitment, the canonical Subject is the durable evidence-cell identity across
+successive custom overlay Scopes. The current matrix therefore derives a Subject's state, review
+date, and retained Update stream from that owner's evidence for the Subject across prior overlay
+ids. Each Update still retains the exact Scope id that was effective when it was written. Removing a
+Subject makes that evidence former; leaving it unchanged or applying the same canonical Subject
+again makes the existing history current without rewriting it.
+
 Commitment projections retain the established behavior that a future-dated Update immediately
 supplies current state and cadence. Thread review cells and Focus review dates ignore Updates after
 their projection date. Explicit aggregate review pokes are separate evidence: a Thread poke can
@@ -296,8 +303,8 @@ evidence entry are deliberately separate controls and locations:
    becomes bounded, remains editable in a bottom Former scope updates accordion that is closed by
    default. Its Add Update dropdown requires one current Subject choice, immediately creates that
    exact cell, and leaves the new card editable in the overview.
-3. A selected Subject displays and creates direct Thread Updates for its exact current
-   Scope/Subject pair.
+3. A selected Subject displays that Thread's durable evidence for the canonical Subject across
+   prior overlay Scope ids. Creation still writes the exact current Scope/Subject pair.
 4. The same Subject lens includes only child Commitment matrices that contain that canonical
    Subject, using the Commitment cell rather than its aggregate rollup.
 5. If the selected Subject leaves the Thread Scope, the lens returns to All Subjects. The prior

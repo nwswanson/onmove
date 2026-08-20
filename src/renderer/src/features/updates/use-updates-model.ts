@@ -36,8 +36,7 @@ export function updatesForWorkingContext(
   }
   if (context.mode === 'cell') {
     return updates.filter(({ scope }) =>
-      scope?.scopeId === context.cell.scopeId &&
-      scope.subjectId === context.cell.subjectId
+      scope !== null && scope.subjectId === context.cell.subjectId
     )
   }
   return [...updates]

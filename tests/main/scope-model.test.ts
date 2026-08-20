@@ -1122,7 +1122,11 @@ describe('Subject, Scope, and scoped Update models', () => {
     ])
     expect(restored.scopeId).not.toBe(firstCustomScopeId)
     expect(sprint.scopeMatrix('2026-08-08')).toEqual([
-      expect.objectContaining({ subjectId: customerOperationsId, state: 'none' }),
+      expect.objectContaining({
+        subjectId: customerOperationsId,
+        state: 'green',
+        lastReviewDate: '2026-08-08'
+      }),
       expect.objectContaining({ subjectId: platformTeamId, state: 'none' })
     ])
 
@@ -1217,6 +1221,132 @@ describe('Subject, Scope, and scoped Update models', () => {
       'explicit',
       'inherited'
     ])
+  })
+
+  it('retains every unchanged Subject evidence cell when a custom Thread Scope is widened or narrowed', () => {
+    const initial = new Date('2026-08-08T12:00:00.000Z')
+    const widenedAt = new Date('2026-08-09T12:00:00.000Z')
+    const narrowedAt = new Date('2026-08-10T12:00:00.000Z')
+    const focus = database!.domain.focuses.create({ title: 'Project Atlas' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Sprint execution',
+      reviewFrequencyDays: 7
+    }, initial)
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'tracking',
+      title: 'Improve ticket quality'
+    }, initial)
+
+    const firstScope = database!.domain.threadScopes.addSubject(
+      thread.id,
+      { name: 'Customer Operations' },
+      initial
+    )
+    const customerId = firstScope.subjects[0]!.id
+    const populatedScope = database!.domain.threadScopes.addSubject(
+      thread.id,
+      { name: 'Platform Team' },
+      initial
+    )
+    const platformId = populatedScope.subjects.find(({ name }) => name === 'Platform Team')!.id
+    const evidenceScopeId = populatedScope.scopeId!
+
+    const threadCustomerUpdate = database!.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2026-08-08',
+      observation: 'Customer delivery remains at risk',
+      state: 'red',
+      scope: { scopeId: evidenceScopeId, subjectId: customerId }
+    }, initial)
+    const threadPlatformUpdate = database!.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      date: '2026-08-08',
+      observation: 'Platform delivery is healthy',
+      state: 'green',
+      scope: { scopeId: evidenceScopeId, subjectId: platformId }
+    }, initial)
+    const commitmentCustomerUpdate = database!.domain.updates.create({
+      parent: { type: 'commitment', id: commitment.id },
+      date: '2026-08-08',
+      observation: 'Customer tickets need clearer acceptance criteria',
+      state: 'yellow',
+      scope: { scopeId: evidenceScopeId, subjectId: customerId }
+    }, initial)
+    const commitmentPlatformUpdate = database!.domain.updates.create({
+      parent: { type: 'commitment', id: commitment.id },
+      date: '2026-08-08',
+      observation: 'Platform tickets are ready',
+      state: 'green',
+      scope: { scopeId: evidenceScopeId, subjectId: platformId }
+    }, initial)
+
+    const widened = database!.domain.threadScopes.addSubject(
+      thread.id,
+      { name: 'Delivery Partners' },
+      widenedAt
+    )
+    const deliveryPartnersId = widened.subjects
+      .find(({ name }) => name === 'Delivery Partners')!.id
+    expect(widened.scopeId).not.toBe(evidenceScopeId)
+    expect(thread.scopeMatrix('2026-08-09')).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        subjectId: customerId,
+        state: 'red',
+        lastReviewDate: '2026-08-08'
+      }),
+      expect.objectContaining({
+        subjectId: platformId,
+        state: 'green',
+        lastReviewDate: '2026-08-08'
+      })
+    ]))
+    expect(commitment.scopeMatrix('2026-08-09')).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        subjectId: customerId,
+        state: 'yellow',
+        lastUpdateDate: '2026-08-08'
+      }),
+      expect.objectContaining({
+        subjectId: platformId,
+        state: 'green',
+        lastUpdateDate: '2026-08-08'
+      })
+    ]))
+
+    const narrowed = database!.domain.threadScopes.removeSubject(
+      thread.id,
+      deliveryPartnersId,
+      narrowedAt
+    )
+    expect(narrowed.scopeId).not.toBe(widened.scopeId)
+    expect(thread.scopeMatrix('2026-08-10')).toEqual([
+      expect.objectContaining({ subjectId: customerId, state: 'red' }),
+      expect.objectContaining({ subjectId: platformId, state: 'green' })
+    ])
+    expect(commitment.scopeMatrix('2026-08-10')).toEqual([
+      expect.objectContaining({ subjectId: customerId, state: 'yellow' }),
+      expect.objectContaining({ subjectId: platformId, state: 'green' })
+    ])
+
+    // Scope edits must not rewrite or delete historical attribution. These
+    // pre-fix rows are rescued at read time through their canonical Subject.
+    expect(database!.domain.updates.listForThread(thread.id)).toMatchObject([
+      { id: threadCustomerUpdate.id, scope: { scopeId: evidenceScopeId, subjectId: customerId } },
+      { id: threadPlatformUpdate.id, scope: { scopeId: evidenceScopeId, subjectId: platformId } }
+    ])
+    expect(database!.domain.updates.listForCommitment(commitment.id)).toMatchObject([
+      {
+        id: commitmentCustomerUpdate.id,
+        scope: { scopeId: evidenceScopeId, subjectId: customerId }
+      },
+      {
+        id: commitmentPlatformUpdate.id,
+        scope: { scopeId: evidenceScopeId, subjectId: platformId }
+      }
+    ])
+    expect(database!.domain.archivedUpdates.list()).toEqual([])
   })
 
   it('applies a later custom Thread Scope to both existing Commitments', () => {

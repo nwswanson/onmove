@@ -578,7 +578,11 @@ describe('Thread, Commitment, and Update models', () => {
       subjects: [{ id: subject.id, name: 'Platform Team' }]
     })
     expect(commitment.snapshot().parent).toEqual({ type: 'thread', id: target.id })
-    expect(commitment.scopeMatrix()).toMatchObject([{ subjectId: subject.id, state: 'none' }])
+    expect(commitment.scopeMatrix()).toMatchObject([{
+      subjectId: subject.id,
+      state: 'red',
+      lastUpdateDate: '2026-08-10'
+    }])
     expect(database!.domain.updates.listForCommitment(commitment.id)).toMatchObject([
       { id: update.id, scope: update.scope, observation: '', state: 'red' }
     ])
