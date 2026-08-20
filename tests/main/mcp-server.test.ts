@@ -127,6 +127,9 @@ describe('OnMove MCP protocol adapter', () => {
     const searchSchema = JSON.stringify(search.inputSchema)
     const threadSchema = JSON.stringify(getThread.inputSchema)
     const updateSchema = JSON.stringify(createUpdate.inputSchema)
+    const resolveTargetSchema = resolveTarget.inputSchema as {
+      properties?: Record<string, unknown>
+    }
 
     expect(searchSchema).toContain('current OnMove UI Focus and Subject selection')
     expect(searchSchema).toContain('Null or omitted means mode=all')
@@ -153,9 +156,18 @@ describe('OnMove MCP protocol adapter', () => {
     expect(JSON.stringify(resolveTarget.inputSchema)).toContain(
       'Provide either id or title, not both'
     )
-    expect(JSON.stringify(resolveTarget.inputSchema)).toContain(
-      'Provide either id or name, not both'
-    )
+    expect(resolveTargetSchema.properties?.subject).toMatchObject({
+      oneOf: [
+        expect.objectContaining({
+          required: ['id'],
+          additionalProperties: false
+        }),
+        expect.objectContaining({
+          required: ['name'],
+          additionalProperties: false
+        })
+      ]
+    })
     expect(createUpdate.description).toContain('Open parents require unscoped attribution')
     expect(updateSchema).toContain('writeGuide.createUpdate.allowedSubjects')
     expect(updateSchema).toContain('Team management')

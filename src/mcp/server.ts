@@ -2107,20 +2107,18 @@ export function createOnMoveMcpServer(
   }).describe(
     `Choose exactly one ${entity} selector form: {id: positiveInteger} OR {title: exactName}.`
   )
-  const subjectSelectorSchema = z.strictObject({
-    id: idSchema.optional().describe(
-      'Optional canonical Subject ID from Scope data or a search result. ' +
-      'Provide either id or name, not both.'
-    ),
-    name: z.string().min(1).optional().describe(
-      'Optional exact Subject name, matched case-insensitively. Example: Person Y. ' +
-      'Provide either id or name, not both.'
-    )
-  }).refine(({ id, name }) => id !== undefined || name !== undefined, {
-    message: 'Subject selector requires id or name'
-  }).refine(({ id, name }) => id === undefined || name === undefined, {
-    message: 'Subject selector conflict: provide either id or name, not both'
-  }).describe(
+  const subjectSelectorSchema = z.xor([
+    z.strictObject({
+      id: idSchema.describe(
+        'The canonical Subject ID from Scope data, namedSubjectDiscovery, or a prior result.'
+      )
+    }),
+    z.strictObject({
+      name: z.string().min(1).describe(
+        'The exact Subject name, matched case-insensitively. Example: Person Y.'
+      )
+    })
+  ], 'Subject selector conflict: provide either id or name, not both').describe(
     'Choose exactly one canonical Subject selector form: {id: positiveInteger} OR {name: exactName}.'
   )
   server.registerTool(

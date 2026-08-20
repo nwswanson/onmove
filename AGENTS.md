@@ -818,7 +818,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
   Subject in the target's effective Scope—and return a directly usable recommended write request.
   Match names exactly and case-insensitively so punctuation-bearing names such as `1:1` are not
   damaged by FTS tokenization. Return candidates for duplicates and never guess through ambiguity.
-  Every name/ID selector accepts exactly one representation: ID or title/name. Reject a payload
+  Every name/ID selector accepts exactly one representation: ID or title/name. Advertise Subject
+  selectors as an actual JSON Schema `oneOf` with one strict `{id}` branch and one strict `{name}`
+  branch; optional sibling properties plus runtime refinements are not an adequate tool contract.
+  Reject a payload
   containing both with an explicit selector-conflict error, even if they happen to agree, so a
   stale name cannot be silently paired with a different ID. Exact Thread resolution remains the
   authority; when shorthand such as “my Xs” does not exactly match `Foobar / Xs!`, return bounded,
