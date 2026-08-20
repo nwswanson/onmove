@@ -45,6 +45,36 @@ async function openContextualItemMenu(
   return window.getByRole('menu', { name: `${menuItemLabel} actions` })
 }
 
+test('quits completely after one native quit request', async () => {
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-single-quit-e2e-'))
+  let application: ElectronApplication | undefined
+
+  try {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    await application.firstWindow()
+    const applicationProcess = application.process()
+    const exited = new Promise<boolean>((resolveExit) => {
+      const timeout = setTimeout(() => resolveExit(false), 3_000)
+      applicationProcess.once('exit', () => {
+        clearTimeout(timeout)
+        resolveExit(true)
+      })
+    })
+
+    await application.evaluate(({ app }) => app.quit())
+    expect(await exited).toBe(true)
+    application = undefined
+  } finally {
+    await application?.close().catch(() => undefined)
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
 test('badges actionable navigation and decrements Review after persistence', async () => {
   const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-navigation-badges-e2e-'))
   const databasePath = join(userDataDirectory, 'onmove.sqlite3')

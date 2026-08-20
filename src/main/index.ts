@@ -37,6 +37,7 @@ const MAIN_WINDOW_MIN_HEIGHT = 600
 const WINDOW_SIZE_SAVE_DELAY_MS = 150
 let pendingMainWindowSize: { width: number; height: number } | undefined
 let windowSizeSaveTimer: NodeJS.Timeout | undefined
+let shutdownInProgress = false
 
 function flushMainWindowSize(): void {
   if (windowSizeSaveTimer) clearTimeout(windowSizeSaveTimer)
@@ -85,7 +86,10 @@ function persistMainWindowResize(window: BrowserWindow): void {
   })
 }
 
-function createWindow(richTextTarget?: RichTextDocumentReference): BrowserWindow {
+function createWindow(richTextTarget?: RichTextDocumentReference): BrowserWindow | null {
+  // A cancelled before-quit event keeps Electron alive while async services
+  // close. Never create a renderer against IPC/database state being torn down.
+  if (shutdownInProgress) return null
   const initialSize = richTextTarget
     ? { width: 820, height: 720 }
     : initialMainWindowSize()
@@ -369,6 +373,7 @@ app.whenReady().then(async () => {
   createWindow()
 
   app.on('activate', () => {
+    if (shutdownInProgress) return
     const hasMainWindow = BrowserWindow.getAllWindows().some(
       (window) => !richTextWindowTargets.has(window.webContents.id)
     )
@@ -380,7 +385,6 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-let shutdownInProgress = false
 app.on('before-quit', (event) => {
   if (shutdownInProgress) return
   event.preventDefault()
@@ -393,9 +397,20 @@ app.on('before-quit', (event) => {
 
   const runtime = mcpRuntime
   mcpRuntime = undefined
-  void (runtime?.close() ?? Promise.resolve()).finally(() => {
-    database?.close()
+  void (async () => {
+    try {
+      await runtime?.close()
+    } catch (error) {
+      console.error('OnMove MCP server could not be closed cleanly:', error)
+    }
+    try {
+      database?.close()
+    } catch (error) {
+      console.error('OnMove database could not be closed cleanly:', error)
+    }
     database = undefined
-    app.quit()
-  })
+    // The original app.quit() was cancelled above. app.exit() completes that
+    // same shutdown request without entering a second, unreliable quit cycle.
+    app.exit(0)
+  })()
 })
