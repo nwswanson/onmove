@@ -776,6 +776,23 @@ foreground colors and do not rely on color alone to communicate selection or sta
   must reject a populated Note becoming only whitespace, line breaks, or empty structure as
   `NOTE_TEXT_DISAPPEARED`; only an explicit `clear=true` may authorize and canonicalize an
   intentional clear.
+- Apply that semantic contract to every independently revisioned rich-text field exposed through
+  MCP. Focus descriptions and Update observations use `onmove.patch_rich_text` for localized edits
+  and `onmove.update_rich_text` only for structural replacement. Their `target` must remain a strict
+  discriminated object (`focus-description` with `focusId`, or `update-observation` with
+  `updateId`) so IDs cannot be silently reinterpreted. Notes retain their Note-specific tools;
+  never add overlapping aliases for the same field.
+- Return edit-ready state at the first useful read boundary. `get_focus(includeRichText=true)` must
+  include the Focus description document, revision, and write guide as well as expanded Notes;
+  `get_update` must return an Update's hierarchy, full observation document, revision, and guide.
+  Thread/Commitment Update arrays and `create_update` results must also carry the observation
+  revision and guide so a known Update can be patched without another exploratory call.
+- Protect Focus descriptions and Update observations with the same optimistic concurrency,
+  formatting preservation, accidental-empty guard, metadata-only audit, sensitivity policy, and
+  live rich-text broadcast as Notes. Map semantic patch failures to field-neutral
+  `RICH_TEXT_*` recovery codes and return the exact `get_focus(includeRichText=true)` or
+  `get_update` request needed to recover. Routine Run-item notes remain governed by attestation
+  finalization and are not generic MCP rich-text mutation targets.
 - Let callers avoid discovery call explosions. `onmove.get_focus` must optionally return directly
   owned Notes with complete rich text and write guides through `includeRichText=true`.
   `onmove.resolve_note` must resolve exact Focus → optional Thread → optional Commitment → Note
@@ -797,11 +814,11 @@ foreground colors and do not rely on color alone to communicate selection or sta
   handler can add recovery metadata. In particular, preserve regression coverage for mixed marks
   such as `marks: ["italic", "highlight-yellow"]`, unsupported marks, unsafe links, missing
   `richText`, and the rejected root-level `document` field. Rejected input must not mutate SQLite.
-- A Note mutation is a revision-guarded operation. Require the revision returned by `get_note`,
-  `resolve_note`, or an expanded Focus read, reject stale revisions without writing, and tell the
-  agent to re-read, reconcile, and retry. Do not invent a merge. A blank Update remains a valid
-  explicit record, so omitting optional `richText` from `onmove.create_update` must not be confused
-  with a malformed Note replacement.
+- Every existing rich-text mutation is revision guarded. Require the revision returned by its read
+  or write guide, reject stale revisions without writing, and tell the agent to re-read, reconcile,
+  and retry. Do not invent a merge. A blank Update remains a valid explicit record, so omitting
+  optional `richText` from `onmove.create_update` must not be confused with a malformed replacement
+  of an existing rich-text field.
 - Keep mutations narrow, typed, auditable, and opt-in. Route them only through
   `OnMoveCommandService`; never expose generic model updates, arbitrary fields, SQL, delete, import,
   move, archive clearing, or lifecycle transitions without a separate product and confirmation

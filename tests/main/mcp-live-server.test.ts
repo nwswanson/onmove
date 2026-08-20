@@ -40,6 +40,10 @@ describe('running-application MCP server', () => {
       title: 'Live MCP',
       reviewFrequencyDays: 7
     }).snapshot()
+    const update = database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      observation: 'Live Update observation'
+    }).toSnapshot()
     database.mcpSettings.update({ allowMutations: true })
     const changed = vi.fn()
     const richTextChanged = vi.fn()
@@ -49,7 +53,7 @@ describe('running-application MCP server', () => {
 
     try {
       await client.connect(new StreamableHTTPClientTransport(new URL(endpoint)))
-      expect((await client.listTools()).tools).toHaveLength(21)
+      expect((await client.listTools()).tools).toHaveLength(24)
       const created = await client.callTool({
         name: 'onmove.create_todo',
         arguments: { parent: { type: 'thread', id: thread.id }, name: 'Same process Todo' }
@@ -101,6 +105,25 @@ describe('running-application MCP server', () => {
         reference: { type: 'note', id: note.id, field: 'content' },
         value: expect.stringContaining('Live Note wording'),
         revision: note.revision + 2
+      }))
+
+      changed.mockClear()
+      richTextChanged.mockClear()
+      const patchedUpdate = await client.callTool({
+        name: 'onmove.patch_rich_text',
+        arguments: {
+          target: { type: 'update-observation', updateId: update.id },
+          expectedRevision: 0,
+          findText: 'Live Update',
+          replaceText: 'Fresh evidence'
+        }
+      })
+      expect(patchedUpdate.isError).not.toBe(true)
+      expect(changed).toHaveBeenCalledOnce()
+      expect(richTextChanged).toHaveBeenCalledWith(expect.objectContaining({
+        reference: { type: 'update', id: update.id, field: 'observation' },
+        value: expect.stringContaining('Fresh evidence observation'),
+        revision: 1
       }))
 
       const rejected = await fetch(endpoint, {

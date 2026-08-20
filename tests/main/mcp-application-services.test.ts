@@ -8,6 +8,8 @@ import type { OnMoveAccessPolicy } from '../../src/main/application/access-polic
 import {
   NoteRevisionConflictError,
   NoteTextDisappearedError,
+  RichTextDisappearedError,
+  RichTextRevisionConflictError,
   ScopeTargetValidationError
 } from '../../src/main/application/services'
 import type { OnMoveRichTextDocument } from '../../src/shared/rich-text-document'
@@ -418,6 +420,12 @@ describe('OnMove MCP application services', () => {
         revision: focusNote.revision + 1,
         richText: richText('Focus-level evidence')
       })
+    expect(database.queries.getFocus(focusId, denied, { includeRichText: true })?.entity)
+      .toMatchObject({
+        description: 'Deliver a resilient operating model',
+        descriptionRichText: richText('Deliver a resilient operating model'),
+        descriptionRevision: 0
+      })
 
     const focusResolution = database.queries.resolveNote({
       focus: { title: 'project atlas' },
@@ -446,6 +454,112 @@ describe('OnMove MCP application services', () => {
         ]
       }]
     })
+  })
+
+  it('semantically edits Focus descriptions and Update observations with revision safety', () => {
+    const { focusId, threadId } = hierarchy()
+    const focusPatch = database.commands.patchRichText({
+      reference: { type: 'focus', id: focusId, field: 'description' },
+      expectedRevision: 0,
+      findText: 'resilient',
+      replaceText: 'durable',
+      addMarks: ['italic']
+    }, writable, 'rich-text-test')
+    expect(focusPatch).toMatchObject({
+      reference: { type: 'focus', id: focusId, field: 'description' },
+      revision: 1
+    })
+    expect(database.queries.getFocus(focusId, denied, { includeRichText: true })?.entity)
+      .toMatchObject({
+        description: 'Deliver a durable operating model',
+        descriptionRevision: 1,
+        descriptionRichText: {
+          blocks: [{
+            children: expect.arrayContaining([
+              expect.objectContaining({ text: 'durable', marks: ['italic'] })
+            ])
+          }]
+        }
+      })
+
+    const created = database.commands.createUpdate({
+      parent: { type: 'thread', id: threadId },
+      document: {
+        version: 1,
+        blocks: [{
+          type: 'paragraph',
+          children: [{ type: 'text', text: 'Customer risk is high', marks: ['bold'], color: 'red' }]
+        }]
+      }
+    }, writable)
+    expect(created.observationRevision).toBe(0)
+    const updatePatch = database.commands.patchRichText({
+      reference: { type: 'update', id: created.id, field: 'observation' },
+      expectedRevision: created.observationRevision,
+      findText: 'high',
+      replaceText: 'contained',
+      addMarks: ['italic']
+    }, writable)
+    expect(updatePatch.revision).toBe(1)
+    expect(database.queries.getUpdate(created.id, denied)).toMatchObject({
+      reference: { type: 'update', id: created.id },
+      contextPath: [
+        { type: 'focus', id: focusId, title: 'Project Atlas' },
+        { type: 'thread', id: threadId, title: 'Sprint execution' }
+      ],
+      update: {
+        id: created.id,
+        observation: 'Customer risk is contained',
+        observationRevision: 1,
+        observationRichText: {
+          blocks: [{
+            children: expect.arrayContaining([
+              expect.objectContaining({
+                text: 'contained',
+                marks: ['bold', 'italic'],
+                color: 'red'
+              })
+            ])
+          }]
+        }
+      }
+    })
+
+    expect(() => database.commands.updateRichText({
+      reference: { type: 'update', id: created.id, field: 'observation' },
+      expectedRevision: 0,
+      document: richText('Stale replacement')
+    }, writable)).toThrow(RichTextRevisionConflictError)
+
+    const structureOnly: OnMoveRichTextDocument = {
+      version: 1,
+      blocks: [{ type: 'paragraph', children: [{ type: 'line-break' }] }]
+    }
+    expect(() => database.commands.updateRichText({
+      reference: { type: 'focus', id: focusId, field: 'description' },
+      expectedRevision: focusPatch.revision,
+      document: structureOnly
+    }, writable)).toThrow(RichTextDisappearedError)
+    const cleared = database.commands.updateRichText({
+      reference: { type: 'focus', id: focusId, field: 'description' },
+      expectedRevision: focusPatch.revision,
+      document: structureOnly,
+      clear: true
+    }, writable)
+    expect(cleared).toMatchObject({ value: '', revision: 2 })
+
+    const raw = new DatabaseSync(databasePath, { readOnly: true })
+    const audit = raw.prepare(
+      `SELECT tool_name, entity_type, entity_id FROM mcp_mutation_audit
+       WHERE tool_name IN ('onmove.patch_rich_text', 'onmove.update_rich_text')
+       ORDER BY id`
+    ).all()
+    raw.close()
+    expect(audit).toEqual([
+      { tool_name: 'onmove.patch_rich_text', entity_type: 'focus', entity_id: focusId },
+      { tool_name: 'onmove.patch_rich_text', entity_type: 'update', entity_id: created.id },
+      { tool_name: 'onmove.update_rich_text', entity_type: 'focus', entity_id: focusId }
+    ])
   })
 
   it('patches Note text semantically and blocks accidental text disappearance', () => {

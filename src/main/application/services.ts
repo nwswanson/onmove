@@ -5,6 +5,7 @@ import type {
   HealthState,
   NoteParent,
   NoteSnapshot,
+  RichTextDocumentReference,
   RichTextDocumentSnapshot,
   ReviewOverviewSnapshot,
   TagSummarySnapshot,
@@ -84,6 +85,16 @@ export interface CreateApplicationUpdate {
 export interface ApplicationUpdateSnapshot extends UpdateSnapshot {
   /** Lossless editor-neutral form of the plain observation projection. */
   observationRichText: OnMoveRichTextDocument
+  /** Optimistic-concurrency token for editing the observation. */
+  observationRevision: number
+}
+
+export interface ApplicationUpdateContext {
+  reference: { type: 'update'; id: number }
+  uri: string
+  contextPath: Array<{ type: 'focus' | 'thread' | 'commitment'; id: number; title: string }>
+  effectiveSensitive: boolean
+  update: ApplicationUpdateSnapshot
 }
 
 export interface CreateApplicationTodo {
@@ -118,6 +129,30 @@ export interface PatchApplicationNoteText {
   addMarks?: OnMoveRichTextMark[]
   removeMarks?: OnMoveRichTextMark[]
   /** Explicit acknowledgement that an existing non-empty Note may become empty. */
+  clear?: boolean
+}
+
+export type ApplicationRichTextReference =
+  | { type: 'focus'; id: number; field: 'description' }
+  | { type: 'update'; id: number; field: 'observation' }
+
+export interface UpdateApplicationRichText {
+  reference: ApplicationRichTextReference
+  expectedRevision: number
+  document: OnMoveRichTextDocument
+  /** Explicit acknowledgement that existing readable text may become empty. */
+  clear?: boolean
+}
+
+export interface PatchApplicationRichText {
+  reference: ApplicationRichTextReference
+  expectedRevision: number
+  findText: string
+  replaceText?: string
+  occurrence?: number
+  addMarks?: OnMoveRichTextMark[]
+  removeMarks?: OnMoveRichTextMark[]
+  /** Explicit acknowledgement that existing readable text may become empty. */
   clear?: boolean
 }
 
@@ -231,6 +266,34 @@ export class NoteTextDisappearedError extends ModelValidationError {
   }
 }
 
+export interface RichTextRevisionConflictIssue {
+  reference: ApplicationRichTextReference
+  expectedRevision: number
+  currentRevision: number
+}
+
+/** A recoverable optimistic-concurrency failure for a non-Note rich-text field. */
+export class RichTextRevisionConflictError extends ModelValidationError {
+  constructor(message: string, readonly issue: RichTextRevisionConflictIssue) {
+    super(message)
+    this.name = 'RichTextRevisionConflictError'
+  }
+}
+
+export interface RichTextDisappearedIssue {
+  code: 'RICH_TEXT_DISAPPEARED'
+  reference: ApplicationRichTextReference
+  previousRevision: number
+}
+
+/** Protects a populated rich-text field from an accidental structure-only replacement. */
+export class RichTextDisappearedError extends ModelValidationError {
+  constructor(message: string, readonly issue: RichTextDisappearedIssue) {
+    super(message)
+    this.name = 'RichTextDisappearedError'
+  }
+}
+
 interface AuditInput {
   toolName: string
   entityType: string
@@ -280,10 +343,14 @@ function trackingCommitment(record: { type: string }): boolean {
   return record.type === 'tracking'
 }
 
-function updateProjection(update: UpdateSnapshot): ApplicationUpdateSnapshot {
+function updateProjection(
+  update: UpdateSnapshot,
+  document: RichTextDocumentSnapshot
+): ApplicationUpdateSnapshot {
   return {
     ...plainProjection(update) as UpdateSnapshot,
-    observationRichText: onMoveRichTextDocumentFromStored(update.observation)
+    observationRichText: onMoveRichTextDocumentFromStored(document.value),
+    observationRevision: document.revision
   }
 }
 
@@ -413,12 +480,23 @@ export class OnMoveQueryService {
       subjects: scope.subjects.filter((subject) =>
         this.sensitivity.canRead('subject', subject.id, access))
     }
+    const description = options.includeRichText === true
+      ? this.domain.richTextDocuments.get({ type: 'focus', id, field: 'description' })
+      : null
     return {
       reference: { type: 'focus', id },
       uri: uri({ type: 'focus', id }),
       contextPath: [{ type: 'focus', id, title: focus.title }],
       effectiveSensitive: Boolean(this.sensitivity.isSensitive('focus', id)),
-      entity: plainProjection(focus),
+      entity: {
+        ...plainProjection(focus) as FocusSnapshot,
+        ...(description
+          ? {
+              descriptionRichText: onMoveRichTextDocumentFromStored(description.value),
+              descriptionRevision: description.revision
+            }
+          : {})
+      },
       scope: plainProjection(visibleScope),
       updates: [],
       todos: [],
@@ -497,6 +575,56 @@ export class OnMoveQueryService {
       commitments: [],
       routines: [],
       threads: []
+    }
+  }
+
+  getUpdate(id: number, access: OnMoveAccessPolicy): ApplicationUpdateContext | null {
+    assertPositiveId(id, 'update id')
+    const update = this.domain.updates.find(id)
+    if (!update || !this.sensitivity.canRead('update', id, access)) return null
+    const contextPath: ApplicationUpdateContext['contextPath'] = []
+    if (update.parent.type === 'focus') {
+      const focus = this.domain.focuses.find(update.parent.id)
+      if (!focus) return null
+      contextPath.push({ type: 'focus', id: focus.id, title: focus.title })
+    } else if (update.parent.type === 'thread') {
+      const thread = this.domain.threads.find(update.parent.id)
+      const focus = thread ? this.domain.focuses.find(thread.focusId) : null
+      if (!thread || !focus) return null
+      contextPath.push(
+        { type: 'focus', id: focus.id, title: focus.title },
+        { type: 'thread', id: thread.id, title: thread.title }
+      )
+    } else {
+      const commitment = this.domain.commitments.find(update.parent.id)
+      if (!commitment) return null
+      if (commitment.parent.type === 'focus') {
+        const focus = this.domain.focuses.find(commitment.parent.id)
+        if (!focus) return null
+        contextPath.push(
+          { type: 'focus', id: focus.id, title: focus.title },
+          { type: 'commitment', id: commitment.id, title: commitment.title }
+        )
+      } else {
+        const thread = this.domain.threads.find(commitment.parent.id)
+        const focus = thread ? this.domain.focuses.find(thread.focusId) : null
+        if (!thread || !focus) return null
+        contextPath.push(
+          { type: 'focus', id: focus.id, title: focus.title },
+          { type: 'thread', id: thread.id, title: thread.title },
+          { type: 'commitment', id: commitment.id, title: commitment.title }
+        )
+      }
+    }
+    const document = this.domain.richTextDocuments.get({
+      type: 'update', id, field: 'observation'
+    })
+    return {
+      reference: { type: 'update', id },
+      uri: `onmove://update/${id}`,
+      contextPath,
+      effectiveSensitive: Boolean(this.sensitivity.isSensitive('update', id)),
+      update: updateProjection(update, document)
     }
   }
 
@@ -826,7 +954,12 @@ export class OnMoveQueryService {
       ? this.domain.updates.listForThread(parent.id)
       : this.domain.updates.listForCommitment(parent.id)
     return updates.filter((update) => this.sensitivity.canRead('update', update.id, access))
-      .map(updateProjection)
+      .map((update) => updateProjection(
+        update,
+        this.domain.richTextDocuments.get({
+          type: 'update', id: update.id, field: 'observation'
+        })
+      ))
   }
 
   private visibleTodos(parent: TodoParent, access: OnMoveAccessPolicy): unknown[] {
@@ -900,7 +1033,9 @@ export class OnMoveCommandService {
         category: 'create', clientName,
         affectedSensitive: Boolean(this.sensitivity.isSensitive('update', created.id))
       })
-      return updateProjection(created)
+      return updateProjection(created, this.domain.richTextDocuments.get({
+        type: 'update', id: created.id, field: 'observation'
+      }))
     })
     return result
   }
@@ -958,6 +1093,120 @@ export class OnMoveCommandService {
         affectedSensitive: Boolean(this.sensitivity.isSensitive('todo', updated.id))
       })
       return updated
+    })
+  }
+
+  updateRichText(
+    input: UpdateApplicationRichText,
+    access: OnMoveAccessPolicy,
+    clientName?: string
+  ): RichTextDocumentSnapshot {
+    return this.writeApplicationRichTextDocument(
+      input,
+      access,
+      'onmove.update_rich_text',
+      clientName,
+      () => input.document
+    )
+  }
+
+  patchRichText(
+    input: PatchApplicationRichText,
+    access: OnMoveAccessPolicy,
+    clientName?: string
+  ): RichTextDocumentSnapshot {
+    return this.writeApplicationRichTextDocument(
+      input,
+      access,
+      'onmove.patch_rich_text',
+      clientName,
+      (current) => patchOnMoveRichTextDocument(current, input).document
+    )
+  }
+
+  private writeApplicationRichTextDocument(
+    input: {
+      reference: ApplicationRichTextReference
+      expectedRevision: number
+      clear?: boolean
+    },
+    access: OnMoveAccessPolicy,
+    toolName: 'onmove.update_rich_text' | 'onmove.patch_rich_text',
+    clientName: string | undefined,
+    nextDocument: (current: OnMoveRichTextDocument) => OnMoveRichTextDocument
+  ): RichTextDocumentSnapshot {
+    this.assertMutation(access)
+    const { reference } = input
+    assertPositiveId(reference.id, `${reference.type} id`)
+    const validReference =
+      (reference.type === 'focus' && reference.field === 'description') ||
+      (reference.type === 'update' && reference.field === 'observation')
+    if (!validReference) {
+      throw new ModelValidationError(
+        'rich-text target must be a Focus description or Update observation'
+      )
+    }
+    if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) {
+      throw new ModelValidationError('expected rich-text revision must be a non-negative integer')
+    }
+    if (!this.sensitivity.canRead(reference.type, reference.id, access)) {
+      throw new ModelNotFoundError(
+        reference.type === 'focus' ? 'Focus' : 'Update',
+        reference.id
+      )
+    }
+    return this.database.transaction(() => {
+      const current = this.domain.richTextDocuments.get(reference as RichTextDocumentReference)
+      if (current.revision !== input.expectedRevision) {
+        throw new RichTextRevisionConflictError(
+          `${reference.type === 'focus' ? 'Focus description' : 'Update observation'} ` +
+          `${reference.id} changed after revision ${input.expectedRevision}. The current ` +
+          `revision is ${current.revision}. Read it again before retrying.`,
+          {
+            reference: structuredClone(reference),
+            expectedRevision: input.expectedRevision,
+            currentRevision: current.revision
+          }
+        )
+      }
+      const currentDocument = onMoveRichTextDocumentFromStored(current.value)
+      const next = nextDocument(currentDocument)
+      let stored: string
+      try {
+        stored = onMoveRichTextDocumentToStored(next)
+      } catch (error) {
+        throw new ModelValidationError(
+          `${reference.type === 'focus' ? 'Focus description' : 'Update observation'} ` +
+          `rich-text document is invalid: ${error instanceof Error ? error.message : String(error)}`
+        )
+      }
+      const textDisappeared = richTextPlainText(current.value).trim().length > 0 &&
+        richTextPlainText(stored).trim().length === 0
+      if (textDisappeared) {
+        if (input.clear !== true) {
+          throw new RichTextDisappearedError(
+            `The ${reference.type === 'focus' ? 'Focus description' : 'Update observation'} ` +
+            `${reference.id} contains text, but this change would leave only empty structure or ` +
+            'line breaks. Retry with clear=true only when intentionally clearing it.',
+            {
+              code: 'RICH_TEXT_DISAPPEARED',
+              reference: structuredClone(reference),
+              previousRevision: current.revision
+            }
+          )
+        }
+        stored = ''
+      }
+      const document = this.domain.richTextDocuments.save(reference, stored)
+      this.audit.record({
+        toolName,
+        entityType: reference.type,
+        entityId: reference.id,
+        category: 'update',
+        clientName,
+        affectedSensitive: Boolean(this.sensitivity.isSensitive(reference.type, reference.id))
+      })
+      return document
     })
   }
 

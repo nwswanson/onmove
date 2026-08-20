@@ -91,8 +91,12 @@ returned editor-neutral `note.richText` only for structural document edits. The 
 `note.content` field is a read-only search/prose projection. Stale revisions and accidental
 text-erasing changes are rejected, and successful edits synchronize into open OnMove windows.
 `onmove.create_update` uses the same document shape for its optional rich-text observation. Both
-full-document write tools accept that structure only through the root-level `richText` field; there is no
-`document` compatibility alias.
+Focus descriptions and existing Update observations expose the same safety model: read a Focus with
+`includeRichText: true` or an Update with `onmove.get_update`, then follow the returned
+`descriptionWriteGuide` or `observationWriteGuide`. Use `onmove.patch_rich_text` for exact localized
+changes and `onmove.update_rich_text` only for structural replacement. Full-document tools accept
+the document only through the root-level `richText` field; there is no `document` compatibility
+alias.
 
 See [`docs/mcp-server.md`](docs/mcp-server.md) for the available tools, search behavior, and security
 boundary.

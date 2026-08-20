@@ -45,6 +45,10 @@ test('serves MCP from the running app and immediately refreshes its open windows
     reviewFrequencyDays: 7
   }).snapshot()
   const threadNote = seeded.domain.notes.list({ type: 'thread', id: thread.id })[0]
+  const threadUpdate = seeded.domain.updates.create({
+    parent: { type: 'thread', id: thread.id },
+    observation: 'Initial Update observation'
+  }).toSnapshot()
   const team = seeded.domain.threads.create({
     focusId: focus.id,
     title: 'Leadership Team',
@@ -85,6 +89,9 @@ test('serves MCP from the running app and immediately refreshes its open windows
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.resolve_target')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.patch_note_text')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.update_note')
+    expect(tools.tools.map(({ name }) => name)).toContain('onmove.get_update')
+    expect(tools.tools.map(({ name }) => name)).toContain('onmove.patch_rich_text')
+    expect(tools.tools.map(({ name }) => name)).toContain('onmove.update_rich_text')
 
     await window.evaluate((noteId) => {
       const testWindow = window as typeof window & {
@@ -171,6 +178,41 @@ test('serves MCP from the running app and immediately refreshes its open windows
         change.revision === revision
       )
     }, { noteId: threadNote.id, revision: threadNote.revision + 2 })).toBe(true)
+
+    await window.evaluate((updateId) => {
+      const testWindow = window as typeof window & {
+        __mcpUpdateChanges?: Array<{ id: number; value: string; revision: number }>
+      }
+      testWindow.__mcpUpdateChanges = []
+      window.onmove.richText.onDocumentChanged(({ document }) => {
+        if (document.reference.type !== 'update' || document.reference.id !== updateId) return
+        testWindow.__mcpUpdateChanges?.push({
+          id: document.reference.id,
+          value: document.value,
+          revision: document.revision
+        })
+      })
+    }, threadUpdate.id)
+    const patchedUpdate = await client.callTool({
+      name: 'onmove.patch_rich_text',
+      arguments: {
+        target: { type: 'update-observation', updateId: threadUpdate.id },
+        expectedRevision: 0,
+        findText: 'Initial Update',
+        replaceText: 'Live MCP Update'
+      }
+    })
+    expect(patchedUpdate.isError).not.toBe(true)
+    await expect.poll(() => window.evaluate(({ updateId }) => {
+      const testWindow = window as typeof window & {
+        __mcpUpdateChanges?: Array<{ id: number; value: string; revision: number }>
+      }
+      return (testWindow.__mcpUpdateChanges ?? []).some((change) =>
+        change.id === updateId &&
+        change.value.includes('Live MCP Update observation') &&
+        change.revision === 1
+      )
+    }, { updateId: threadUpdate.id })).toBe(true)
 
     const resolved = await client.callTool({
       name: 'onmove.resolve_target',
@@ -271,11 +313,11 @@ test('serves MCP from the running app and immediately refreshes its open windows
       arguments: { id: thread.id }
     })
     expect(updatedThread.structuredContent).toMatchObject({
-      updates: [expect.objectContaining({
+      updates: expect.arrayContaining([expect.objectContaining({
         observation: 'Live recovery evidence',
         observationRichText: richText('Live recovery evidence'),
         scope: null
-      })]
+      })])
     })
 
     const created = await client.callTool({

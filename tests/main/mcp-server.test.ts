@@ -48,16 +48,19 @@ describe('OnMove MCP protocol adapter', () => {
     expect(listed.tools.map(({ name }) => name)).toEqual(expect.arrayContaining([
       'onmove.list_focuses',
       'onmove.get_thread',
+      'onmove.get_update',
       'onmove.get_note',
       'onmove.resolve_note',
       'onmove.resolve_target',
       'onmove.search',
       'onmove.create_update',
+      'onmove.patch_rich_text',
+      'onmove.update_rich_text',
       'onmove.patch_note_text',
       'onmove.update_note',
       'onmove.poke_review'
     ]))
-    expect(listed.tools).toHaveLength(21)
+    expect(listed.tools).toHaveLength(24)
 
     const templates = await client.listResourceTemplates()
     expect(templates.resourceTemplates.map(({ uriTemplate }) => uriTemplate)).toEqual(
@@ -107,6 +110,8 @@ describe('OnMove MCP protocol adapter', () => {
     const resolveTarget = tools.find(({ name }) => name === 'onmove.resolve_target')!
     const createUpdate = tools.find(({ name }) => name === 'onmove.create_update')!
     const createTodo = tools.find(({ name }) => name === 'onmove.create_todo')!
+    const patchRichText = tools.find(({ name }) => name === 'onmove.patch_rich_text')!
+    const updateRichText = tools.find(({ name }) => name === 'onmove.update_rich_text')!
     const searchSchema = JSON.stringify(search.inputSchema)
     const threadSchema = JSON.stringify(getThread.inputSchema)
     const updateSchema = JSON.stringify(createUpdate.inputSchema)
@@ -133,6 +138,17 @@ describe('OnMove MCP protocol adapter', () => {
     expect(JSON.stringify(resolveTarget.inputSchema)).toContain('1:1')
     expect(createTodo.description).toContain('writeGuide.createTodo')
     expect(JSON.stringify(createTodo.inputSchema)).toContain('all-subjects')
+    const richTextTargetSchema = JSON.stringify(patchRichText.inputSchema)
+    expect(richTextTargetSchema).toContain('focus-description')
+    expect(richTextTargetSchema).toContain('update-observation')
+    expect(richTextTargetSchema).toContain('searchResult.reference.id')
+    expect(richTextTargetSchema).toContain('oneOf')
+    expect(richTextTargetSchema).toContain('"additionalProperties":false')
+    const replacementProperties = (updateRichText.inputSchema as {
+      properties?: Record<string, unknown>
+    }).properties
+    expect(replacementProperties).toHaveProperty('richText')
+    expect(replacementProperties).not.toHaveProperty('document')
   })
 
   it('resolves Team → 1:1 → Person Y and supplies an executable subject Todo request', async () => {
@@ -661,6 +677,202 @@ describe('OnMove MCP protocol adapter', () => {
               color: 'blue'
             }]
           }]
+        }
+      }
+    })
+  })
+
+  it('reads and semantically edits Focus descriptions and Update observations', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Rich-text owner',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    database.mcpSettings.update({ allowMutations: true })
+    database.commands.updateRichText({
+      reference: { type: 'focus', id: focus.id, field: 'description' },
+      expectedRevision: 0,
+      document: {
+        version: 1,
+        blocks: [{
+          type: 'paragraph',
+          children: [{ type: 'text', text: 'hello world', marks: ['bold'], color: 'blue' }]
+        }]
+      }
+    }, database.mcpSettings.accessPolicy())
+
+    const focusRead = await client.callTool({
+      name: 'onmove.get_focus',
+      arguments: { id: focus.id, includeRichText: true }
+    })
+    expect(focusRead.structuredContent).toMatchObject({
+      entity: {
+        description: 'hello world',
+        descriptionRevision: 1,
+        descriptionRichText: {
+          blocks: [{ children: [{ text: 'hello world', marks: ['bold'], color: 'blue' }] }]
+        },
+        descriptionWriteGuide: {
+          patchRichText: {
+            tool: 'onmove.patch_rich_text',
+            target: { type: 'focus-description', focusId: focus.id },
+            expectedRevision: 1
+          },
+          updateRichText: { tool: 'onmove.update_rich_text' }
+        }
+      }
+    })
+
+    const focusPatched = await client.callTool({
+      name: 'onmove.patch_rich_text',
+      arguments: {
+        target: { type: 'focus-description', focusId: focus.id },
+        expectedRevision: 1,
+        findText: 'hello world',
+        replaceText: 'hi there',
+        addMarks: ['italic']
+      }
+    })
+    expect(focusPatched.isError).not.toBe(true)
+    expect(focusPatched.structuredContent).toMatchObject({
+      entity: {
+        description: 'hi there',
+        descriptionRevision: 2,
+        descriptionRichText: {
+          blocks: [{ children: [{
+            text: 'hi there', marks: ['bold', 'italic'], color: 'blue'
+          }] }]
+        },
+        descriptionWriteGuide: {
+          patchRichText: { expectedRevision: 2 }
+        }
+      }
+    })
+
+    const created = await client.callTool({
+      name: 'onmove.create_update',
+      arguments: {
+        parent: { type: 'thread', id: thread.id },
+        attribution: { mode: 'unscoped' },
+        richText: {
+          version: 1,
+          blocks: [{
+            type: 'paragraph',
+            children: [{ type: 'text', text: 'Risk is high', marks: ['bold'], color: 'red' }]
+          }]
+        }
+      }
+    })
+    const updateId = Number((created.structuredContent as { id: number }).id)
+    expect(created.structuredContent).toMatchObject({
+      id: updateId,
+      observationRevision: 0,
+      observationWriteGuide: {
+        patchRichText: {
+          tool: 'onmove.patch_rich_text',
+          target: { type: 'update-observation', updateId },
+          expectedRevision: 0
+        }
+      }
+    })
+
+    const threadRead = await client.callTool({
+      name: 'onmove.get_thread', arguments: { id: thread.id }
+    })
+    expect(threadRead.structuredContent).toMatchObject({
+      updates: [{
+        id: updateId,
+        observationWriteGuide: {
+          patchRichText: { target: { type: 'update-observation', updateId } }
+        }
+      }]
+    })
+    const updateRead = await client.callTool({
+      name: 'onmove.get_update', arguments: { id: updateId }
+    })
+    expect(updateRead.structuredContent).toMatchObject({
+      reference: { type: 'update', id: updateId },
+      contextPath: [
+        { type: 'focus', id: focus.id, title: 'Launch readiness' },
+        { type: 'thread', id: thread.id, title: 'Rich-text owner' }
+      ],
+      update: {
+        observation: 'Risk is high',
+        observationRevision: 0,
+        observationWriteGuide: {
+          updateRichText: { tool: 'onmove.update_rich_text' }
+        }
+      }
+    })
+
+    const updatePatched = await client.callTool({
+      name: 'onmove.patch_rich_text',
+      arguments: {
+        target: { type: 'update-observation', updateId },
+        expectedRevision: 0,
+        findText: 'high',
+        replaceText: 'contained',
+        addMarks: ['italic']
+      }
+    })
+    expect(updatePatched.structuredContent).toMatchObject({
+      update: {
+        observation: 'Risk is contained',
+        observationRevision: 1,
+        observationRichText: {
+          blocks: [{ children: [
+            expect.objectContaining({ text: 'Risk is ' }),
+            expect.objectContaining({
+              text: 'contained', marks: ['bold', 'italic'], color: 'red'
+            })
+          ] }]
+        }
+      }
+    })
+
+    const stale = await client.callTool({
+      name: 'onmove.patch_rich_text',
+      arguments: {
+        target: { type: 'update-observation', updateId },
+        expectedRevision: 0,
+        findText: 'Risk',
+        replaceText: 'Delivery risk'
+      }
+    })
+    expect(stale.isError).toBe(true)
+    expect(stale.structuredContent).toMatchObject({
+      error: {
+        code: 'rich_text_revision_conflict',
+        target: { type: 'update-observation', updateId },
+        expectedRevision: 0,
+        currentRevision: 1
+      },
+      recovery: { inspect: { tool: 'onmove.get_update', arguments: { id: updateId } } }
+    })
+
+    const accidentalClear = await client.callTool({
+      name: 'onmove.update_rich_text',
+      arguments: {
+        target: { type: 'update-observation', updateId },
+        expectedRevision: 1,
+        richText: {
+          version: 1,
+          blocks: [{ type: 'paragraph', children: [{ type: 'line-break' }] }]
+        }
+      }
+    })
+    expect(accidentalClear.isError).toBe(true)
+    expect(accidentalClear.structuredContent).toMatchObject({
+      error: {
+        code: 'RICH_TEXT_DISAPPEARED',
+        target: { type: 'update-observation', updateId }
+      },
+      recovery: {
+        inspect: { tool: 'onmove.get_update', arguments: { id: updateId } },
+        retry: {
+          tool: 'onmove.update_rich_text',
+          arguments: { clear: true }
         }
       }
     })

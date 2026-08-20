@@ -32,9 +32,9 @@ Hidden records are indistinguishable from unknown IDs. Effective sensitivity inc
 Thread, Commitment or Routine, Scope, Subject cell, and record-level sensitivity.
 
 Write access is intentionally limited to creating Updates and Todos, editing or completing Todos,
-updating existing Notes, and poking Thread or Commitment reviews. There are no delete, move,
-import, archive-clear, or status transition tools. Successful MCP writes store a metadata-only
-audit row without user-authored text.
+editing existing Focus descriptions, Update observations, and Notes, and poking Thread or
+Commitment reviews. There are no delete, move, import, archive-clear, or status transition tools.
+Successful MCP writes store a metadata-only audit row without user-authored text.
 
 ### Creating Updates
 
@@ -80,8 +80,9 @@ The observation uses the same editor-neutral rich-text document contract as Note
 
 Omitting `richText`, or sending an empty `blocks` array, creates a valid blank Update. The former
 plain `observation` write parameter is intentionally absent because it cannot represent formatting.
-Responses and parent contexts expose `observation` as a readable plain-text projection and
-`observationRichText` as the lossless document.
+Responses and parent contexts expose `observation` as a readable plain-text projection,
+`observationRichText` as the lossless document, `observationRevision` for concurrency, and an
+`observationWriteGuide` with directly usable semantic edit requests.
 
 ### Resolving a hierarchy and creating Todos
 
@@ -136,9 +137,10 @@ Add `thread` and then `commitment` selectors when the Note is owned at those lev
 selector is the direct owner; the tool never silently searches descendant Notes. Duplicate exact
 matches return candidates instead of being guessed.
 
-`onmove.get_focus` also accepts `includeRichText: true`. Its directly owned `notes` then contain
-their complete rich-text documents and current write guides rather than compact summaries. This is
-useful when the Focus is already known and avoids one `get_note` call per Note.
+`onmove.get_focus` also accepts `includeRichText: true`. Its `entity` then contains the complete
+Focus description, revision, and `descriptionWriteGuide`; directly owned `notes` contain their
+complete rich-text documents and current write guides rather than compact summaries. This is useful
+when the Focus is already known and avoids separate reads.
 
 The returned `note.content` is a
 read-only plain-text projection for comprehension and search. `note.richText` is the complete,
@@ -221,6 +223,48 @@ mark aliases, a recovery instruction, and a minimal valid example.
 A committed Note edit is broadcast through both the domain and rich-text live-change channels, so
 the main application and any open pop-out Note window receive the new revision immediately.
 
+### Editing Focus descriptions and Update observations
+
+Focus descriptions and Update observations use the same lossless document, optimistic-concurrency,
+semantic-patch, and accidental-empty guarantees as Notes. Their target is intentionally
+self-describing:
+
+```json
+{
+  "target": { "type": "focus-description", "focusId": 12 },
+  "expectedRevision": 4,
+  "findText": "hello world",
+  "replaceText": "hi there"
+}
+```
+
+```json
+{
+  "target": { "type": "update-observation", "updateId": 93 },
+  "expectedRevision": 2,
+  "findText": "delivery risk",
+  "addMarks": ["bold", "highlight"]
+}
+```
+
+Call `onmove.patch_rich_text` for a localized text or formatting change. Call
+`onmove.update_rich_text` with `target`, `expectedRevision`, and `richText` only when changing
+document structure. Notes keep their Note-specific tools so callers cannot confuse a Note ID with
+another entity ID.
+
+Read a Focus with `onmove.get_focus({ id, includeRichText: true })`. The response includes
+`entity.description`, `entity.descriptionRichText`, `entity.descriptionRevision`, and
+`entity.descriptionWriteGuide`. Read a known Update with `onmove.get_update({ id })`; parent Thread
+and Commitment reads also embed full Update observations, revisions, and write guides. A successful
+`onmove.create_update` response includes the same observation guide, so a newly created blank Update
+can be edited immediately without another discovery call.
+
+Stale writes return `rich_text_revision_conflict` with the exact read request needed for recovery.
+Removing all readable text without `clear: true` returns `RICH_TEXT_DISAPPEARED`. Exact patch misses
+and duplicate matches return `RICH_TEXT_NOT_FOUND` or `RICH_TEXT_AMBIGUOUS` with actionable retry
+metadata. Successful edits are committed through the shared application service and broadcast to
+all open main and rich-text windows.
+
 ## Search
 
 `onmove.search` is backed by a durable SQLite FTS5 index, not by raw `LIKE` queries or arbitrary
@@ -262,9 +306,9 @@ the Update's `reference.id`. This distinction is also described directly in the 
 
 ## Tools and resources
 
-Read tools cover Focuses, Threads, Commitments, Routines, Reviews, Due work, Todos, Tags, search,
-Notes, combined Note resolution, and hierarchy-aware work-target resolution. Write tools cover the
-safe mutations and semantic Note patching described above.
+Read tools cover Focuses, Threads, Commitments, Updates, Routines, Reviews, Due work, Todos, Tags,
+search, Notes, combined Note resolution, and hierarchy-aware work-target resolution. Write tools
+cover the safe mutations and semantic rich-text editing described above.
 Stable resource templates use:
 
 ```text

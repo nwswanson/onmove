@@ -4,7 +4,10 @@ import type { AppDatabase } from '../main/database'
 import {
   NoteRevisionConflictError,
   NoteTextDisappearedError,
+  RichTextDisappearedError,
+  RichTextRevisionConflictError,
   ScopeTargetValidationError,
+  type ApplicationRichTextReference,
   type ApplicationResolvedTargetCandidate
 } from '../main/application/services'
 import {
@@ -194,7 +197,10 @@ function plainRichTextDocument(text: string): OnMoveRichTextDocument {
   }
 }
 
-type RichTextWriteTool = 'onmove.create_update' | 'onmove.update_note'
+type RichTextWriteTool =
+  | 'onmove.create_update'
+  | 'onmove.update_note'
+  | 'onmove.update_rich_text'
 
 class RichTextToolInputError extends Error {
   constructor(
@@ -218,7 +224,9 @@ function normalizedRichTextToolInput(
     throw new RichTextToolInputError(
       tool,
       'missing_rich_text',
-      `${tool} requires richText. Copy note.richText from onmove.get_note and submit it as richText.`
+      tool === 'onmove.update_note'
+        ? `${tool} requires richText. Copy note.richText from onmove.get_note and submit it as richText.`
+        : `${tool} requires richText. Copy the field's returned richText document and submit it as richText.`
     )
   }
   try {
@@ -284,6 +292,118 @@ interface PatchNoteTextWriteGuide {
 interface NoteWriteGuide {
   patchNoteText: PatchNoteTextWriteGuide
   updateNote: UpdateNoteWriteGuide
+}
+
+type RichTextFieldTarget =
+  | { type: 'focus-description'; focusId: number }
+  | { type: 'update-observation'; updateId: number }
+
+interface RichTextFieldWriteGuide {
+  patchRichText: {
+    tool: 'onmove.patch_rich_text'
+    target: RichTextFieldTarget
+    expectedRevision: number
+    instruction: string
+    requestExample: Record<string, unknown>
+  }
+  updateRichText: {
+    tool: 'onmove.update_rich_text'
+    target: RichTextFieldTarget
+    expectedRevision: number
+    instruction: string
+    requestExample: Record<string, unknown>
+  }
+}
+
+function applicationRichTextReference(target: RichTextFieldTarget): ApplicationRichTextReference {
+  return target.type === 'focus-description'
+    ? { type: 'focus', id: target.focusId, field: 'description' }
+    : { type: 'update', id: target.updateId, field: 'observation' }
+}
+
+function richTextFieldWriteGuide(
+  target: RichTextFieldTarget,
+  expectedRevision: number
+): RichTextFieldWriteGuide {
+  const label = target.type === 'focus-description' ? 'Focus description' : 'Update observation'
+  return {
+    patchRichText: {
+      tool: 'onmove.patch_rich_text',
+      target,
+      expectedRevision,
+      instruction:
+        `Prefer this tool for a localized ${label} wording or formatting change. Send the ` +
+        'revision just read and exact findText; surrounding structure, links, colors, and ' +
+        'unspecified marks remain unchanged.',
+      requestExample: {
+        target,
+        expectedRevision,
+        findText: 'hello world',
+        replaceText: 'hi there'
+      }
+    },
+    updateRichText: {
+      tool: 'onmove.update_rich_text',
+      target,
+      expectedRevision,
+      instruction:
+        `Use full-document replacement only for structural ${label} edits. Copy the returned ` +
+        'richText document, edit it, and submit it with the revision just read. If populated ' +
+        'text is intentionally being emptied, also send clear=true.',
+      requestExample: {
+        target,
+        expectedRevision,
+        richText: plainRichTextDocument(`Replacement ${label.toLocaleLowerCase()}.`)
+      }
+    }
+  }
+}
+
+function withUpdateRichTextWriteGuide(value: unknown): unknown {
+  const update = record(value)
+  if (!update || !Number.isSafeInteger(update.id) ||
+      !Number.isSafeInteger(update.observationRevision)) return value
+  return {
+    ...update,
+    observationWriteGuide: richTextFieldWriteGuide(
+      { type: 'update-observation', updateId: Number(update.id) },
+      Number(update.observationRevision)
+    )
+  }
+}
+
+function withEmbeddedUpdateRichTextWriteGuides(value: unknown): unknown {
+  const context = record(value)
+  if (!context || !Array.isArray(context.updates)) return value
+  return {
+    ...context,
+    updates: context.updates.map(withUpdateRichTextWriteGuide)
+  }
+}
+
+function withUpdateContextWriteGuide(value: unknown): unknown {
+  const context = record(value)
+  if (!context || !('update' in context)) return value
+  return { ...context, update: withUpdateRichTextWriteGuide(context.update) }
+}
+
+function withFocusDescriptionWriteGuide(value: unknown): unknown {
+  const context = record(value)
+  const reference = record(context?.reference)
+  const entity = record(context?.entity)
+  if (reference?.type !== 'focus' || !Number.isSafeInteger(reference.id) ||
+      !entity || !Number.isSafeInteger(entity.descriptionRevision) ||
+      !('descriptionRichText' in entity)) return value
+  return {
+    ...context,
+    entity: {
+      ...entity,
+      descriptionWriteGuide: richTextFieldWriteGuide(
+        { type: 'focus-description', focusId: Number(reference.id) },
+        Number(entity.descriptionRevision)
+      )
+    }
+  }
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -414,12 +534,13 @@ function todoWriteGuide(value: unknown): TodoWriteGuide | null {
 }
 
 function withWriteGuide(value: unknown): unknown {
-  const context = record(value)
+  const decorated = withEmbeddedUpdateRichTextWriteGuides(value)
+  const context = record(decorated)
   const createUpdate = updateWriteGuide(value)
   const createTodo = todoWriteGuide(value)
   return context && createUpdate && createTodo
     ? { ...context, writeGuide: { createUpdate, createTodo } }
-    : value
+    : decorated
 }
 
 function noteWriteGuide(value: unknown): NoteWriteGuide | null {
@@ -952,6 +1073,118 @@ function noteTextPatchErrorResult(
   }
 }
 
+function richTextInspectRequest(target: RichTextFieldTarget): {
+  tool: 'onmove.get_focus' | 'onmove.get_update'
+  arguments: Record<string, unknown>
+} {
+  return target.type === 'focus-description'
+    ? { tool: 'onmove.get_focus', arguments: { id: target.focusId, includeRichText: true } }
+    : { tool: 'onmove.get_update', arguments: { id: target.updateId } }
+}
+
+function richTextRevisionConflictResult(
+  error: RichTextRevisionConflictError,
+  target: RichTextFieldTarget
+): {
+  isError: true
+  content: Array<{ type: 'text'; text: string }>
+  structuredContent: Record<string, unknown>
+} {
+  const structuredContent = {
+    error: {
+      code: 'rich_text_revision_conflict',
+      target,
+      expectedRevision: error.issue.expectedRevision,
+      currentRevision: error.issue.currentRevision,
+      message: error.message
+    },
+    recovery: {
+      inspect: richTextInspectRequest(target),
+      retry: null,
+      instruction:
+        'Read the field again, reconcile its current content, and retry with the newly returned revision.'
+    },
+    diagnostics: diagnosticsScope()
+  }
+  return {
+    isError: true,
+    content: [{
+      type: 'text',
+      text: `${error.message} Read the field again and retry with its current revision. ` +
+        'The server will not guess how to merge text.'
+    }],
+    structuredContent
+  }
+}
+
+function richTextDisappearedResult(
+  error: RichTextDisappearedError,
+  tool: 'onmove.update_rich_text' | 'onmove.patch_rich_text',
+  target: RichTextFieldTarget,
+  retryArguments: Record<string, unknown>
+): {
+  isError: true
+  content: Array<{ type: 'text'; text: string }>
+  structuredContent: Record<string, unknown>
+} {
+  const retry = { tool, arguments: { ...retryArguments, clear: true } }
+  const structuredContent = {
+    error: { ...error.issue, target, message: error.message },
+    recovery: {
+      inspect: richTextInspectRequest(target),
+      instruction:
+        'The existing field contains readable text. Confirm that clearing it is intentional, then retry the same request with clear=true.',
+      retry
+    },
+    diagnostics: diagnosticsScope()
+  }
+  return {
+    isError: true,
+    content: [{
+      type: 'text',
+      text: `${error.issue.code}: ${error.message}\n` +
+        `Intentional clear retry: ${JSON.stringify(retry)}`
+    }],
+    structuredContent
+  }
+}
+
+function richTextPatchErrorResult(
+  error: OnMoveRichTextPatchError,
+  input: { target: RichTextFieldTarget; expectedRevision: number; findText: string }
+): {
+  isError: true
+  content: Array<{ type: 'text'; text: string }>
+  structuredContent: Record<string, unknown>
+} {
+  const code = error.code.replace(/^NOTE_TEXT/u, 'RICH_TEXT')
+  const instruction = error.code === 'NOTE_TEXT_AMBIGUOUS'
+    ? `Retry with occurrence set to a number from 1 through ${error.matchCount}.`
+    : error.code === 'NOTE_TEXT_NOT_FOUND'
+      ? 'Read the field again and use exact case-sensitive text from its plain-text projection.'
+      : error.message
+  const structuredContent = {
+    error: {
+      code,
+      target: input.target,
+      expectedRevision: input.expectedRevision,
+      findText: input.findText,
+      matchCount: error.matchCount,
+      message: error.message
+    },
+    recovery: {
+      inspect: richTextInspectRequest(input.target),
+      instruction
+    },
+    diagnostics: diagnosticsScope()
+  }
+  return {
+    isError: true,
+    content: [{ type: 'text', text: `${code}: ${error.message}\n${instruction}` }],
+    structuredContent
+  }
+}
+
 function decorateResolvedTarget(
   database: AppDatabase,
   candidate: ApplicationResolvedTargetCandidate,
@@ -993,7 +1226,7 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Use onmove.search for literal information that may appear anywhere in titles, Updates, Notes, Todos, Subjects, or other indexed text. Search is global by default: never assume the current UI Focus is applied. For a hierarchy-shaped request such as "do X for Person Y\'s 1:1 in Team", use onmove.resolve_target with Thread, Commitment, and Subject selectors, then follow its recommendedTodoRequest or writeGuide.createTodo. Use onmove.resolve_note to read a directly owned Note by hierarchy titles in one call. Each search result includes hierarchy IDs; use hierarchy.thread.id with onmove.get_thread, not the ID of a matching Update or Note. Prefer onmove.patch_note_text for localized Note wording or mark changes; use onmove.update_note only for structural full-document edits. Rich-text writes use the editor-neutral contract only under richText. Use highlight for the yellow highlighter; highlight-yellow is accepted as a mark alias. Before other mutations, inspect the matching writeGuide: Open parents must be unscoped, while scoped parents require a listed Subject or an explicitly shared Todo. Inspect diagnostics and warnings on every response. Sensitive content and mutations are controlled only in OnMove Settings.'
+        'Use onmove.search for literal information that may appear anywhere in titles, Updates, Notes, Todos, Subjects, or other indexed text. Search is global by default: never assume the current UI Focus is applied. For a hierarchy-shaped request such as "do X for Person Y\'s 1:1 in Team", use onmove.resolve_target with Thread, Commitment, and Subject selectors, then follow its recommendedTodoRequest or writeGuide.createTodo. Use onmove.resolve_note to read a directly owned Note by hierarchy titles in one call. Each search result includes hierarchy IDs; use hierarchy.thread.id with onmove.get_thread, not the ID of a matching Update or Note. Prefer onmove.patch_note_text for localized Note edits and onmove.patch_rich_text for localized Focus-description or Update-observation edits; use their full-update counterparts only for structural edits. Rich-text writes use the editor-neutral contract only under richText. Use highlight for the yellow highlighter; highlight-yellow is accepted as a mark alias. Before other mutations, inspect the matching writeGuide: Open parents must be unscoped, while scoped parents require a listed Subject or an explicitly shared Todo. Inspect diagnostics and warnings on every response. Sensitive content and mutations are controlled only in OnMove Settings.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -1021,13 +1254,13 @@ export function createOnMoveMcpServer(
     'onmove.get_focus',
     {
       title: 'Get an OnMove focus',
-      description: 'Read one visible Focus, a top-level area containing Threads. Set includeRichText=true to return each directly owned Note with its lossless note.richText document and current write guides in this same response.',
+      description: 'Read one visible Focus, a top-level area containing Threads. Set includeRichText=true to return the lossless Focus description, its semantic write guide, and each directly owned Note with its lossless rich text and write guides in this same response.',
       inputSchema: z.strictObject({
         id: idSchema.describe(
           'The Focus\'s own positive ID, available as searchResult.hierarchy.focus.id.'
         ),
         includeRichText: z.boolean().optional().describe(
-          'When true, include complete rich-text documents and write guides for directly owned Focus Notes. Defaults to false for a compact read.'
+          'When true, include the complete Focus description document and directly owned Note documents with revisions and write guides. Defaults to false for a compact read.'
         )
       }),
       annotations: { readOnlyHint: true }
@@ -1038,7 +1271,9 @@ export function createOnMoveMcpServer(
         policy(),
         { includeRichText: includeRichText === true }
       ))
-      return result(includeRichText ? withEmbeddedNoteWriteGuides(context) : context)
+      return result(includeRichText
+        ? withFocusDescriptionWriteGuide(withEmbeddedNoteWriteGuides(context))
+        : context)
     }
   )
 
@@ -1081,6 +1316,23 @@ export function createOnMoveMcpServer(
       annotations: { readOnlyHint: true }
     },
     async ({ id }) => result(withNoteWriteGuide(found(database.queries.getNote(id, policy()))))
+  )
+
+  server.registerTool(
+    'onmove.get_update',
+    {
+      title: 'Get an OnMove update',
+      description: 'Read one visible Update by its own ID, including hierarchy context, exact Scope/Subject attribution, the plain-text observation, its lossless rich-text document, current revision, and semantic write guide.',
+      inputSchema: z.strictObject({
+        id: idSchema.describe(
+          'The Update\'s own positive ID from searchResult.reference.id or a parent context\'s updates array.'
+        )
+      }),
+      annotations: { readOnlyHint: true }
+    },
+    async ({ id }) => result(withUpdateContextWriteGuide(
+      found(database.queries.getUpdate(id, policy()))
+    ))
   )
 
   server.registerTool(
@@ -1412,17 +1664,19 @@ export function createOnMoveMcpServer(
       }
       const subjectId = normalizedUpdateSubject(normalized)
       try {
-        return mutationResult(() => database.commands.createUpdate(
-          {
-            parent: normalized.parent,
-            subjectId,
-            date: normalized.date,
-            document: normalized.richText,
-            state: normalized.state,
-            sensitive: normalized.sensitive
-          },
-          policy(),
-          server.server.getClientVersion()?.name
+        return mutationResult(() => withUpdateRichTextWriteGuide(
+          database.commands.createUpdate(
+            {
+              parent: normalized.parent,
+              subjectId,
+              date: normalized.date,
+              document: normalized.richText,
+              state: normalized.state,
+              sensitive: normalized.sensitive
+            },
+            policy(),
+            server.server.getClientVersion()?.name
+          )
         ))
       } catch (error) {
         if (!(error instanceof ScopeTargetValidationError)) throw error
@@ -1498,6 +1752,151 @@ export function createOnMoveMcpServer(
     'highlight-yellow'
   ])).max(ONMOVE_RICH_TEXT_MARKS.length).optional().describe(
     'Formatting marks applied only to the matched text: bold, italic, underline, strikethrough, or highlight. highlight-yellow is accepted as an input alias.'
+  )
+
+  const richTextFieldTargetSchema = z.discriminatedUnion('type', [
+    z.strictObject({
+      type: z.literal('focus-description').describe(
+        'Selects the rich-text description belonging to one top-level Focus.'
+      ),
+      focusId: idSchema.describe(
+        'The Focus\'s own positive ID from get_focus, resolve_note context, or search hierarchy.focus.id.'
+      )
+    }),
+    z.strictObject({
+      type: z.literal('update-observation').describe(
+        'Selects the rich-text observation belonging to one Update evidence record.'
+      ),
+      updateId: idSchema.describe(
+        'The Update\'s own positive ID from get_update, a parent updates array, or an Update searchResult.reference.id.'
+      )
+    })
+  ]).describe(
+    'A self-describing rich-text target. IDs are interpreted only within the selected target type.'
+  )
+
+  const readRichTextTarget = (target: RichTextFieldTarget): unknown =>
+    target.type === 'focus-description'
+      ? withFocusDescriptionWriteGuide(found(database.queries.getFocus(
+          target.focusId,
+          policy(),
+          { includeRichText: true }
+        )))
+      : withUpdateContextWriteGuide(found(database.queries.getUpdate(target.updateId, policy())))
+
+  server.registerTool(
+    'onmove.patch_rich_text',
+    {
+      title: 'Patch an OnMove rich-text field',
+      description: 'Safely replace exact text or change marks in a Focus description or Update observation without resending the whole document. Surrounding structure, links, colors, and unspecified marks are preserved. Notes use onmove.patch_note_text.',
+      inputSchema: z.strictObject({
+        target: richTextFieldTargetSchema,
+        expectedRevision: z.number().int().nonnegative().describe(
+          'The exact field revision returned by its read or write guide. Stale writes are rejected without changing content.'
+        ),
+        findText: z.string().min(1).describe(
+          'Exact case-sensitive words to match within one paragraph or list item. It cannot cross a line or block boundary.'
+        ),
+        replaceText: z.string().optional().describe(
+          'Replacement words. Omit for a marks-only patch; send an empty string only to delete the matched text.'
+        ),
+        occurrence: z.number().int().positive().optional().describe(
+          'One-based match in document order. Omit for a unique match; an ambiguous response reports the available count.'
+        ),
+        addMarks: patchMarksSchema,
+        removeMarks: patchMarksSchema,
+        clear: z.boolean().optional().describe(
+          'Set true only to confirm intentionally removing all readable text from a populated field.'
+        )
+      }).refine(({ replaceText, addMarks, removeMarks }) =>
+        replaceText !== undefined || Boolean(addMarks?.length) || Boolean(removeMarks?.length), {
+        message: 'Provide replaceText, addMarks, or removeMarks.'
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false }
+    },
+    async (input) => {
+      const canonicalMarks = (marks: typeof input.addMarks): OnMoveRichTextMark[] | undefined =>
+        marks?.map((mark) => mark === 'highlight-yellow' ? 'highlight' : mark)
+      try {
+        const document = database.commands.patchRichText({
+          reference: applicationRichTextReference(input.target),
+          expectedRevision: input.expectedRevision,
+          findText: input.findText,
+          replaceText: input.replaceText,
+          occurrence: input.occurrence,
+          addMarks: canonicalMarks(input.addMarks),
+          removeMarks: canonicalMarks(input.removeMarks),
+          clear: input.clear
+        }, policy(), server.server.getClientVersion()?.name)
+        options.onRichTextMutation?.(document)
+        options.onMutation?.()
+        return result(readRichTextTarget(input.target))
+      } catch (error) {
+        if (error instanceof RichTextRevisionConflictError) {
+          return richTextRevisionConflictResult(error, input.target)
+        }
+        if (error instanceof RichTextDisappearedError) {
+          return richTextDisappearedResult(error, 'onmove.patch_rich_text', input.target, input)
+        }
+        if (error instanceof OnMoveRichTextPatchError) {
+          return richTextPatchErrorResult(error, input)
+        }
+        throw error
+      }
+    }
+  )
+
+  server.registerTool(
+    'onmove.update_rich_text',
+    {
+      title: 'Replace an OnMove rich-text field',
+      description: 'Replace a Focus description or Update observation with a complete editor-neutral rich-text document using optimistic concurrency. Prefer onmove.patch_rich_text for localized changes. Notes use onmove.update_note.',
+      inputSchema: z.strictObject({
+        target: richTextFieldTargetSchema,
+        expectedRevision: z.number().int().nonnegative().describe(
+          'The exact field revision returned by its read or write guide. Stale writes are rejected without changing content.'
+        ),
+        richText: richTextDocumentSchema.optional().describe(
+          'The only complete replacement field. Copy the field\'s returned richText document, change only intended nodes, and submit it here.'
+        ),
+        clear: z.boolean().optional().describe(
+          'Set true only to confirm intentionally removing all readable text from a populated field.'
+        )
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false }
+    },
+    async (input) => {
+      let richText: OnMoveRichTextDocument
+      try {
+        richText = normalizedRichTextToolInput(
+          'onmove.update_rich_text',
+          input,
+          true
+        ) as OnMoveRichTextDocument
+      } catch (error) {
+        if (!(error instanceof RichTextToolInputError)) throw error
+        return richTextInputErrorResult(error)
+      }
+      try {
+        const document = database.commands.updateRichText({
+          reference: applicationRichTextReference(input.target),
+          expectedRevision: input.expectedRevision,
+          document: richText,
+          clear: input.clear
+        }, policy(), server.server.getClientVersion()?.name)
+        options.onRichTextMutation?.(document)
+        options.onMutation?.()
+        return result(readRichTextTarget(input.target))
+      } catch (error) {
+        if (error instanceof RichTextRevisionConflictError) {
+          return richTextRevisionConflictResult(error, input.target)
+        }
+        if (error instanceof RichTextDisappearedError) {
+          return richTextDisappearedResult(error, 'onmove.update_rich_text', input.target, input)
+        }
+        throw error
+      }
+    }
   )
 
   server.registerTool(
