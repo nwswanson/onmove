@@ -18,6 +18,8 @@ import type {
 import {
   onMoveRichTextDocumentFromStored,
   onMoveRichTextDocumentToStored,
+  patchOnMoveRichTextDocument,
+  type OnMoveRichTextMark,
   type OnMoveRichTextDocument
 } from '../../shared/rich-text-document'
 import { richTextPlainText } from '../../shared/rich-text-value'
@@ -41,6 +43,10 @@ export interface ListFocusesQuery {
   statuses?: readonly string[]
   limit?: number
   offset?: number
+}
+
+export interface ApplicationEntityReadOptions {
+  includeRichText?: boolean
 }
 
 export interface ApplicationEntityContext {
@@ -99,6 +105,20 @@ export interface UpdateApplicationNote {
   id: number
   expectedRevision: number
   document: OnMoveRichTextDocument
+  /** Explicit acknowledgement that an existing non-empty Note may become empty. */
+  clear?: boolean
+}
+
+export interface PatchApplicationNoteText {
+  id: number
+  expectedRevision: number
+  findText: string
+  replaceText?: string
+  occurrence?: number
+  addMarks?: OnMoveRichTextMark[]
+  removeMarks?: OnMoveRichTextMark[]
+  /** Explicit acknowledgement that an existing non-empty Note may become empty. */
+  clear?: boolean
 }
 
 export interface PokeApplicationReview {
@@ -121,6 +141,23 @@ export interface ResolveApplicationTargetQuery {
   thread: ApplicationEntitySelector
   commitment?: ApplicationEntitySelector
   subject?: ApplicationSubjectSelector
+}
+
+export interface ResolveApplicationNoteQuery {
+  /** Required Focus anchor; use its ID or exact title. */
+  focus: ApplicationEntitySelector
+  /** Optional direct Thread parent inside the Focus. */
+  thread?: ApplicationEntitySelector
+  /** Optional direct Commitment parent; requires a Thread selector. */
+  commitment?: ApplicationEntitySelector
+  /** The Note's own ID or exact title under the resolved parent. */
+  note: ApplicationEntitySelector
+}
+
+export interface ApplicationNoteResolution {
+  status: 'resolved' | 'ambiguous' | 'not_found'
+  requested: ResolveApplicationNoteQuery
+  candidates: ApplicationNoteContext[]
 }
 
 export interface ApplicationResolvedTargetCandidate {
@@ -177,6 +214,20 @@ export class NoteRevisionConflictError extends ModelValidationError {
   constructor(message: string, readonly issue: NoteRevisionConflictIssue) {
     super(message)
     this.name = 'NoteRevisionConflictError'
+  }
+}
+
+export interface NoteTextDisappearedIssue {
+  code: 'NOTE_TEXT_DISAPPEARED'
+  noteId: number
+  previousRevision: number
+}
+
+/** Protects a populated Note from an accidentally structure-only replacement. */
+export class NoteTextDisappearedError extends ModelValidationError {
+  constructor(message: string, readonly issue: NoteTextDisappearedIssue) {
+    super(message)
+    this.name = 'NoteTextDisappearedError'
   }
 }
 
@@ -346,7 +397,11 @@ export class OnMoveQueryService {
       .map((focus) => plainProjection(focus))
   }
 
-  getFocus(id: number, access: OnMoveAccessPolicy): ApplicationEntityContext | null {
+  getFocus(
+    id: number,
+    access: OnMoveAccessPolicy,
+    options: ApplicationEntityReadOptions = {}
+  ): ApplicationEntityContext | null {
     assertPositiveId(id, 'focus id')
     const focus = this.domain.focuses.find(id)
     if (!focus || !this.sensitivity.canRead('focus', id, access)) return null
@@ -367,7 +422,7 @@ export class OnMoveQueryService {
       scope: plainProjection(visibleScope),
       updates: [],
       todos: [],
-      notes: this.visibleNotes({ type: 'focus', id }, access),
+      notes: this.visibleNotes({ type: 'focus', id }, access, options.includeRichText === true),
       commitments: [],
       routines: [],
       threads: threads.map((thread) => plainProjection(thread))
@@ -691,6 +746,78 @@ export class OnMoveQueryService {
     }
   }
 
+  /**
+   * Resolves a directly owned Note through an exact hierarchy path. The
+   * deepest selector identifies the owning parent; descendants are never
+   * searched implicitly.
+   */
+  resolveNote(
+    query: ResolveApplicationNoteQuery,
+    access: OnMoveAccessPolicy
+  ): ApplicationNoteResolution {
+    if (!query || typeof query !== 'object') {
+      throw new ModelValidationError('Note resolution query is required')
+    }
+    assertEntitySelector(query.focus, 'focus')
+    assertEntitySelector(query.note, 'note')
+    if (query.thread) assertEntitySelector(query.thread, 'thread')
+    if (query.commitment) {
+      if (!query.thread) {
+        throw new ModelValidationError(
+          'A Commitment Note selector requires its parent Thread selector.'
+        )
+      }
+      assertEntitySelector(query.commitment, 'commitment')
+    }
+
+    const parents: NoteParent[] = []
+    const focuses = this.domain.focuses.list()
+      .filter((focus) => this.sensitivity.canRead('focus', focus.id, access))
+      .filter((focus) => matchesEntitySelector(focus, query.focus))
+    for (const focus of focuses) {
+      if (!query.thread) {
+        parents.push({ type: 'focus', id: focus.id })
+        continue
+      }
+      const threads = this.domain.threads.listForFocus(focus.id)
+        .filter((thread) => this.sensitivity.canRead('thread', thread.id, access))
+        .filter((thread) => matchesEntitySelector(thread, query.thread as ApplicationEntitySelector))
+      for (const thread of threads) {
+        if (!query.commitment) {
+          parents.push({ type: 'thread', id: thread.id })
+          continue
+        }
+        const commitments = this.domain.commitments.listForThread(thread.id)
+          .filter(trackingCommitment)
+          .filter((commitment) =>
+            this.sensitivity.canRead('commitment', commitment.id, access))
+          .filter((commitment) => matchesEntitySelector(
+            commitment,
+            query.commitment as ApplicationEntitySelector
+          ))
+        parents.push(...commitments.map((commitment) => ({
+          type: 'commitment' as const,
+          id: commitment.id
+        })))
+      }
+    }
+
+    const candidates = parents.flatMap((parent) => this.domain.notes.list(parent)
+      .filter((note) => this.sensitivity.canRead('note', note.id, access))
+      .filter((note) => matchesEntitySelector(note, query.note))
+      .flatMap((note) => {
+        const context = this.getNote(note.id, access)
+        return context ? [context] : []
+      }))
+    return {
+      status: candidates.length === 1
+        ? 'resolved'
+        : candidates.length === 0 ? 'not_found' : 'ambiguous',
+      requested: query,
+      candidates
+    }
+  }
+
   private visibleUpdates(
     parent: { type: 'thread' | 'commitment'; id: number },
     access: OnMoveAccessPolicy
@@ -710,11 +837,17 @@ export class OnMoveQueryService {
 
   private visibleNotes(
     parent: { type: 'focus' | 'thread' | 'commitment'; id: number },
-    access: OnMoveAccessPolicy
+    access: OnMoveAccessPolicy,
+    includeRichText = false
   ): unknown[] {
     return this.domain.notes.list(parent)
       .filter((note) => this.sensitivity.canRead('note', note.id, access))
-      .map((note) => plainProjection(note))
+      .map((note) => ({
+        ...plainProjection(note) as NoteSnapshot,
+        ...(includeRichText
+          ? { richText: onMoveRichTextDocumentFromStored(note.content) }
+          : {})
+      }))
   }
 }
 
@@ -833,6 +966,36 @@ export class OnMoveCommandService {
     access: OnMoveAccessPolicy,
     clientName?: string
   ): RichTextDocumentSnapshot {
+    return this.writeNoteDocument(
+      input,
+      access,
+      'onmove.update_note',
+      clientName,
+      () => input.document
+    )
+  }
+
+  patchNoteText(
+    input: PatchApplicationNoteText,
+    access: OnMoveAccessPolicy,
+    clientName?: string
+  ): RichTextDocumentSnapshot {
+    return this.writeNoteDocument(
+      input,
+      access,
+      'onmove.patch_note_text',
+      clientName,
+      (current) => patchOnMoveRichTextDocument(current, input).document
+    )
+  }
+
+  private writeNoteDocument(
+    input: { id: number; expectedRevision: number; clear?: boolean },
+    access: OnMoveAccessPolicy,
+    toolName: 'onmove.update_note' | 'onmove.patch_note_text',
+    clientName: string | undefined,
+    nextDocument: (current: OnMoveRichTextDocument) => OnMoveRichTextDocument
+  ): RichTextDocumentSnapshot {
     this.assertMutation(access)
     assertPositiveId(input.id, 'note id')
     if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) {
@@ -856,19 +1019,37 @@ export class OnMoveCommandService {
           }
         )
       }
-      const document = this.domain.richTextDocuments.save({
-        type: 'note', id: input.id, field: 'content'
-      }, (() => {
-        try {
-          return onMoveRichTextDocumentToStored(input.document)
-        } catch (error) {
-          throw new ModelValidationError(
-            `Note rich-text document is invalid: ${error instanceof Error ? error.message : String(error)}`
+      const currentDocument = onMoveRichTextDocumentFromStored(current.content)
+      const next = nextDocument(currentDocument)
+      let stored: string
+      try {
+        stored = onMoveRichTextDocumentToStored(next)
+      } catch (error) {
+        throw new ModelValidationError(
+          `Note rich-text document is invalid: ${error instanceof Error ? error.message : String(error)}`
+        )
+      }
+      const textDisappeared = richTextPlainText(current.content).trim().length > 0 &&
+        richTextPlainText(stored).trim().length === 0
+      if (textDisappeared) {
+        if (input.clear !== true) {
+          throw new NoteTextDisappearedError(
+            `Note ${input.id} contains text, but this change would leave only empty structure or ` +
+            'line breaks. Retry with clear=true only when intentionally clearing the Note.',
+            {
+              code: 'NOTE_TEXT_DISAPPEARED',
+              noteId: input.id,
+              previousRevision: current.revision
+            }
           )
         }
-      })())
+        stored = ''
+      }
+      const document = this.domain.richTextDocuments.save({
+        type: 'note', id: input.id, field: 'content'
+      }, stored)
       this.audit.record({
-        toolName: 'onmove.update_note', entityType: 'note', entityId: input.id,
+        toolName, entityType: 'note', entityId: input.id,
         category: 'update', clientName,
         affectedSensitive: Boolean(this.sensitivity.isSensitive('note', input.id))
       })

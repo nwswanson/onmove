@@ -49,13 +49,15 @@ describe('OnMove MCP protocol adapter', () => {
       'onmove.list_focuses',
       'onmove.get_thread',
       'onmove.get_note',
+      'onmove.resolve_note',
       'onmove.resolve_target',
       'onmove.search',
       'onmove.create_update',
+      'onmove.patch_note_text',
       'onmove.update_note',
       'onmove.poke_review'
     ]))
-    expect(listed.tools).toHaveLength(19)
+    expect(listed.tools).toHaveLength(21)
 
     const templates = await client.listResourceTemplates()
     expect(templates.resourceTemplates.map(({ uriTemplate }) => uriTemplate)).toEqual(
@@ -583,18 +585,241 @@ describe('OnMove MCP protocol adapter', () => {
     expect(database.domain.notes.find(note.id)?.content).toContain('Updated live through MCP')
   })
 
+  it('resolves and patches a Note in two semantic calls while preserving its formatting', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const note = database.domain.notes.list({ type: 'focus', id: focus.id })[0]
+    database.mcpSettings.update({ allowMutations: true })
+    database.commands.updateNote({
+      id: note.id,
+      expectedRevision: note.revision,
+      document: {
+        version: 1,
+        blocks: [{
+          type: 'paragraph',
+          children: [{
+            type: 'text',
+            text: 'hello world',
+            marks: ['bold'],
+            color: 'blue'
+          }]
+        }]
+      }
+    }, database.mcpSettings.accessPolicy())
+
+    const resolved = await client.callTool({
+      name: 'onmove.resolve_note',
+      arguments: {
+        focus: { title: 'launch readiness' },
+        note: { title: 'default' },
+        includeRichText: true
+      }
+    })
+    expect(resolved.isError).not.toBe(true)
+    expect(resolved.structuredContent).toMatchObject({
+      status: 'resolved',
+      target: {
+        reference: { type: 'note', id: note.id },
+        contextPath: [{ type: 'focus', id: focus.id, title: 'Launch readiness' }],
+        note: {
+          content: 'hello world',
+          revision: note.revision + 1,
+          richText: { blocks: [{ children: [{ marks: ['bold'], color: 'blue' }] }] }
+        },
+        writeGuide: {
+          patchNoteText: {
+            tool: 'onmove.patch_note_text',
+            noteId: note.id,
+            expectedRevision: note.revision + 1
+          },
+          updateNote: { tool: 'onmove.update_note' }
+        }
+      },
+      diagnostics: { resolutionStatus: 'resolved', candidateCount: 1 }
+    })
+
+    const patched = await client.callTool({
+      name: 'onmove.patch_note_text',
+      arguments: {
+        id: note.id,
+        expectedRevision: note.revision + 1,
+        findText: 'hello world',
+        replaceText: 'hi there',
+        addMarks: ['italic']
+      }
+    })
+    expect(patched.isError).not.toBe(true)
+    expect(patched.structuredContent).toMatchObject({
+      note: {
+        content: 'hi there',
+        revision: note.revision + 2,
+        richText: {
+          blocks: [{
+            children: [{
+              type: 'text',
+              text: 'hi there',
+              marks: ['bold', 'italic'],
+              color: 'blue'
+            }]
+          }]
+        }
+      }
+    })
+  })
+
+  it('returns full Focus Notes only on request and guards every accidental clear path', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const note = database.domain.notes.list({ type: 'focus', id: focus.id })[0]
+    database.mcpSettings.update({ allowMutations: true })
+    database.commands.updateNote({
+      id: note.id,
+      expectedRevision: note.revision,
+      document: richText('Keep this text')
+    }, database.mcpSettings.accessPolicy())
+
+    const compact = await client.callTool({
+      name: 'onmove.get_focus', arguments: { id: focus.id }
+    })
+    const compactNotes = (compact.structuredContent as { notes: Array<Record<string, unknown>> }).notes
+    expect(compactNotes[0]).not.toHaveProperty('richText')
+    expect(compactNotes[0]).not.toHaveProperty('writeGuide')
+
+    const complete = await client.callTool({
+      name: 'onmove.get_focus',
+      arguments: { id: focus.id, includeRichText: true }
+    })
+    expect(complete.structuredContent).toMatchObject({
+      notes: [{
+        id: note.id,
+        revision: note.revision + 1,
+        richText: richText('Keep this text'),
+        writeGuide: {
+          patchNoteText: { tool: 'onmove.patch_note_text' },
+          updateNote: { tool: 'onmove.update_note' }
+        }
+      }]
+    })
+
+    const structuralClear = await client.callTool({
+      name: 'onmove.update_note',
+      arguments: {
+        id: note.id,
+        expectedRevision: note.revision + 1,
+        richText: {
+          version: 1,
+          blocks: [{
+            type: 'paragraph',
+            children: [{ type: 'line-break' }]
+          }]
+        }
+      }
+    })
+    expect(structuralClear.isError).toBe(true)
+    expect(structuralClear.structuredContent).toMatchObject({
+      error: { code: 'NOTE_TEXT_DISAPPEARED', noteId: note.id },
+      recovery: {
+        instruction: expect.stringContaining('clear=true'),
+        retry: {
+          tool: 'onmove.update_note',
+          arguments: { id: note.id, clear: true }
+        }
+      }
+    })
+    expect(database.domain.notes.find(note.id)?.revision).toBe(note.revision + 1)
+
+    const patchClear = await client.callTool({
+      name: 'onmove.patch_note_text',
+      arguments: {
+        id: note.id,
+        expectedRevision: note.revision + 1,
+        findText: 'Keep this text',
+        replaceText: ''
+      }
+    })
+    expect(patchClear.isError).toBe(true)
+    expect(patchClear.structuredContent).toMatchObject({
+      error: { code: 'NOTE_TEXT_DISAPPEARED', noteId: note.id }
+    })
+    expect(database.domain.notes.find(note.id)?.revision).toBe(note.revision + 1)
+
+    const intentional = await client.callTool({
+      name: 'onmove.patch_note_text',
+      arguments: {
+        id: note.id,
+        expectedRevision: note.revision + 1,
+        findText: 'Keep this text',
+        replaceText: '',
+        clear: true
+      }
+    })
+    expect(intentional.isError).not.toBe(true)
+    expect(intentional.structuredContent).toMatchObject({
+      note: { content: '', revision: note.revision + 2, richText: { blocks: [] } }
+    })
+  })
+
+  it('makes duplicate semantic Note patches recoverable without guessing', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const note = database.domain.notes.list({ type: 'focus', id: focus.id })[0]
+    database.mcpSettings.update({ allowMutations: true })
+    database.commands.updateNote({
+      id: note.id,
+      expectedRevision: note.revision,
+      document: richText('hello world and hello world')
+    }, database.mcpSettings.accessPolicy())
+
+    const ambiguous = await client.callTool({
+      name: 'onmove.patch_note_text',
+      arguments: {
+        id: note.id,
+        expectedRevision: note.revision + 1,
+        findText: 'hello world',
+        replaceText: 'hi there'
+      }
+    })
+    expect(ambiguous.isError).toBe(true)
+    expect(ambiguous.structuredContent).toMatchObject({
+      error: { code: 'NOTE_TEXT_AMBIGUOUS', matchCount: 2 },
+      recovery: { instruction: expect.stringContaining('1 through 2') }
+    })
+    expect(database.domain.notes.find(note.id)?.revision).toBe(note.revision + 1)
+
+    const selected = await client.callTool({
+      name: 'onmove.patch_note_text',
+      arguments: {
+        id: note.id,
+        expectedRevision: note.revision + 1,
+        findText: 'hello world',
+        replaceText: 'hi there',
+        occurrence: 2
+      }
+    })
+    expect(selected.isError).not.toBe(true)
+    expect(selected.structuredContent).toMatchObject({
+      note: { content: 'hello world and hi there' }
+    })
+  })
+
   it('advertises a structured Note document and rejects unsafe rich-text input', async () => {
     const tools = (await client.listTools()).tools
     const updateNote = tools.find(({ name }) => name === 'onmove.update_note')!
+    const patchNote = tools.find(({ name }) => name === 'onmove.patch_note_text')!
+    const resolveNote = tools.find(({ name }) => name === 'onmove.resolve_note')!
     const schema = JSON.stringify(updateNote.inputSchema)
     expect(schema).toContain('bullet-list')
     expect(schema).toContain('checklist')
     expect(schema).toContain('strikethrough')
     expect(schema).toContain('rich-text')
+    expect(schema).toContain('Example text run')
+    expect(schema).toContain('structural soft line break')
+    expect(schema).toContain('oneOf')
+    expect(schema).toContain('"additionalProperties":false')
     const properties = (updateNote.inputSchema as { properties?: Record<string, unknown> }).properties
     expect(properties).toHaveProperty('richText')
     expect(properties).not.toHaveProperty('document')
     expect(properties).not.toHaveProperty('content')
+    expect(JSON.stringify(patchNote.inputSchema)).toContain('NOTE_TEXT_AMBIGUOUS')
+    expect(JSON.stringify(patchNote.inputSchema)).toContain('clear')
+    expect(JSON.stringify(resolveNote.inputSchema)).toContain('Defaults to true')
 
     const focus = database.domain.focuses.requireModel(1).toSnapshot()
     const note = database.domain.notes.list({ type: 'focus', id: focus.id })[0]

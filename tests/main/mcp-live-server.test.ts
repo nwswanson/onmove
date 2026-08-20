@@ -49,7 +49,7 @@ describe('running-application MCP server', () => {
 
     try {
       await client.connect(new StreamableHTTPClientTransport(new URL(endpoint)))
-      expect((await client.listTools()).tools).toHaveLength(19)
+      expect((await client.listTools()).tools).toHaveLength(21)
       const created = await client.callTool({
         name: 'onmove.create_todo',
         arguments: { parent: { type: 'thread', id: thread.id }, name: 'Same process Todo' }
@@ -82,6 +82,25 @@ describe('running-application MCP server', () => {
         reference: { type: 'note', id: note.id, field: 'content' },
         value: expect.stringContaining('Live Note content'),
         revision: note.revision + 1
+      }))
+
+      changed.mockClear()
+      richTextChanged.mockClear()
+      const patchedNote = await client.callTool({
+        name: 'onmove.patch_note_text',
+        arguments: {
+          id: note.id,
+          expectedRevision: note.revision + 1,
+          findText: 'Live Note content',
+          replaceText: 'Live Note wording'
+        }
+      })
+      expect(patchedNote.isError).not.toBe(true)
+      expect(changed).toHaveBeenCalledOnce()
+      expect(richTextChanged).toHaveBeenCalledWith(expect.objectContaining({
+        reference: { type: 'note', id: note.id, field: 'content' },
+        value: expect.stringContaining('Live Note wording'),
+        revision: note.revision + 2
       }))
 
       const rejected = await fetch(endpoint, {

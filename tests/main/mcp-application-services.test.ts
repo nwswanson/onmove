@@ -7,6 +7,7 @@ import { AppDatabase } from '../../src/main/database'
 import type { OnMoveAccessPolicy } from '../../src/main/application/access-policy'
 import {
   NoteRevisionConflictError,
+  NoteTextDisappearedError,
   ScopeTargetValidationError
 } from '../../src/main/application/services'
 import type { OnMoveRichTextDocument } from '../../src/shared/rich-text-document'
@@ -398,6 +399,122 @@ describe('OnMove MCP application services', () => {
       client_name: 'note-test'
     })])
     expect(JSON.stringify(audit)).not.toContain('readiness review')
+  })
+
+  it('includes Focus rich text only on request and resolves directly owned Notes by hierarchy', () => {
+    const { focusId, threadId } = hierarchy()
+    const focusNote = database.domain.notes.list({ type: 'focus', id: focusId })[0]
+    const threadNote = database.domain.notes.list({ type: 'thread', id: threadId })[0]
+    database.commands.updateNote({
+      id: focusNote.id,
+      expectedRevision: focusNote.revision,
+      document: richText('Focus-level evidence')
+    }, writable)
+
+    expect(database.queries.getFocus(focusId, denied)?.notes[0]).not.toHaveProperty('richText')
+    expect(database.queries.getFocus(focusId, denied, { includeRichText: true })?.notes[0])
+      .toMatchObject({
+        id: focusNote.id,
+        revision: focusNote.revision + 1,
+        richText: richText('Focus-level evidence')
+      })
+
+    const focusResolution = database.queries.resolveNote({
+      focus: { title: 'project atlas' },
+      note: { title: 'default' }
+    }, denied)
+    expect(focusResolution).toMatchObject({
+      status: 'resolved',
+      candidates: [{
+        reference: { type: 'note', id: focusNote.id },
+        contextPath: [{ type: 'focus', id: focusId, title: 'Project Atlas' }],
+        note: { richText: richText('Focus-level evidence') }
+      }]
+    })
+
+    expect(database.queries.resolveNote({
+      focus: { id: focusId },
+      thread: { title: 'Sprint execution' },
+      note: { id: threadNote.id }
+    }, denied)).toMatchObject({
+      status: 'resolved',
+      candidates: [{
+        reference: { type: 'note', id: threadNote.id },
+        contextPath: [
+          { type: 'focus', id: focusId },
+          { type: 'thread', id: threadId }
+        ]
+      }]
+    })
+  })
+
+  it('patches Note text semantically and blocks accidental text disappearance', () => {
+    const { threadId } = hierarchy()
+    const note = database.domain.notes.list({ type: 'thread', id: threadId })[0]
+    const initial = database.commands.updateNote({
+      id: note.id,
+      expectedRevision: note.revision,
+      document: {
+        version: 1,
+        blocks: [{
+          type: 'paragraph',
+          children: [{
+            type: 'text',
+            text: 'hello world',
+            marks: ['bold'],
+            color: 'blue'
+          }]
+        }]
+      }
+    }, writable)
+    const patched = database.commands.patchNoteText({
+      id: note.id,
+      expectedRevision: initial.revision,
+      findText: 'hello world',
+      replaceText: 'hi there',
+      addMarks: ['italic']
+    }, writable)
+    expect(database.queries.getNote(note.id, denied)?.note).toMatchObject({
+      content: 'hi there',
+      revision: patched.revision,
+      richText: {
+        blocks: [{
+          children: [{
+            type: 'text',
+            text: 'hi there',
+            marks: ['bold', 'italic'],
+            color: 'blue'
+          }]
+        }]
+      }
+    })
+
+    expect(() => database.commands.updateNote({
+      id: note.id,
+      expectedRevision: patched.revision,
+      document: {
+        version: 1,
+        blocks: [{
+          type: 'paragraph',
+          children: [{ type: 'line-break' }]
+        }]
+      }
+    }, writable)).toThrow(NoteTextDisappearedError)
+    expect(database.domain.notes.find(note.id)?.revision).toBe(patched.revision)
+
+    expect(() => database.commands.patchNoteText({
+      id: note.id,
+      expectedRevision: patched.revision,
+      findText: 'hi there',
+      replaceText: ''
+    }, writable)).toThrow(NoteTextDisappearedError)
+    expect(database.commands.patchNoteText({
+      id: note.id,
+      expectedRevision: patched.revision,
+      findText: 'hi there',
+      replaceText: '',
+      clear: true
+    }, writable)).toMatchObject({ revision: patched.revision + 1, value: '' })
   })
 
   it('treats a Note under a sensitive ancestor as unknown unless sensitive access is enabled', () => {

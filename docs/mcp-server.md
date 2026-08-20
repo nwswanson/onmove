@@ -120,7 +120,27 @@ inspection call, allowed choices, and unambiguous retry behavior as Update creat
 ### Updating Notes
 
 Search results and parent contexts expose each Note's own ID. Use `onmove.get_note` with that ID to
-read its hierarchy, current revision, and `writeGuide.updateNote`. The returned `note.content` is a
+read its hierarchy, current revision, and both Note write guides. For a title-based request,
+`onmove.resolve_note` combines exact hierarchy resolution and the Note read into one call. For
+example, a directly owned Focus Note can be read with:
+
+```json
+{
+  "focus": { "title": "Project Atlas" },
+  "note": { "title": "Default" },
+  "includeRichText": true
+}
+```
+
+Add `thread` and then `commitment` selectors when the Note is owned at those levels. The deepest
+selector is the direct owner; the tool never silently searches descendant Notes. Duplicate exact
+matches return candidates instead of being guessed.
+
+`onmove.get_focus` also accepts `includeRichText: true`. Its directly owned `notes` then contain
+their complete rich-text documents and current write guides rather than compact summaries. This is
+useful when the Focus is already known and avoids one `get_note` call per Note.
+
+The returned `note.content` is a
 read-only plain-text projection for comprehension and search. `note.richText` is the complete,
 lossless document to edit and send back:
 
@@ -148,6 +168,26 @@ lossless document to edit and send back:
 }
 ```
 
+For a localized wording or mark change, prefer `onmove.patch_note_text`:
+
+```json
+{
+  "id": 81,
+  "expectedRevision": 4,
+  "findText": "hello world",
+  "replaceText": "hi there",
+  "addMarks": ["italic"],
+  "removeMarks": ["bold"]
+}
+```
+
+The match is exact and case-sensitive within one paragraph or list item. When it occurs once, no
+position is needed. Multiple matches return `NOTE_TEXT_AMBIGUOUS` with a count; retry with a
+one-based `occurrence`. A patch can cross adjacent formatted text runs and link boundaries, while
+structural line or block changes remain full-document operations. Replacement text inherits the
+first matched run's formatting, then applies `addMarks` and `removeMarks`; surrounding text, links,
+colors, and unspecified marks remain unchanged. Omit `replaceText` for a marks-only patch.
+
 `onmove.update_note` replaces the complete Note with an editor-neutral document rather than exposing
 the app's internal Lexical JSON. Blocks support paragraphs, bulleted lists, numbered lists,
 checklists, and multi-block quotes. Inline content supports links, soft line breaks, durable `@tag`
@@ -170,6 +210,10 @@ rejected as `note_revision_conflict` without changing the database. The response
 client to read, reconcile, and retry; the server never invents a text or structural merge. A
 successful write returns the refreshed Note context, including its new revision and canonical
 `note.richText` document.
+
+If a populated Note would become only whitespace, line breaks, or empty structure through either
+write tool, the server returns `NOTE_TEXT_DISAPPEARED` without changing the Note. Retry the same
+operation with `clear: true` only after confirming that intentionally emptying the Note is desired.
 
 Missing or structurally invalid rich text returns an error with `preferredField`, supported marks,
 mark aliases, a recovery instruction, and a minimal valid example.
@@ -219,7 +263,8 @@ the Update's `reference.id`. This distinction is also described directly in the 
 ## Tools and resources
 
 Read tools cover Focuses, Threads, Commitments, Routines, Reviews, Due work, Todos, Tags, search,
-Notes, and hierarchy-aware target resolution. Write tools cover the safe mutations described above.
+Notes, combined Note resolution, and hierarchy-aware work-target resolution. Write tools cover the
+safe mutations and semantic Note patching described above.
 Stable resource templates use:
 
 ```text

@@ -84,12 +84,14 @@ For hierarchy-shaped requests such as “Do X for Person Y's 1:1 in Team,” cli
 `onmove.resolve_target` first and execute its resolved Todo recommendation. This keeps duplicate
 names and Subject Scope attribution explicit instead of asking the model to guess IDs.
 
-To edit a Note, call `onmove.get_note`, modify the returned editor-neutral `note.richText` document,
-and pass it as `richText` with the returned revision to `onmove.update_note`. The plain `note.content` field is a
-read-only search/prose projection, so an MCP client cannot accidentally flatten formatting. Stale
-revisions are rejected, and successful edits synchronize into open OnMove windows.
+For a localized Note edit, resolve and read it with `onmove.resolve_note` (or `onmove.get_note` when
+its ID is known), then call `onmove.patch_note_text` with its revision, exact `findText`, and
+`replaceText`. The server preserves surrounding formatting. Use `onmove.update_note` with the
+returned editor-neutral `note.richText` only for structural document edits. The plain
+`note.content` field is a read-only search/prose projection. Stale revisions and accidental
+text-erasing changes are rejected, and successful edits synchronize into open OnMove windows.
 `onmove.create_update` uses the same document shape for its optional rich-text observation. Both
-write tools accept that structure only through the root-level `richText` field; there is no
+full-document write tools accept that structure only through the root-level `richText` field; there is no
 `document` compatibility alias.
 
 See [`docs/mcp-server.md`](docs/mcp-server.md) for the available tools, search behavior, and security

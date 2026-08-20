@@ -87,6 +87,41 @@ export interface OnMoveRichTextDocument {
   blocks: OnMoveRichTextBlock[]
 }
 
+export interface OnMoveRichTextPatch {
+  /** Exact, case-sensitive text to locate within one paragraph or list-item flow. */
+  findText: string
+  /** Replacement text. Omit for a formatting-only patch; an empty string deletes the match. */
+  replaceText?: string
+  /** One-based occurrence in document order. Omit only when the match is unique. */
+  occurrence?: number
+  addMarks?: OnMoveRichTextMark[]
+  removeMarks?: OnMoveRichTextMark[]
+}
+
+export type OnMoveRichTextPatchIssueCode =
+  | 'NOTE_TEXT_NOT_FOUND'
+  | 'NOTE_TEXT_AMBIGUOUS'
+  | 'NOTE_TEXT_OCCURRENCE_OUT_OF_RANGE'
+  | 'NOTE_TEXT_PATCH_INVALID'
+
+/** A recoverable semantic-patch failure suitable for an MCP response. */
+export class OnMoveRichTextPatchError extends Error {
+  constructor(
+    readonly code: OnMoveRichTextPatchIssueCode,
+    message: string,
+    readonly matchCount: number
+  ) {
+    super(message)
+    this.name = 'OnMoveRichTextPatchError'
+  }
+}
+
+export interface OnMoveRichTextPatchResult {
+  document: OnMoveRichTextDocument
+  matchCount: number
+  appliedOccurrence: number
+}
+
 const FORMAT_BITS: Readonly<Record<OnMoveRichTextMark, number>> = {
   bold: 1,
   italic: 1 << 1,
@@ -426,6 +461,285 @@ export function assertOnMoveRichTextDocument(value: unknown): OnMoveRichTextDocu
     version: ONMOVE_RICH_TEXT_DOCUMENT_VERSION,
     blocks: array(document.blocks, 'rich-text document blocks')
       .map((block) => validateBlock(block, budget, 1))
+  }
+}
+
+interface InlineFlow {
+  content: OnMoveRichTextInline[]
+  text: string
+}
+
+interface InlineFlowMatch {
+  flow: InlineFlow
+  start: number
+  end: number
+}
+
+function inlineFlowText(content: OnMoveRichTextInline[]): string {
+  return content.map((inline) => inline.type === 'text'
+    ? inline.text
+    : inline.type === 'link'
+      ? inline.children.map((child) => child.text).join('')
+      : '\n').join('')
+}
+
+function collectInlineFlows(blocks: OnMoveRichTextBlock[], result: InlineFlow[]): void {
+  for (const block of blocks) {
+    if (block.type === 'paragraph') {
+      result.push({ content: block.children, text: inlineFlowText(block.children) })
+      continue
+    }
+    if (block.type === 'quote') {
+      collectInlineFlows(block.blocks, result)
+      continue
+    }
+    for (const item of block.items) {
+      result.push({ content: item.content, text: inlineFlowText(item.content) })
+      for (const child of item.children ?? []) collectInlineFlows([child], result)
+    }
+  }
+}
+
+function marksAfterPatch(
+  source: OnMoveRichTextText,
+  addMarks: readonly OnMoveRichTextMark[],
+  removeMarks: readonly OnMoveRichTextMark[]
+): OnMoveRichTextMark[] | undefined {
+  const marks = new Set(source.marks ?? [])
+  for (const mark of removeMarks) marks.delete(mark)
+  for (const mark of addMarks) marks.add(mark)
+  const ordered = ONMOVE_RICH_TEXT_MARKS.filter((mark) => marks.has(mark))
+  return ordered.length > 0 ? ordered : undefined
+}
+
+function textFragment(
+  source: OnMoveRichTextText,
+  text: string,
+  options: {
+    replaceMarks?: boolean
+    marks?: OnMoveRichTextMark[]
+    preserveTag?: boolean
+  } = {}
+): OnMoveRichTextText {
+  const result: OnMoveRichTextText = { ...source, text }
+  if (options.replaceMarks) {
+    if (options.marks) result.marks = options.marks
+    else delete result.marks
+  }
+  if (!options.preserveTag || !/^@[A-Za-z0-9]+$/u.test(text)) delete result.tag
+  return result
+}
+
+function patchedLeaf(
+  source: OnMoveRichTextText,
+  leafStart: number,
+  match: InlineFlowMatch,
+  patch: OnMoveRichTextPatch,
+  replacementState: { inserted: boolean }
+): OnMoveRichTextText[] {
+  const leafEnd = leafStart + source.text.length
+  if (match.end <= leafStart || match.start >= leafEnd || source.text.length === 0) {
+    return [source]
+  }
+  const from = Math.max(0, match.start - leafStart)
+  const to = Math.min(source.text.length, match.end - leafStart)
+  const prefix = source.text.slice(0, from)
+  const selected = source.text.slice(from, to)
+  const suffix = source.text.slice(to)
+  const result: OnMoveRichTextText[] = []
+  if (prefix) result.push(textFragment(source, prefix))
+
+  const marks = marksAfterPatch(source, patch.addMarks ?? [], patch.removeMarks ?? [])
+  if (patch.replaceText === undefined) {
+    if (selected) {
+      result.push(textFragment(
+        source,
+        selected,
+        {
+          replaceMarks: true,
+          marks,
+          preserveTag: from === 0 && to === source.text.length
+        }
+      ))
+    }
+  } else if (!replacementState.inserted) {
+    replacementState.inserted = true
+    if (patch.replaceText) {
+      result.push(textFragment(
+        source,
+        patch.replaceText,
+        {
+          replaceMarks: true,
+          marks,
+          preserveTag: from === 0 && to === source.text.length
+        }
+      ))
+    }
+  }
+
+  if (suffix) result.push(textFragment(source, suffix))
+  return result
+}
+
+function sameTextStyle(left: OnMoveRichTextText, right: OnMoveRichTextText): boolean {
+  return left.color === right.color && left.tag === right.tag &&
+    JSON.stringify(left.marks ?? []) === JSON.stringify(right.marks ?? [])
+}
+
+function mergeTextRuns(children: OnMoveRichTextText[]): OnMoveRichTextText[] {
+  const result: OnMoveRichTextText[] = []
+  for (const child of children) {
+    const previous = result.at(-1)
+    if (previous && sameTextStyle(previous, child) && !previous.tag && !child.tag) {
+      previous.text += child.text
+    } else {
+      result.push(child)
+    }
+  }
+  return result
+}
+
+function compactInlineRuns(content: OnMoveRichTextInline[]): OnMoveRichTextInline[] {
+  const result: OnMoveRichTextInline[] = []
+  for (const inline of content) {
+    if (inline.type === 'link') {
+      result.push({ ...inline, children: mergeTextRuns(inline.children) })
+      continue
+    }
+    if (inline.type === 'text') {
+      const previous = result.at(-1)
+      if (previous?.type === 'text' && sameTextStyle(previous, inline) &&
+          !previous.tag && !inline.tag) {
+        previous.text += inline.text
+      } else {
+        result.push(inline)
+      }
+      continue
+    }
+    result.push(inline)
+  }
+  return result
+}
+
+function patchInlineFlow(match: InlineFlowMatch, patch: OnMoveRichTextPatch): void {
+  let cursor = 0
+  const replacementState = { inserted: false }
+  const content: OnMoveRichTextInline[] = []
+  for (const inline of match.flow.content) {
+    if (inline.type === 'line-break') {
+      content.push(inline)
+      cursor += 1
+      continue
+    }
+    if (inline.type === 'text') {
+      content.push(...patchedLeaf(inline, cursor, match, patch, replacementState))
+      cursor += inline.text.length
+      continue
+    }
+    const children: OnMoveRichTextText[] = []
+    for (const child of inline.children) {
+      children.push(...patchedLeaf(child, cursor, match, patch, replacementState))
+      cursor += child.text.length
+    }
+    if (children.length > 0) content.push({ ...inline, children })
+  }
+  match.flow.content.splice(0, match.flow.content.length, ...compactInlineRuns(content))
+}
+
+/**
+ * Applies one exact semantic text patch without rebuilding unrelated rich-text nodes.
+ * Matches may cross adjacent formatted runs or link boundaries, but never structural
+ * paragraph/list-item boundaries or explicit line-break nodes.
+ */
+export function patchOnMoveRichTextDocument(
+  value: unknown,
+  patch: OnMoveRichTextPatch
+): OnMoveRichTextPatchResult {
+  const document = assertOnMoveRichTextDocument(value)
+  if (!patch || typeof patch !== 'object' ||
+      typeof patch.findText !== 'string' || patch.findText.length === 0) {
+    throw new OnMoveRichTextPatchError(
+      'NOTE_TEXT_PATCH_INVALID',
+      'findText must contain the exact non-empty text to patch.',
+      0
+    )
+  }
+  if (/\r|\n/u.test(patch.findText)) {
+    throw new OnMoveRichTextPatchError(
+      'NOTE_TEXT_PATCH_INVALID',
+      'findText cannot cross a structural line or block boundary; use onmove.update_note for structural edits.',
+      0
+    )
+  }
+  if (
+    patch.replaceText === undefined &&
+    (patch.addMarks?.length ?? 0) === 0 &&
+    (patch.removeMarks?.length ?? 0) === 0
+  ) {
+    throw new OnMoveRichTextPatchError(
+      'NOTE_TEXT_PATCH_INVALID',
+      'Provide replaceText, addMarks, or removeMarks.',
+      0
+    )
+  }
+  if (patch.occurrence !== undefined && (
+    !Number.isSafeInteger(patch.occurrence) || patch.occurrence < 1
+  )) {
+    throw new OnMoveRichTextPatchError(
+      'NOTE_TEXT_PATCH_INVALID',
+      'occurrence must be a one-based positive integer.',
+      0
+    )
+  }
+  const overlap = (patch.addMarks ?? []).find((mark) => patch.removeMarks?.includes(mark))
+  if (overlap) {
+    throw new OnMoveRichTextPatchError(
+      'NOTE_TEXT_PATCH_INVALID',
+      `The same mark cannot be both added and removed: ${overlap}.`,
+      0
+    )
+  }
+
+  const flows: InlineFlow[] = []
+  collectInlineFlows(document.blocks, flows)
+  const matches: InlineFlowMatch[] = []
+  for (const flow of flows) {
+    let offset = 0
+    while (offset <= flow.text.length - patch.findText.length) {
+      const start = flow.text.indexOf(patch.findText, offset)
+      if (start < 0) break
+      matches.push({ flow, start, end: start + patch.findText.length })
+      offset = start + patch.findText.length
+    }
+  }
+  if (matches.length === 0) {
+    throw new OnMoveRichTextPatchError(
+      'NOTE_TEXT_NOT_FOUND',
+      `The exact text ${JSON.stringify(patch.findText)} was not found in the Note.`,
+      0
+    )
+  }
+  if (patch.occurrence === undefined && matches.length > 1) {
+    throw new OnMoveRichTextPatchError(
+      'NOTE_TEXT_AMBIGUOUS',
+      `The exact text ${JSON.stringify(patch.findText)} occurs ${matches.length} times. ` +
+      'Retry with a one-based occurrence.',
+      matches.length
+    )
+  }
+  const occurrence = patch.occurrence ?? 1
+  if (occurrence > matches.length) {
+    throw new OnMoveRichTextPatchError(
+      'NOTE_TEXT_OCCURRENCE_OUT_OF_RANGE',
+      `Occurrence ${occurrence} was requested, but the exact text occurs ${matches.length} times.`,
+      matches.length
+    )
+  }
+  patchInlineFlow(matches[occurrence - 1], patch)
+  return {
+    document: assertOnMoveRichTextDocument(document),
+    matchCount: matches.length,
+    appliedOccurrence: occurrence
   }
 }
 

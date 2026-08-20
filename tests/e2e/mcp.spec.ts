@@ -81,7 +81,9 @@ test('serves MCP from the running app and immediately refreshes its open windows
 
     const tools = await client.listTools()
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.search')
+    expect(tools.tools.map(({ name }) => name)).toContain('onmove.resolve_note')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.resolve_target')
+    expect(tools.tools.map(({ name }) => name)).toContain('onmove.patch_note_text')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.update_note')
 
     await window.evaluate((noteId) => {
@@ -128,6 +130,47 @@ test('serves MCP from the running app and immediately refreshes its open windows
         change.revision === revision
       )
     }, { noteId: threadNote.id, revision: threadNote.revision + 1 })).toBe(true)
+
+    const resolvedNote = await client.callTool({
+      name: 'onmove.resolve_note',
+      arguments: {
+        focus: { title: 'MCP launch' },
+        thread: { title: 'MCP delivery' },
+        note: { title: 'Default' },
+        includeRichText: true
+      }
+    })
+    expect(resolvedNote.structuredContent).toMatchObject({
+      status: 'resolved',
+      target: {
+        reference: { type: 'note', id: threadNote.id },
+        note: {
+          revision: threadNote.revision + 1,
+          content: 'MCP content visible in open windows'
+        }
+      }
+    })
+    const patchedNote = await client.callTool({
+      name: 'onmove.patch_note_text',
+      arguments: {
+        id: threadNote.id,
+        expectedRevision: threadNote.revision + 1,
+        findText: 'content',
+        replaceText: 'wording'
+      }
+    })
+    expect(patchedNote.isError).not.toBe(true)
+    await expect.poll(() => window.evaluate(({ noteId, revision }) => {
+      const testWindow = window as typeof window & {
+        __mcpNoteChanges?: Array<{ id: number; value: string; revision: number }>
+      }
+      return (testWindow.__mcpNoteChanges ?? []).some((change) =>
+        change.id === noteId &&
+        change.value.includes('MCP wording visible in open windows') &&
+        change.value.includes('"format":1') &&
+        change.revision === revision
+      )
+    }, { noteId: threadNote.id, revision: threadNote.revision + 2 })).toBe(true)
 
     const resolved = await client.callTool({
       name: 'onmove.resolve_target',

@@ -766,24 +766,42 @@ foreground colors and do not rely on color alone to communicate selection or sta
   may use different implementation vocabulary, but that must not leak into the MCP schema.
 - Rich-text reads expose both a readable plain-text projection and a lossless editor-neutral
   versioned document. The plain projection is for search and comprehension and must remain
-  read-only. All MCP-writable rich-text fields use the same AST and accept full-document replacement
-  through `richText`, preserving paragraphs, nested lists and checklists, multi-block quotes, links,
-  tags, colors, soft breaks, and marks. Never accept a plain string write that can flatten formatting.
+  read-only. All full-document MCP rich-text writes use the same AST under `richText`, preserving
+  paragraphs, nested lists and checklists, multi-block quotes, links, tags, colors, soft breaks, and
+  marks. Never accept a plain string full-document write that can flatten formatting.
+- Prefer `onmove.patch_note_text` for localized Note wording and mark changes. It must locate exact
+  case-sensitive text within one inline flow, require a one-based occurrence when duplicates exist,
+  preserve surrounding structure and unspecified formatting, retain optimistic concurrency, and
+  return the refreshed canonical Note. Keep `onmove.update_note` for structural edits. Both paths
+  must reject a populated Note becoming only whitespace, line breaks, or empty structure as
+  `NOTE_TEXT_DISAPPEARED`; only an explicit `clear=true` may authorize and canonicalize an
+  intentional clear.
+- Let callers avoid discovery call explosions. `onmove.get_focus` must optionally return directly
+  owned Notes with complete rich text and write guides through `includeRichText=true`.
+  `onmove.resolve_note` must resolve exact Focus → optional Thread → optional Commitment → Note
+  selectors and return hierarchy, Note id, revision, optional full rich text, and write guides in
+  one response. The deepest supplied hierarchy selector is the direct owner; never search
+  descendants implicitly or guess duplicate matches.
 - Keep the rich-text schema practical for LLM clients. Describe every node, field, mark, color,
   protocol, limit, and minimal valid example. The canonical yellow highlight mark is `highlight`;
   accept `highlight-yellow` only as an input mark alias and canonicalize it on read. This mark alias
   must not become another root document field. Missing or invalid rich text must name `richText`,
   identify the bad nested value, list supported values, and include a corrected example.
+- Model rich-text nodes as strict discriminated `oneOf` variants on `type`, with
+  `additionalProperties: false` at every object boundary. Give the ordinary `text` run a prominent
+  complete example and describe `line-break` as a rare structural node that cannot contain text;
+  agents previously selected line-break while trying to supply ordinary content.
 - Validate semantic rich-text details in the handler when doing so produces a more actionable error
   than an opaque MCP SDK “invalid arguments” response. Test invalid requests through a real MCP
   client, not only the converter, because transport schema validation can reject input before the
   handler can add recovery metadata. In particular, preserve regression coverage for mixed marks
   such as `marks: ["italic", "highlight-yellow"]`, unsupported marks, unsafe links, missing
   `richText`, and the rejected root-level `document` field. Rejected input must not mutate SQLite.
-- A Note update is a read-edit-write operation. Require the revision returned by `onmove.get_note`,
-  reject stale revisions without writing, and tell the agent to re-read, reconcile, and retry. Do
-  not invent a merge. A blank Update remains a valid explicit record, so omitting optional
-  `richText` from `onmove.create_update` must not be confused with a malformed Note replacement.
+- A Note mutation is a revision-guarded operation. Require the revision returned by `get_note`,
+  `resolve_note`, or an expanded Focus read, reject stale revisions without writing, and tell the
+  agent to re-read, reconcile, and retry. Do not invent a merge. A blank Update remains a valid
+  explicit record, so omitting optional `richText` from `onmove.create_update` must not be confused
+  with a malformed Note replacement.
 - Keep mutations narrow, typed, auditable, and opt-in. Route them only through
   `OnMoveCommandService`; never expose generic model updates, arbitrary fields, SQL, delete, import,
   move, archive clearing, or lifecycle transitions without a separate product and confirmation
