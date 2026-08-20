@@ -21,6 +21,7 @@ import {
 } from '../../shared/contracts'
 import { BaseModel, BaseRepository, ModelNotFoundError, ModelValidationError } from './model'
 import { ScopeRepository } from './scope-model'
+import { RichTextHistoryRepository } from './rich-text-history'
 import type { SqliteAdapter } from './sqlite-adapter'
 
 interface RoutineRow {
@@ -255,10 +256,12 @@ export class RoutineModel extends BaseModel<RoutineSnapshot> {
  */
 export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineModel> {
   private readonly scopes: ScopeRepository
+  private readonly richTextHistory: RichTextHistoryRepository
 
   constructor(private readonly database: SqliteAdapter) {
     super()
     this.scopes = new ScopeRepository(database)
+    this.richTextHistory = new RichTextHistoryRepository(database)
   }
 
   protected instantiate(record: RoutineSnapshot): RoutineModel {
@@ -492,6 +495,14 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
         : owner.attested_at
 
     this.database.transaction(() => {
+      if (note !== owner.note) {
+        this.richTextHistory.recordUnversionedChange(
+          { type: 'routine-attestation', id: attestationId, field: 'note' },
+          owner.note,
+          note,
+          now
+        )
+      }
       this.database.run(
         `UPDATE routine_review_cell_attestations
          SET resolution = ?, attested_at = ?, note = ?
@@ -522,6 +533,19 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
       )
     })
     return this.materialize(Number(owner.routine_id), localDate(now))
+  }
+
+  itemNoteHistory(attestationId: number) {
+    assertId(attestationId, 'Routine Run cell attestation')
+    if (!this.database.get<{ found: number }>(
+      'SELECT 1 AS found FROM routine_review_cell_attestations WHERE id = ?',
+      [attestationId]
+    )) throw new ModelNotFoundError('Routine Run cell attestation', attestationId)
+    return this.richTextHistory.list({
+      type: 'routine-attestation',
+      id: attestationId,
+      field: 'note'
+    })
   }
 
   finalizeCell(cellId: number, now = new Date()): RoutineSnapshot {

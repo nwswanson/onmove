@@ -77,6 +77,10 @@ describe('DataArchiveRepository', () => {
     const defaultNote = source.domain.commitments.materialize(commitment.id).notes[0]
     source.domain.richTextDocuments.save(
       { type: 'note', id: defaultNote.id, field: 'content' },
+      'A'.repeat(600)
+    )
+    source.domain.richTextDocuments.save(
+      { type: 'note', id: defaultNote.id, field: 'content' },
       'Durable imported note'
     )
 
@@ -89,6 +93,18 @@ describe('DataArchiveRepository', () => {
     })
     expect(archive.tables.commitment_parent_transitions).toHaveLength(2)
     expect(archive.tables.thread_parent_transitions).toHaveLength(1)
+    expect(archive.tables.rich_text_history).toMatchObject([{
+      document_type: 'note-content',
+      entity_id: defaultNote.id,
+      revision: 1,
+      reason: 'large-edit'
+    }])
+    expect(archive.tables.rich_text_history_state).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        document_type: 'note-content',
+        entity_id: defaultNote.id
+      })
+    ]))
 
     const target = createDatabase('archive-target')
     target.domain.focuses.create({ title: 'Replaced local data' })
@@ -132,8 +148,15 @@ describe('DataArchiveRepository', () => {
         done: true,
         completedAt: sourceTodo.completedAt
       })
-    expect(target.domain.commitments.materialize(importedCommitment.id).notes[0].content)
-      .toBe('Durable imported note')
+    const [importedNote] = target.domain.commitments.materialize(importedCommitment.id).notes
+    expect(importedNote.content).toBe('Durable imported note')
+    expect(target.domain.richTextDocuments.history({
+      type: 'note', id: importedNote.id, field: 'content'
+    })).toMatchObject([{
+      revision: 1,
+      value: 'A'.repeat(600),
+      reason: 'large-edit'
+    }])
     const importedRoutine = target.domain.routines.list('2026-08-09')[0]
     expect(importedRoutine).toMatchObject({
       id: routine.id,
@@ -354,6 +377,8 @@ describe('DataArchiveRepository', () => {
         focuses: [{
           id: '10',
           title: 'Older focus',
+          description: 'Legacy rich description',
+          descriptionRevision: 1,
           kind: 'kind-added-by-another-version',
           status: 'status-added-by-another-version',
           futurePresentationHint: 'ignored'
@@ -376,6 +401,13 @@ describe('DataArchiveRepository', () => {
           name: 'Older completed Todo',
           done: true
         }],
+        rich_text_history: [{
+          documentType: 'focus-description',
+          entityId: 10,
+          revision: 1,
+          value: 'Legacy rich description',
+          changedAt: '2026-08-08T12:00:00.000Z'
+        }],
         future_documents: [{ id: 1, blocks: [] }]
       }
     }, new Date('2026-08-09T12:00:00.000Z'))
@@ -383,7 +415,7 @@ describe('DataArchiveRepository', () => {
     expect(summary.sourceArchiveVersion).toBe(99)
     expect(summary.sourceSchemaVersion).toBe(999)
     expect(summary.issues).toEqual([])
-    expect(summary).toMatchObject({ candidateRows: 4, importedRows: 4, skippedRows: 0 })
+    expect(summary).toMatchObject({ candidateRows: 5, importedRows: 5, skippedRows: 0 })
     expect(summary.ignoredTables).toEqual(['future_documents'])
     expect(summary.ignoredFields).toContain('focuses.futurePresentationHint')
     expect(summary.repairedRows).toBeGreaterThan(0)
@@ -391,6 +423,15 @@ describe('DataArchiveRepository', () => {
     const focus = target.domain.focuses.list()[0]
     expect(focus).toMatchObject({ id: 10, title: 'Older focus', kind: 'generic', status: 'active' })
     expect(focus.notes).toHaveLength(1)
+    expect(target.domain.richTextDocuments.history({
+      type: 'focus', id: focus.id, field: 'description'
+    })).toMatchObject([{
+      revision: 1,
+      value: 'Legacy rich description',
+      reason: 'legacy',
+      editCount: 1,
+      changeSize: 0
+    }])
     const thread = target.domain.threads.listForFocus(focus.id)[0]
     expect(thread).toMatchObject({ id: 20, title: 'Older thread', reviewFrequencyDays: 7 })
     expect(thread.notes).toHaveLength(1)

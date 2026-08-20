@@ -133,14 +133,52 @@ or introduce multiple named documents without changing parent shape.
 
 Focus description, Update observation, and Note content implement one addressable
 `RichTextDocumentReference` contract. A changed value is committed synchronously on the main
-process's single SQLite connection. SQLite triggers increment the field-specific revision and append
-the complete committed value to `rich_text_history`; saving the identical value is a no-op. Parent
-and Update deletion also removes the corresponding polymorphic history rows.
+process's single SQLite connection. SQLite triggers increment the field-specific live revision;
+saving the identical value is a no-op. That revision is the synchronization token used by editors
+and MCP optimistic concurrency, so it advances for every changed save even when no recovery
+checkpoint is created.
 
-The active record remains the materialized value used by normal snapshots. Revision history is the
-safety trail, not something the UI must replay. A commit returns its new materialized snapshot and
-is broadcast to every renderer window, allowing the main workspace and any detached editor window
-to converge on the same persisted revision without a renderer-owned cache or close-time flush.
+`rich_text_history` is instead a bounded recovery trail. A row stores the complete document *before*
+a noteworthy edit, its document type and entity id, live revision, capture time, reason, edit count,
+and measured change size. It is not an audit of every keystroke. Each document retains only its 30
+newest full checkpoints. `rich_text_history_state` stores one mutable accumulator row per active
+document: the baseline revision/value/time, last edit time, edits since the baseline, and latest
+accumulated change size. Thus ordinary 750 ms autosaves update one small row rather than appending a
+full rich-text document each time.
+
+The polymorphic history types currently cover Focus descriptions, Update observations, Note
+content, and Routine Run × Subject attestation evidence notes. The first three use their public live
+field revision as the checkpoint revision. A Routine attestation note is finalized with its cell and
+does not expose a standalone synchronization contract, so the accumulator derives a stable internal
+revision from its baseline plus edit count. It otherwise uses the identical capture and retention
+algorithm.
+
+The checkpoint algorithm compares both readable plain text and the stored rich-text structure so it
+can notice formatting-only changes without allowing serialized editor metadata to dominate the
+measurement. It captures the recoverable pre-edit value when any of these boundaries is crossed:
+
+- a non-empty document is cleared (`destructive`);
+- one edit changes at least 512 measured units, or at least 96 units and 60% of the before/after
+  content (`large-edit`);
+- individually small edits accumulate to at least 768 units, or at least 192 units and 40% of the
+  baseline/current content (`accumulated`);
+- a meaningful edited session resumes after five idle minutes (`idle`); or
+- a meaningful continuously active session reaches 15 minutes (`elapsed`).
+
+After a checkpoint, the incoming committed value becomes the new accumulator baseline. Blank
+initial content is never stored as a useless recovery document. The capture and live-field write
+share one SQLite transaction, and all aggregate/model/MCP mutation routes converge on
+`RichTextDocumentRepository`; Routine evidence writes call the same history service inside their
+attestation transaction, so a failed save cannot leave a phantom checkpoint. Parent, Update, and
+Routine-cell deletion removes both checkpoint and accumulator rows. Portable export/import carries both tables;
+older archives without the new metadata receive `legacy` defaults. Migration 36 thins the former
+per-save history to the newest 30 values per document and marks them `legacy`.
+
+The active record remains the materialized value used by normal snapshots. A commit returns its new
+materialized snapshot and is broadcast to every renderer window, allowing the main workspace and
+any detached editor window to converge on the same persisted revision without a renderer-owned
+cache or close-time flush. There is intentionally no history UI yet; the repository exposes the
+bounded checkpoints for a later recovery interface.
 
 ## Archived Updates
 

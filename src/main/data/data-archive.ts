@@ -52,7 +52,8 @@ export const DATA_ARCHIVE_TABLES = [
   'commitment_status_transitions',
   'commitment_parent_transitions',
   'scope_application_transitions',
-  'rich_text_history'
+  'rich_text_history',
+  'rich_text_history_state'
 ] as const
 
 type ArchiveTable = (typeof DATA_ARCHIVE_TABLES)[number]
@@ -132,6 +133,11 @@ const INTEGER_COLUMNS = new Set([
   'observation_revision',
   'content_revision',
   'revision',
+  'baseline_revision',
+  'edit_count',
+  'change_size',
+  'edits_since_snapshot',
+  'accumulated_change',
   'routine_id',
   'run_id',
   'run_item_id',
@@ -143,7 +149,14 @@ const INTEGER_COLUMNS = new Set([
   'position',
   'weekday'
 ])
-const TIMESTAMP_COLUMNS = new Set(['created_at', 'updated_at', 'changed_at', 'deleted_at'])
+const TIMESTAMP_COLUMNS = new Set([
+  'created_at',
+  'updated_at',
+  'changed_at',
+  'deleted_at',
+  'baseline_at',
+  'last_edit_at'
+])
 const OPTIONAL_TIMESTAMP_COLUMNS = new Set(['completed_at'])
 const DATE_COLUMNS = new Set([
   'recorded_on',
@@ -350,6 +363,11 @@ function normalizeRow(
   if (table === 'routine_review_cell_issues') {
     setFallback(row, 'description', '')
     setFallback(row, 'follow_up_type', 'none')
+  }
+  if (table === 'rich_text_history') {
+    setFallback(row, 'reason', 'legacy')
+    setFallback(row, 'edit_count', 1)
+    setFallback(row, 'change_size', 0)
   }
   if (table === 'routine_run_issues') {
     setFallback(row, 'description', '')
@@ -610,6 +628,20 @@ function cleanSemanticViolations(database: SqliteAdapter): number {
        SELECT 1 FROM updates WHERE id = rich_text_history.entity_id
      )) OR (document_type = 'note-content' AND NOT EXISTS (
        SELECT 1 FROM notes WHERE id = rich_text_history.entity_id
+     )) OR (document_type = 'routine-attestation-note' AND NOT EXISTS (
+       SELECT 1 FROM routine_review_cell_attestations
+       WHERE id = rich_text_history.entity_id
+     ))`,
+    `DELETE FROM rich_text_history_state
+     WHERE (document_type = 'focus-description' AND NOT EXISTS (
+       SELECT 1 FROM focuses WHERE id = rich_text_history_state.entity_id
+     )) OR (document_type = 'update-observation' AND NOT EXISTS (
+       SELECT 1 FROM updates WHERE id = rich_text_history_state.entity_id
+     )) OR (document_type = 'note-content' AND NOT EXISTS (
+       SELECT 1 FROM notes WHERE id = rich_text_history_state.entity_id
+     )) OR (document_type = 'routine-attestation-note' AND NOT EXISTS (
+       SELECT 1 FROM routine_review_cell_attestations
+       WHERE id = rich_text_history_state.entity_id
      ))`
   ]
   return statements.reduce((count, sql) => count + database.run(sql).changes, 0)

@@ -678,10 +678,20 @@ foreground colors and do not rely on color alone to communicate selection or sta
   one hardcoded `Default` Note through database triggers, but the schema and snapshots must tolerate
   zero or multiple Notes for future document organization. Parent deletion cascades Notes.
 - Treat Focus description, Update observation, and Note content as addressable rich-text
-  documents. Save each changed value before returning to its editor, append a numbered full-value
-  revision, and broadcast the committed revision across renderer windows. Dedicated document
-  windows use the same sandboxed preload contract and SQLite path; they must not own a second cache
-  or delayed persistence queue.
+  documents. Save each changed value before returning to its editor, increment the live field's
+  synchronization revision, and broadcast that committed revision across renderer windows.
+  Dedicated document windows use the same sandboxed preload contract and SQLite path; they must not
+  own a second cache or delayed persistence queue.
+- Route every existing rich-text mutation—including aggregate update helpers and MCP writes—through
+  `RichTextDocumentRepository`; Routine attestation evidence notes must call the same underlying
+  `RichTextHistoryRepository` inside their finalization-aware transaction. The history service owns
+  bounded recovery checkpoints for every current rich-text field; callers must never bypass it or
+  add per-keystroke history triggers.
+  Keep at most 30 full pre-edit checkpoints per document. Use the single mutable
+  `rich_text_history_state` row to recognize destructive/large edits, accumulated small edits,
+  idle-session boundaries, and long active sessions without converting every autosave into a
+  history row. History is a recovery facility, not an edit audit; live revisions still advance on
+  every changed save.
 - Keep native File-menu import/export in the main process. Export a versioned, named-field JSON
   archive rather than renderer view models or an opaque SQLite copy. Import must intersect known
   fields, default missing older fields, ignore unknown future fields/tables, and prune unsafe rows.

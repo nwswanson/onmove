@@ -3406,6 +3406,165 @@ const migrations: readonly Migration[] = [
           CHECK (server_port BETWEEN 1024 AND 65535);
       `)
     }
+  },
+  {
+    version: 36,
+    name: 'bounded_rich_text_history',
+    up(database) {
+      const requiredTables = ['focuses', 'updates', 'notes', 'rich_text_history']
+      const hasRichTextDomain = requiredTables.every((table) => database.get<{ found: number }>(
+        "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?",
+        [table]
+      ))
+      if (!hasRichTextDomain) return
+      const hasRoutineAttestations = Boolean(database.get<{ found: number }>(
+        `SELECT 1 AS found FROM sqlite_master
+         WHERE type = 'table' AND name = 'routine_review_cell_attestations'`
+      ))
+
+      database.exec(`
+        DROP TRIGGER IF EXISTS focuses_version_goal;
+        DROP TRIGGER IF EXISTS focuses_version_description;
+        DROP TRIGGER IF EXISTS updates_version_observation;
+        DROP TRIGGER IF EXISTS notes_version_content;
+        DROP TRIGGER IF EXISTS focuses_delete_rich_text_history;
+        DROP TRIGGER IF EXISTS updates_delete_rich_text_history;
+        DROP TRIGGER IF EXISTS notes_delete_rich_text_history;
+        DROP TRIGGER IF EXISTS routine_attestations_delete_rich_text_history;
+        DROP INDEX IF EXISTS rich_text_history_changed_index;
+
+        CREATE TABLE rich_text_history_per_edit AS
+          SELECT document_type, entity_id, revision, value, changed_at
+          FROM rich_text_history;
+        DROP TABLE rich_text_history;
+
+        CREATE TABLE rich_text_history (
+          document_type TEXT NOT NULL CHECK (
+            document_type IN (
+              'focus-description', 'update-observation', 'note-content',
+              'routine-attestation-note'
+            )
+          ),
+          entity_id INTEGER NOT NULL CHECK (entity_id > 0),
+          revision INTEGER NOT NULL CHECK (revision >= 0),
+          value TEXT NOT NULL,
+          changed_at TEXT NOT NULL CHECK (datetime(changed_at) IS NOT NULL),
+          reason TEXT NOT NULL CHECK (
+            reason IN (
+              'legacy', 'destructive', 'large-edit', 'accumulated', 'idle', 'elapsed'
+            )
+          ),
+          edit_count INTEGER NOT NULL DEFAULT 1 CHECK (edit_count >= 0),
+          change_size INTEGER NOT NULL DEFAULT 0 CHECK (change_size >= 0),
+          PRIMARY KEY (document_type, entity_id, revision)
+        ) STRICT, WITHOUT ROWID;
+
+        CREATE INDEX rich_text_history_changed_index
+          ON rich_text_history(changed_at, document_type, entity_id);
+
+        INSERT INTO rich_text_history (
+          document_type, entity_id, revision, value, changed_at,
+          reason, edit_count, change_size
+        )
+        SELECT document_type, entity_id, revision, value, changed_at,
+               'legacy', 1, 0
+        FROM (
+          SELECT history.*,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY document_type, entity_id ORDER BY revision DESC
+                 ) AS retained_rank
+          FROM rich_text_history_per_edit history
+          WHERE document_type IN (
+            'focus-description', 'update-observation', 'note-content'
+          )
+        )
+        WHERE retained_rank <= 30;
+
+        DROP TABLE rich_text_history_per_edit;
+
+        CREATE TABLE rich_text_history_state (
+          document_type TEXT NOT NULL CHECK (
+            document_type IN (
+              'focus-description', 'update-observation', 'note-content',
+              'routine-attestation-note'
+            )
+          ),
+          entity_id INTEGER NOT NULL CHECK (entity_id > 0),
+          baseline_revision INTEGER NOT NULL CHECK (baseline_revision >= 0),
+          baseline_value TEXT NOT NULL,
+          baseline_at TEXT NOT NULL CHECK (datetime(baseline_at) IS NOT NULL),
+          last_edit_at TEXT NOT NULL CHECK (datetime(last_edit_at) IS NOT NULL),
+          edits_since_snapshot INTEGER NOT NULL DEFAULT 0
+            CHECK (edits_since_snapshot >= 0),
+          accumulated_change INTEGER NOT NULL DEFAULT 0
+            CHECK (accumulated_change >= 0),
+          PRIMARY KEY (document_type, entity_id)
+        ) STRICT, WITHOUT ROWID;
+
+        CREATE TRIGGER focuses_version_description
+        AFTER UPDATE OF description ON focuses
+        WHEN OLD.description IS NOT NEW.description
+        BEGIN
+          UPDATE focuses SET description_revision = OLD.description_revision + 1
+          WHERE id = NEW.id;
+        END;
+
+        CREATE TRIGGER updates_version_observation
+        AFTER UPDATE OF observation ON updates
+        WHEN OLD.observation IS NOT NEW.observation
+        BEGIN
+          UPDATE updates SET observation_revision = OLD.observation_revision + 1
+          WHERE id = NEW.id;
+        END;
+
+        CREATE TRIGGER notes_version_content
+        AFTER UPDATE OF content ON notes
+        WHEN OLD.content IS NOT NEW.content
+        BEGIN
+          UPDATE notes SET content_revision = OLD.content_revision + 1 WHERE id = NEW.id;
+        END;
+
+        CREATE TRIGGER focuses_delete_rich_text_history
+        AFTER DELETE ON focuses
+        BEGIN
+          DELETE FROM rich_text_history
+          WHERE entity_id = OLD.id AND document_type = 'focus-description';
+          DELETE FROM rich_text_history_state
+          WHERE entity_id = OLD.id AND document_type = 'focus-description';
+        END;
+
+        CREATE TRIGGER updates_delete_rich_text_history
+        AFTER DELETE ON updates
+        BEGIN
+          DELETE FROM rich_text_history
+          WHERE entity_id = OLD.id AND document_type = 'update-observation';
+          DELETE FROM rich_text_history_state
+          WHERE entity_id = OLD.id AND document_type = 'update-observation';
+        END;
+
+        CREATE TRIGGER notes_delete_rich_text_history
+        AFTER DELETE ON notes
+        BEGIN
+          DELETE FROM rich_text_history
+          WHERE entity_id = OLD.id AND document_type = 'note-content';
+          DELETE FROM rich_text_history_state
+          WHERE entity_id = OLD.id AND document_type = 'note-content';
+        END;
+
+      `)
+      if (hasRoutineAttestations) {
+        database.exec(`
+          CREATE TRIGGER routine_attestations_delete_rich_text_history
+          AFTER DELETE ON routine_review_cell_attestations
+          BEGIN
+            DELETE FROM rich_text_history
+            WHERE entity_id = OLD.id AND document_type = 'routine-attestation-note';
+            DELETE FROM rich_text_history_state
+            WHERE entity_id = OLD.id AND document_type = 'routine-attestation-note';
+          END;
+        `)
+      }
+    }
   }
 ]
 

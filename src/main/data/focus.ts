@@ -14,6 +14,7 @@ import {
 import { BaseModel, BaseRepository, ModelNotFoundError, ModelValidationError } from './model'
 import { ScopeApplicationRepository } from './scope-model'
 import { NoteRepository } from './note-model'
+import { RichTextDocumentRepository } from './rich-text-model'
 import type { SqliteAdapter } from './sqlite-adapter'
 
 type FocusRecord = FocusSnapshot
@@ -228,11 +229,13 @@ export class FocusModel extends BaseModel<FocusRecord> {
 export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
   private readonly scopeApplications: ScopeApplicationRepository
   private readonly notes: NoteRepository
+  private readonly richTextDocuments: RichTextDocumentRepository
 
   constructor(private readonly database: SqliteAdapter) {
     super()
     this.scopeApplications = new ScopeApplicationRepository(database)
     this.notes = new NoteRepository(database)
+    this.richTextDocuments = new RichTextDocumentRepository(database)
   }
 
   protected instantiate(record: FocusRecord): FocusModel {
@@ -300,31 +303,36 @@ export class FocusRepository extends BaseRepository<FocusRecord, FocusModel> {
     const current = this.find(id)
     if (!current) throw new ModelNotFoundError('Focus', id)
 
-    this.database.run(
-      `UPDATE focuses
-       SET title = ?, description = ?, goal = ?, status = ?, due_on = ?, needs_review = ?, sensitive = ?, updated_at = ?
-       WHERE id = ?`,
-      [
-        input.title === undefined ? current.title : normalizeTitle(input.title),
-        input.description === undefined
-          ? current.description
-          : normalizeDescription(input.description),
-        retiredGoalValue(input),
-        input.status === undefined ? current.status : normalizeStatus(input.status),
-        input.dueDate === undefined
-          ? current.dueDate
-          : normalizeOptionalDate(input.dueDate, 'dueDate'),
-        input.needsReview === undefined
-          ? (current.needsReview ? 1 : 0)
-          : (normalizeNeedsReview(input.needsReview) ? 1 : 0),
-        input.sensitive === undefined
-          ? (current.sensitive ? 1 : 0)
-          : (normalizeSensitive(input.sensitive) ? 1 : 0),
-        timestamp(),
-        id
-      ]
-    )
-    return this.find(id) as FocusRecord
+    return this.database.transaction(() => {
+      if (input.description !== undefined) {
+        this.richTextDocuments.save(
+          { type: 'focus', id, field: 'description' },
+          normalizeDescription(input.description) ?? ''
+        )
+      }
+      this.database.run(
+        `UPDATE focuses
+         SET title = ?, goal = ?, status = ?, due_on = ?, needs_review = ?, sensitive = ?, updated_at = ?
+         WHERE id = ?`,
+        [
+          input.title === undefined ? current.title : normalizeTitle(input.title),
+          retiredGoalValue(input),
+          input.status === undefined ? current.status : normalizeStatus(input.status),
+          input.dueDate === undefined
+            ? current.dueDate
+            : normalizeOptionalDate(input.dueDate, 'dueDate'),
+          input.needsReview === undefined
+            ? (current.needsReview ? 1 : 0)
+            : (normalizeNeedsReview(input.needsReview) ? 1 : 0),
+          input.sensitive === undefined
+            ? (current.sensitive ? 1 : 0)
+            : (normalizeSensitive(input.sensitive) ? 1 : 0),
+          timestamp(),
+          id
+        ]
+      )
+      return this.find(id) as FocusRecord
+    })
   }
 
   setStatus(id: number, status: FocusStatus): FocusRecord {

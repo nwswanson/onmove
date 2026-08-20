@@ -59,7 +59,7 @@ describe('Note and durable rich-text models', () => {
     expect(database!.domain.focuses.requireModel(focus.id).toSnapshot().notes).toEqual([])
   })
 
-  it('commits every changed value synchronously and retains ordered revisions', () => {
+  it('commits every changed value synchronously without creating per-save history', () => {
     const focus = database!.domain.focuses.create({ title: 'Durable writing' })
     const [note] = focus.toSnapshot().notes
     const reference = { type: 'note', id: note.id, field: 'content' } as const
@@ -88,13 +88,16 @@ describe('Note and durable rich-text models', () => {
       `SELECT revision, value FROM rich_text_history
        WHERE document_type = 'note-content' AND entity_id = ? ORDER BY revision`
     ).all(note.id)
+    const state = reader.prepare(
+      `SELECT baseline_revision, edits_since_snapshot
+       FROM rich_text_history_state
+       WHERE document_type = 'note-content' AND entity_id = ?`
+    ).get(note.id)
     reader.close()
 
     expect(current).toMatchObject({ content: 'First draft', revision: 2 })
-    expect(history).toEqual([
-      { revision: 1, value: 'F' },
-      { revision: 2, value: 'First draft' }
-    ])
+    expect(history).toEqual([])
+    expect(state).toMatchObject({ baseline_revision: 0, edits_since_snapshot: 2 })
   })
 
   it('uses one versioned contract for Focus descriptions and Update observations', () => {
@@ -220,7 +223,7 @@ describe('Note and durable rich-text models', () => {
     })
   })
 
-  it('cascades Notes and their revision history with deleted parents', () => {
+  it('cascades Notes and their bounded-history accumulator with deleted parents', () => {
     const focus = database!.domain.focuses.create({ title: 'Delete safely' })
     const thread = database!.domain.threads.create({
       focusId: focus.id,
@@ -239,6 +242,10 @@ describe('Note and durable rich-text models', () => {
       .toMatchObject({ count: 0 })
     expect(reader.prepare(
       `SELECT count(*) AS count FROM rich_text_history
+       WHERE document_type = 'note-content' AND entity_id = ?`
+    ).get(note.id)).toMatchObject({ count: 0 })
+    expect(reader.prepare(
+      `SELECT count(*) AS count FROM rich_text_history_state
        WHERE document_type = 'note-content' AND entity_id = ?`
     ).get(note.id)).toMatchObject({ count: 0 })
     reader.close()

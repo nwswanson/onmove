@@ -1,9 +1,11 @@
 import type {
   RichTextDocumentContextSegment,
   RichTextDocumentReference,
-  RichTextDocumentSnapshot
+  RichTextDocumentSnapshot,
+  RichTextHistorySnapshot
 } from '../../shared/contracts'
 import { ModelNotFoundError, ModelValidationError } from './model'
+import { RichTextHistoryRepository } from './rich-text-history'
 import type { SqliteAdapter } from './sqlite-adapter'
 
 interface RichTextRow {
@@ -64,7 +66,11 @@ function hierarchyContext(row: RichTextRow): RichTextDocumentContextSegment[] {
  * the Electron main event loop serialize commits from all renderer windows.
  */
 export class RichTextDocumentRepository {
-  constructor(private readonly database: SqliteAdapter) {}
+  private readonly historyRepository: RichTextHistoryRepository
+
+  constructor(private readonly database: SqliteAdapter) {
+    this.historyRepository = new RichTextHistoryRepository(database)
+  }
 
   get(reference: RichTextDocumentReference): RichTextDocumentSnapshot {
     assertReference(reference)
@@ -108,12 +114,13 @@ export class RichTextDocumentRepository {
     return this.database.transaction(() => {
       const current = this.get(reference)
       if (current.value === value) return current
+      this.historyRepository.recordChange(reference, current, value, now)
       const changedAt = timestamp(now)
       let result: { changes: number }
       if (reference.type === 'focus') {
         result = this.database.run(
           'UPDATE focuses SET description = ?, updated_at = ? WHERE id = ?',
-          [value, changedAt, reference.id]
+          [value === '' ? null : value, changedAt, reference.id]
         )
       } else if (reference.type === 'update') {
         result = this.database.run(
@@ -131,6 +138,14 @@ export class RichTextDocumentRepository {
       }
       return this.get(reference)
     })
+  }
+
+  /** Bounded recovery checkpoints; the live document is returned by get(). */
+  history(reference: RichTextDocumentReference): RichTextHistorySnapshot[] {
+    assertReference(reference)
+    // Match get() not-found behavior instead of returning an orphan-shaped history.
+    this.get(reference)
+    return this.historyRepository.list(reference)
   }
 
   private row(reference: RichTextDocumentReference): RichTextRow | undefined {

@@ -67,6 +67,65 @@ describe('database migrations', () => {
     expect(() => new AppDatabase(databasePath)).toThrow(/newer than supported/)
   })
 
+  it('thins legacy per-edit rich-text history to the newest 30 recovery documents', () => {
+    const current = new AppDatabase(databasePath)
+    const focus = current.domain.focuses.create({ title: 'Legacy writing' })
+    const [note] = focus.toSnapshot().notes
+    current.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      DROP TRIGGER notes_version_content;
+      DROP TRIGGER focuses_delete_rich_text_history;
+      DROP TRIGGER updates_delete_rich_text_history;
+      DROP TRIGGER notes_delete_rich_text_history;
+      DROP INDEX rich_text_history_changed_index;
+      DROP TABLE rich_text_history_state;
+      DROP TABLE rich_text_history;
+
+      CREATE TABLE rich_text_history (
+        document_type TEXT NOT NULL,
+        entity_id INTEGER NOT NULL,
+        revision INTEGER NOT NULL CHECK (revision > 0),
+        value TEXT NOT NULL,
+        changed_at TEXT NOT NULL,
+        PRIMARY KEY (document_type, entity_id, revision)
+      ) STRICT, WITHOUT ROWID;
+      CREATE INDEX rich_text_history_changed_index
+        ON rich_text_history(changed_at, document_type, entity_id);
+      DELETE FROM schema_migrations WHERE version = 36;
+    `)
+    const insert = legacy.prepare(
+      `INSERT INTO rich_text_history (
+         document_type, entity_id, revision, value, changed_at
+       ) VALUES ('note-content', ?, ?, ?, ?)`
+    )
+    for (let revision = 1; revision <= 35; revision += 1) {
+      insert.run(
+        note.id,
+        revision,
+        `Legacy revision ${revision}`,
+        `2026-08-18T12:00:${String(revision).padStart(2, '0')}.000Z`
+      )
+    }
+    legacy.prepare(
+      'UPDATE notes SET content = ?, content_revision = ? WHERE id = ?'
+    ).run('Legacy revision 35', 35, note.id)
+    legacy.close()
+
+    const migrated = new AppDatabase(databasePath)
+    const reference = { type: 'note', id: note.id, field: 'content' } as const
+    const history = migrated.domain.richTextDocuments.history(reference)
+    expect(history).toHaveLength(30)
+    expect(history.at(0)).toMatchObject({ revision: 35, reason: 'legacy' })
+    expect(history.at(-1)).toMatchObject({ revision: 6, reason: 'legacy' })
+
+    migrated.domain.richTextDocuments.save(reference, 'Legacy revision 35!')
+    expect(migrated.domain.richTextDocuments.get(reference).revision).toBe(36)
+    expect(migrated.domain.richTextDocuments.history(reference)).toHaveLength(30)
+    migrated.close()
+  })
+
   it('upgrades the previous schema with a bounded archive without touching live Updates', () => {
     const current = new AppDatabase(databasePath)
     const focus = current.domain.focuses.create({ title: 'Existing focus' })

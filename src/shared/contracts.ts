@@ -1014,6 +1014,31 @@ export interface RichTextDocumentSnapshot {
   updatedAt: string
 }
 
+export type RichTextHistoryReason =
+  | 'legacy'
+  | 'destructive'
+  | 'large-edit'
+  | 'accumulated'
+  | 'idle'
+  | 'elapsed'
+
+export type RichTextHistoryReference = RichTextDocumentReference | {
+  type: 'routine-attestation'
+  id: number
+  field: 'note'
+}
+
+/** One bounded recovery checkpoint; the current document remains the live record. */
+export interface RichTextHistorySnapshot {
+  reference: RichTextHistoryReference
+  revision: number
+  value: string
+  capturedAt: string
+  reason: RichTextHistoryReason
+  editCount: number
+  changeSize: number
+}
+
 export interface RichTextDocumentChange {
   document: RichTextDocumentSnapshot
   sourceWindowId: number

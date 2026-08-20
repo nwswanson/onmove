@@ -43,6 +43,7 @@ import {
 } from './scope-model'
 import type { SqliteAdapter } from './sqlite-adapter'
 import { NoteRepository } from './note-model'
+import { RichTextDocumentRepository } from './rich-text-model'
 
 type ThreadRecord = ThreadSnapshot
 type CommitmentRecord = CommitmentSnapshot
@@ -1692,11 +1693,13 @@ export class UpdateModel extends BaseModel<UpdateRecord> {
 export class UpdateRepository extends BaseRepository<UpdateRecord, UpdateModel> {
   private readonly scopeApplications: ScopeApplicationRepository
   private readonly scopes: ScopeRepository
+  private readonly richTextDocuments: RichTextDocumentRepository
 
   constructor(private readonly database: SqliteAdapter) {
     super()
     this.scopeApplications = new ScopeApplicationRepository(database)
     this.scopes = new ScopeRepository(database)
+    this.richTextDocuments = new RichTextDocumentRepository(database)
   }
 
   protected instantiate(record: UpdateRecord): UpdateModel {
@@ -1760,13 +1763,19 @@ export class UpdateRepository extends BaseRepository<UpdateRecord, UpdateModel> 
     if (current.scope) {
       this.assertEffectiveMember(current.scope, input.date)
     }
-    const result = this.database.run(
-      `UPDATE updates
-       SET recorded_on = ?, observation = ?, state = ?, sensitive = ?, updated_at = ?
-       WHERE id = ?`,
-      [input.date, input.observation, input.state, input.sensitive ? 1 : 0, timestamp(), id]
-    )
-    if (result.changes === 0) throw new ModelNotFoundError('Update', id)
+    this.database.transaction(() => {
+      this.richTextDocuments.save(
+        { type: 'update', id, field: 'observation' },
+        input.observation
+      )
+      const result = this.database.run(
+        `UPDATE updates
+         SET recorded_on = ?, state = ?, sensitive = ?, updated_at = ?
+         WHERE id = ?`,
+        [input.date, input.state, input.sensitive ? 1 : 0, timestamp(), id]
+      )
+      if (result.changes === 0) throw new ModelNotFoundError('Update', id)
+    })
   }
 
   delete(id: number): boolean {
