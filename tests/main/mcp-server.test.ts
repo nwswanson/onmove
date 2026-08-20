@@ -118,11 +118,15 @@ describe('OnMove MCP protocol adapter', () => {
     expect(createUpdate.description).toContain('Open parents require unscoped attribution')
     expect(updateSchema).toContain('writeGuide.createUpdate.allowedSubjects')
     expect(updateSchema).toContain('Null or omitted means unscoped')
-    expect(updateSchema).toContain('Preferred rich-text observation field')
+    expect(updateSchema).toContain('The only rich-text observation field')
     expect(updateSchema).toContain('highlight-yellow')
     expect(updateSchema).toContain('checklist')
-    expect((createUpdate.inputSchema as { properties?: Record<string, unknown> }).properties)
-      .not.toHaveProperty('observation')
+    const updateProperties = (createUpdate.inputSchema as {
+      properties?: Record<string, unknown>
+    }).properties
+    expect(updateProperties).toHaveProperty('richText')
+    expect(updateProperties).not.toHaveProperty('document')
+    expect(updateProperties).not.toHaveProperty('observation')
     expect(resolveTarget.description).toContain('Thread → Commitment → Subject')
     expect(JSON.stringify(resolveTarget.inputSchema)).toContain('1:1')
     expect(createTodo.description).toContain('writeGuide.createTodo')
@@ -524,7 +528,6 @@ describe('OnMove MCP protocol adapter', () => {
       },
       recovery: {
         preferredField: 'richText',
-        acceptedAlias: 'document',
         supportedMarks: ['bold', 'italic', 'underline', 'strikethrough', 'highlight'],
         acceptedMarkAliases: { 'highlight-yellow': 'highlight' }
       }
@@ -560,7 +563,7 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: {
         id: note.id,
         expectedRevision: note.revision,
-        document: richText('This must not overwrite the newer value')
+        richText: richText('This must not overwrite the newer value')
       }
     })
     expect(stale.isError).toBe(true)
@@ -588,12 +591,26 @@ describe('OnMove MCP protocol adapter', () => {
     expect(schema).toContain('checklist')
     expect(schema).toContain('strikethrough')
     expect(schema).toContain('rich-text')
-    expect((updateNote.inputSchema as { properties?: Record<string, unknown> }).properties)
-      .not.toHaveProperty('content')
+    const properties = (updateNote.inputSchema as { properties?: Record<string, unknown> }).properties
+    expect(properties).toHaveProperty('richText')
+    expect(properties).not.toHaveProperty('document')
+    expect(properties).not.toHaveProperty('content')
 
     const focus = database.domain.focuses.requireModel(1).toSnapshot()
     const note = database.domain.notes.list({ type: 'focus', id: focus.id })[0]
     database.mcpSettings.update({ allowMutations: true })
+    const removedAlias = await client.callTool({
+      name: 'onmove.update_note',
+      arguments: {
+        id: note.id,
+        expectedRevision: note.revision,
+        document: richText('The removed alias must not write')
+      }
+    })
+    expect(removedAlias.isError).toBe(true)
+    expect(database.domain.notes.find(note.id)?.content).toBe('')
+    expect(database.domain.notes.find(note.id)?.revision).toBe(note.revision)
+
     const rejected = await client.callTool({
       name: 'onmove.update_note',
       arguments: {
@@ -655,7 +672,7 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: {
         parent: { type: 'thread', id: thread.id },
         attribution: { mode: 'unscoped' },
-        document,
+        richText: document,
         state: 'green'
       }
     })
@@ -669,6 +686,17 @@ describe('OnMove MCP protocol adapter', () => {
     const stored = database.domain.updates.listForThread(thread.id)[0]
     expect(stored.observation).toContain('"type":"link"')
     expect(stored.observation).toContain('"listType":"check"')
+
+    const removedAlias = await client.callTool({
+      name: 'onmove.create_update',
+      arguments: {
+        parent: { type: 'thread', id: thread.id },
+        attribution: { mode: 'unscoped' },
+        document: richText('The removed alias must not create an Update')
+      }
+    })
+    expect(removedAlias.isError).toBe(true)
+    expect(database.domain.updates.listForThread(thread.id)).toHaveLength(1)
 
     const flattened = await client.callTool({
       name: 'onmove.create_update',
@@ -987,7 +1015,7 @@ describe('OnMove MCP protocol adapter', () => {
       name: 'onmove.create_update',
       arguments: {
         parent: { type: 'thread', id: thread.id },
-        document: richText('First evidence'),
+        richText: richText('First evidence'),
         state: 'green'
       }
     })

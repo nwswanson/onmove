@@ -155,8 +155,8 @@ tokens, readable text colors, and bold, italic, underline, strikethrough, and hi
 may nest. The server validates document shape, size, depth, tag syntax, supported marks and colors,
 and `http`, `https`, or `mailto` link protocols before writing anything.
 
-`richText` is the preferred write field for both tools because it matches `note.richText` on reads.
-The older `document` name remains accepted as a compatibility alias, but clients must not send both.
+`richText` is the only accepted write field for both tools because it matches `note.richText` on
+reads. The MCP tool schemas do not expose or accept a second root-level document field.
 The yellow highlighter is the canonical `highlight` mark. The intuitive `highlight-yellow` input is
 also accepted and reads back as `highlight`; it is not a separate foreground color.
 
@@ -171,8 +171,8 @@ client to read, reconcile, and retry; the server never invents a text or structu
 successful write returns the refreshed Note context, including its new revision and canonical
 `note.richText` document.
 
-Missing, conflicting, or structurally invalid rich text returns an error with `preferredField`, the
-accepted alias, supported marks, mark aliases, a recovery instruction, and a minimal valid example.
+Missing or structurally invalid rich text returns an error with `preferredField`, supported marks,
+mark aliases, a recovery instruction, and a minimal valid example.
 
 A committed Note edit is broadcast through both the domain and rich-text live-change channels, so
 the main application and any open pop-out Note window receive the new revision immediately.

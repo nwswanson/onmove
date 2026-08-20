@@ -168,7 +168,7 @@ type RichTextWriteTool = 'onmove.create_update' | 'onmove.update_note'
 class RichTextToolInputError extends Error {
   constructor(
     readonly tool: RichTextWriteTool,
-    readonly code: 'missing_rich_text' | 'conflicting_rich_text_fields' | 'invalid_rich_text',
+    readonly code: 'missing_rich_text' | 'invalid_rich_text',
     message: string
   ) {
     super(message)
@@ -178,24 +178,16 @@ class RichTextToolInputError extends Error {
 
 function normalizedRichTextToolInput(
   tool: RichTextWriteTool,
-  input: { richText?: unknown; document?: unknown },
+  input: { richText?: unknown },
   required: boolean
 ): OnMoveRichTextDocument | undefined {
-  if (input.richText !== undefined && input.document !== undefined) {
-    throw new RichTextToolInputError(
-      tool,
-      'conflicting_rich_text_fields',
-      `${tool} received both richText and document. Send only richText; document is a compatibility alias.`
-    )
-  }
-  const value = input.richText ?? input.document
+  const value = input.richText
   if (value === undefined) {
     if (!required) return undefined
     throw new RichTextToolInputError(
       tool,
       'missing_rich_text',
-      `${tool} requires richText. Copy note.richText from onmove.get_note and submit it as richText. ` +
-      'The older document field is also accepted as an alias.'
+      `${tool} requires richText. Copy note.richText from onmove.get_note and submit it as richText.`
     )
   }
   try {
@@ -528,7 +520,6 @@ function richTextInputErrorResult(error: RichTextToolInputError): {
     },
     recovery: {
       preferredField: 'richText',
-      acceptedAlias: 'document',
       supportedMarks: ONMOVE_RICH_TEXT_MARKS,
       acceptedMarkAliases: { 'highlight-yellow': 'highlight' },
       instruction:
@@ -1150,10 +1141,7 @@ export function createOnMoveMcpServer(
         ),
         date: dateSchema.optional().describe('The Update\'s recorded date; defaults to today.'),
         richText: richTextDocumentSchema.optional().describe(
-          'Preferred rich-text observation field. Omit it for a blank Update. Use marks:["italic","highlight"] for italic yellow-highlighted text; highlight-yellow is accepted as an alias.'
-        ),
-        document: richTextDocumentSchema.optional().describe(
-          'Compatibility alias for richText. Do not send both fields.'
+          'The only rich-text observation field. Omit it for a blank Update. Use marks:["italic","highlight"] for italic yellow-highlighted text; highlight-yellow is accepted as a mark alias.'
         ),
         state: z.enum(['red', 'yellow', 'green', 'none']).optional().describe(
           'Evidence state; defaults to none.'
@@ -1277,10 +1265,7 @@ export function createOnMoveMcpServer(
           'The exact Note revision returned by onmove.get_note. Stale revisions are rejected without changing content.'
         ),
         richText: richTextDocumentSchema.optional().describe(
-          'Preferred complete replacement document. Copy note.richText from onmove.get_note, change only the intended nodes, and submit it here.'
-        ),
-        document: richTextDocumentSchema.optional().describe(
-          'Compatibility alias for richText. Do not send both fields.'
+          'The only complete replacement field. Copy note.richText from onmove.get_note, change only the intended nodes, and submit it here.'
         )
       }),
       annotations: { readOnlyHint: false, destructiveHint: false }
