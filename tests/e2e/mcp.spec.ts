@@ -103,7 +103,7 @@ test('serves MCP from the running app and immediately refreshes its open windows
       arguments: {
         id: threadNote.id,
         expectedRevision: threadNote.revision,
-        document: {
+        richText: {
           version: 1,
           blocks: [{
             type: 'paragraph',
@@ -198,7 +198,7 @@ test('serves MCP from the running app and immediately refreshes its open windows
       arguments: {
         parent: { type: 'thread', id: thread.id },
         subjectId: unrelatedSubject.id,
-        document: richText('Live recovery evidence')
+        richText: richText('Live recovery evidence')
       }
     })
     expect(invalidUpdate.isError).toBe(true)
@@ -210,7 +210,7 @@ test('serves MCP from the running app and immediately refreshes its open windows
           arguments: {
             parent: { type: 'thread', id: thread.id },
             attribution: { mode: 'unscoped' },
-            document: richText('Live recovery evidence')
+            richText: richText('Live recovery evidence')
           }
         }
       }

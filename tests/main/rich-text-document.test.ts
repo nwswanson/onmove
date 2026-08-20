@@ -95,4 +95,16 @@ describe('OnMove rich-text API document', () => {
       blocks: [{ children: [{ marks: ['bold', 'highlight'] }] }]
     })
   })
+
+  it('accepts the intuitive yellow-highlight alias and returns its canonical mark', () => {
+    expect(assertOnMoveRichTextDocument({
+      version: 1,
+      blocks: [{
+        type: 'paragraph',
+        children: [{ type: 'text', text: 'x', marks: ['italic', 'highlight-yellow'] }]
+      }]
+    })).toMatchObject({
+      blocks: [{ children: [{ marks: ['italic', 'highlight'] }] }]
+    })
+  })
 })

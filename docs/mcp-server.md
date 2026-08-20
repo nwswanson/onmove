@@ -59,7 +59,7 @@ The observation uses the same editor-neutral rich-text document contract as Note
 {
   "parent": { "type": "thread", "id": 12 },
   "attribution": { "mode": "unscoped" },
-  "document": {
+  "richText": {
     "version": 1,
     "blocks": [{
       "type": "paragraph",
@@ -78,7 +78,7 @@ The observation uses the same editor-neutral rich-text document contract as Note
 }
 ```
 
-Omitting `document`, or sending an empty `blocks` array, creates a valid blank Update. The former
+Omitting `richText`, or sending an empty `blocks` array, creates a valid blank Update. The former
 plain `observation` write parameter is intentionally absent because it cannot represent formatting.
 Responses and parent contexts expose `observation` as a readable plain-text projection and
 `observationRichText` as the lossless document.
@@ -128,7 +128,7 @@ lossless document to edit and send back:
 {
   "id": 81,
   "expectedRevision": 4,
-  "document": {
+  "richText": {
     "version": 1,
     "blocks": [
       {
@@ -155,6 +155,11 @@ tokens, readable text colors, and bold, italic, underline, strikethrough, and hi
 may nest. The server validates document shape, size, depth, tag syntax, supported marks and colors,
 and `http`, `https`, or `mailto` link protocols before writing anything.
 
+`richText` is the preferred write field for both tools because it matches `note.richText` on reads.
+The older `document` name remains accepted as a compatibility alias, but clients must not send both.
+The yellow highlighter is the canonical `highlight` mark. The intuitive `highlight-yellow` input is
+also accepted and reads back as `highlight`; it is not a separate foreground color.
+
 Clients should copy `note.richText`, change only the intended nodes, and submit the whole document.
 The writable schema deliberately has no plain `content` field: plain-text replacement could erase
 formatting that the caller did not see. Legacy plain-text Notes are projected into paragraph blocks
@@ -165,6 +170,9 @@ rejected as `note_revision_conflict` without changing the database. The response
 client to read, reconcile, and retry; the server never invents a text or structural merge. A
 successful write returns the refreshed Note context, including its new revision and canonical
 `note.richText` document.
+
+Missing, conflicting, or structurally invalid rich text returns an error with `preferredField`, the
+accepted alias, supported marks, mark aliases, a recovery instruction, and a minimal valid example.
 
 A committed Note edit is broadcast through both the domain and rich-text live-change channels, so
 the main application and any open pop-out Note window receive the new revision immediately.

@@ -118,7 +118,8 @@ describe('OnMove MCP protocol adapter', () => {
     expect(createUpdate.description).toContain('Open parents require unscoped attribution')
     expect(updateSchema).toContain('writeGuide.createUpdate.allowedSubjects')
     expect(updateSchema).toContain('Null or omitted means unscoped')
-    expect(updateSchema).toContain('complete rich-text observation document')
+    expect(updateSchema).toContain('Preferred rich-text observation field')
+    expect(updateSchema).toContain('highlight-yellow')
     expect(updateSchema).toContain('checklist')
     expect((createUpdate.inputSchema as { properties?: Record<string, unknown> }).properties)
       .not.toHaveProperty('observation')
@@ -464,7 +465,8 @@ describe('OnMove MCP protocol adapter', () => {
           expectedRevision: note.revision,
           requestExample: {
             id: note.id,
-            expectedRevision: note.revision
+            expectedRevision: note.revision,
+            richText: { version: 1, blocks: expect.any(Array) }
           }
         }
       }
@@ -475,7 +477,17 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: {
         id: note.id,
         expectedRevision: note.revision,
-        document: richText('Updated live through MCP')
+        richText: {
+          version: 1,
+          blocks: [{
+            type: 'paragraph',
+            children: [{
+              type: 'text',
+              text: 'Updated live through MCP',
+              marks: ['italic', 'highlight-yellow']
+            }]
+          }]
+        }
       }
     })
     expect(updated.isError).not.toBe(true)
@@ -484,9 +496,64 @@ describe('OnMove MCP protocol adapter', () => {
       note: {
         content: 'Updated live through MCP',
         revision: note.revision + 1,
-        richText: richText('Updated live through MCP')
+        richText: {
+          version: 1,
+          blocks: [{
+            type: 'paragraph',
+            children: [{
+              type: 'text',
+              text: 'Updated live through MCP',
+              marks: ['italic', 'highlight']
+            }]
+          }]
+        }
       }
     })
+
+    const missingRichText = await client.callTool({
+      name: 'onmove.update_note',
+      arguments: { id: note.id, expectedRevision: note.revision + 1 }
+    })
+    expect(missingRichText.isError).toBe(true)
+    expect(missingRichText.structuredContent).toMatchObject({
+      error: {
+        code: 'missing_rich_text',
+        tool: 'onmove.update_note',
+        field: 'richText',
+        message: expect.stringContaining('Copy note.richText')
+      },
+      recovery: {
+        preferredField: 'richText',
+        acceptedAlias: 'document',
+        supportedMarks: ['bold', 'italic', 'underline', 'strikethrough', 'highlight'],
+        acceptedMarkAliases: { 'highlight-yellow': 'highlight' }
+      }
+    })
+    expect(JSON.stringify(missingRichText.content)).toContain('highlight-yellow')
+
+    const unsupportedMark = await client.callTool({
+      name: 'onmove.update_note',
+      arguments: {
+        id: note.id,
+        expectedRevision: note.revision + 1,
+        richText: {
+          version: 1,
+          blocks: [{
+            type: 'paragraph',
+            children: [{ type: 'text', text: 'Bad mark', marks: ['highlight-blue'] }]
+          }]
+        }
+      }
+    })
+    expect(unsupportedMark.isError).toBe(true)
+    expect(unsupportedMark.structuredContent).toMatchObject({
+      error: {
+        code: 'invalid_rich_text',
+        field: 'richText',
+        message: expect.stringContaining('marks must use bold, italic, underline')
+      }
+    })
+    expect(JSON.stringify(unsupportedMark.content)).toContain('highlight-yellow')
 
     const stale = await client.callTool({
       name: 'onmove.update_note',
@@ -532,7 +599,7 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: {
         id: note.id,
         expectedRevision: note.revision,
-        document: {
+        richText: {
           version: 1,
           blocks: [{
             type: 'paragraph',
@@ -640,7 +707,8 @@ describe('OnMove MCP protocol adapter', () => {
           allowedSubjects: [],
           requestExample: {
             parent: { type: 'thread', id: thread.id },
-            attribution: { mode: 'unscoped' }
+            attribution: { mode: 'unscoped' },
+            richText: { version: 1, blocks: expect.any(Array) }
           }
         }
       }
@@ -651,7 +719,7 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: {
         parent: { type: 'thread', id: thread.id },
         subjectId: subject.id,
-        document: richText('Open Thread evidence'),
+        richText: richText('Open Thread evidence'),
         state: 'green'
       }
     })
@@ -673,7 +741,7 @@ describe('OnMove MCP protocol adapter', () => {
           arguments: {
             parent: { type: 'thread', id: thread.id },
             attribution: { mode: 'unscoped' },
-            document: richText('Open Thread evidence'),
+            richText: richText('Open Thread evidence'),
             state: 'green'
           }
         }
@@ -788,7 +856,7 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: {
         parent: { type: 'thread', id: thread.id },
         attribution: { mode: 'unscoped' },
-        document: richText('Needs exact attribution')
+        richText: richText('Needs exact attribution')
       }
     })
     expect(rejected.isError).toBe(true)
@@ -801,7 +869,7 @@ describe('OnMove MCP protocol adapter', () => {
           arguments: {
             parent: { type: 'thread', id: thread.id },
             attribution: { mode: 'subject', subjectId: subject.id },
-            document: richText('Needs exact attribution')
+            richText: richText('Needs exact attribution')
           }
         }
       }
@@ -812,7 +880,7 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: {
         parent: { type: 'thread', id: thread.id },
         attribution: { mode: 'subject', subjectId: subject.id },
-        document: richText('Subject evidence')
+        richText: richText('Subject evidence')
       }
     })
     expect(created.isError).not.toBe(true)
@@ -839,7 +907,7 @@ describe('OnMove MCP protocol adapter', () => {
       name: 'onmove.create_update',
       arguments: {
         parent: { type: 'thread', id: thread.id },
-        document: richText('Ambiguous evidence')
+        richText: richText('Ambiguous evidence')
       }
     })
     expect(missing.isError).toBe(true)
@@ -857,7 +925,7 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: {
         parent: { type: 'thread', id: thread.id },
         attribution: { mode: 'subject', subjectId: unrelated.id },
-        document: richText('Invalidly attributed evidence')
+        richText: richText('Invalidly attributed evidence')
       }
     })
     expect(invalid.isError).toBe(true)
@@ -884,7 +952,7 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: {
         parent: { type: 'thread', id: thread.id },
         subjectId: null,
-        document: richText('Nullable unscoped evidence')
+        richText: richText('Nullable unscoped evidence')
       }
     })
     expect(created.isError).not.toBe(true)
@@ -910,7 +978,7 @@ describe('OnMove MCP protocol adapter', () => {
 
     const denied = await client.callTool({
       name: 'onmove.create_update',
-      arguments: { parent: { type: 'thread', id: thread.id }, document: richText('First evidence') }
+      arguments: { parent: { type: 'thread', id: thread.id }, richText: richText('First evidence') }
     })
     expect(denied.isError).toBe(true)
 

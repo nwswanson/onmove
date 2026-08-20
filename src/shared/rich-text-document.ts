@@ -10,6 +10,12 @@ export const ONMOVE_RICH_TEXT_MARKS = [
   'highlight'
 ] as const
 
+/** Accepted write aliases; reads always return the canonical marks above. */
+export const ONMOVE_RICH_TEXT_INPUT_MARKS = [
+  ...ONMOVE_RICH_TEXT_MARKS,
+  'highlight-yellow'
+] as const
+
 export const ONMOVE_RICH_TEXT_COLORS = [
   'gray',
   'red',
@@ -89,7 +95,7 @@ const FORMAT_BITS: Readonly<Record<OnMoveRichTextMark, number>> = {
   highlight: 1 << 7
 }
 const SUPPORTED_FORMAT_BITS = Object.values(FORMAT_BITS).reduce((value, bit) => value | bit, 0)
-const MARKS = new Set<string>(ONMOVE_RICH_TEXT_MARKS)
+const INPUT_MARKS = new Set<string>(ONMOVE_RICH_TEXT_INPUT_MARKS)
 const COLORS = new Set<string>(ONMOVE_RICH_TEXT_COLORS)
 const TAG_PATTERN = /^@[A-Za-z0-9]+$/u
 const MAX_DEPTH = 16
@@ -281,10 +287,19 @@ function validateText(value: unknown, budget: ValidationBudget, depth: number): 
   const result: OnMoveRichTextText = { type: 'text', text: text.text }
   if (text.marks !== undefined) {
     const marks = array(text.marks, 'rich-text text marks')
-    if (new Set(marks).size !== marks.length || marks.some((mark) => typeof mark !== 'string' || !MARKS.has(mark))) {
-      throw new Error('rich-text text marks must be unique supported marks')
+    if (marks.some((mark) => typeof mark !== 'string' || !INPUT_MARKS.has(mark))) {
+      throw new Error(
+        'rich-text text marks must use bold, italic, underline, strikethrough, or highlight ' +
+        '(highlight-yellow is accepted as an alias for the yellow highlight)'
+      )
     }
-    if (marks.length > 0) result.marks = ONMOVE_RICH_TEXT_MARKS.filter((mark) => marks.includes(mark))
+    const canonicalMarks = marks.map((mark) => mark === 'highlight-yellow' ? 'highlight' : mark)
+    if (new Set(canonicalMarks).size !== canonicalMarks.length) {
+      throw new Error('rich-text text marks must not repeat the same formatting')
+    }
+    if (canonicalMarks.length > 0) {
+      result.marks = ONMOVE_RICH_TEXT_MARKS.filter((mark) => canonicalMarks.includes(mark))
+    }
   }
   if (text.color !== undefined) {
     if (typeof text.color !== 'string' || !COLORS.has(text.color)) {

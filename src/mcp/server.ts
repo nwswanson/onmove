@@ -15,6 +15,7 @@ import type { McpUiContextSnapshot, RichTextDocumentSnapshot } from '../shared/c
 import {
   ONMOVE_RICH_TEXT_COLORS,
   ONMOVE_RICH_TEXT_MARKS,
+  assertOnMoveRichTextDocument,
   type OnMoveRichTextDocument
 } from '../shared/rich-text-document'
 
@@ -89,11 +90,11 @@ const searchScopeSchema = z.object({
 const richTextTextSchema = z.strictObject({
   type: z.literal('text'),
   text: z.string().describe('The text in this run.'),
-  marks: z.array(z.enum(ONMOVE_RICH_TEXT_MARKS)).optional().describe(
-    'Optional formatting marks. Marks must be unique.'
+  marks: z.array(z.string()).optional().describe(
+    'Optional unique formatting marks: bold, italic, underline, strikethrough, or highlight. highlight is always yellow; highlight-yellow is accepted as an input alias and reads back as highlight. Other values return an actionable rich-text error.'
   ),
-  color: z.enum(ONMOVE_RICH_TEXT_COLORS).optional().describe(
-    'Optional readable editor text color.'
+  color: z.string().optional().describe(
+    `Optional readable foreground color: ${ONMOVE_RICH_TEXT_COLORS.join(', ')}. Other values return an actionable rich-text error.`
   ),
   tag: z.literal(true).optional().describe(
     'Set only when text is a durable @tag token of @ followed by alphanumeric characters.'
@@ -106,7 +107,9 @@ const richTextLineBreakSchema = z.strictObject({
 
 const richTextLinkSchema = z.strictObject({
   type: z.literal('link'),
-  url: z.url().describe('An http, https, or mailto URL.'),
+  url: z.string().describe(
+    'An http, https, or mailto URL. Other protocols return an actionable rich-text error.'
+  ),
   children: z.array(richTextTextSchema).min(1).describe(
     'Formatted visible text for the link.'
   )
@@ -160,6 +163,52 @@ function plainRichTextDocument(text: string): OnMoveRichTextDocument {
   }
 }
 
+type RichTextWriteTool = 'onmove.create_update' | 'onmove.update_note'
+
+class RichTextToolInputError extends Error {
+  constructor(
+    readonly tool: RichTextWriteTool,
+    readonly code: 'missing_rich_text' | 'conflicting_rich_text_fields' | 'invalid_rich_text',
+    message: string
+  ) {
+    super(message)
+    this.name = 'RichTextToolInputError'
+  }
+}
+
+function normalizedRichTextToolInput(
+  tool: RichTextWriteTool,
+  input: { richText?: unknown; document?: unknown },
+  required: boolean
+): OnMoveRichTextDocument | undefined {
+  if (input.richText !== undefined && input.document !== undefined) {
+    throw new RichTextToolInputError(
+      tool,
+      'conflicting_rich_text_fields',
+      `${tool} received both richText and document. Send only richText; document is a compatibility alias.`
+    )
+  }
+  const value = input.richText ?? input.document
+  if (value === undefined) {
+    if (!required) return undefined
+    throw new RichTextToolInputError(
+      tool,
+      'missing_rich_text',
+      `${tool} requires richText. Copy note.richText from onmove.get_note and submit it as richText. ` +
+      'The older document field is also accepted as an alias.'
+    )
+  }
+  try {
+    return assertOnMoveRichTextDocument(value)
+  } catch (error) {
+    throw new RichTextToolInputError(
+      tool,
+      'invalid_rich_text',
+      `${tool} received invalid richText: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+}
+
 function diagnosticsScope(scope: AppliedSearchScope = GLOBAL_SCOPE): McpDiagnostics {
   return { appliedScope: scope, warnings: [] }
 }
@@ -188,7 +237,7 @@ interface NoteWriteGuide {
   noteId: number
   expectedRevision: number
   instruction: string
-  requestExample: { id: number; expectedRevision: number; document: OnMoveRichTextDocument }
+  requestExample: { id: number; expectedRevision: number; richText: OnMoveRichTextDocument }
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -251,7 +300,7 @@ function updateWriteGuide(value: unknown): UpdateWriteGuide | null {
       requestExample: {
         parent,
         attribution: { mode: 'unscoped' },
-        document: plainRichTextDocument('Write the Update observation here.')
+        richText: plainRichTextDocument('Write the Update observation here.')
       }
     }
   }
@@ -267,7 +316,7 @@ function updateWriteGuide(value: unknown): UpdateWriteGuide | null {
     requestExample: {
       parent,
       attribution: { mode: 'subject', subjectId: allowedSubjects[0].id },
-      document: plainRichTextDocument('Write the Update observation here.')
+      richText: plainRichTextDocument('Write the Update observation here.')
     }
   }
 }
@@ -344,11 +393,11 @@ function noteWriteGuide(value: unknown): NoteWriteGuide | null {
     instruction:
       'Send the revision just read as expectedRevision. A stale revision is rejected; ' +
       'read the Note again and reconcile before retrying. Copy note.richText, edit that ' +
-      'document, and submit it whole; note.content is a read-only plain-text projection.',
+      'document, and submit it as richText; note.content is a read-only plain-text projection.',
     requestExample: {
       id: noteId,
       expectedRevision,
-      document: {
+      richText: {
         version: 1,
         blocks: [{
           type: 'paragraph',
@@ -464,6 +513,39 @@ function result(value: unknown, diagnostics: McpDiagnostics = diagnosticsScope()
   }
 }
 
+function richTextInputErrorResult(error: RichTextToolInputError): {
+  isError: true
+  content: Array<{ type: 'text'; text: string }>
+  structuredContent: Record<string, unknown>
+} {
+  const example = plainRichTextDocument('Write rich text here.')
+  const structuredContent = {
+    error: {
+      code: error.code,
+      tool: error.tool,
+      field: 'richText',
+      message: error.message
+    },
+    recovery: {
+      preferredField: 'richText',
+      acceptedAlias: 'document',
+      supportedMarks: ONMOVE_RICH_TEXT_MARKS,
+      acceptedMarkAliases: { 'highlight-yellow': 'highlight' },
+      instruction:
+        'Send the complete version=1 document under richText. marks is an array using bold, ' +
+        'italic, underline, strikethrough, or highlight. highlight is the yellow highlighter; ' +
+        'highlight-yellow is accepted and canonicalized to highlight.',
+      example: { richText: example }
+    },
+    diagnostics: diagnosticsScope()
+  }
+  return {
+    isError: true,
+    content: [{ type: 'text', text: `${error.message}\n${structuredContent.recovery.instruction}` }],
+    structuredContent
+  }
+}
+
 function resource(uri: URL, value: unknown): {
   contents: Array<{ uri: string; mimeType: string; text: string }>
 } {
@@ -502,7 +584,7 @@ interface CreateUpdateToolInput {
   /** Backward-compatible shorthand. Prefer attribution. */
   subjectId?: number | null
   date?: string
-  document?: OnMoveRichTextDocument
+  richText?: OnMoveRichTextDocument
   state?: 'red' | 'yellow' | 'green' | 'none'
   sensitive?: boolean
 }
@@ -752,7 +834,7 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Use onmove.search for literal information that may appear anywhere in titles, Updates, Notes, Todos, Subjects, or other indexed text. Search is global by default: never assume the current UI Focus is applied. For a hierarchy-shaped request such as "do X for Person Y\'s 1:1 in Team", use onmove.resolve_target with Thread, Commitment, and Subject selectors, then follow its recommendedTodoRequest or writeGuide.createTodo. Each search result includes hierarchy IDs; use hierarchy.thread.id with onmove.get_thread, not the ID of a matching Update or Note. Rich-text writes always use the editor-neutral document contract: send document to onmove.create_update, and before updating a Note call onmove.get_note, edit note.richText without flattening it, and send its revision as expectedRevision. Before other mutations, inspect the matching writeGuide: Open parents must be unscoped, while scoped parents require a listed Subject or an explicitly shared Todo. Inspect diagnostics and warnings on every response. Sensitive content and mutations are controlled only in OnMove Settings.'
+        'Use onmove.search for literal information that may appear anywhere in titles, Updates, Notes, Todos, Subjects, or other indexed text. Search is global by default: never assume the current UI Focus is applied. For a hierarchy-shaped request such as "do X for Person Y\'s 1:1 in Team", use onmove.resolve_target with Thread, Commitment, and Subject selectors, then follow its recommendedTodoRequest or writeGuide.createTodo. Each search result includes hierarchy IDs; use hierarchy.thread.id with onmove.get_thread, not the ID of a matching Update or Note. Rich-text writes always use the editor-neutral document contract under richText: send richText to onmove.create_update, and before updating a Note call onmove.get_note, edit note.richText without flattening it, and send its revision as expectedRevision. Use highlight for the yellow highlighter; highlight-yellow is accepted as an alias. Before other mutations, inspect the matching writeGuide: Open parents must be unscoped, while scoped parents require a listed Subject or an explicitly shared Todo. Inspect diagnostics and warnings on every response. Sensitive content and mutations are controlled only in OnMove Settings.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -1067,8 +1149,11 @@ export function createOnMoveMcpServer(
           'Backward-compatible shorthand for attribution.mode="subject". Prefer attribution. Null or omitted means unscoped and is required for an Open parent.'
         ),
         date: dateSchema.optional().describe('The Update\'s recorded date; defaults to today.'),
+        richText: richTextDocumentSchema.optional().describe(
+          'Preferred rich-text observation field. Omit it for a blank Update. Use marks:["italic","highlight"] for italic yellow-highlighted text; highlight-yellow is accepted as an alias.'
+        ),
         document: richTextDocumentSchema.optional().describe(
-          'The complete rich-text observation document. Omit it or send version=1 with empty blocks for a blank Update. Plain observation strings are intentionally not writable because they cannot represent formatting.'
+          'Compatibility alias for richText. Do not send both fields.'
         ),
         state: z.enum(['red', 'yellow', 'green', 'none']).optional().describe(
           'Evidence state; defaults to none.'
@@ -1080,9 +1165,21 @@ export function createOnMoveMcpServer(
       annotations: { readOnlyHint: false, destructiveHint: false }
     },
     async (input) => {
+      let richText: OnMoveRichTextDocument | undefined
+      try {
+        richText = normalizedRichTextToolInput('onmove.create_update', input, false)
+      } catch (error) {
+        if (!(error instanceof RichTextToolInputError)) throw error
+        return richTextInputErrorResult(error)
+      }
       const normalized: CreateUpdateToolInput = {
-        ...input,
-        document: input.document as OnMoveRichTextDocument | undefined
+        parent: input.parent,
+        attribution: input.attribution,
+        subjectId: input.subjectId,
+        date: input.date,
+        richText,
+        state: input.state,
+        sensitive: input.sensitive
       }
       const subjectId = normalizedUpdateSubject(normalized)
       try {
@@ -1091,7 +1188,7 @@ export function createOnMoveMcpServer(
             parent: normalized.parent,
             subjectId,
             date: normalized.date,
-            document: normalized.document,
+            document: normalized.richText,
             state: normalized.state,
             sensitive: normalized.sensitive
           },
@@ -1172,23 +1269,37 @@ export function createOnMoveMcpServer(
     {
       title: 'Update an OnMove note',
       description: 'Replace one visible Note with a complete editor-neutral rich-text document using optimistic concurrency. Call onmove.get_note first, edit note.richText, and pass its current revision. The plain note.content projection is intentionally not writable, so formatting cannot be flattened accidentally.',
-      inputSchema: z.object({
+      inputSchema: z.strictObject({
         id: idSchema.describe(
           'The Note\'s own positive ID from onmove.get_note, a Note search hit, or a parent context.'
         ),
         expectedRevision: z.number().int().nonnegative().describe(
           'The exact Note revision returned by onmove.get_note. Stale revisions are rejected without changing content.'
         ),
-        document: richTextDocumentSchema.describe(
-          'Complete replacement document. Begin with note.richText from onmove.get_note and preserve blocks, links, colors, marks, checklists, quotes, and tags that are not intentionally changed.'
+        richText: richTextDocumentSchema.optional().describe(
+          'Preferred complete replacement document. Copy note.richText from onmove.get_note, change only the intended nodes, and submit it here.'
+        ),
+        document: richTextDocumentSchema.optional().describe(
+          'Compatibility alias for richText. Do not send both fields.'
         )
       }),
       annotations: { readOnlyHint: false, destructiveHint: false }
     },
     async (input) => {
+      let richText: OnMoveRichTextDocument
+      try {
+        richText = normalizedRichTextToolInput(
+          'onmove.update_note',
+          input,
+          true
+        ) as OnMoveRichTextDocument
+      } catch (error) {
+        if (!(error instanceof RichTextToolInputError)) throw error
+        return richTextInputErrorResult(error)
+      }
       try {
         const document = database.commands.updateNote(
-          { ...input, document: input.document as OnMoveRichTextDocument },
+          { id: input.id, expectedRevision: input.expectedRevision, document: richText },
           policy(),
           server.server.getClientVersion()?.name
         )

@@ -85,7 +85,7 @@ For hierarchy-shaped requests such as “Do X for Person Y's 1:1 in Team,” cli
 names and Subject Scope attribution explicit instead of asking the model to guess IDs.
 
 To edit a Note, call `onmove.get_note`, modify the returned editor-neutral `note.richText` document,
-and pass it with the returned revision to `onmove.update_note`. The plain `note.content` field is a
+and pass it as `richText` with the returned revision to `onmove.update_note`. The plain `note.content` field is a
 read-only search/prose projection, so an MCP client cannot accidentally flatten formatting. Stale
 revisions are rejected, and successful edits synchronize into open OnMove windows.
 `onmove.create_update` uses the same document shape for its optional rich-text observation.

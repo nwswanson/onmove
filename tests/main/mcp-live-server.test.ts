@@ -67,7 +67,7 @@ describe('running-application MCP server', () => {
         arguments: {
           id: note.id,
           expectedRevision: note.revision,
-          document: {
+          richText: {
             version: 1,
             blocks: [{
               type: 'paragraph',
