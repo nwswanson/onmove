@@ -26,7 +26,12 @@ describe('Update presenters', () => {
         date: '2026-08-07',
         observation: 'Ticket quality improved',
         state: 'green',
-        sensitive: false
+        sensitive: false,
+        historyReference: {
+          type: 'update',
+          id: 8,
+          field: 'observation'
+        }
       }
     ])
     expect(UPDATE_LIST_STATE_OPTIONS).toEqual([

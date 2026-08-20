@@ -247,6 +247,16 @@ describe('registerAppIpc', () => {
             snapshot: () => ({ id: 36, type: 'routine', name: 'Inspect scope' })
           })),
           update: vi.fn(() => ({ id: 35, type: 'routine', name: 'Inspect delivery weekly' })),
+          itemNoteHistory: vi.fn(() => [{
+            reference: { type: 'routine-attestation', id: 91, field: 'note' },
+            revision: 1,
+            value: 'Earlier evidence',
+            capturedAt: '2026-08-09T12:00:00.000Z',
+            reason: 'large-edit',
+            editCount: 2,
+            changeSize: 700
+          }]),
+          restoreItemNote: vi.fn(() => ({ id: 35, type: 'routine', name: 'Inspect delivery' })),
           planMove: vi.fn(() => ({
             routineId: 35,
             from: { type: 'focus', id: 12 },
@@ -385,6 +395,26 @@ describe('registerAppIpc', () => {
             value,
             revision: 2,
             updatedAt: '2026-08-09T12:01:00.000Z'
+          })),
+          history: vi.fn((reference) => [{
+            reference,
+            revision: 1,
+            value: 'Ship before',
+            capturedAt: '2026-08-09T11:00:00.000Z',
+            reason: 'large-edit',
+            editCount: 2,
+            changeSize: 600
+          }]),
+          restore: vi.fn((reference) => ({
+            reference,
+            title: 'Launch — Description',
+            kind: 'description',
+            context: [{ kind: 'focus', title: 'Launch' }],
+            subject: null,
+            updateMetadata: null,
+            value: 'Ship before',
+            revision: 3,
+            updatedAt: '2026-08-09T12:02:00.000Z'
           }))
         }
       }
@@ -731,6 +761,25 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.getRichTextDocument)?.(undefined, {
       type: 'focus', id: 12, field: 'description'
     })).toMatchObject({ value: 'Ship', revision: 1 })
+    expect(await handlers.get(IPC_CHANNELS.listRichTextHistory)?.(undefined, {
+      type: 'focus', id: 12, field: 'description'
+    })).toMatchObject([{ revision: 1, value: 'Ship before' }])
+    expect(await handlers.get(IPC_CHANNELS.restoreRichTextHistory)?.(
+      { sender: { id: 8 } },
+      { type: 'focus', id: 12, field: 'description' },
+      1
+    )).toMatchObject({ value: 'Ship before', history: [{ revision: 1 }] })
+    expect(richTextWindows.broadcast).toHaveBeenCalledWith(expect.objectContaining({
+      document: expect.objectContaining({ value: 'Ship before', revision: 3 }),
+      sourceWindowId: 8
+    }))
+    expect(await handlers.get(IPC_CHANNELS.restoreRichTextHistory)?.(
+      { sender: { id: 8 } },
+      { type: 'routine-attestation', id: 91, field: 'note' },
+      1
+    )).toMatchObject({ value: 'Earlier evidence', history: [{ revision: 1 }] })
+    expect(database.domain.routines.restoreItemNote).toHaveBeenCalledWith(91, 1)
+    expect(notifyRoutinesChanged).toHaveBeenCalled()
 
     const syncEvent = { sender: { id: 7 }, returnValue: undefined as unknown }
     listeners.get(IPC_SYNC_CHANNELS.saveRichTextDocument)?.(

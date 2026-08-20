@@ -3565,6 +3565,58 @@ const migrations: readonly Migration[] = [
         `)
       }
     }
+  },
+  {
+    version: 37,
+    name: 'rich_text_history_restore_reason',
+    up(database) {
+      const exists = database.get<{ found: number }>(
+        "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = 'rich_text_history'"
+      )
+      if (!exists) return
+      database.exec(`
+        DROP INDEX IF EXISTS rich_text_history_changed_index;
+        CREATE TABLE rich_text_history_pre_restore AS
+          SELECT document_type, entity_id, revision, value, changed_at,
+                 reason, edit_count, change_size
+          FROM rich_text_history;
+        DROP TABLE rich_text_history;
+
+        CREATE TABLE rich_text_history (
+          document_type TEXT NOT NULL CHECK (
+            document_type IN (
+              'focus-description', 'update-observation', 'note-content',
+              'routine-attestation-note'
+            )
+          ),
+          entity_id INTEGER NOT NULL CHECK (entity_id > 0),
+          revision INTEGER NOT NULL CHECK (revision >= 0),
+          value TEXT NOT NULL,
+          changed_at TEXT NOT NULL CHECK (datetime(changed_at) IS NOT NULL),
+          reason TEXT NOT NULL CHECK (
+            reason IN (
+              'legacy', 'destructive', 'large-edit', 'accumulated',
+              'idle', 'elapsed', 'restore'
+            )
+          ),
+          edit_count INTEGER NOT NULL DEFAULT 1 CHECK (edit_count >= 0),
+          change_size INTEGER NOT NULL DEFAULT 0 CHECK (change_size >= 0),
+          PRIMARY KEY (document_type, entity_id, revision)
+        ) STRICT, WITHOUT ROWID;
+
+        INSERT INTO rich_text_history (
+          document_type, entity_id, revision, value, changed_at,
+          reason, edit_count, change_size
+        )
+        SELECT document_type, entity_id, revision, value, changed_at,
+               reason, edit_count, change_size
+        FROM rich_text_history_pre_restore;
+        DROP TABLE rich_text_history_pre_restore;
+
+        CREATE INDEX rich_text_history_changed_index
+          ON rich_text_history(changed_at, document_type, entity_id);
+      `)
+    }
   }
 ]
 

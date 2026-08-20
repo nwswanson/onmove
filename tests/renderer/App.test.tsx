@@ -514,6 +514,8 @@ function installApi(
     domain,
     richText: {
       getDocument: vi.fn(() => new Promise<RichTextDocumentSnapshot>(() => undefined)),
+      listHistory: vi.fn().mockResolvedValue([]),
+      restoreHistory: vi.fn(async (reference) => ({ reference, value: '', history: [] })),
       saveDocument: vi.fn((reference, value): RichTextDocumentSnapshot => ({
         reference,
         title: 'Test document',
@@ -4621,6 +4623,8 @@ describe('App', () => {
       {
         richText: {
           getDocument: vi.fn(() => new Promise<RichTextDocumentSnapshot>(() => undefined)),
+          listHistory: vi.fn().mockResolvedValue([]),
+          restoreHistory: vi.fn(async (reference) => ({ reference, value: '', history: [] })),
           saveDocument,
           openWindow: vi.fn().mockResolvedValue(undefined),
           getWindowTarget: vi.fn().mockResolvedValue(null),

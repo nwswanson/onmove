@@ -10,12 +10,27 @@ import {
   type Locator
 } from '@playwright/test'
 import { AppDatabase } from '../../src/main/database'
+import { RICH_TEXT_PREFIX, richTextPlainText } from '../../src/shared/rich-text-value'
 
 function localDate(now = new Date()): string {
   const year = now.getFullYear()
   const month = String(now.getMonth() + 1).padStart(2, '0')
   const day = String(now.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
+}
+
+function lexicalText(text: string): string {
+  return `${RICH_TEXT_PREFIX}${JSON.stringify({
+    root: {
+      type: 'root',
+      children: [{
+        type: 'paragraph',
+        children: [{ type: 'text', text, version: 1 }],
+        version: 1
+      }],
+      version: 1
+    }
+  })}`
 }
 
 async function openContextualItemMenu(
@@ -74,6 +89,74 @@ test('badges actionable navigation and decrements Review after persistence', asy
     await window.getByRole('button', { name: 'Review, 1 remaining', exact: true }).click()
     await window.getByRole('button', { name: 'Pass along' }).click()
     await expect(window.getByRole('button', { name: 'Review', exact: true })).toBeVisible()
+  } finally {
+    await application?.close().catch(() => undefined)
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
+test('views and restores bounded rich-text history without removing prior checkpoints', async () => {
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-rich-text-history-e2e-'))
+  const databasePath = join(userDataDirectory, 'onmove.sqlite3')
+  const seeded = new AppDatabase(databasePath)
+  const focus = seeded.domain.focuses.create({ title: 'History project' })
+  const note = focus.toSnapshot().notes[0]
+  const reference = { type: 'note', id: note.id, field: 'content' } as const
+  const earlierValue = lexicalText('A'.repeat(600))
+  const currentValue = lexicalText('B'.repeat(600))
+  seeded.domain.richTextDocuments.save(reference, earlierValue)
+  seeded.domain.richTextDocuments.save(reference, currentValue)
+  seeded.close()
+  let application: ElectronApplication | undefined
+
+  try {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    const window = await application.firstWindow()
+    await window.getByRole('button', { name: 'History project' }).click()
+
+    const noteEditor = window.locator('[data-slot="rich-text-editor"]').filter({
+      has: window.getByRole('textbox', { name: 'Default note' })
+    })
+    await noteEditor.getByRole('button', { name: 'View history' }).click()
+    const historyDialog = window.getByRole('dialog', { name: 'Text history' })
+    await expect(historyDialog).toBeVisible()
+    await historyDialog.getByRole('button', { name: /Version 1 · Before a large edit/ }).click()
+    await expect(historyDialog.getByLabel('Historical text revision 1')).toContainText('A'.repeat(40))
+    await historyDialog.getByRole('button', { name: 'Restore this version' }).click()
+    await expect(historyDialog.getByRole('status')).toContainText('Restored as a new edit')
+
+    await expect.poll(() => {
+      const reader = new DatabaseSync(databasePath, { readOnly: true })
+      const current = reader.prepare(
+        'SELECT content, content_revision AS revision FROM notes WHERE id = ?'
+      ).get(note.id) as { content: string; revision: number }
+      const history = reader.prepare(
+        `SELECT revision, value, reason FROM rich_text_history
+         WHERE document_type = 'note-content' AND entity_id = ? ORDER BY revision DESC`
+      ).all(note.id) as Array<{ revision: number; value: string; reason: string }>
+      reader.close()
+      const retained = history.find(({ revision }) => revision === 1)
+      const displaced = history.find(({ reason }) => reason === 'restore')
+      return {
+        currentText: richTextPlainText(current.content),
+        currentAdvanced: current.revision > 1,
+        retainedText: retained ? richTextPlainText(retained.value) : null,
+        displacedText: displaced ? richTextPlainText(displaced.value) : null,
+        stackAdvanced: Boolean(displaced && retained && displaced.revision > retained.revision)
+      }
+    }).toEqual({
+      currentText: 'A'.repeat(600),
+      currentAdvanced: true,
+      retainedText: 'A'.repeat(600),
+      displacedText: 'B'.repeat(600),
+      stackAdvanced: true
+    })
+    await expect(window.getByRole('textbox', { name: 'Default note' })).toContainText('A'.repeat(40))
   } finally {
     await application?.close().catch(() => undefined)
     rmSync(userDataDirectory, { recursive: true, force: true })

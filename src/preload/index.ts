@@ -151,6 +151,10 @@ const api: OnMoveApi = {
   richText: {
     getDocument: (reference) =>
       ipcRenderer.invoke(IPC_CHANNELS.getRichTextDocument, reference),
+    listHistory: (reference) =>
+      ipcRenderer.invoke(IPC_CHANNELS.listRichTextHistory, reference),
+    restoreHistory: (reference, revision) =>
+      ipcRenderer.invoke(IPC_CHANNELS.restoreRichTextHistory, reference, revision),
     saveDocument: (reference, value) => {
       const result = ipcRenderer.sendSync(
         IPC_SYNC_CHANNELS.saveRichTextDocument,

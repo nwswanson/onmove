@@ -2,7 +2,6 @@ import { useRef, useState } from 'react'
 import { Check, Minus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
-  RichTextContent,
   richTextPlainText
 } from '@/components/ui/rich-text-editor'
 import { TaggedText } from '@/components/ui/tagged-text'
@@ -10,6 +9,7 @@ import {
   RoutineItemNote,
   type RoutineItemNoteHandle
 } from '@/features/routines/routine-item-note'
+import { RichTextContentWithHistory } from '@/features/rich-text/rich-text-history'
 import { cn } from '@/lib/utils'
 
 export interface RoutineCellItemMutation {
@@ -154,7 +154,15 @@ export function RoutineCellChecklist({
                     className="mt-3 border-l-2 border-border/70 pl-3 text-sm"
                     aria-label={`Note for ${item.inspection}`}
                   >
-                    <RichTextContent value={item.note} ariaLabel={`Recorded note for ${item.inspection}`} />
+                    <RichTextContentWithHistory
+                      value={item.note}
+                      ariaLabel={`Recorded note for ${item.inspection}`}
+                      historyReference={{
+                        type: 'routine-attestation',
+                        id: item.id,
+                        field: 'note'
+                      }}
+                    />
                   </div>
                 )}
               </div>

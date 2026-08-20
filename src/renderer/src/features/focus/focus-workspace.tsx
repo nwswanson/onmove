@@ -34,6 +34,7 @@ import {
 import { Dialog, DialogField } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { RichTextContent } from '@/components/ui/rich-text-editor'
+import { RichTextHistoryDialog } from '@/features/rich-text/rich-text-history'
 import { TaggedInput, TaggedText } from '@/components/ui/tagged-text'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
 import { WorkspaceTabBar } from '@/components/ui/workspace-tab-bar'
@@ -273,6 +274,7 @@ export function FocusWorkspace({
   const [commitmentMoveSaving, setCommitmentMoveSaving] = useState(false)
   const [commitmentMoveError, setCommitmentMoveError] = useState<string | null>(null)
   const [routineMoveError, setRoutineMoveError] = useState<string | null>(null)
+  const [focusDescriptionHistoryOpen, setFocusDescriptionHistoryOpen] = useState(false)
   const [standaloneCommitmentRoute, setStandaloneCommitmentRoute] = useState<{
     parent: CommitmentParent
     commitmentId: number
@@ -1470,6 +1472,9 @@ export function FocusWorkspace({
               onSave: onUpdateFocus,
               onDescriptionChange: model.saveDescription,
               onOpenDescription: model.openDescriptionInWindow,
+              onOpenDescriptionHistory: () => setFocusDescriptionHistoryOpen(true),
+              descriptionValue: model.descriptionValue,
+              descriptionRevision: model.descriptionRevision,
               onDelete: onDeleteFocus
             })
 
@@ -2171,6 +2176,11 @@ export function FocusWorkspace({
         ) : undefined}
         main={main}
         drawer={<ContextDrawerOutlet adapter={contextDrawerAdapter} {...contextDrawer} />}
+      />
+      <RichTextHistoryDialog
+        reference={{ type: 'focus', id: focus.id, field: 'description' }}
+        open={focusDescriptionHistoryOpen}
+        onClose={() => setFocusDescriptionHistoryOpen(false)}
       />
       {newThreadOpen && (
         <NewThreadDialog

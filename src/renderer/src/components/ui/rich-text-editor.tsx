@@ -68,6 +68,7 @@ import { $findMatchingParent, mergeRegister } from '@lexical/utils'
 import {
   Bold,
   Highlighter,
+  History,
   Italic,
   Link2,
   List,
@@ -386,6 +387,7 @@ export { richTextPlainText }
 interface RichTextToolbarProps {
   compact: boolean
   onOpenInWindow?: () => void
+  onOpenHistory?: () => void
 }
 
 /**
@@ -490,7 +492,11 @@ function LinkPastePlugin(): null {
   return null
 }
 
-function RichTextToolbar({ compact, onOpenInWindow }: RichTextToolbarProps): React.JSX.Element {
+function RichTextToolbar({
+  compact,
+  onOpenInWindow,
+  onOpenHistory
+}: RichTextToolbarProps): React.JSX.Element {
   const [editor] = useLexicalComposerContext()
   const [bold, setBold] = useState(false)
   const [italic, setItalic] = useState(false)
@@ -797,6 +803,13 @@ function RichTextToolbar({ compact, onOpenInWindow }: RichTextToolbarProps): Rea
           onOpenInWindow,
           <SquareArrowOutUpRight aria-hidden="true" />
         ) : null}
+        {onOpenHistory ? toolbarButton(
+          'View history',
+          undefined,
+          false,
+          onOpenHistory,
+          <History aria-hidden="true" />
+        ) : null}
       </div>
       {linkEditorOpen ? (
         <div
@@ -867,6 +880,8 @@ export interface RichTextEditorProps {
   fillHeight?: boolean
   className?: string
   onOpenInWindow?: () => void
+  /** Optional receiver-owned action; omit inside dialogs and creation forms. */
+  onOpenHistory?: () => void
   /** Changes only when a value committed outside this editor should be applied. */
   externalRevision?: string | number
 }
@@ -944,6 +959,7 @@ function RichTextEditor({
   fillHeight = false,
   className,
   onOpenInWindow,
+  onOpenHistory,
   externalRevision
 }: RichTextEditorProps, forwardedRef): React.JSX.Element {
   const currentValue = useRef(value)
@@ -973,7 +989,11 @@ function RichTextEditor({
       }}
     >
       <LexicalComposer initialConfig={config}>
-        <RichTextToolbar compact={compact} onOpenInWindow={onOpenInWindow} />
+        <RichTextToolbar
+          compact={compact}
+          onOpenInWindow={onOpenInWindow}
+          onOpenHistory={onOpenHistory}
+        />
         <div
           data-slot="rich-text-editor-document"
           className={cn('relative', fillHeight && 'min-h-0 flex-1 overflow-hidden')}

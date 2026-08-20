@@ -241,6 +241,15 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - Persist rich text as the versioned `onmove-rich-text:1:` Lexical JSON envelope in the existing
   text fields. Continue accepting legacy plain text and render it through the same component; do
   not require a destructive content migration.
+- Give every existing persisted rich-text editor a receiver-owned History toolbar action. It opens
+  the shared closable history dialog, lists bounded recovery checkpoints, lets the user inspect one
+  checkpoint at a time with Back navigation, and restores through the typed preload contract.
+  Parameterize the capability and omit it from creation forms or editors already contained by a
+  modal; those drafts do not represent an independently addressable persisted document.
+- Treat restore as a new edit, never as popping or reordering a version stack. Before applying the
+  selected checkpoint, capture the current live value with reason `restore`, then advance the live
+  field revision and broadcast it normally. Finalized Routine evidence remains read-only and may
+  expose history inspection without Restore.
 - Recognize durable inline text tags only through the shared parser: `@` followed by one or more
   Unicode alphanumeric characters, outside email-like words. Reject hyphenated and underscored
   continuations instead of styling a misleading prefix. Rich text stores recognized tokens as
@@ -691,7 +700,8 @@ foreground colors and do not rely on color alone to communicate selection or sta
   `rich_text_history_state` row to recognize destructive/large edits, accumulated small edits,
   idle-session boundaries, and long active sessions without converting every autosave into a
   history row. History is a recovery facility, not an edit audit; live revisions still advance on
-  every changed save.
+  every changed save. A restore captures the displaced live value with reason `restore` and writes
+  the selected value as a new live revision; it must not delete or reorder older checkpoints.
 - Keep native File-menu import/export in the main process. Export a versioned, named-field JSON
   archive rather than renderer view models or an opaque SQLite copy. Import must intersect known
   fields, default missing older fields, ignore unknown future fields/tables, and prune unsafe rows.

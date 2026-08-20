@@ -21,6 +21,7 @@ SQLite/domain -> typed preload snapshot -> feature model hook -> feature present
 | Work status selector | `WorkStatusSelectProps` | Supply one Focus/Thread/Commitment status and a typed mutation callback | Shared domain choices and translation into the low-level lifecycle-select receiver |
 | Sidebar Sunflower | `SemanticSunflowerModel` | Project the newest direct state and active Commitment states into labeled semantic-tone seeds | 24px spiral geometry, product-color resolution, density limits, SVG accessibility, and model validation |
 | Rich text | `RichTextEditorProps` and the drawer's `rich-text` field kind | Supply an opaque persisted string and typed change/save callbacks | Lexical state, legacy-text import, toolbar, formatting, serialization, focus, and accessibility |
+| Rich-text recovery | `RichTextEditorWithHistory`, `RichTextHistoryReference`, and the typed `richText` preload history methods | Supply the stable persisted-document identity, optional pre-open flush, and whether the host permits another modal | Toolbar action, closable list/detail navigation, historical rendering, Restore feedback, and applying the returned live value |
 | Inline text tags | `TaggedInput`, `TaggedText`, and Lexical `TagNode` | Preserve the literal user-authored value and existing persistence callback | Shared syntax recognition, deep-blue token presentation, native compact-input behavior, and rich-text node materialization |
 | Tag navigation | `ContextualSidebarItemModel` and `TagUseRowModel` | Query exact tag summaries/uses, apply sensitive collection visibility, and translate hierarchy ids into a destination | Tag selection rows, visible counts, compact table markup, and containing-screen link interaction |
 | Command palette | `CommandMenuGroupModel` / `CommandMenuItemModel` over the shared `Command` primitives | Load the searchable graph on demand, apply hierarchy visibility, map records to receiver data, and retain the typed Focus or Tag destination behind each opaque item id | Modal/filter/list markup, icons, focus, arrow-key navigation, Enter selection, empty/loading states, and id-only selection events |
@@ -194,6 +195,14 @@ and applies only newer revision broadcasts from other windows. `RichTextEditor` 
 revision token and updates Lexical only when that token changes; ordinary controlled rerenders never
 interrupt rapid local typing. The receiver exposes an optional Open in new window action, while the
 feature supplies the typed operation. Detached windows run the same sandboxed renderer and hook.
+
+`RichTextEditorWithHistory` composes that low-level receiver only for addressable persisted fields.
+Its optional toolbar action opens `RichTextHistoryDialog`, whose list and detail screens own all
+history markup. Selecting Restore calls the typed main-process boundary; the current live value is
+checkpointed and the selected value becomes a new live revision, so restoration never rewinds or
+reorders the retained list. An optional pre-open callback flushes throttled Routine evidence before
+the list is read. Hosts set `historyEnabled={false}` when the editor is already inside a modal, and
+creation dialogs continue using the plain editor because they have no persisted identity yet.
 
 Compact metadata still uses `useThrottledAutosave`; it performs at most one write per 750 ms, never
 overlaps writes, and coalesces changes made while a write is in flight. A drawer adapter declares

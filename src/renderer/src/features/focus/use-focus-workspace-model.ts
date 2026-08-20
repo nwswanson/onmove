@@ -51,6 +51,8 @@ export interface FocusWorkspaceModel {
   focusTimeline: FocusOverviewTimelineSnapshot
   commitmentsFor: (parent: CommitmentParent) => readonly CommitmentSnapshot[]
   routinesFor: (parent: CommitmentParent) => readonly RoutineSnapshot[]
+  descriptionValue: string
+  descriptionRevision: number
   saveDescription: (value: string) => void
   openDescriptionInWindow: () => void
   addFocusScopeSubject: (name: string) => Promise<void>
@@ -734,6 +736,8 @@ export function useFocusWorkspaceModel({
     focusTimeline,
     commitmentsFor,
     routinesFor,
+    descriptionValue: descriptionDocument.value,
+    descriptionRevision: descriptionDocument.revision,
     saveDescription: descriptionDocument.save,
     openDescriptionInWindow: descriptionDocument.openInWindow,
     addFocusScopeSubject,

@@ -80,6 +80,8 @@ export const IPC_CHANNELS = {
   getReviewOverview: 'domain:get-review-overview',
   getDueOverview: 'domain:get-due-overview',
   getRichTextDocument: 'rich-text:get-document',
+  listRichTextHistory: 'rich-text:list-history',
+  restoreRichTextHistory: 'rich-text:restore-history',
   openRichTextDocumentWindow: 'rich-text:open-window',
   getRichTextWindowTarget: 'rich-text:get-window-target'
 } as const
@@ -1021,6 +1023,7 @@ export type RichTextHistoryReason =
   | 'accumulated'
   | 'idle'
   | 'elapsed'
+  | 'restore'
 
 export type RichTextHistoryReference = RichTextDocumentReference | {
   type: 'routine-attestation'
@@ -1037,6 +1040,12 @@ export interface RichTextHistorySnapshot {
   reason: RichTextHistoryReason
   editCount: number
   changeSize: number
+}
+
+export interface RichTextHistoryRestoreSnapshot {
+  reference: RichTextHistoryReference
+  value: string
+  history: RichTextHistorySnapshot[]
 }
 
 export interface RichTextDocumentChange {
@@ -1319,6 +1328,11 @@ export interface DomainApi {
 
 export interface RichTextApi {
   getDocument: (reference: RichTextDocumentReference) => Promise<RichTextDocumentSnapshot>
+  listHistory: (reference: RichTextHistoryReference) => Promise<RichTextHistorySnapshot[]>
+  restoreHistory: (
+    reference: RichTextHistoryReference,
+    revision: number
+  ) => Promise<RichTextHistoryRestoreSnapshot>
   /** A local SQLite commit completes before this method returns. */
   saveDocument: (
     reference: RichTextDocumentReference,

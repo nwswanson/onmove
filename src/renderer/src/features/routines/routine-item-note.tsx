@@ -5,7 +5,7 @@ import {
   useRef,
   useState
 } from 'react'
-import { RichTextEditor } from '@/components/ui/rich-text-editor'
+import { RichTextEditorWithHistory } from '@/features/rich-text/rich-text-history'
 import { useThrottledAutosave } from '@/lib/use-throttled-autosave'
 
 export interface RoutineItemNoteHandle {
@@ -50,7 +50,8 @@ export const RoutineItemNote = forwardRef<RoutineItemNoteHandle, {
 
   return (
     <div className="mt-3">
-      <RichTextEditor
+      <RichTextEditorWithHistory
+        historyReference={{ type: 'routine-attestation', id: itemId, field: 'note' }}
         id={`routine-item-note-${itemId}`}
         value={draft}
         externalRevision={value}
@@ -67,6 +68,7 @@ export const RoutineItemNote = forwardRef<RoutineItemNoteHandle, {
           setDraft(next)
           void autosave.flush(next)
         }}
+        onBeforeOpenHistory={() => autosave.flush(draftRef.current)}
       />
       {autosave.error !== null && (
         <p role="alert" className="mt-1 text-xs text-destructive">

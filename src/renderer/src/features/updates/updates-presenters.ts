@@ -51,6 +51,7 @@ export function updateListProjection(
       observation: update.observation,
       state: update.state,
       sensitive: update.sensitive,
+      historyReference: { type: 'update' as const, id: update.id, field: 'observation' as const },
       ...(context?.externalObservationRevisions?.has(update.id)
         ? { externalRevision: context.externalObservationRevisions.get(update.id) }
         : {}),

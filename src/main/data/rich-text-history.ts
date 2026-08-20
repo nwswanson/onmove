@@ -6,6 +6,7 @@ import type {
   RichTextHistorySnapshot
 } from '../../shared/contracts'
 import { richTextPlainText } from '../../shared/rich-text-value'
+import { ModelNotFoundError, ModelValidationError } from './model'
 import type { SqliteAdapter } from './sqlite-adapter'
 
 export const RICH_TEXT_HISTORY_LIMIT = 30
@@ -137,6 +138,15 @@ export class RichTextHistoryRepository {
     this.recordValueChange(reference, current, nextValue, now)
   }
 
+  recordRestoration(
+    reference: RichTextDocumentReference,
+    current: RichTextDocumentSnapshot,
+    nextValue: string,
+    now = new Date()
+  ): void {
+    this.recordValueChange(reference, current, nextValue, now, 'restore')
+  }
+
   /**
    * Records a rich-text field that does not expose a public synchronization
    * revision. The accumulator's baseline plus edit count is its durable,
@@ -148,28 +158,35 @@ export class RichTextHistoryRepository {
     nextValue: string,
     now = new Date()
   ): void {
-    const state = this.state(reference)
-    const retainedRevision = state === undefined
-      ? Number(this.database.get<{ revision: number | null }>(
-          `SELECT max(revision) AS revision FROM rich_text_history
-           WHERE document_type = ? AND entity_id = ?`,
-          [documentType(reference), reference.id]
-        )?.revision ?? -1)
-      : -1
-    this.recordValueChange(reference, {
-      value: currentValue,
-      revision: state === undefined
-        ? retainedRevision + 1
-        : Number(state.baseline_revision) + Number(state.edits_since_snapshot),
-      updatedAt: state?.last_edit_at ?? now.toISOString()
-    }, nextValue, now)
+    this.recordValueChange(
+      reference,
+      this.unversionedCurrent(reference, currentValue, now),
+      nextValue,
+      now
+    )
+  }
+
+  recordUnversionedRestoration(
+    reference: Extract<RichTextHistoryReference, { type: 'routine-attestation' }>,
+    currentValue: string,
+    nextValue: string,
+    now = new Date()
+  ): void {
+    this.recordValueChange(
+      reference,
+      this.unversionedCurrent(reference, currentValue, now),
+      nextValue,
+      now,
+      'restore'
+    )
   }
 
   private recordValueChange(
     reference: RichTextHistoryReference,
     current: Pick<RichTextDocumentSnapshot, 'value' | 'revision' | 'updatedAt'>,
     nextValue: string,
-    now: Date
+    now: Date,
+    forcedReason: Extract<RichTextHistoryReason, 'restore'> | null = null
   ): void {
     if (current.value === nextValue) return
     if (Number.isNaN(now.getTime())) throw new TypeError('rich-text history requires a valid date')
@@ -187,21 +204,23 @@ export class RichTextHistoryRepository {
     const destructive = richTextPlainText(current.value).trim().length > 0 &&
       richTextPlainText(nextValue).trim().length === 0
 
-    let reason: RichTextHistoryReason | null = null
-    if (destructive) reason = 'destructive'
-    else if (isLarge(directChange)) reason = 'large-edit'
-    else if (
-      edits > 1 &&
-      elapsed(lastEditAt, now) >= RICH_TEXT_HISTORY_IDLE_MS &&
-      isMeaningful(currentFromBaseline)
-    ) reason = 'idle'
-    else if (
-      elapsed(baselineAt, now) >= RICH_TEXT_HISTORY_ELAPSED_MS &&
-      isMeaningful(accumulatedChange)
-    ) reason = 'elapsed'
-    else if (isAccumulated(accumulatedChange)) reason = 'accumulated'
+    let reason: RichTextHistoryReason | null = forcedReason
+    if (reason === null) {
+      if (destructive) reason = 'destructive'
+      else if (isLarge(directChange)) reason = 'large-edit'
+      else if (
+        edits > 1 &&
+        elapsed(lastEditAt, now) >= RICH_TEXT_HISTORY_IDLE_MS &&
+        isMeaningful(currentFromBaseline)
+      ) reason = 'idle'
+      else if (
+        elapsed(baselineAt, now) >= RICH_TEXT_HISTORY_ELAPSED_MS &&
+        isMeaningful(accumulatedChange)
+      ) reason = 'elapsed'
+      else if (isAccumulated(accumulatedChange)) reason = 'accumulated'
+    }
 
-    if (reason !== null && !isBlank(current.value)) {
+    if (reason !== null && (forcedReason !== null || !isBlank(current.value))) {
       this.capture(
         reference,
         current.revision,
@@ -271,6 +290,28 @@ export class RichTextHistoryRepository {
     }))
   }
 
+  require(reference: RichTextHistoryReference, revision: number): RichTextHistorySnapshot {
+    if (!Number.isSafeInteger(revision) || revision < 0) {
+      throw new ModelValidationError('rich-text history revision must be a non-negative integer')
+    }
+    const row = this.database.get<HistoryRow>(
+      `SELECT revision, value, changed_at, reason, edit_count, change_size
+       FROM rich_text_history
+       WHERE document_type = ? AND entity_id = ? AND revision = ?`,
+      [documentType(reference), reference.id, revision]
+    )
+    if (!row) throw new ModelNotFoundError('Rich-text history revision', revision)
+    return {
+      reference: structuredClone(reference),
+      revision: Number(row.revision),
+      value: row.value,
+      capturedAt: row.changed_at,
+      reason: row.reason as RichTextHistoryReason,
+      editCount: Number(row.edit_count),
+      changeSize: Number(row.change_size)
+    }
+  }
+
   private capture(
     reference: RichTextHistoryReference,
     revision: number,
@@ -307,5 +348,27 @@ export class RichTextHistoryRepository {
        WHERE document_type = ? AND entity_id = ?`,
       [documentType(reference), reference.id]
     )
+  }
+
+  private unversionedCurrent(
+    reference: Extract<RichTextHistoryReference, { type: 'routine-attestation' }>,
+    value: string,
+    now: Date
+  ): Pick<RichTextDocumentSnapshot, 'value' | 'revision' | 'updatedAt'> {
+    const state = this.state(reference)
+    const retainedRevision = state === undefined
+      ? Number(this.database.get<{ revision: number | null }>(
+          `SELECT max(revision) AS revision FROM rich_text_history
+           WHERE document_type = ? AND entity_id = ?`,
+          [documentType(reference), reference.id]
+        )?.revision ?? -1)
+      : -1
+    return {
+      value,
+      revision: state === undefined
+        ? retainedRevision + 1
+        : Number(state.baseline_revision) + Number(state.edits_since_snapshot),
+      updatedAt: state?.last_edit_at ?? now.toISOString()
+    }
   }
 }

@@ -80,6 +80,26 @@ describe('bounded rich-text history', () => {
     ])
   })
 
+  it('restores a checkpoint as a new edit while retaining the selected history stack', () => {
+    const { reference, updatedAt } = noteDocument()
+    const first = 'A'.repeat(600)
+    const second = 'B'.repeat(600)
+    database!.domain.richTextDocuments.save(reference, first, after(updatedAt, 1))
+    database!.domain.richTextDocuments.save(reference, second, after(updatedAt, 2))
+
+    const restored = database!.domain.richTextDocuments.restore(
+      reference,
+      1,
+      after(updatedAt, 3)
+    )
+
+    expect(restored).toMatchObject({ value: first, revision: 3 })
+    expect(database!.domain.richTextDocuments.history(reference)).toMatchObject([
+      { revision: 2, value: second, reason: 'restore' },
+      { revision: 1, value: first, reason: 'large-edit' }
+    ])
+  })
+
   it('recognizes a major change accumulated across many individually small edits', () => {
     const { reference, updatedAt } = noteDocument()
     let value = 'a'.repeat(400)
@@ -220,6 +240,17 @@ describe('bounded rich-text history', () => {
       value: 'A'.repeat(600),
       reason: 'large-edit'
     }])
+
+    const restored = database!.domain.routines.restoreItemNote(
+      attestationId,
+      1,
+      new Date('2026-01-01T09:02:00.000Z')
+    )
+    expect(restored.currentRun!.items[0].note).toBe('A'.repeat(600))
+    expect(database!.domain.routines.itemNoteHistory(attestationId)).toMatchObject([
+      { revision: 2, value: 'B'.repeat(600), reason: 'restore' },
+      { revision: 1, value: 'A'.repeat(600), reason: 'large-edit' }
+    ])
 
     expect(database!.domain.routines.delete(routine.id)).toBe(true)
     const reader = new DatabaseSync(databasePath, { readOnly: true })

@@ -1,9 +1,9 @@
 import { useRef } from 'react'
 import {
   isRichText,
-  RichTextEditor,
   richTextPlainText
 } from '@/components/ui/rich-text-editor'
+import { RichTextEditorWithHistory } from '@/features/rich-text/rich-text-history'
 import { useDurableRichText } from '@/features/rich-text/use-durable-rich-text'
 import { cn } from '@/lib/utils'
 
@@ -35,7 +35,8 @@ export function NoteEditor({
       'flex h-full min-h-0 flex-col overflow-hidden bg-background',
       className
     )}>
-      <RichTextEditor
+      <RichTextEditorWithHistory
+        historyReference={{ type: 'note', id: note.id, field: 'content' }}
         className="min-h-0 flex-1 rounded-none border-0 bg-background shadow-none"
         ariaLabel={`${note.title} note`}
         placeholder="Write a note…"

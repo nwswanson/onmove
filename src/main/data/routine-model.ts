@@ -548,6 +548,52 @@ export class RoutineRepository extends BaseRepository<RoutineSnapshot, RoutineMo
     })
   }
 
+  restoreItemNote(
+    attestationId: number,
+    revision: number,
+    now = new Date()
+  ): RoutineSnapshot {
+    assertId(attestationId, 'Routine Run cell attestation')
+    const owner = this.database.get<RunOwnerRow>(
+      `SELECT run.routine_id, run.id AS run_id, cell.id AS cell_id,
+              cell.completed_at, attestation.resolution, attestation.attested_at,
+              attestation.note
+       FROM routine_review_cell_attestations attestation
+       JOIN routine_review_cells cell ON cell.id = attestation.cell_id
+       JOIN routine_review_runs run ON run.id = cell.run_id
+       WHERE attestation.id = ?`,
+      [attestationId]
+    )
+    if (!owner) throw new ModelNotFoundError('Routine Run cell attestation', attestationId)
+    if (owner.completed_at !== null) {
+      throw new ModelValidationError('Finalized Routine Run Subject cells cannot be changed')
+    }
+    const reference = { type: 'routine-attestation', id: attestationId, field: 'note' } as const
+    const selected = this.richTextHistory.require(reference, revision)
+    if (selected.value === owner.note) {
+      return this.materialize(Number(owner.routine_id), localDate(now))
+    }
+    const changedAt = timestamp(now)
+    this.database.transaction(() => {
+      this.richTextHistory.recordUnversionedRestoration(
+        reference,
+        owner.note,
+        selected.value,
+        now
+      )
+      this.database.run(
+        'UPDATE routine_review_cell_attestations SET note = ? WHERE id = ?',
+        [selected.value, attestationId]
+      )
+      this.database.run(
+        `UPDATE commitments SET updated_at = ?
+         WHERE id = ? AND behavior_type = 'routine'`,
+        [changedAt, Number(owner.routine_id)]
+      )
+    })
+    return this.materialize(Number(owner.routine_id), localDate(now))
+  }
+
   finalizeCell(cellId: number, now = new Date()): RoutineSnapshot {
     assertId(cellId, 'Routine Run Subject cell')
     const owner = this.database.get<CellOwnerRow>(

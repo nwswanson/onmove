@@ -26,6 +26,7 @@ import {
   type NoteParent,
   type RichTextDocumentChange,
   type RichTextDocumentReference,
+  type RichTextHistoryReference,
   type UpdateScopeCell,
   type UpdateParent,
   type UpdateCommitmentInput,
@@ -360,6 +361,41 @@ export function registerAppIpc(
     IPC_CHANNELS.getRichTextDocument,
     (_event, reference: RichTextDocumentReference) =>
       database.domain.richTextDocuments.get(reference)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.listRichTextHistory,
+    (_event, reference: RichTextHistoryReference) =>
+      reference.type === 'routine-attestation'
+        ? database.domain.routines.itemNoteHistory(reference.id)
+        : database.domain.richTextDocuments.history(reference)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.restoreRichTextHistory,
+    (event, reference: RichTextHistoryReference, revision: number) => {
+      if (reference.type === 'routine-attestation') {
+        const selected = database.domain.routines.itemNoteHistory(reference.id)
+          .find((entry) => entry.revision === revision)
+        if (!selected) {
+          // The repository supplies the typed validation/not-found error.
+          database.domain.routines.restoreItemNote(reference.id, revision)
+          throw new Error('The history revision could not be restored.')
+        }
+        routineMutation(() => database.domain.routines.restoreItemNote(reference.id, revision))
+        return {
+          reference,
+          value: selected.value,
+          history: database.domain.routines.itemNoteHistory(reference.id)
+        }
+      }
+      const document = database.domain.richTextDocuments.restore(reference, revision)
+      richTextWindows.broadcast({ document, sourceWindowId: event.sender.id })
+      invalidateNavigationBadges()
+      return {
+        reference,
+        value: document.value,
+        history: database.domain.richTextDocuments.history(reference)
+      }
+    }
   )
   ipcMain.handle(
     IPC_CHANNELS.openRichTextDocumentWindow,

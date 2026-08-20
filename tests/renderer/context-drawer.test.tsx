@@ -49,6 +49,7 @@ describe('ContextDrawerOutlet', () => {
 
   it('owns editable-field rendering, draft state, validation, and action dispatch', async () => {
     const save = vi.fn().mockResolvedValue(undefined)
+    const openHistory = vi.fn()
     const user = userEvent.setup()
     render(
       <ContextDrawerOutlet
@@ -68,7 +69,8 @@ describe('ContextDrawerOutlet', () => {
                     kind: 'rich-text',
                     id: 'notes',
                     label: 'Notes',
-                    value: 'Existing notes'
+                    value: 'Existing notes',
+                    onOpenHistory: openHistory
                   },
                   {
                     kind: 'select',
@@ -115,6 +117,8 @@ describe('ContextDrawerOutlet', () => {
 
     const title = screen.getByLabelText(/^Title/)
     expect(screen.getByText('Focus — Atlas')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'View history' }))
+    expect(openHistory).toHaveBeenCalledOnce()
     await user.clear(title)
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
     await user.type(title, 'Revised')

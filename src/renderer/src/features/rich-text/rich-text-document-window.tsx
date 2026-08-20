@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { ChevronRight } from 'lucide-react'
 import type { EditUpdateInput, RichTextDocumentReference } from '../../../../shared/contracts'
-import { RichTextEditor } from '@/components/ui/rich-text-editor'
+import { RichTextEditorWithHistory } from '@/features/rich-text/rich-text-history'
 import { TaggedText } from '@/components/ui/tagged-text'
 import { useDurableRichText } from '@/features/rich-text/use-durable-rich-text'
 import { WorkKindIcon } from '@/features/shared/work-kind-icon'
@@ -113,7 +113,8 @@ export function RichTextDocumentWindow({
         data-slot="rich-text-window-editor-region"
         className="flex min-h-0 flex-1 flex-col p-6"
       >
-        <RichTextEditor
+        <RichTextEditorWithHistory
+          historyReference={reference}
           ariaLabel="Document content"
           className="min-h-0 flex-1"
           fillHeight

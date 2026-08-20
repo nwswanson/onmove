@@ -71,6 +71,7 @@ export type ContextDrawerFieldModel = (
       placeholder?: string
       onValueChange?: (value: string) => void
       onOpenInWindow?: () => void
+      onOpenHistory?: () => void
       errorMessage?: string
       externalRevision?: string | number
     }
@@ -956,6 +957,7 @@ function ContextDrawerInspector({
                           value={drawerStringValue(values, field.id)}
                           onChange={(value) => updateRichText(field, value)}
                           onOpenInWindow={field.onOpenInWindow}
+                          onOpenHistory={field.onOpenHistory}
                           externalRevision={field.externalRevision}
                           compact
                         />

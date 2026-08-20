@@ -115,27 +115,23 @@ export class RichTextDocumentRepository {
       const current = this.get(reference)
       if (current.value === value) return current
       this.historyRepository.recordChange(reference, current, value, now)
-      const changedAt = timestamp(now)
-      let result: { changes: number }
-      if (reference.type === 'focus') {
-        result = this.database.run(
-          'UPDATE focuses SET description = ?, updated_at = ? WHERE id = ?',
-          [value === '' ? null : value, changedAt, reference.id]
-        )
-      } else if (reference.type === 'update') {
-        result = this.database.run(
-          'UPDATE updates SET observation = ?, updated_at = ? WHERE id = ?',
-          [value, changedAt, reference.id]
-        )
-      } else {
-        result = this.database.run(
-          'UPDATE notes SET content = ?, updated_at = ? WHERE id = ?',
-          [value, changedAt, reference.id]
-        )
-      }
-      if (result.changes === 0) {
-        throw new ModelNotFoundError('Rich-text document', reference.id)
-      }
+      this.write(reference, value, timestamp(now))
+      return this.get(reference)
+    })
+  }
+
+  restore(
+    reference: RichTextDocumentReference,
+    revision: number,
+    now = new Date()
+  ): RichTextDocumentSnapshot {
+    assertReference(reference)
+    return this.database.transaction(() => {
+      const current = this.get(reference)
+      const selected = this.historyRepository.require(reference, revision)
+      if (current.value === selected.value) return current
+      this.historyRepository.recordRestoration(reference, current, selected.value, now)
+      this.write(reference, selected.value, timestamp(now))
       return this.get(reference)
     })
   }
@@ -146,6 +142,29 @@ export class RichTextDocumentRepository {
     // Match get() not-found behavior instead of returning an orphan-shaped history.
     this.get(reference)
     return this.historyRepository.list(reference)
+  }
+
+  private write(reference: RichTextDocumentReference, value: string, changedAt: string): void {
+    let result: { changes: number }
+    if (reference.type === 'focus') {
+      result = this.database.run(
+        'UPDATE focuses SET description = ?, updated_at = ? WHERE id = ?',
+        [value === '' ? null : value, changedAt, reference.id]
+      )
+    } else if (reference.type === 'update') {
+      result = this.database.run(
+        'UPDATE updates SET observation = ?, updated_at = ? WHERE id = ?',
+        [value, changedAt, reference.id]
+      )
+    } else {
+      result = this.database.run(
+        'UPDATE notes SET content = ?, updated_at = ? WHERE id = ?',
+        [value, changedAt, reference.id]
+      )
+    }
+    if (result.changes === 0) {
+      throw new ModelNotFoundError('Rich-text document', reference.id)
+    }
   }
 
   private row(reference: RichTextDocumentReference): RichTextRow | undefined {

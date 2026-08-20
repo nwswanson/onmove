@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { ChevronDown, Plus, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { RichTextEditor } from '@/components/ui/rich-text-editor'
+import { RichTextEditorWithHistory } from '@/features/rich-text/rich-text-history'
 import {
   validateUpdateListModel,
   type UpdateListDraft,
@@ -152,17 +153,32 @@ function UpdateEditorCard({
             <span role="status" className="text-xs text-muted-foreground">Saving…</span>
           )}
         </div>
-        <RichTextEditor
-          id={`${fieldPrefix}-observation`}
-          ariaLabel="Update observation"
-          placeholder="What changed?"
-          value={draft.observation}
-          externalRevision={item.externalRevision}
-          autoFocus={autoFocus}
-          onChange={updateObservation}
-          onOpenInWindow={onOpenObservation}
-          compact
-        />
+        {item.historyReference ? (
+          <RichTextEditorWithHistory
+            historyReference={item.historyReference}
+            id={`${fieldPrefix}-observation`}
+            ariaLabel="Update observation"
+            placeholder="What changed?"
+            value={draft.observation}
+            externalRevision={item.externalRevision}
+            autoFocus={autoFocus}
+            onChange={updateObservation}
+            onOpenInWindow={onOpenObservation}
+            compact
+          />
+        ) : (
+          <RichTextEditor
+            id={`${fieldPrefix}-observation`}
+            ariaLabel="Update observation"
+            placeholder="What changed?"
+            value={draft.observation}
+            externalRevision={item.externalRevision}
+            autoFocus={autoFocus}
+            onChange={updateObservation}
+            onOpenInWindow={onOpenObservation}
+            compact
+          />
+        )}
         {(error !== null || autosave.error !== null) && (
           <p role="alert" className="mt-1.5 text-xs text-destructive">
             {error ?? 'The update could not be saved.'}

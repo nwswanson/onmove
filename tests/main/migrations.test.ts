@@ -93,7 +93,7 @@ describe('database migrations', () => {
       ) STRICT, WITHOUT ROWID;
       CREATE INDEX rich_text_history_changed_index
         ON rich_text_history(changed_at, document_type, entity_id);
-      DELETE FROM schema_migrations WHERE version = 36;
+      DELETE FROM schema_migrations WHERE version IN (36, 37);
     `)
     const insert = legacy.prepare(
       `INSERT INTO rich_text_history (

@@ -172,13 +172,22 @@ share one SQLite transaction, and all aggregate/model/MCP mutation routes conver
 attestation transaction, so a failed save cannot leave a phantom checkpoint. Parent, Update, and
 Routine-cell deletion removes both checkpoint and accumulator rows. Portable export/import carries both tables;
 older archives without the new metadata receive `legacy` defaults. Migration 36 thins the former
-per-save history to the newest 30 values per document and marks them `legacy`.
+per-save history to the newest 30 values per document and marks them `legacy`. Migration 37 adds
+the explicit `restore` checkpoint reason without changing already-released migrations.
+
+Restoring a checkpoint is a forward mutation rather than a stack operation. In the same transaction,
+the repository first captures the displaced live value with reason `restore`, applies the selected
+value, and advances the normal live revision. Older checkpoints keep their revisions and order; no
+entry is popped or moved. The usual cross-window broadcast then converges every open editor on the
+restored value. Finalized Routine evidence notes remain immutable, so their history is inspectable
+but cannot be restored.
 
 The active record remains the materialized value used by normal snapshots. A commit returns its new
 materialized snapshot and is broadcast to every renderer window, allowing the main workspace and
 any detached editor window to converge on the same persisted revision without a renderer-owned
-cache or close-time flush. There is intentionally no history UI yet; the repository exposes the
-bounded checkpoints for a later recovery interface.
+cache or close-time flush. Existing persisted editors expose the shared History action and a
+closable list/detail dialog with Back and Restore controls. Creation editors and editors already
+hosted in a modal omit that nested-modal action.
 
 ## Archived Updates
 

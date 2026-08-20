@@ -587,12 +587,18 @@ export function focusDrawerAdapter({
   onSave,
   onDescriptionChange,
   onOpenDescription,
+  onOpenDescriptionHistory,
+  descriptionValue = focus.description ?? '',
+  descriptionRevision = focus.updatedAt,
   onDelete
 }: {
   focus: FocusSnapshot
   onSave: (input: UpdateFocusInput) => Promise<void>
   onDescriptionChange?: (value: string) => void
   onOpenDescription?: () => void
+  onOpenDescriptionHistory?: () => void
+  descriptionValue?: string
+  descriptionRevision?: string | number
   onDelete: () => Promise<void>
 }): ContextDrawerAdapter {
   return {
@@ -653,11 +659,12 @@ export function focusDrawerAdapter({
               kind: 'rich-text',
               id: 'description',
               label: 'Description / notes',
-              value: focus.description ?? '',
+              value: descriptionValue,
               onValueChange: onDescriptionChange,
               onOpenInWindow: onOpenDescription,
+              onOpenHistory: onOpenDescriptionHistory,
               errorMessage: 'The description could not be saved. Keep editing to retry.',
-              externalRevision: focus.updatedAt
+              externalRevision: descriptionRevision
             }
           ]
         }

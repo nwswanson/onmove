@@ -30,6 +30,8 @@ describe('useDurableRichText', () => {
         revision: 0,
         updatedAt: '2026-08-09T12:00:00.000Z'
       }),
+      listHistory: vi.fn().mockResolvedValue([]),
+      restoreHistory: vi.fn(async (target) => ({ reference: target, value: '', history: [] })),
       saveDocument: vi.fn(),
       openWindow: vi.fn().mockResolvedValue(undefined),
       getWindowTarget: vi.fn().mockResolvedValue(reference),
@@ -94,6 +96,8 @@ describe('useDurableRichText', () => {
         revision,
         updatedAt: '2026-08-09T12:00:01.000Z'
       }),
+      listHistory: vi.fn().mockResolvedValue([]),
+      restoreHistory: vi.fn(async (target) => ({ reference: target, value: '', history: [] })),
       saveDocument,
       openWindow,
       getWindowTarget: vi.fn().mockResolvedValue(null),
@@ -162,6 +166,8 @@ describe('useDurableRichText', () => {
     }))
     const richText = {
       getDocument,
+      listHistory: vi.fn().mockResolvedValue([]),
+      restoreHistory: vi.fn(async (target) => ({ reference: target, value: '', history: [] })),
       saveDocument: vi.fn((_reference, value: string): RichTextDocumentSnapshot => ({
         reference,
         title: 'Focus — Goal',
@@ -234,6 +240,8 @@ describe('useDurableRichText', () => {
       }))
     const richText = {
       getDocument: vi.fn().mockResolvedValue(documentSnapshot),
+      listHistory: vi.fn().mockResolvedValue([]),
+      restoreHistory: vi.fn(async (target) => ({ reference: target, value: '', history: [] })),
       saveDocument: vi.fn((_savedReference, value: string) => ({
         ...documentSnapshot,
         value,
