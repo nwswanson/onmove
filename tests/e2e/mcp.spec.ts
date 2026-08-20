@@ -92,6 +92,7 @@ test('serves MCP from the running app and immediately refreshes its open windows
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.get_update')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.patch_rich_text')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.update_rich_text')
+    expect(tools.tools.map(({ name }) => name)).toContain('onmove.reparent_update')
 
     await window.evaluate(async ({ threadId }) => {
       await window.onmove.mcp.update({
@@ -285,6 +286,57 @@ test('serves MCP from the running app and immediately refreshes its open windows
             attribution: { mode: 'subject', subjectId: person.id }
           }
         }
+      }
+    })
+    const semanticPath = {
+      focus: { id: focus.id, title: focus.title },
+      thread: { id: team.id, title: team.title },
+      commitment: { id: oneToOne.id, title: oneToOne.title },
+      subject: { id: person.id, name: person.name }
+    }
+    const hierarchySearch = await client.callTool({
+      name: 'onmove.search',
+      arguments: {
+        text: 'person y',
+        includeThreads: true,
+        includeCommitments: true,
+        includeSubjects: true,
+        includeScopes: true
+      }
+    })
+    expect(hierarchySearch.structuredContent).toMatchObject({
+      hierarchyPaths: expect.arrayContaining([
+        expect.objectContaining({
+          relativePath: 'Leadership Team > 1:1[Person Y]',
+          recommendedUpdateRequest: expect.objectContaining({
+            tool: 'onmove.create_update',
+            arguments: expect.objectContaining({
+              parent: { type: 'commitment', id: oneToOne.id },
+              attribution: { mode: 'subject', subjectId: person.id },
+              semanticPath
+            })
+          })
+        })
+      ])
+    })
+    const reparented = await client.callTool({
+      name: 'onmove.reparent_update',
+      arguments: {
+        id: threadUpdate.id,
+        destination: {
+          parent: { type: 'commitment', id: oneToOne.id },
+          attribution: { mode: 'subject', subjectId: person.id },
+          semanticPath
+        }
+      }
+    })
+    expect(reparented.isError).not.toBe(true)
+    expect(reparented.structuredContent).toMatchObject({
+      update: {
+        id: threadUpdate.id,
+        parent: { type: 'commitment', id: oneToOne.id },
+        scope: { scopeId: teamScope.scopeId, subjectId: person.id },
+        observation: 'Live MCP Update observation'
       }
     })
     const recommendation = resolved.structuredContent as {

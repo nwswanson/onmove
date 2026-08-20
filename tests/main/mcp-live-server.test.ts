@@ -53,7 +53,7 @@ describe('running-application MCP server', () => {
 
     try {
       await client.connect(new StreamableHTTPClientTransport(new URL(endpoint)))
-      expect((await client.listTools()).tools).toHaveLength(33)
+      expect((await client.listTools()).tools).toHaveLength(34)
       const created = await client.callTool({
         name: 'onmove.create_todo',
         arguments: { parent: { type: 'thread', id: thread.id }, name: 'Same process Todo' }
@@ -133,11 +133,7 @@ describe('running-application MCP server', () => {
           version: 1,
           blocks: [{
             type: 'paragraph',
-            children: [{
-              type: 'link',
-              url: 'https://example.com',
-              children: [{ type: 'text', text: 'hey there', tag: true }]
-            }]
+            children: [{ type: 'text', text: 'hey there', tag: true }]
           }]
         }
       }
@@ -149,7 +145,7 @@ describe('running-application MCP server', () => {
         })
       }
       expect(thirdRejected?.structuredContent).toMatchObject({
-        error: { pointer: '/richText/blocks/0/children/0/children/0' },
+        error: { pointer: '/richText/blocks/0/children/0' },
         recovery: {
           duplicateInvalidCall: {
             count: 3,

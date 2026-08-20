@@ -84,10 +84,34 @@ export interface ApplicationNoteContext {
 export interface CreateApplicationUpdate {
   parent: { type: 'thread' | 'commitment'; id: number }
   subjectId?: number
+  /** Semantic path copied from discovery when the user's wording names a hierarchy destination. */
+  semanticPath?: ApplicationSemanticTargetPath
   date?: string
   document?: OnMoveRichTextDocument
   state?: HealthState
   sensitive?: boolean
+}
+
+export interface ApplicationSemanticTargetPath {
+  focus?: { id: number; title: string }
+  thread: { id: number; title: string }
+  commitment?: { id: number; title: string }
+  subject?: { id: number; name: string }
+}
+
+export interface ReparentApplicationUpdate {
+  id: number
+  parent: { type: 'thread' | 'commitment'; id: number }
+  subjectId?: number
+  semanticPath?: ApplicationSemanticTargetPath
+}
+
+export interface ReparentApplicationUpdateResult {
+  update: ApplicationUpdateSnapshot
+  previous: {
+    parent: { type: 'thread' | 'commitment'; id: number }
+    subjectId: number | null
+  }
 }
 
 export interface ApplicationUpdateSnapshot extends UpdateSnapshot {
@@ -247,6 +271,54 @@ export interface ApplicationTargetResolution {
   parentCandidates: ApplicationResolvedTargetCandidate[]
 }
 
+export interface BrowseApplicationHierarchyQuery {
+  /** Null means structural browsing rather than text-match expansion. */
+  text: string | null
+  focusId?: number | null
+  subjectId?: number | null
+  includeThreads?: boolean
+  includeCommitments?: boolean
+  includeSubjects?: boolean
+  includeScopes?: boolean
+  limit?: number
+  offset?: number
+}
+
+export interface ApplicationHierarchyPath {
+  kind: 'focus' | 'thread' | 'commitment' | 'subject'
+  hierarchy: {
+    focus: { id: number; title: string }
+    thread: { id: number; title: string } | null
+    commitment: { id: number; title: string } | null
+  }
+  subject: { id: number; name: string } | null
+  /** Human-readable selector notation. Names are display values; hierarchy above owns the IDs. */
+  notation: {
+    focus: string
+    thread?: string
+    commitment?: string
+    subject?: string
+  }
+  displayPath: string
+  relativePath: string
+  scope?: {
+    id: number
+    name: string
+    dimension: string
+    applicationMode: string
+  } | null
+  /** Exact typed destination for a safe create_update call, or null when a Subject choice is required. */
+  updateTarget: {
+    parent: { type: 'thread' | 'commitment'; id: number }
+    attribution: { mode: 'unscoped' } | { mode: 'subject'; subjectId: number }
+  } | null
+}
+
+export interface ApplicationHierarchyBrowseResult {
+  paths: ApplicationHierarchyPath[]
+  total: number
+}
+
 export type ScopeTargetIssueCode =
   | 'open_parent_cannot_target_subject'
   | 'empty_scope_cannot_target_subject'
@@ -267,6 +339,26 @@ export class ScopeTargetValidationError extends ModelValidationError {
   constructor(message: string, readonly issue: ScopeTargetIssue) {
     super(message)
     this.name = 'ScopeTargetValidationError'
+  }
+}
+
+export type SemanticTargetIssueCode =
+  | 'semantic_path_parent_mismatch'
+  | 'semantic_path_requires_subject_attribution'
+  | 'semantic_path_subject_mismatch'
+
+export interface SemanticTargetIssue {
+  code: SemanticTargetIssueCode
+  parent: { type: 'thread' | 'commitment'; id: number }
+  subjectId: number | null
+  semanticPath: ApplicationSemanticTargetPath
+}
+
+/** Prevents a hierarchy-shaped user request from being flattened onto a different or open target. */
+export class SemanticTargetValidationError extends ModelValidationError {
+  constructor(message: string, readonly issue: SemanticTargetIssue) {
+    super(message)
+    this.name = 'SemanticTargetValidationError'
   }
 }
 
@@ -845,6 +937,309 @@ export class OnMoveQueryService {
   }
 
   /**
+   * Browses writable hierarchy paths independently of indexed text. Text hits
+   * seed ancestor expansion, while a matched Subject expands every currently
+   * applicable Thread and Commitment path for that canonical identity.
+   */
+  browseHierarchy(
+    query: BrowseApplicationHierarchyQuery,
+    matches: readonly SearchResult[],
+    access: OnMoveAccessPolicy
+  ): ApplicationHierarchyBrowseResult {
+    const page = boundedPage(query.limit, query.offset)
+    const structuralBrowse = query.text === null
+    const requestedFocusId = query.focusId ?? null
+    const requestedSubjectId = query.subjectId ?? null
+    const hierarchyTokens = query.text?.normalize('NFKC').toLocaleLowerCase()
+      .match(/[\p{L}\p{N}_]+/gu) ?? []
+    const matchesHierarchyText = (...values: Array<string | null | undefined>): boolean =>
+      hierarchyTokens.length > 0 && hierarchyTokens.some((token) =>
+        values.some((value) => value?.normalize('NFKC').toLocaleLowerCase().includes(token)))
+    const matchedFocusIds = new Set<number>()
+    const matchedThreadIds = new Set<number>()
+    const matchedCommitmentIds = new Set<number>()
+    const matchedSubjectIds = new Set<number>()
+    for (const match of matches) {
+      if (match.hierarchy.focus && !match.hierarchy.thread) {
+        matchedFocusIds.add(match.hierarchy.focus.id)
+      }
+      if (match.hierarchy.commitment) {
+        matchedCommitmentIds.add(match.hierarchy.commitment.id)
+      } else if (match.hierarchy.thread) {
+        matchedThreadIds.add(match.hierarchy.thread.id)
+      }
+      if (match.reference.type === 'focus') matchedFocusIds.add(match.reference.id)
+      if (match.reference.type === 'thread') matchedThreadIds.add(match.reference.id)
+      if (match.reference.type === 'commitment') matchedCommitmentIds.add(match.reference.id)
+      if (match.reference.type === 'subject') matchedSubjectIds.add(match.reference.id)
+      if (match.subject) matchedSubjectIds.add(match.subject.id)
+    }
+    if (requestedSubjectId !== null) matchedSubjectIds.add(requestedSubjectId)
+
+    const paths: ApplicationHierarchyPath[] = []
+    const seen = new Set<string>()
+    const append = (path: ApplicationHierarchyPath): void => {
+      const key = [
+        path.kind,
+        path.hierarchy.focus.id,
+        path.hierarchy.thread?.id ?? 0,
+        path.hierarchy.commitment?.id ?? 0,
+        path.subject?.id ?? 0
+      ].join(':')
+      if (seen.has(key)) return
+      seen.add(key)
+      paths.push(path)
+    }
+    const makePath = (
+      kind: ApplicationHierarchyPath['kind'],
+      focus: { id: number; title: string },
+      thread: { id: number; title: string } | null,
+      commitment: { id: number; title: string } | null,
+      subject: { id: number; name: string } | null,
+      scope: ApplicationHierarchyPath['scope'],
+      updateTarget: ApplicationHierarchyPath['updateTarget']
+    ): ApplicationHierarchyPath => {
+      const notation: ApplicationHierarchyPath['notation'] = { focus: focus.title }
+      if (thread) notation.thread = thread.title
+      if (commitment) notation.commitment = commitment.title
+      if (subject) notation.subject = subject.name
+      const labels = [focus.title, thread?.title, commitment?.title]
+        .filter((value): value is string => Boolean(value))
+      const relativeLabels = [thread?.title, commitment?.title]
+        .filter((value): value is string => Boolean(value))
+      if (subject) {
+        const last = labels.length - 1
+        labels[last] = `${labels[last]}[${subject.name}]`
+        const relativeLast = relativeLabels.length - 1
+        if (relativeLast >= 0) {
+          relativeLabels[relativeLast] = `${relativeLabels[relativeLast]}[${subject.name}]`
+        }
+      }
+      return {
+        kind,
+        hierarchy: { focus, thread, commitment },
+        subject,
+        notation,
+        displayPath: labels.join(' > '),
+        relativePath: relativeLabels.join(' > ') || labels.join(' > '),
+        ...(query.includeScopes ? { scope } : {}),
+        updateTarget
+      }
+    }
+
+    for (const focusRecord of this.domain.focuses.list()) {
+      if (requestedFocusId !== null && focusRecord.id !== requestedFocusId) continue
+      const focus = { id: focusRecord.id, title: focusRecord.title }
+      const threadRecords = this.domain.threads.listForFocus(focus.id)
+        .filter((thread) => this.sensitivity.canRead('thread', thread.id, access))
+      const focusScope = this.domain.focusScopes.get(focus.id)
+      const focusScopeRecord = focusScope.scopeId === null
+        ? null
+        : this.domain.scopes.find(focusScope.scopeId)
+      const focusScopeAccessible = focusScopeRecord === null ||
+        ((access.sensitiveContent === 'allow' || !focusScopeRecord.sensitive) &&
+          this.sensitivity.canViewResource('subject', access, {
+            focusId: focus.id,
+            threadId: null
+          }))
+      const focusSubjects = focusScopeAccessible
+        ? focusScope.subjects.filter((subject) =>
+            (requestedSubjectId === null || subject.id === requestedSubjectId) &&
+            this.sensitivity.canReadInContext('subject', subject.id, access, {
+              focusId: focus.id,
+              threadId: null
+            }))
+        : []
+      const focusScopeSummary = focusScopeRecord && focusScopeAccessible
+        ? {
+            id: focusScopeRecord.id,
+            name: focusScopeRecord.name,
+            dimension: focusScopeRecord.dimension,
+            applicationMode: focusScope.mode
+          }
+        : null
+      const focusScopeMatched = query.includeScopes === true && focusScopeAccessible &&
+        matchesHierarchyText(focusScopeRecord?.name, focusScopeRecord?.dimension)
+      const focusMatched = structuralBrowse || matchedFocusIds.has(focus.id) || focusScopeMatched
+      if (
+        this.sensitivity.canRead('focus', focus.id, access) &&
+        focusMatched && requestedSubjectId === null &&
+        (query.includeThreads || query.includeCommitments || query.includeSubjects ||
+          query.includeScopes)
+      ) {
+        append(makePath('focus', focus, null, null, null, focusScopeSummary, null))
+      }
+      const focusSubjectMatched = focusSubjects.some((subject) => matchedSubjectIds.has(subject.id))
+      if (
+        query.includeSubjects || focusSubjectMatched ||
+        (structuralBrowse && requestedSubjectId !== null)
+      ) {
+        for (const subject of focusSubjects) {
+          if (!structuralBrowse && !focusMatched && !matchedSubjectIds.has(subject.id)) continue
+          append(makePath(
+            'subject', focus, null, null, { id: subject.id, name: subject.name },
+            focusScopeSummary, null
+          ))
+        }
+      }
+
+      for (const threadRecord of threadRecords) {
+        const thread = { id: threadRecord.id, title: threadRecord.title }
+        const threadScope = this.domain.threadScopes.get(thread.id)
+        const scopeRecord = threadScope.scopeId === null
+          ? null
+          : this.domain.scopes.find(threadScope.scopeId)
+        const scopeAccessible = scopeRecord === null ||
+          ((access.sensitiveContent === 'allow' || !scopeRecord.sensitive) &&
+            this.sensitivity.canViewResource('subject', access, {
+              focusId: focus.id,
+              threadId: thread.id
+            }))
+        const effectiveSubjects = scopeAccessible ? threadScope.subjects : []
+        const subjects = scopeAccessible
+          ? effectiveSubjects.filter((subject) =>
+              (requestedSubjectId === null || subject.id === requestedSubjectId) &&
+              this.sensitivity.canReadInContext('subject', subject.id, access, {
+                focusId: focus.id,
+                threadId: thread.id
+              }))
+          : []
+        const subjectMatched = subjects.some((subject) => matchedSubjectIds.has(subject.id))
+        const commitments = this.domain.commitments.listForThread(thread.id)
+          .filter(trackingCommitment)
+          .filter((commitment) =>
+            this.sensitivity.canRead('commitment', commitment.id, access))
+        const commitmentMatched = commitments.some((commitment) =>
+          matchedCommitmentIds.has(commitment.id))
+        const scopeMatched = query.includeScopes === true && scopeAccessible &&
+          matchesHierarchyText(scopeRecord?.name, scopeRecord?.dimension)
+        const threadMatched = structuralBrowse || focusMatched ||
+          matchedThreadIds.has(thread.id) || commitmentMatched || subjectMatched || scopeMatched
+        if (!threadMatched) continue
+        if (requestedSubjectId !== null && !subjects.some(({ id }) => id === requestedSubjectId)) {
+          continue
+        }
+        const threadScopeSummary = scopeRecord && scopeAccessible
+          ? {
+              id: scopeRecord.id,
+              name: scopeRecord.name,
+              dimension: scopeRecord.dimension,
+              applicationMode: threadScope.mode
+            }
+          : null
+        const threadUnscopedTarget = scopeAccessible &&
+          (threadScope.scopeId === null || effectiveSubjects.length === 0)
+          ? {
+              parent: { type: 'thread' as const, id: thread.id },
+              attribution: { mode: 'unscoped' as const }
+            }
+          : null
+        if (query.includeThreads) {
+          append(makePath(
+            'thread', focus, thread, null, null, threadScopeSummary, threadUnscopedTarget
+          ))
+        }
+        if (query.includeSubjects || subjectMatched || requestedSubjectId !== null) {
+          for (const subject of subjects) {
+            if (
+              !structuralBrowse && !focusMatched && !matchedThreadIds.has(thread.id) &&
+              !matchedSubjectIds.has(subject.id) && !commitmentMatched
+            ) continue
+            append(makePath(
+              'subject', focus, thread, null, { id: subject.id, name: subject.name },
+              threadScopeSummary,
+              {
+                parent: { type: 'thread', id: thread.id },
+                attribution: { mode: 'subject', subjectId: subject.id }
+              }
+            ))
+          }
+        }
+
+        for (const commitmentRecord of commitments) {
+          const commitment = { id: commitmentRecord.id, title: commitmentRecord.title }
+          const ownMatch = matchedCommitmentIds.has(commitment.id)
+          const commitmentSeeded = structuralBrowse || focusMatched ||
+            matchedThreadIds.has(thread.id) || ownMatch || subjectMatched
+          if (!commitmentSeeded) continue
+          const application = this.domain.scopeApplications.get({
+            type: 'commitment', id: commitment.id
+          })
+          const commitmentScopeRecord = application.effectiveScopeId === null
+            ? null
+            : this.domain.scopes.find(application.effectiveScopeId)
+          const commitmentScopeAccessible = commitmentScopeRecord === null ||
+            ((access.sensitiveContent === 'allow' || !commitmentScopeRecord.sensitive) &&
+              this.sensitivity.canViewResource('subject', access, {
+                focusId: focus.id,
+                threadId: thread.id
+              }))
+          const commitmentSubjects = commitmentScopeAccessible
+            ? this.domain.commitments.scopeMatrix(commitment.id)
+                .map(({ subject }) => subject)
+                .filter((subject) =>
+                  (requestedSubjectId === null || subject.id === requestedSubjectId) &&
+                  this.sensitivity.canReadInContext('subject', subject.id, access, {
+                    focusId: focus.id,
+                    threadId: thread.id
+                  }))
+            : []
+          if (
+            requestedSubjectId !== null &&
+            !commitmentSubjects.some(({ id }) => id === requestedSubjectId)
+          ) continue
+          const commitmentScopeSummary = commitmentScopeRecord && commitmentScopeAccessible
+            ? {
+                id: commitmentScopeRecord.id,
+                name: commitmentScopeRecord.name,
+                dimension: commitmentScopeRecord.dimension,
+                applicationMode: application.mode
+              }
+            : null
+          const commitmentUnscopedTarget = commitmentScopeAccessible &&
+            application.effectiveScopeId === null
+            ? {
+                parent: { type: 'commitment' as const, id: commitment.id },
+                attribution: { mode: 'unscoped' as const }
+              }
+            : null
+          if (query.includeCommitments) {
+            append(makePath(
+              'commitment', focus, thread, commitment, null,
+              commitmentScopeSummary, commitmentUnscopedTarget
+            ))
+          }
+          if (query.includeSubjects || subjectMatched || requestedSubjectId !== null) {
+            for (const subject of commitmentSubjects) {
+              if (
+                !structuralBrowse && !focusMatched && !matchedThreadIds.has(thread.id) &&
+                !ownMatch && !matchedSubjectIds.has(subject.id)
+              ) continue
+              append(makePath(
+                'subject', focus, thread, commitment,
+                { id: subject.id, name: subject.name }, commitmentScopeSummary,
+                {
+                  parent: { type: 'commitment', id: commitment.id },
+                  attribution: { mode: 'subject', subjectId: subject.id }
+                }
+              ))
+            }
+          }
+        }
+      }
+
+    }
+
+    paths.sort((left, right) =>
+      left.displayPath.localeCompare(right.displayPath, undefined, { sensitivity: 'base' }) ||
+      left.kind.localeCompare(right.kind))
+    return {
+      paths: paths.slice(page.offset, page.offset + page.limit),
+      total: paths.length
+    }
+  }
+
+  /**
    * Resolves a write target in hierarchy order instead of treating names as
    * unrelated global search terms. Exact names are case-insensitive and IDs
    * can be supplied at any level to disambiguate duplicates.
@@ -1208,6 +1603,8 @@ export class OnMoveCommandService {
   ): ApplicationUpdateSnapshot {
     this.assertVisibleParent(input.parent, access)
     this.assertCreatePermission('update', input.parent, access)
+    this.assertVisibleSubject(input.parent, input.subjectId, access)
+    this.assertSemanticTarget(input.parent, input.subjectId, input.semanticPath)
     if (input.sensitive && access.sensitiveContent === 'deny') {
       throw new ModelValidationError('MCP sensitive-content access is disabled')
     }
@@ -1248,6 +1645,48 @@ export class OnMoveCommandService {
     return result
   }
 
+  reparentUpdate(
+    input: ReparentApplicationUpdate,
+    access: OnMoveAccessPolicy,
+    clientName?: string
+  ): ReparentApplicationUpdateResult {
+    this.assertEditPermission('update', input.id, access)
+    this.assertVisibleParent(input.parent, access)
+    this.assertCreatePermission('update', input.parent, access)
+    this.assertVisibleSubject(input.parent, input.subjectId, access)
+    this.assertSemanticTarget(input.parent, input.subjectId, input.semanticPath)
+    const current = this.domain.updates.find(input.id)
+    if (!current || current.parent.type === 'focus') {
+      throw new ModelNotFoundError('Update', input.id)
+    }
+    const previousParent: { type: 'thread' | 'commitment'; id: number } = current.parent
+    const scope = this.resolveScopeCell(
+      input.parent,
+      input.subjectId,
+      current.date,
+      'writeGuide.createUpdate'
+    )
+    return this.database.transaction(() => {
+      const updated = this.domain.updates.requireModel(input.id)
+        .reparent(input.parent, scope)
+        .toSnapshot()
+      this.audit.record({
+        toolName: 'onmove.reparent_update', entityType: 'update', entityId: input.id,
+        category: 'reparent', clientName,
+        affectedSensitive: Boolean(this.sensitivity.isSensitive('update', input.id))
+      })
+      return {
+        update: updateProjection(updated, this.domain.richTextDocuments.get({
+          type: 'update', id: input.id, field: 'observation'
+        })),
+        previous: {
+          parent: previousParent,
+          subjectId: current.scope?.subjectId ?? null
+        }
+      }
+    })
+  }
+
   createTodo(
     input: CreateApplicationTodo,
     access: OnMoveAccessPolicy,
@@ -1255,6 +1694,7 @@ export class OnMoveCommandService {
   ): TodoSnapshot {
     this.assertVisibleParent(input.parent, access)
     this.assertCreatePermission('todo', input.parent, access)
+    this.assertVisibleSubject(input.parent, input.subjectId, access)
     if (input.subjectId !== undefined && input.sharedAcrossSubjects) {
       throw new ModelValidationError('a Todo cannot be both shared and assigned to one Subject')
     }
@@ -1511,6 +1951,7 @@ export class OnMoveCommandService {
   ): unknown {
     this.assertVisibleParent(input.target, access)
     this.assertEditPermission(input.target.type, input.target.id, access)
+    this.assertVisibleSubject(input.target, input.subjectId, access)
     const cell = this.resolveScopeCell(input.target, input.subjectId)
     return this.database.transaction(() => {
       const result = input.target.type === 'thread'
@@ -1579,6 +2020,79 @@ export class OnMoveCommandService {
   private assertSensitiveWrite(value: boolean | undefined, access: OnMoveAccessPolicy): void {
     if (value === true && access.sensitiveContent === 'deny') {
       throw new ModelValidationError('MCP sensitive-content access is disabled')
+    }
+  }
+
+  private assertVisibleSubject(
+    parent: { type: 'thread' | 'commitment'; id: number },
+    subjectId: number | undefined,
+    access: OnMoveAccessPolicy
+  ): void {
+    if (subjectId === undefined) return
+    assertPositiveId(subjectId, 'subject id')
+    if (!this.sensitivity.canReadInContext(
+      'subject', subjectId, access, this.sensitivity.contextFor(parent.type, parent.id)
+    )) {
+      throw new ModelNotFoundError('Subject', subjectId)
+    }
+  }
+
+  private assertSemanticTarget(
+    parent: { type: 'thread' | 'commitment'; id: number },
+    subjectId: number | undefined,
+    semanticPath: ApplicationSemanticTargetPath | undefined
+  ): void {
+    if (!semanticPath) return
+    assertPositiveId(semanticPath.thread.id, 'semantic path thread id')
+    if (semanticPath.focus) assertPositiveId(semanticPath.focus.id, 'semantic path focus id')
+    if (semanticPath.commitment) {
+      assertPositiveId(semanticPath.commitment.id, 'semantic path commitment id')
+    }
+    if (semanticPath.subject) {
+      assertPositiveId(semanticPath.subject.id, 'semantic path subject id')
+    }
+    const actualContext = this.sensitivity.contextFor(parent.type, parent.id)
+    const expectedParentMatches = parent.type === 'thread'
+      ? parent.id === semanticPath.thread.id && semanticPath.commitment === undefined
+      : parent.id === semanticPath.commitment?.id &&
+        actualContext.threadId === semanticPath.thread.id
+    const focusMatches = semanticPath.focus === undefined ||
+      actualContext.focusId === semanticPath.focus.id
+    if (!expectedParentMatches || !focusMatches) {
+      throw new SemanticTargetValidationError(
+        'The create target does not match semanticPath. Do not flatten or redirect a named ' +
+        'Thread/Commitment/Subject path; use the parent from hierarchy discovery.',
+        {
+          code: 'semantic_path_parent_mismatch',
+          parent,
+          subjectId: subjectId ?? null,
+          semanticPath: structuredClone(semanticPath)
+        }
+      )
+    }
+    if (semanticPath.subject && subjectId === undefined) {
+      throw new SemanticTargetValidationError(
+        `semanticPath names Subject ${semanticPath.subject.name} (${semanticPath.subject.id}), ` +
+        'so an unscoped Update is unsafe. Use attribution.mode="subject" with that Subject ID.',
+        {
+          code: 'semantic_path_requires_subject_attribution',
+          parent,
+          subjectId: null,
+          semanticPath: structuredClone(semanticPath)
+        }
+      )
+    }
+    if (semanticPath.subject && subjectId !== semanticPath.subject.id) {
+      throw new SemanticTargetValidationError(
+        `semanticPath names Subject ${semanticPath.subject.name} (${semanticPath.subject.id}), ` +
+        `but the write targets Subject ${subjectId}. Preserve the requested Subject cell.`,
+        {
+          code: 'semantic_path_subject_mismatch',
+          parent,
+          subjectId: subjectId ?? null,
+          semanticPath: structuredClone(semanticPath)
+        }
+      )
     }
   }
 

@@ -110,7 +110,7 @@ export const onMoveRichTextTextSchema = z.strictObject({
     'Optional foreground color. Omit it when no color is intended; null is accepted and canonicalized to omission.'
   ),
   tag: z.literal(true).optional().describe(
-    'Set only for a durable token whose complete text is @ followed by alphanumeric characters. Omit for ordinary text, including text inside links.'
+    'Set only for a durable token whose complete text is @ followed by alphanumeric characters. Inside link children it is tolerated but canonicalized away because links cannot also be durable tags.'
   )
 }).describe('rich-text text variant: type, text, optional marks, optional color, and optional valid tag marker.')
 
@@ -122,7 +122,7 @@ export const onMoveRichTextLinkSchema = z.strictObject({
   type: z.literal('link').describe('Discriminator for a clickable link.'),
   url: z.string().describe('An http, https, or mailto URL.'),
   children: z.array(onMoveRichTextTextSchema).min(1).describe(
-    'Visible link text runs. Their tag field must be omitted.'
+    'Visible link text runs. Any accidental tag:true field is stripped during canonicalization.'
   )
 }).describe('Link variant: type, URL, and one or more text children.')
 
@@ -543,20 +543,13 @@ function validateText(
     result.color = text.color as OnMoveRichTextColor
   }
   if (text.tag !== undefined) {
+    if (insideLink && text.tag === true) return result
     if (text.tag !== true || !TAG_PATTERN.test(text.text)) {
       semanticValidationError(
         path,
         `${insideLink ? 'received a tagged link text node' : 'received a tagged text node'}, ` +
         `but ${JSON.stringify(text.text)} is not @ followed only by alphanumeric characters. ` +
         'Remove tag:true for ordinary text.',
-        text,
-        ordinaryTextCorrection(text.text)
-      )
-    }
-    if (insideLink) {
-      semanticValidationError(
-        path,
-        `received a tagged link text node. Link text cannot also be a durable tag; remove tag:true.`,
         text,
         ordinaryTextCorrection(text.text)
       )

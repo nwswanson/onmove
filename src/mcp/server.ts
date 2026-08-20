@@ -6,9 +6,12 @@ import {
   NoteTextDisappearedError,
   RichTextDisappearedError,
   RichTextRevisionConflictError,
+  SemanticTargetValidationError,
   ScopeTargetValidationError,
+  type ApplicationHierarchyPath,
   type ApplicationRichTextReference,
-  type ApplicationResolvedTargetCandidate
+  type ApplicationResolvedTargetCandidate,
+  type ApplicationSemanticTargetPath
 } from '../main/application/services'
 import {
   SEARCH_ENTITY_TYPES,
@@ -58,9 +61,26 @@ interface McpDiagnostics {
   warnings: string[]
   appliedKinds?: SearchEntityType[] | 'all'
   resultCount?: number
+  hierarchyPathCount?: number
+  hierarchyPathTotal?: number
+  subjectUseCount?: number
   resolutionStatus?: 'resolved' | 'ambiguous' | 'not_found'
   candidateCount?: number
 }
+
+const HIERARCHY_NOTATION_GUIDE = {
+  object: '{ focus?: string, thread: string, commitment?: string, subject?: string }',
+  example: {
+    thread: 'Team management',
+    commitment: '1:1s',
+    subject: 'Michael'
+  },
+  display: 'Team management > 1:1s[Michael]',
+  semantics:
+    'Focus is the optional top-level area; Thread is its workstream; Commitment is optional ' +
+    'tracked work inside the Thread; Subject is the exact Scope cell. A Subject in brackets ' +
+    'must be preserved as subject attribution on create_update.'
+} as const
 
 const EMPTY_UI_CONTEXT: McpUiContextSnapshot = { focusId: null, subjectId: null }
 const GLOBAL_SCOPE: AppliedSearchScope = {
@@ -238,6 +258,7 @@ interface UpdateWriteGuide {
   attributionMode: 'unscoped' | 'subject'
   subjectRequired: boolean
   allowedSubjects: Array<{ id: number; name: string }>
+  semanticPath: ApplicationSemanticTargetPath
   instruction: string
   requestExample: Record<string, unknown>
 }
@@ -495,10 +516,36 @@ function contextWriteTarget(value: unknown): {
   }
 }
 
+function semanticPathFromContext(
+  value: unknown,
+  subject: { id: number; name: string } | null = null
+): ApplicationSemanticTargetPath | null {
+  const context = record(value)
+  if (!context || !Array.isArray(context.contextPath)) return null
+  const entries = context.contextPath.map(record).filter((entry): entry is Record<string, unknown> =>
+    entry !== null)
+  const focus = entries.find((entry) => entry.type === 'focus')
+  const thread = entries.find((entry) => entry.type === 'thread')
+  const commitment = entries.find((entry) => entry.type === 'commitment')
+  if (!thread || !Number.isSafeInteger(thread.id) || typeof thread.title !== 'string') return null
+  return {
+    ...(focus && Number.isSafeInteger(focus.id) && typeof focus.title === 'string'
+      ? { focus: { id: Number(focus.id), title: focus.title } }
+      : {}),
+    thread: { id: Number(thread.id), title: thread.title },
+    ...(commitment && Number.isSafeInteger(commitment.id) && typeof commitment.title === 'string'
+      ? { commitment: { id: Number(commitment.id), title: commitment.title } }
+      : {}),
+    ...(subject ? { subject } : {})
+  }
+}
+
 function updateWriteGuide(value: unknown): UpdateWriteGuide | null {
   const target = contextWriteTarget(value)
   if (!target) return null
   const { parent, scopeId, allowedSubjects } = target
+  const baseSemanticPath = semanticPathFromContext(value)
+  if (!baseSemanticPath) return null
   const subjectRequired = scopeId !== null && allowedSubjects.length > 0
   if (!subjectRequired) {
     return {
@@ -507,12 +554,14 @@ function updateWriteGuide(value: unknown): UpdateWriteGuide | null {
       attributionMode: 'unscoped',
       subjectRequired: false,
       allowedSubjects: [],
+      semanticPath: baseSemanticPath,
       instruction:
         `${parent.type === 'thread' ? 'Thread' : 'Commitment'} ${parent.id} accepts an ` +
         'unscoped Update. Omit subjectId or use attribution.mode="unscoped".',
       requestExample: {
         parent,
         attribution: { mode: 'unscoped' },
+        semanticPath: baseSemanticPath,
         richText: plainRichTextDocument('Write the Update observation here.')
       }
     }
@@ -523,12 +572,14 @@ function updateWriteGuide(value: unknown): UpdateWriteGuide | null {
     attributionMode: 'subject',
     subjectRequired: true,
     allowedSubjects,
+    semanticPath: { ...baseSemanticPath, subject: allowedSubjects[0] },
     instruction:
       `${parent.type === 'thread' ? 'Thread' : 'Commitment'} ${parent.id} is scoped. ` +
       'Choose exactly one allowed Subject and use attribution.mode="subject".',
     requestExample: {
       parent,
       attribution: { mode: 'subject', subjectId: allowedSubjects[0].id },
+      semanticPath: { ...baseSemanticPath, subject: allowedSubjects[0] },
       richText: plainRichTextDocument('Write the Update observation here.')
     }
   }
@@ -856,12 +907,69 @@ function variableId(value: string | string[] | undefined): number {
 interface CreateUpdateToolInput {
   parent: { type: 'thread' | 'commitment'; id: number }
   attribution?: null | { mode: 'unscoped' } | { mode: 'subject'; subjectId: number }
+  semanticPath?: ApplicationSemanticTargetPath
   /** Backward-compatible shorthand. Prefer attribution. */
   subjectId?: number | null
   date?: string
   richText?: OnMoveRichTextDocument
   state?: 'red' | 'yellow' | 'green' | 'none'
   sensitive?: boolean
+}
+
+function semanticTargetErrorResult(
+  error: SemanticTargetValidationError,
+  tool: 'onmove.create_update' | 'onmove.reparent_update',
+  input: Record<string, unknown>
+): McpErrorResult {
+  const path = error.issue.semanticPath
+  const expectedParent = path.commitment
+    ? { type: 'commitment' as const, id: path.commitment.id }
+    : { type: 'thread' as const, id: path.thread.id }
+  const expectedAttribution = path.subject
+    ? { mode: 'subject' as const, subjectId: path.subject.id }
+    : { mode: 'unscoped' as const }
+  const corrected = tool === 'onmove.create_update'
+    ? { ...input, parent: expectedParent, attribution: expectedAttribution, semanticPath: path }
+    : {
+        ...input,
+        destination: {
+          ...(record(input.destination) ?? {}),
+          parent: expectedParent,
+          attribution: expectedAttribution,
+          semanticPath: path
+        }
+      }
+  delete (corrected as Record<string, unknown>).subjectId
+  const resolutionArguments = {
+    ...(path.focus ? { focus: { id: path.focus.id } } : {}),
+    thread: { id: path.thread.id },
+    ...(path.commitment
+      ? { commitment: { id: path.commitment.id } }
+      : {}),
+    ...(path.subject
+      ? { subject: { id: path.subject.id } }
+      : {})
+  }
+  const structuredContent = {
+    error: { ...error.issue, message: error.message },
+    recovery: {
+      inspect: { tool: 'onmove.resolve_target', arguments: resolutionArguments },
+      retry: { tool, arguments: corrected },
+      instruction:
+        'Resolve the semantic path if it may be stale, then preserve its exact parent and ' +
+        'Subject attribution. Never retry this request as unscoped when semanticPath has a Subject.'
+    },
+    diagnostics: diagnosticsScope()
+  }
+  return {
+    isError: true,
+    content: [{
+      type: 'text',
+      text: `${error.issue.code}: ${error.message}\nSuggested safe retry: ` +
+        JSON.stringify(structuredContent.recovery.retry)
+    }],
+    structuredContent
+  }
 }
 
 interface CreateTodoToolInput {
@@ -1032,6 +1140,58 @@ function todoScopeTargetErrorResult(
       text: retryArguments === null
         ? `${error.message}\nInspect the parent and choose one allowed Todo attribution.`
         : `${error.message}\nSuggested retry: ${JSON.stringify(recovery.retry)}`
+    }],
+    structuredContent
+  }
+}
+
+function reparentScopeTargetErrorResult(
+  error: ScopeTargetValidationError,
+  input: {
+    id: number
+    destination: {
+      parent: { type: 'thread' | 'commitment'; id: number }
+      attribution?: CreateUpdateToolInput['attribution']
+      semanticPath?: ApplicationSemanticTargetPath
+    }
+  },
+  guide: UpdateWriteGuide | null
+): McpErrorResult {
+  const subjectAttribution = guide?.allowedSubjects.length === 1
+    ? { mode: 'subject' as const, subjectId: guide.allowedSubjects[0].id }
+    : null
+  const unscoped = error.issue.code === 'open_parent_cannot_target_subject' ||
+    error.issue.code === 'empty_scope_cannot_target_subject'
+  const attribution = unscoped ? { mode: 'unscoped' as const } : subjectAttribution
+  const retry = attribution === null
+    ? null
+    : {
+        tool: 'onmove.reparent_update',
+        arguments: {
+          id: input.id,
+          destination: { ...input.destination, attribution }
+        }
+      }
+  const structuredContent = {
+    error: { code: error.issue.code, message: error.message, target: error.issue },
+    recovery: {
+      inspect: {
+        tool: `onmove.get_${error.issue.parent.type}`,
+        arguments: { id: error.issue.parent.id },
+        path: 'writeGuide.createUpdate'
+      },
+      allowedSubjects: guide?.allowedSubjects ?? [],
+      retry
+    },
+    diagnostics: diagnosticsScope()
+  }
+  return {
+    isError: true,
+    content: [{
+      type: 'text',
+      text: retry
+        ? `${error.message}\nSuggested reparent retry: ${JSON.stringify(retry)}`
+        : `${error.message}\nInspect the destination and choose one allowed Subject before retrying the move.`
     }],
     structuredContent
   }
@@ -1259,6 +1419,49 @@ function decorateResolvedTarget(
     : database.queries.getCommitment(candidate.parent.id, access)
   const createUpdate = updateWriteGuide(context)
   const createTodo = todoWriteGuide(context)
+  const semanticPath: ApplicationSemanticTargetPath = {
+    focus: candidate.hierarchy.focus,
+    thread: candidate.hierarchy.thread,
+    ...(candidate.hierarchy.commitment
+      ? { commitment: candidate.hierarchy.commitment }
+      : {}),
+    ...(candidate.subject ? { subject: candidate.subject } : {})
+  }
+  const notation = {
+    focus: candidate.hierarchy.focus.title,
+    thread: candidate.hierarchy.thread.title,
+    ...(candidate.hierarchy.commitment
+      ? { commitment: candidate.hierarchy.commitment.title }
+      : {}),
+    ...(candidate.subject ? { subject: candidate.subject.name } : {})
+  }
+  const relativePath = [
+    candidate.hierarchy.thread.title,
+    candidate.hierarchy.commitment?.title
+  ].filter((value): value is string => Boolean(value))
+  if (candidate.subject) {
+    relativePath[relativePath.length - 1] =
+      `${relativePath.at(-1)}[${candidate.subject.name}]`
+  }
+  const recommendedUpdateRequest = candidate.subject
+    ? {
+        tool: 'onmove.create_update',
+        arguments: {
+          parent: candidate.parent,
+          attribution: { mode: 'subject', subjectId: candidate.subject.id },
+          semanticPath
+        }
+      }
+    : createUpdate?.attributionMode === 'unscoped'
+      ? {
+          tool: 'onmove.create_update',
+          arguments: {
+            parent: candidate.parent,
+            attribution: { mode: 'unscoped' },
+            semanticPath
+          }
+        }
+      : null
   const recommendedTodoRequest = candidate.subject
     ? {
         tool: 'onmove.create_todo',
@@ -1276,8 +1479,33 @@ function decorateResolvedTarget(
       : null
   return {
     ...candidate,
+    notation,
+    displayPath: relativePath.join(' > '),
+    semanticPath,
     writeGuide: createUpdate && createTodo ? { createUpdate, createTodo } : null,
+    recommendedUpdateRequest,
     recommendedTodoRequest
+  }
+}
+
+function decorateHierarchyPath(path: ApplicationHierarchyPath): Record<string, unknown> {
+  const semanticPath: ApplicationSemanticTargetPath | null = path.hierarchy.thread
+    ? {
+        focus: path.hierarchy.focus,
+        thread: path.hierarchy.thread,
+        ...(path.hierarchy.commitment ? { commitment: path.hierarchy.commitment } : {}),
+        ...(path.subject ? { subject: path.subject } : {})
+      }
+    : null
+  return {
+    ...path,
+    semanticPath,
+    recommendedUpdateRequest: path.updateTarget && semanticPath
+      ? {
+          tool: 'onmove.create_update',
+          arguments: { ...path.updateTarget, semanticPath }
+        }
+      : null
   }
 }
 
@@ -1290,7 +1518,7 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Use onmove.search for literal information that may appear anywhere in titles, Updates, Notes, Todos, Subjects, or other indexed text. Search is global by default: never assume the current UI Focus is applied. For a text mutation, set search includeRichText=true so Focus, Update, and Note hits return complete documents, revisions, targets, and write guides without follow-up getters. For a hierarchy-shaped request such as "do X for Person Y\'s 1:1 in Team", use onmove.resolve_target with Thread, Commitment, and Subject selectors, then follow its recommendedTodoRequest or writeGuide.createTodo. Use onmove.resolve_note to read a directly owned Note by hierarchy titles in one call. Each search result includes hierarchy IDs; use hierarchy.thread.id with onmove.get_thread, not the ID of a matching Update or Note. Prefer onmove.patch_note_text for localized Note edits and onmove.patch_rich_text for localized Focus-description or Update-observation edits; use their full-update counterparts only for structural edits. Rich-text writes use the editor-neutral contract only under richText. Omit color when no foreground color is intended; null is also accepted. Use highlight for the yellow highlighter; highlight-yellow is accepted as a mark alias. Before other mutations, inspect the matching writeGuide: Open parents must be unscoped, while scoped parents require a listed Subject or an explicitly shared Todo. Inspect diagnostics and warnings on every response. OnMove Settings independently controls sensitive access and effective View/Edit grants by resource, Focus, and Thread; permission changes apply on the next call.'
+        'Use onmove.search for both literal discovery and hierarchy browsing. Search is global by default: never assume the current UI Focus is applied. Set includeThreads/includeCommitments/includeSubjects/includeScopes to expand matched ancestors into structural paths even when children contain no matching text; text=null performs structural browsing, and scope.mode=subject with text=null lists that Subject\'s attributed records and applicable paths. Paths use explicit notation such as {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve a bracketed Subject as subject attribution and use a path\'s recommendedUpdateRequest. For a hierarchy-shaped request, onmove.resolve_target remains the exact-name resolver. For a text mutation, set includeRichText=true. Use onmove.resolve_note for directly owned Notes. Prefer semantic rich-text patch tools for localized edits. Rich-text writes use only richText. Before mutations inspect writeGuide: scoped parents require a listed Subject. create_update semanticPath is required whenever the user names a Subject and prevents an unscoped or wrong-parent write. Use onmove.reparent_update to repair an Update placed at the wrong path without recreating its content. Inspect diagnostics and warnings on every response. OnMove Settings independently controls sensitive access and effective View/Edit grants by resource, Focus, and Thread; permission changes apply on the next call.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -1474,10 +1702,10 @@ export function createOnMoveMcpServer(
     'onmove.search',
     {
       title: 'Search OnMove',
-      description: 'Search literal words globally across visible Focus and Thread hierarchies, including titles, rich text, Updates, Todos, Notes, Subjects, and Routine templates. Omitted or null scope is always global and never inherits the current UI. Set includeRichText=true to return complete edit-ready Focus descriptions, Update observations, and Notes with revisions and write guides in this same call.',
+      description: 'Search text and browse visible hierarchy paths. text may be null for structural browsing. includeThreads/includeCommitments/includeSubjects expand a matched ancestor into every requested child path even when the child has no searchable text; includeScopes adds effective Scope metadata. A Subject name match automatically returns subjectUses plus every currently applicable Thread[Subject] and Commitment[Subject] path. Omitted scope is global and never inherits the UI.',
       inputSchema: z.object({
-        text: z.string().min(1).describe(
-          'Literal ordinary-language words to find anywhere in indexed OnMove content. For a unique token such as asdfasdf, pass that token directly.'
+        text: z.string().min(1).nullable().optional().describe(
+          'Literal ordinary-language words to find anywhere. Null or omitted means hierarchy browsing. With scope.mode=subject it also lists records already attributed to that Subject without requiring a text term.'
         ),
         scope: searchScopeSchema,
         kinds: z.array(z.enum(SEARCH_ENTITY_TYPES)).optional().describe(
@@ -1486,38 +1714,118 @@ export function createOnMoveMcpServer(
         includeRichText: z.boolean().optional().describe(
           'When true, each Focus, Update, or Note hit includes editableRichText with its full document, revision, self-describing target, and patch/full-write guides. Defaults to false.'
         ),
+        includeThreads: z.boolean().optional().describe(
+          'Include Thread hierarchy paths. When an ancestor matches text, include its child Threads even when their own text does not match.'
+        ),
+        includeCommitments: z.boolean().optional().describe(
+          'Include tracking Commitment paths under matched Focuses or Threads, even when those Commitments contain no matching text.'
+        ),
+        includeSubjects: z.boolean().optional().describe(
+          'Include one applicable path per canonical Subject on each included Thread and Commitment. Subject text matches enable these paths automatically.'
+        ),
+        includeScopes: z.boolean().optional().describe(
+          'Attach the effective Scope ID, name, dimension, and application mode to returned hierarchy paths. Scopes describe applicability; Subject is the exact evidence cell.'
+        ),
         ...pageSchema
       }),
       annotations: { readOnlyHint: true }
     },
-    async ({ scope, includeRichText, ...input }) => {
+    async ({
+      scope,
+      includeRichText,
+      includeThreads,
+      includeCommitments,
+      includeSubjects,
+      includeScopes,
+      text,
+      ...input
+    }) => {
       const resolved = resolveSearchScope(
         scope,
         options.getCurrentUiContext?.() ?? EMPTY_UI_CONTEXT
       )
-      const query = { ...input, ...resolved.query }
+      const normalizedText = text ?? null
+      const query = { ...input, text: normalizedText, ...resolved.query }
       const access = policy()
-      const matches = database.queries.search(query, access)
-      const items = includeRichText === true
-        ? matches.map((match) => {
+      const matches = normalizedText !== null || resolved.query.subjectId !== null
+        ? database.queries.search(query, access)
+        : []
+      const decorateSearchItems = (values: readonly SearchResult[]) => includeRichText === true
+        ? values.map((match) => {
             const editableRichText = searchableRichText(database, match, access)
             return editableRichText ? { ...match, editableRichText } : match
           })
-        : matches
+        : values
+      const items = decorateSearchItems(matches)
+      const matchedSubjects = normalizedText === null
+        ? []
+        : [...new Map(matches.flatMap((match) => {
+            if (match.reference.type !== 'subject') return []
+            const subject = match.subject ?? {
+              id: match.reference.id,
+              name: match.title
+            }
+            return [[subject.id, subject] as const]
+          })).values()].slice(0, 10)
+      const subjectUses = decorateSearchItems(matchedSubjects.flatMap((subject) =>
+        database.queries.search({
+          text: null,
+          subjectId: subject.id,
+          kinds: input.kinds,
+          limit: input.limit,
+          offset: 0
+        }, access)
+          .filter(({ reference }) => reference.type !== 'subject')
+          .map((use) => ({ ...use, matchedSubject: subject }))))
+        .slice(0, input.limit ?? 25)
+      const explicitHierarchyFlags = [
+        includeThreads, includeCommitments, includeSubjects, includeScopes
+      ].some((value) => value !== undefined)
+      const subjectMatched = matches.some(({ reference }) => reference.type === 'subject')
+      const defaultStructuralBrowse = normalizedText === null && !explicitHierarchyFlags
+      const hierarchyRequested = normalizedText === null || subjectMatched ||
+        includeThreads === true || includeCommitments === true || includeSubjects === true ||
+        includeScopes === true
+      const hierarchy = hierarchyRequested
+        ? database.queries.browseHierarchy({
+            text: normalizedText,
+            ...resolved.query,
+            includeThreads: defaultStructuralBrowse || includeThreads === true ||
+              includeScopes === true,
+            includeCommitments: defaultStructuralBrowse || includeCommitments === true ||
+              includeScopes === true,
+            includeSubjects: defaultStructuralBrowse || subjectMatched || includeSubjects === true,
+            includeScopes: defaultStructuralBrowse ? true : includeScopes === true,
+            limit: input.limit,
+            offset: input.offset
+          }, matches, access)
+        : { paths: [], total: 0 }
+      const hierarchyPaths = hierarchy.paths.map(decorateHierarchyPath)
       const appliedKinds = input.kinds?.length ? [...input.kinds] : 'all'
       const warnings = [...resolved.diagnostics.warnings]
-      if (items.length === 0 && (
+      if (items.length === 0 && hierarchyPaths.length === 0 && (
         resolved.diagnostics.appliedScope.mode !== 'all' || appliedKinds !== 'all'
       )) {
         warnings.push(
           'No matches were found with the applied filters. Retry with scope.mode="all", no focusId or subjectId, and omit kinds to search globally within the visible workspace.'
         )
       }
-      return result(items, {
+      if (normalizedText === null && resolved.query.subjectId === null && !hierarchyRequested) {
+        warnings.push('Supply text or enable hierarchy inclusion flags.')
+      }
+      return result({
+        items,
+        subjectUses,
+        hierarchyPaths,
+        hierarchyNotation: HIERARCHY_NOTATION_GUIDE
+      }, {
         ...resolved.diagnostics,
         warnings,
         appliedKinds,
-        resultCount: items.length
+        resultCount: items.length,
+        subjectUseCount: subjectUses.length,
+        hierarchyPathCount: hierarchyPaths.length,
+        hierarchyPathTotal: hierarchy.total
       })
     }
   )
@@ -1587,6 +1895,7 @@ export function createOnMoveMcpServer(
       return result({
         status: resolution.status,
         requested: resolution.requested,
+        hierarchyNotation: HIERARCHY_NOTATION_GUIDE,
         target: resolution.status === 'resolved' ? candidates[0] : null,
         candidates,
         ...(resolution.status === 'not_found' && parentCandidates.length > 0
@@ -1901,6 +2210,24 @@ export function createOnMoveMcpServer(
       'The parent Thread or Commitment\'s own ID. Use the corresponding searchResult.hierarchy ID, not an Update, Todo, or Note ID.'
     )
   })
+  const semanticPathEntitySchema = (label: string) => z.strictObject({
+    id: idSchema.describe(`The ${label}'s own ID from hierarchy discovery.`),
+    title: z.string().min(1).describe(`The ${label}'s readable title from hierarchy discovery.`)
+  })
+  const semanticPathSchema = z.strictObject({
+    focus: semanticPathEntitySchema('Focus').optional(),
+    thread: semanticPathEntitySchema('Thread'),
+    commitment: semanticPathEntitySchema('Commitment').optional(),
+    subject: z.strictObject({
+      id: idSchema.describe('The canonical Subject ID for the exact Scope cell.'),
+      name: z.string().min(1).describe('The Subject name shown in bracket notation.')
+    }).optional()
+  }).describe(
+    'The explicit hierarchy path copied from search or resolve_target. Example: ' +
+    '{thread:{id:2,title:"Team management"},commitment:{id:7,title:"1:1s"},' +
+    'subject:{id:28,name:"Michael"}} means Team management > 1:1s[Michael]. ' +
+    'Required whenever the user names a Subject; the server rejects flattening it to an unscoped or different parent.'
+  )
   const updateAttributionSchema = z.discriminatedUnion('mode', [
     z.object({
       mode: z.literal('unscoped').describe(
@@ -1944,10 +2271,13 @@ export function createOnMoveMcpServer(
     'onmove.create_update',
     {
       title: 'Create OnMove update',
-      description: 'Create an Update (direct evidence) with an optional editor-neutral rich-text document, not edit a Thread record. The parent object identifies the owning Thread or Commitment. Open parents require unscoped attribution and reject Subject IDs; scoped parents require exactly one Subject from the parent\'s writeGuide.createUpdate.allowedSubjects. Call onmove.get_thread or onmove.get_commitment first when attribution is uncertain.',
+      description: 'Create an Update (direct evidence) with an optional editor-neutral rich-text document, not edit a Thread record. The parent object identifies the owning Thread or Commitment. Open parents require unscoped attribution and reject Subject IDs; scoped parents require exactly one Subject from the parent\'s writeGuide.createUpdate.allowedSubjects. When the user names a Subject path such as 1:1s[Michael], semanticPath is required and an unscoped or different-parent write is rejected. Call search, resolve_target, get_thread, or get_commitment first when attribution is uncertain.',
       inputSchema: z.strictObject({
         parent: parentSchema,
         attribution: updateAttributionSchema,
+        semanticPath: semanticPathSchema.optional().describe(
+          'Copy this from hierarchyPaths[].semanticPath, resolve_target.target.semanticPath, or a write guide. Example names {thread:"Team management",commitment:"1:1s",subject:"Michael"} mean Team management > 1:1s[Michael]. It is required when the user request names a scoped Subject destination.'
+        ),
         subjectId: idSchema.nullable().optional().describe(
           'Backward-compatible shorthand for attribution.mode="subject". Prefer attribution. Null or omitted means unscoped and is required for an Open parent.'
         ),
@@ -1977,6 +2307,7 @@ export function createOnMoveMcpServer(
       const normalized: CreateUpdateToolInput = {
         parent: input.parent,
         attribution: input.attribution,
+        semanticPath: input.semanticPath,
         subjectId: input.subjectId,
         date: input.date,
         richText,
@@ -1990,6 +2321,7 @@ export function createOnMoveMcpServer(
             {
               parent: normalized.parent,
               subjectId,
+              semanticPath: normalized.semanticPath,
               date: normalized.date,
               document: normalized.richText,
               state: normalized.state,
@@ -2000,11 +2332,81 @@ export function createOnMoveMcpServer(
           )
         ))
       } catch (error) {
+        if (error instanceof SemanticTargetValidationError) {
+          return semanticTargetErrorResult(error, 'onmove.create_update', { ...normalized })
+        }
         if (!(error instanceof ScopeTargetValidationError)) throw error
         const context = error.issue.parent.type === 'thread'
           ? database.queries.getThread(error.issue.parent.id, policy())
           : database.queries.getCommitment(error.issue.parent.id, policy())
         return scopeTargetErrorResult(error, normalized, updateWriteGuide(context))
+      }
+    }
+  )
+
+  server.registerTool(
+    'onmove.reparent_update',
+    {
+      title: 'Move an OnMove update to the correct hierarchy path',
+      description: 'Repair an Update created on the wrong Thread, Commitment, or Subject cell without recreating it. The Update keeps its ID, date, state, sensitivity, rich-text observation, revision, and history. The destination follows the same scoped-attribution and semanticPath safeguards as create_update.',
+      inputSchema: z.strictObject({
+        id: idSchema.describe('The existing Update ID returned by search or get_update.'),
+        destination: z.strictObject({
+          parent: parentSchema,
+          attribution: updateAttributionSchema,
+          semanticPath: semanticPathSchema.optional().describe(
+            'The intended destination path from search or resolve_target. Include it whenever the correction names a Subject.'
+          )
+        })
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false }
+    },
+    async (input) => {
+      const destination: CreateUpdateToolInput = {
+        parent: input.destination.parent,
+        attribution: input.destination.attribution,
+        semanticPath: input.destination.semanticPath
+      }
+      const subjectId = normalizedUpdateSubject(destination)
+      try {
+        return mutationResult(() => {
+          const moved = database.commands.reparentUpdate({
+            id: input.id,
+            parent: destination.parent,
+            subjectId,
+            semanticPath: destination.semanticPath
+          }, policy(), server.server.getClientVersion()?.name)
+          const context = withUpdateContextWriteGuide(found(
+            database.queries.getUpdate(input.id, policy())
+          ))
+          return {
+            ...record(context),
+            reparenting: {
+              previous: moved.previous,
+              undo: {
+                tool: 'onmove.reparent_update',
+                arguments: {
+                  id: input.id,
+                  destination: {
+                    parent: moved.previous.parent,
+                    attribution: moved.previous.subjectId === null
+                      ? { mode: 'unscoped' }
+                      : { mode: 'subject', subjectId: moved.previous.subjectId }
+                  }
+                }
+              }
+            }
+          }
+        })
+      } catch (error) {
+        if (error instanceof SemanticTargetValidationError) {
+          return semanticTargetErrorResult(error, 'onmove.reparent_update', input)
+        }
+        if (!(error instanceof ScopeTargetValidationError)) throw error
+        const context = error.issue.parent.type === 'thread'
+          ? database.queries.getThread(error.issue.parent.id, policy())
+          : database.queries.getCommitment(error.issue.parent.id, policy())
+        return reparentScopeTargetErrorResult(error, input, updateWriteGuide(context))
       }
     }
   )

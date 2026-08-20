@@ -84,9 +84,21 @@ sparse hierarchy supports either a whitelist (deny by default, allow selected wo
 sensitive content** only when the connected client should be able to access effectively sensitive
 records. If the default port is occupied, change **Local port** and update the client URL.
 
-For hierarchy-shaped requests such as “Do X for Person Y's 1:1 in Team,” clients should call
-`onmove.resolve_target` first and execute its resolved Todo recommendation. This keeps duplicate
-names and Subject Scope attribution explicit instead of asking the model to guess IDs.
+For hierarchy-shaped requests such as “Add an Update for Michael's 1:1,” use `onmove.search` with
+`includeThreads`, `includeCommitments`, `includeSubjects`, and optionally `includeScopes`. A Subject
+match returns `subjectUses` plus every applicable path even when the child title or evidence does
+not contain the search text. The
+API defines those paths both as readable notation—`Team management > 1:1s[Michael]`—and as an
+explicit object such as `{ thread: "Team management", commitment: "1:1s", subject: "Michael" }`.
+Use the path's `recommendedUpdateRequest`; it includes the exact parent, Subject attribution, and
+semantic safety path. `onmove.resolve_target` remains useful for exact hierarchy names and duplicate
+disambiguation.
+
+Set `text` to `null` for hierarchy-only browsing. In particular,
+`{ text: null, scope: { mode: "subject", subjectId: 28 } }` returns records already attributed to
+that Subject plus every currently applicable Focus, Thread, and Commitment path. If an Update was
+created in the wrong place, `onmove.reparent_update` moves that existing record without replacing
+its rich text, revision, date, state, or sensitivity. Its response also supplies an undo request.
 
 For a localized Note edit, resolve and read it with `onmove.resolve_note` (or `onmove.get_note` when
 its ID is known), then call `onmove.patch_note_text` with its revision, exact `findText`, and

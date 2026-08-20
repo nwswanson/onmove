@@ -692,6 +692,66 @@ describe('Thread, Commitment, and Update models', () => {
     expect(() => update.update({ state: 'red' })).toThrow('has been deleted')
   })
 
+  it('reparents an Update without recreating its evidence or rich-text revision', () => {
+    const focus = database!.domain.focuses.create({ title: 'Leadership' })
+    const source = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Database clarity',
+      reviewFrequencyDays: 7
+    })
+    const destination = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Team management',
+      reviewFrequencyDays: 7
+    })
+    const oneToOnes = database!.domain.commitments.create({
+      parent: { type: 'thread', id: destination.id },
+      type: 'tracking',
+      title: '1:1s'
+    })
+    const scope = database!.domain.threadScopes.addSubject(
+      destination.id,
+      { name: 'Michael' },
+      new Date('2026-08-20T12:00:00.000Z')
+    )
+    const michael = scope.subjects[0]
+    const update = database!.domain.updates.create({
+      parent: { type: 'thread', id: source.id },
+      date: '2026-08-20',
+      observation: 'This evidence belongs in the 1:1.',
+      state: 'yellow'
+    })
+    const saved = database!.domain.richTextDocuments.save(
+      { type: 'update', id: update.id, field: 'observation' },
+      update.toSnapshot().observation
+    )
+
+    expect(() => update.reparent(
+      { type: 'commitment', id: oneToOnes.id },
+      { scopeId: scope.scopeId as number, subjectId: michael.id + 10_000 }
+    )).toThrow()
+    expect(update.toSnapshot().parent).toEqual({ type: 'thread', id: source.id })
+
+    update.reparent(
+      { type: 'commitment', id: oneToOnes.id },
+      { scopeId: scope.scopeId as number, subjectId: michael.id }
+    )
+
+    expect(update.toSnapshot()).toMatchObject({
+      id: update.id,
+      parent: { type: 'commitment', id: oneToOnes.id },
+      date: '2026-08-20',
+      observation: 'This evidence belongs in the 1:1.',
+      state: 'yellow',
+      scope: { scopeId: scope.scopeId, subjectId: michael.id }
+    })
+    expect(database!.domain.richTextDocuments.get({
+      type: 'update', id: update.id, field: 'observation'
+    })).toMatchObject({ value: saved.value, revision: saved.revision })
+    expect(database!.domain.updates.listForThread(source.id)).toEqual([])
+    expect(database!.domain.updates.listForCommitment(oneToOnes.id)).toHaveLength(1)
+  })
+
   it('deletes Commitments and cascades Thread deletion through owned work', () => {
     const focus = database!.domain.focuses.create({ title: 'Project execution' })
     const thread = database!.domain.threads.create({

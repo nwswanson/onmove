@@ -100,6 +100,7 @@ interface OnMoveQueryService {
   getTodos(input: TodoQuery, access: OnMoveAccessPolicy): TodoOverview
   getTags(input: TagQuery, access: OnMoveAccessPolicy): TagOverview
   search(input: SearchQuery, access: OnMoveAccessPolicy): SearchResult[]
+  browseHierarchy(input: HierarchyBrowseQuery, access: OnMoveAccessPolicy): HierarchyPath[]
 }
 
 interface OnMoveCommandService {
@@ -112,6 +113,7 @@ interface OnMoveCommandService {
   createRoutine(/* ... */): RoutineSnapshot
   updateRoutine(/* ... */): RoutineSnapshot
   createUpdate(input: CreateApplicationUpdate, access: OnMoveAccessPolicy): UpdateSnapshot
+  reparentUpdate(input: ReparentApplicationUpdate, access: OnMoveAccessPolicy): UpdateSnapshot
   createTodo(input: CreateApplicationTodo, access: OnMoveAccessPolicy): TodoSnapshot
   updateTodo(input: UpdateApplicationTodo, access: OnMoveAccessPolicy): TodoSnapshot
   pokeReview(input: PokeApplicationReview, access: OnMoveAccessPolicy): ReviewTargetSnapshot
@@ -182,6 +184,15 @@ method.
 - `onmove.get_tag_uses`
 - `onmove.search`
 
+`onmove.search` is also the bounded hierarchy browser. `text=null` performs structural browsing;
+the `includeThreads`, `includeCommitments`, `includeSubjects`, and `includeScopes` flags expand
+matched ancestors into child paths even when those children contain no searchable text. A Subject
+name match automatically returns bounded attributed `subjectUses` plus every currently applicable
+Subject-cell path. Responses define
+both explicit object notation and a readable form such as `Team management > 1:1s[Michael]`.
+Subject mode accepts `text=null` to list attributed records and current applicability paths without
+inventing a dummy text term.
+
 Read tools should support bounded filters such as status, date range, parent, Subject, open/closed,
 and result limit. They should not accept raw SQL fragments or arbitrary field expressions.
 
@@ -190,14 +201,16 @@ and result limit. They should not accept raw SQL fragments or arbitrary field ex
 Add writes only after concurrency, invalidation, and audit work is complete:
 
 - `onmove.create_update`
+- `onmove.reparent_update`
 - `onmove.create_todo`
 - `onmove.update_todo`
 - `onmove.complete_todo`
 - `onmove.poke_review`
 
-The server should initially omit generic delete, move, import, archive-clear, and status-transition
-tools. If those are added later, they need explicit destructive annotations, dry-run/plan support
-where applicable, and client confirmation.
+The server omits generic delete, import, archive-clear, and arbitrary move/status tools. The narrow
+`reparent_update` correction is an explicit exception: it changes only an existing Update's typed
+parent and exact current Subject cell, preserves the record and rich-text revision, validates both
+source and destination permissions, audits the move, and returns the previous destination for undo.
 
 ### Resources
 
@@ -227,6 +240,7 @@ For example, `onmove.create_update` should accept:
 
 - A typed parent reference.
 - An optional canonical Subject ID.
+- The semantic hierarchy path whenever the user's wording names a Subject.
 - Date, state, observation, and sensitivity.
 
 The command service should resolve the parent's current effective Scope and translate the Subject
@@ -237,7 +251,9 @@ Rules:
 - An Open Thread with no effective Subjects accepts an unscoped Update.
 - A scoped Thread or Commitment requires a currently applicable Subject.
 - A removed or unrelated Subject is rejected.
+- A semantic path such as `1:1s[Michael]` cannot be flattened onto an unscoped or different parent.
 - Historical Updates retain their original exact cell.
+- A misplaced Update can be reparented without recreating its content or revision history.
 - MCP does not narrow a Scope merely because the caller chooses one Subject.
 - Routine attestations remain independently matrixed per applicable Subject.
 

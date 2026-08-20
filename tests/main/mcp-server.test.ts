@@ -63,13 +63,14 @@ describe('OnMove MCP protocol adapter', () => {
       'onmove.update_routine',
       'onmove.update_update',
       'onmove.create_update',
+      'onmove.reparent_update',
       'onmove.patch_rich_text',
       'onmove.update_rich_text',
       'onmove.patch_note_text',
       'onmove.update_note',
       'onmove.poke_review'
     ]))
-    expect(listed.tools).toHaveLength(33)
+    expect(listed.tools).toHaveLength(34)
 
     const templates = await client.listResourceTemplates()
     expect(templates.resourceTemplates.map(({ uriTemplate }) => uriTemplate)).toEqual(
@@ -129,10 +130,17 @@ describe('OnMove MCP protocol adapter', () => {
     expect(searchSchema).toContain('Null or omitted means mode=all')
     expect(searchSchema).toContain('top-level area of work')
     expect(searchSchema).toContain('canonical Subject')
+    expect(searchSchema).toContain('includeThreads')
+    expect(searchSchema).toContain('includeCommitments')
+    expect(searchSchema).toContain('includeSubjects')
+    expect(searchSchema).toContain('includeScopes')
+    expect(searchSchema).toContain('hierarchy browsing')
     expect(threadSchema).toContain('hierarchy.thread.id')
     expect(threadSchema).toContain('not searchResult.reference.id')
     expect(createUpdate.description).toContain('Open parents require unscoped attribution')
     expect(updateSchema).toContain('writeGuide.createUpdate.allowedSubjects')
+    expect(updateSchema).toContain('Team management')
+    expect(updateSchema).toContain('semanticPath')
     expect(updateSchema).toContain('Null or omitted means unscoped')
     expect(updateSchema).toContain('The only rich-text observation field')
     expect(updateSchema).toContain('highlight-yellow')
@@ -190,11 +198,7 @@ describe('OnMove MCP protocol adapter', () => {
         version: 1,
         blocks: [{
           type: 'paragraph',
-          children: [{
-            type: 'link',
-            url: 'https://example.com',
-            children: [{ type: 'text', text: 'hey there', tag: true }]
-          }]
+          children: [{ type: 'text', text: 'hey there', tag: true }]
         }]
       }
     }
@@ -209,17 +213,17 @@ describe('OnMove MCP protocol adapter', () => {
     expect(rejected[0].structuredContent).toMatchObject({
       error: {
         code: 'invalid_rich_text',
-        pointer: '/richText/blocks/0/children/0/children/0',
+        pointer: '/richText/blocks/0/children/0',
         received: { type: 'text', text: 'hey there', tag: true },
         correction: {
           type: 'text', text: 'hey there', marks: ['bold', 'highlight']
         },
-        message: expect.stringContaining('tagged link text node')
+        message: expect.stringContaining('tagged text node')
       },
       recovery: {
         instruction: expect.stringContaining('Do not resend'),
         example: {
-          pointer: '/richText/blocks/0/children/0/children/0',
+          pointer: '/richText/blocks/0/children/0',
           value: { type: 'text', text: 'hey there', marks: ['bold', 'highlight'] }
         }
       }
@@ -235,7 +239,7 @@ describe('OnMove MCP protocol adapter', () => {
     const thirdText = rejected[2].content
       .flatMap((entry) => 'text' in entry ? [entry.text] : [])
       .join('\n')
-    expect(thirdText).toContain('type:"link"')
+    expect(thirdText).toContain('type:"text"')
     expect(thirdText).toContain('tag:true')
     expect(database.domain.notes.find(note.id)?.revision).toBe(note.revision)
 
@@ -1747,6 +1751,264 @@ describe('OnMove MCP protocol adapter', () => {
     expect(database.domain.threads.find(thread.id)).toMatchObject({
       title: 'Renamed through MCP',
       dueDate: '2026-09-01'
+    })
+  })
+
+  it('discovers Subject hierarchy paths, guards scoped intent, and repairs a misplaced Update', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const team = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Team management',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const oneToOnes = database.domain.commitments.create({
+      type: 'tracking',
+      parent: { type: 'thread', id: team.id },
+      title: '1:1s'
+    }).snapshot()
+    const scope = database.domain.threadScopes.addSubject(team.id, { name: 'Michael' })
+    const michael = scope.subjects[0]
+    const existingMichaelUse = database.domain.updates.create({
+      parent: { type: 'commitment', id: oneToOnes.id },
+      scope: { scopeId: scope.scopeId as number, subjectId: michael.id },
+      observation: 'Weekly confidence improved without repeating the Subject name.'
+    }).toSnapshot()
+    const wrongThread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Database clarity',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const misplaced = database.domain.updates.create({
+      parent: { type: 'thread', id: wrongThread.id },
+      observation: 'Preserve this rich observation while moving it.',
+      state: 'yellow'
+    }).toSnapshot()
+    database.mcpSettings.update({ allowMutations: true })
+
+    const discovery = await client.callTool({
+      name: 'onmove.search',
+      arguments: {
+        text: 'michael',
+        includeThreads: true,
+        includeCommitments: true,
+        includeSubjects: true,
+        includeScopes: true
+      }
+    })
+    expect(discovery.isError).not.toBe(true)
+    expect(discovery.structuredContent).toMatchObject({
+      hierarchyNotation: {
+        example: { thread: 'Team management', commitment: '1:1s', subject: 'Michael' },
+        display: 'Team management > 1:1s[Michael]'
+      },
+      hierarchyPaths: expect.arrayContaining([
+        expect.objectContaining({
+          relativePath: 'Team management > 1:1s[Michael]',
+          semanticPath: {
+            focus: { id: focus.id, title: focus.title },
+            thread: { id: team.id, title: 'Team management' },
+            commitment: { id: oneToOnes.id, title: '1:1s' },
+            subject: { id: michael.id, name: 'Michael' }
+          },
+          recommendedUpdateRequest: {
+            tool: 'onmove.create_update',
+            arguments: expect.objectContaining({
+              parent: { type: 'commitment', id: oneToOnes.id },
+              attribution: { mode: 'subject', subjectId: michael.id }
+            })
+          }
+        })
+      ]),
+      subjectUses: expect.arrayContaining([
+        expect.objectContaining({
+          reference: { type: 'update', id: existingMichaelUse.id },
+          matchedSubject: { id: michael.id, name: 'Michael' },
+          hierarchy: expect.objectContaining({
+            commitment: { id: oneToOnes.id, title: '1:1s' }
+          })
+        })
+      ]),
+      diagnostics: {
+        hierarchyPathCount: expect.any(Number),
+        hierarchyPathTotal: expect.any(Number),
+        subjectUseCount: 1
+      }
+    })
+
+    const subjectListing = await client.callTool({
+      name: 'onmove.search',
+      arguments: {
+        text: null,
+        scope: { mode: 'subject', subjectId: michael.id }
+      }
+    })
+    expect(subjectListing.isError).not.toBe(true)
+    expect(subjectListing.structuredContent).toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({ reference: { type: 'subject', id: michael.id } })
+      ]),
+      hierarchyPaths: expect.arrayContaining([
+        expect.objectContaining({ relativePath: 'Team management > 1:1s[Michael]' })
+      ]),
+      diagnostics: {
+        appliedScope: { mode: 'subject', subjectId: michael.id }
+      }
+    })
+
+    const semanticPath = {
+      focus: { id: focus.id, title: focus.title },
+      thread: { id: team.id, title: team.title },
+      commitment: { id: oneToOnes.id, title: oneToOnes.title },
+      subject: { id: michael.id, name: michael.name }
+    }
+    const flattened = await client.callTool({
+      name: 'onmove.create_update',
+      arguments: {
+        parent: { type: 'commitment', id: oneToOnes.id },
+        attribution: { mode: 'unscoped' },
+        semanticPath,
+        richText: richText('This must not flatten Michael out of the path.')
+      }
+    })
+    expect(flattened.isError).toBe(true)
+    expect(flattened.structuredContent).toMatchObject({
+      error: { code: 'semantic_path_requires_subject_attribution' },
+      recovery: {
+        retry: {
+          tool: 'onmove.create_update',
+          arguments: {
+            parent: { type: 'commitment', id: oneToOnes.id },
+            attribution: { mode: 'subject', subjectId: michael.id },
+            semanticPath
+          }
+        }
+      }
+    })
+    const unsafe = await client.callTool({
+      name: 'onmove.create_update',
+      arguments: {
+        parent: { type: 'thread', id: wrongThread.id },
+        attribution: { mode: 'unscoped' },
+        semanticPath,
+        richText: richText('This must not land on the wrong parent.')
+      }
+    })
+    expect(unsafe.isError).toBe(true)
+    expect(unsafe.structuredContent).toMatchObject({
+      error: { code: 'semantic_path_parent_mismatch' },
+      recovery: {
+        retry: {
+          tool: 'onmove.create_update',
+          arguments: {
+            parent: { type: 'commitment', id: oneToOnes.id },
+            attribution: { mode: 'subject', subjectId: michael.id },
+            semanticPath
+          }
+        }
+      }
+    })
+    expect(database.domain.updates.listForThread(wrongThread.id)).toHaveLength(1)
+
+    const repaired = await client.callTool({
+      name: 'onmove.reparent_update',
+      arguments: {
+        id: misplaced.id,
+        destination: {
+          parent: { type: 'commitment', id: oneToOnes.id },
+          attribution: { mode: 'subject', subjectId: michael.id },
+          semanticPath
+        }
+      }
+    })
+    expect(repaired.isError).not.toBe(true)
+    expect(repaired.structuredContent).toMatchObject({
+      contextPath: [
+        { type: 'focus', id: focus.id, title: focus.title },
+        { type: 'thread', id: team.id, title: team.title },
+        { type: 'commitment', id: oneToOnes.id, title: oneToOnes.title }
+      ],
+      update: {
+        id: misplaced.id,
+        date: misplaced.date,
+        observation: 'Preserve this rich observation while moving it.',
+        observationRevision: 0,
+        state: 'yellow',
+        parent: { type: 'commitment', id: oneToOnes.id },
+        scope: { scopeId: scope.scopeId, subjectId: michael.id }
+      },
+      reparenting: {
+        previous: {
+          parent: { type: 'thread', id: wrongThread.id },
+          subjectId: null
+        },
+        undo: { tool: 'onmove.reparent_update' }
+      }
+    })
+    expect(database.domain.updates.listForThread(wrongThread.id)).toEqual([])
+    expect(database.domain.updates.listForCommitment(oneToOnes.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: misplaced.id, state: 'yellow' })
+    ]))
+    const undo = (repaired.structuredContent as {
+      reparenting: { undo: { tool: string; arguments: Record<string, unknown> } }
+    }).reparenting.undo
+    const undone = await client.callTool({ name: undo.tool, arguments: undo.arguments })
+    expect(undone.isError).not.toBe(true)
+    expect(undone.structuredContent).toMatchObject({
+      update: {
+        id: misplaced.id,
+        parent: { type: 'thread', id: wrongThread.id },
+        scope: null,
+        observation: 'Preserve this rich observation while moving it.',
+        observationRevision: 0
+      }
+    })
+  })
+
+  it('canonicalizes accidental tag markers out of link text before storing and indexing', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const note = database.domain.notes.list({ type: 'focus', id: focus.id })[0]
+    database.mcpSettings.update({ allowMutations: true })
+
+    const updated = await client.callTool({
+      name: 'onmove.update_note',
+      arguments: {
+        id: note.id,
+        expectedRevision: note.revision,
+        richText: {
+          version: 1,
+          blocks: [{
+            type: 'paragraph',
+            children: [{
+              type: 'link',
+              url: 'https://example.com/michael',
+              children: [{ type: 'text', text: 'Michael reference', tag: true }]
+            }]
+          }]
+        }
+      }
+    })
+    expect(updated.isError).not.toBe(true)
+    expect(updated.structuredContent).toMatchObject({
+      note: {
+        content: 'Michael reference',
+        richText: {
+          blocks: [{
+            children: [{
+              type: 'link',
+              children: [{ type: 'text', text: 'Michael reference' }]
+            }]
+          }]
+        }
+      }
+    })
+    const search = await client.callTool({
+      name: 'onmove.search',
+      arguments: { text: 'michael reference' }
+    })
+    expect(search.structuredContent).toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({ reference: { type: 'note', id: note.id } })
+      ])
     })
   })
 })

@@ -15,7 +15,8 @@ export const SEARCH_ENTITY_TYPES = [
 export type SearchEntityType = (typeof SEARCH_ENTITY_TYPES)[number]
 
 export interface SearchQuery {
-  text: string
+  /** Null is valid only for an explicit Subject listing. Hierarchy-only browsing is handled above this index. */
+  text: string | null
   kinds?: readonly SearchEntityType[]
   /** Null and omission are both explicitly global; callers must opt into narrowing. */
   focusId?: number | null
@@ -131,6 +132,7 @@ export class SearchIndexRepository {
   }
 
   search(query: SearchQuery, access: OnMoveAccessPolicy): SearchResult[] {
+    if (query.text === null) return this.listForSubject(query, access)
     if (typeof query.text !== 'string' || query.text.trim().length === 0) {
       throw new TypeError('search text cannot be empty')
     }
@@ -183,7 +185,21 @@ export class SearchIndexRepository {
           AND permission_thread_all.resource_type = 'all'
          LEFT JOIN mcp_thread_permission_overrides permission_thread_resource
            ON permission_thread_resource.thread_id = document.thread_id
-          AND permission_thread_resource.resource_type = document.entity_type`
+          AND permission_thread_resource.resource_type = document.entity_type
+         JOIN mcp_permission_defaults permission_subject_default
+           ON permission_subject_default.resource_type = 'subject'
+         LEFT JOIN mcp_focus_permission_overrides permission_subject_focus_all
+           ON permission_subject_focus_all.focus_id = document.focus_id
+          AND permission_subject_focus_all.resource_type = 'all'
+         LEFT JOIN mcp_focus_permission_overrides permission_subject_focus
+           ON permission_subject_focus.focus_id = document.focus_id
+          AND permission_subject_focus.resource_type = 'subject'
+         LEFT JOIN mcp_thread_permission_overrides permission_subject_thread_all
+           ON permission_subject_thread_all.thread_id = document.thread_id
+          AND permission_subject_thread_all.resource_type = 'all'
+         LEFT JOIN mcp_thread_permission_overrides permission_subject_thread
+           ON permission_subject_thread.thread_id = document.thread_id
+          AND permission_subject_thread.resource_type = 'subject'`
       : ''
     if (access.permissionPolicy) {
       conditions.push(`COALESCE(
@@ -193,10 +209,19 @@ export class SearchIndexRepository {
         permission_focus_all.can_view,
         permission_default.can_view
       ) = 1`)
+      conditions.push(`(
+        document.subject_id IS NULL OR COALESCE(
+          permission_subject_thread.can_view,
+          permission_subject_thread_all.can_view,
+          permission_subject_focus.can_view,
+          permission_subject_focus_all.can_view,
+          permission_subject_default.can_view
+        ) = 1
+      )`)
     }
     parameters.push(limit, offset)
 
-    return this.database.all<SearchRow>(
+    return this.projectRows(this.database.all<SearchRow>(
       `SELECT document.entity_type, document.entity_id, document.field_name, document.title,
               document.focus_id, focus.title AS focus_title,
               document.thread_id, thread.title AS thread_title,
@@ -218,7 +243,115 @@ export class SearchIndexRepository {
        ORDER BY rank, document.updated_at DESC, document.id
        LIMIT ? OFFSET ?`,
       parameters
-    ).map((row) => ({
+    ))
+  }
+
+  private listForSubject(query: SearchQuery, access: OnMoveAccessPolicy): SearchResult[] {
+    if (query.subjectId === undefined || query.subjectId === null) {
+      throw new TypeError('text may be null only when scope.mode=subject supplies a subjectId')
+    }
+    const limit = query.limit ?? 25
+    const offset = query.offset ?? 0
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new TypeError('search limit must be between 1 and 100')
+    }
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 10_000) {
+      throw new TypeError('search offset must be between 0 and 10000')
+    }
+    const kinds = query.kinds ?? []
+    if (kinds.some((kind) => !SEARCH_ENTITY_TYPES.includes(kind))) {
+      throw new TypeError('search kinds contain an unsupported entity type')
+    }
+    this.synchronize()
+
+    const conditions = ['document.subject_id = ?']
+    const parameters: SqlValue[] = [query.subjectId]
+    if (kinds.length > 0) {
+      conditions.push(`document.entity_type IN (${kinds.map(() => '?').join(', ')})`)
+      parameters.push(...kinds)
+    }
+    const sensitivity = `MAX(
+      document.direct_sensitive,
+      COALESCE(focus.sensitive, 0), COALESCE(thread.sensitive, 0),
+      COALESCE(commitment.sensitive, 0), COALESCE(subject.sensitive, 0),
+      COALESCE(scope.sensitive, 0)
+    )`
+    if (access.sensitiveContent === 'deny') conditions.push(`${sensitivity} = 0`)
+    const permissionJoins = access.permissionPolicy
+      ? `JOIN mcp_permission_defaults permission_default
+           ON permission_default.resource_type = document.entity_type
+         LEFT JOIN mcp_focus_permission_overrides permission_focus_all
+           ON permission_focus_all.focus_id = document.focus_id
+          AND permission_focus_all.resource_type = 'all'
+         LEFT JOIN mcp_focus_permission_overrides permission_focus_resource
+           ON permission_focus_resource.focus_id = document.focus_id
+          AND permission_focus_resource.resource_type = document.entity_type
+         LEFT JOIN mcp_thread_permission_overrides permission_thread_all
+           ON permission_thread_all.thread_id = document.thread_id
+          AND permission_thread_all.resource_type = 'all'
+         LEFT JOIN mcp_thread_permission_overrides permission_thread_resource
+           ON permission_thread_resource.thread_id = document.thread_id
+          AND permission_thread_resource.resource_type = document.entity_type
+         JOIN mcp_permission_defaults permission_subject_default
+           ON permission_subject_default.resource_type = 'subject'
+         LEFT JOIN mcp_focus_permission_overrides permission_subject_focus_all
+           ON permission_subject_focus_all.focus_id = document.focus_id
+          AND permission_subject_focus_all.resource_type = 'all'
+         LEFT JOIN mcp_focus_permission_overrides permission_subject_focus
+           ON permission_subject_focus.focus_id = document.focus_id
+          AND permission_subject_focus.resource_type = 'subject'
+         LEFT JOIN mcp_thread_permission_overrides permission_subject_thread_all
+           ON permission_subject_thread_all.thread_id = document.thread_id
+          AND permission_subject_thread_all.resource_type = 'all'
+         LEFT JOIN mcp_thread_permission_overrides permission_subject_thread
+           ON permission_subject_thread.thread_id = document.thread_id
+          AND permission_subject_thread.resource_type = 'subject'`
+      : ''
+    if (access.permissionPolicy) {
+      conditions.push(`COALESCE(
+        permission_thread_resource.can_view,
+        permission_thread_all.can_view,
+        permission_focus_resource.can_view,
+        permission_focus_all.can_view,
+        permission_default.can_view
+      ) = 1`)
+      conditions.push(`(
+        document.subject_id IS NULL OR COALESCE(
+          permission_subject_thread.can_view,
+          permission_subject_thread_all.can_view,
+          permission_subject_focus.can_view,
+          permission_subject_focus_all.can_view,
+          permission_subject_default.can_view
+        ) = 1
+      )`)
+    }
+    parameters.push(limit, offset)
+
+    return this.projectRows(this.database.all<SearchRow>(
+      `SELECT document.entity_type, document.entity_id, document.field_name, document.title,
+              document.focus_id, focus.title AS focus_title,
+              document.thread_id, thread.title AS thread_title,
+              document.commitment_id, commitment.title AS commitment_title,
+              document.subject_id, subject.name AS subject_name,
+              document.body AS snippet, 0 AS rank,
+              ${sensitivity} AS effective_sensitive,
+              document.updated_at
+       FROM search_documents document
+       LEFT JOIN focuses focus ON focus.id = document.focus_id
+       LEFT JOIN threads thread ON thread.id = document.thread_id
+       LEFT JOIN commitments commitment ON commitment.id = document.commitment_id
+       LEFT JOIN subjects subject ON subject.id = document.subject_id
+       LEFT JOIN scopes scope ON scope.id = document.scope_id
+       ${permissionJoins}
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY document.updated_at DESC, document.id
+       LIMIT ? OFFSET ?`,
+      parameters
+    ))
+  }
+
+  private projectRows(rows: readonly SearchRow[]): SearchResult[] {
+    return rows.map((row) => ({
       reference: { type: row.entity_type, id: Number(row.entity_id) },
       uri: resourceUri(row.entity_type, Number(row.entity_id)),
       field: row.field_name === 'routine' ? 'template' : row.field_name,

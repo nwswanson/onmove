@@ -1688,6 +1688,13 @@ export class UpdateModel extends BaseModel<UpdateRecord> {
     this.repository.updateRecord(this.id, next)
     return this.refresh()
   }
+
+  /** Moves existing evidence without recreating its content or revision history. */
+  reparent(parent: UpdateParent, scope?: UpdateScopeCell | null): this {
+    this.assertPersisted()
+    this.repository.reparent(this.id, parent, scope)
+    return this.refresh()
+  }
 }
 
 export class UpdateRepository extends BaseRepository<UpdateRecord, UpdateModel> {
@@ -1776,6 +1783,32 @@ export class UpdateRepository extends BaseRepository<UpdateRecord, UpdateModel> 
       )
       if (result.changes === 0) throw new ModelNotFoundError('Update', id)
     })
+  }
+
+  reparent(id: number, parent: UpdateParent, requested?: UpdateScopeCell | null): void {
+    assertId(id, 'update')
+    const current = this.find(id)
+    if (!current) throw new ModelNotFoundError('Update', id)
+    this.assertParentExists(parent)
+    const scope = this.scopeCellForCreate(parent, requested, current.date)
+    if (
+      current.parent.type === parent.type && current.parent.id === parent.id &&
+      current.scope?.scopeId === scope?.scopeId &&
+      current.scope?.subjectId === scope?.subjectId
+    ) return
+    const [focusId, threadId, commitmentId] = updateParentColumns(parent)
+    const result = this.database.run(
+      `UPDATE updates
+       SET focus_id = ?, thread_id = ?, commitment_id = ?, scope_id = ?, subject_id = ?,
+           updated_at = ?
+       WHERE id = ?`,
+      [
+        focusId, threadId, commitmentId,
+        scope?.scopeId ?? null, scope?.subjectId ?? null,
+        timestamp(), id
+      ]
+    )
+    if (result.changes === 0) throw new ModelNotFoundError('Update', id)
   }
 
   delete(id: number): boolean {

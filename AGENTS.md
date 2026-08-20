@@ -762,6 +762,18 @@ foreground colors and do not rely on color alone to communicate selection or sta
   with the maintained FTS5 projection and readable rich-text extraction, not a collection of
   entity-specific `LIKE` queries. `get_thread` and other direct getters retrieve known entity ids;
   they are not substitutes for global search.
+- Treat hierarchy discovery as a first-class part of `onmove.search`, not as text matching alone.
+  `text=null` performs bounded structural browsing, while `includeThreads`, `includeCommitments`,
+  `includeSubjects`, and `includeScopes` expand matched ancestors into requested child paths even
+  when those children contain no matching text. A Subject-name match must return every currently
+  applicable Focus/Thread/Commitment path plus bounded `subjectUses` for that canonical Subject,
+  even when those attributed records do not repeat the Subject name. Explicit Subject scope with
+  `text=null` returns both already-attributed records and current applicability paths.
+- Define hierarchy notation in every relevant schema and response. The object
+  `{ thread: "Team management", commitment: "1:1s", subject: "Michael" }` and readable
+  `Team management > 1:1s[Michael]` form identify one semantic path; IDs in the accompanying
+  hierarchy references remain authoritative. Every executable Subject path supplies a complete
+  recommended Update request rather than requiring the caller to reconstruct parent attribution.
 - Search globally by default. Omitted or null `scope`, `focusId`, and `subjectId` must never inherit
   the current UI selection. Use one named `scope` object with explicit modes: `all` for the visible
   workspace, `focus` for one Focus hierarchy, `subject` for one canonical Subject, and `current`
@@ -788,6 +800,15 @@ foreground colors and do not rely on color alone to communicate selection or sta
   Subject for an Update, while Todo rules may additionally support `all-subjects`. Never silently
   discard a supplied Subject or borrow one from the current UI context, because that changes the
   semantic cell receiving evidence.
+- When the user's request names a scoped destination, require the caller to preserve the returned
+  `semanticPath` on `create_update`. Reject a missing Subject attribution, a different Subject, or
+  a different Thread/Commitment parent before writing. The server cannot safely reinterpret
+  bracket notation such as `1:1s[Michael]` as an unscoped Update.
+- Expose only the narrow audited `onmove.reparent_update` correction for misplaced Updates. It must
+  preserve the Update ID, rich text and revision, date, state, sensitivity, and history; validate
+  source Edit plus destination View/Edit and exact current Scope/Subject applicability; refresh
+  live windows and search; and return the previous destination as an undo request. Do not generalize
+  this into arbitrary model moves.
 - Every readable mutation target must return a `writeGuide` that states its current attribution
   mode, allowed Subjects, and executable argument shape. Invalid attribution—including the former
   confusing “an open parent cannot target a subject” case—must return the target's inspection call,
@@ -802,6 +823,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
   read-only. All full-document MCP rich-text writes use the same AST under `richText`, preserving
   paragraphs, nested lists and checklists, multi-block quotes, links, tags, colors, soft breaks, and
   marks. Never accept a plain string full-document write that can flatten formatting.
+- Canonicalize accidental `tag:true` markers out of text nodes inside links before persistence and
+  indexing. A link and durable Tag are mutually exclusive semantics, but this stale serializer
+  artifact is safe to normalize rather than trapping the caller in validation retries.
 - Prefer `onmove.patch_note_text` for localized Note wording and mark changes. It must locate exact
   case-sensitive text within one inline flow, require a one-based occurrence when duplicates exist,
   preserve surrounding structure and unspecified formatting, retain optimistic concurrency, and
