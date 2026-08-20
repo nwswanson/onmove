@@ -1,4 +1,5 @@
-import { Bot, Clock3, DatabaseBackup, FolderOpen, ShieldCheck } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Bot, Clock3, DatabaseBackup, FolderOpen, Plus, ShieldCheck, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   ContextDrawerOutlet,
@@ -6,7 +7,13 @@ import {
 } from '@/components/ui/context-drawer'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
 import { useBackupSettingsModel } from './use-backup-settings-model'
-import { useMcpSettingsModel } from './use-mcp-settings-model'
+import {
+  MCP_PERMISSION_RESOURCES,
+  type McpPermissionOverrideSnapshot,
+  type McpPermissionResource,
+  type McpPermissionResourceSelector
+} from '../../../../shared/contracts'
+import { useMcpSettingsModel, type McpSettingsModel } from './use-mcp-settings-model'
 
 function formatDate(value: string | null): string {
   if (value === null) return 'Not yet created'
@@ -24,6 +31,408 @@ function formatBytes(value: number): string {
 
 interface SettingsWorkspaceProps {
   contextDrawer: ContextDrawerControl
+}
+
+const permissionLabels: Record<McpPermissionResource, string> = {
+  focus: 'Focuses',
+  thread: 'Threads',
+  commitment: 'Commitments',
+  routine: 'Routines',
+  update: 'Updates',
+  todo: 'Todos',
+  note: 'Notes',
+  subject: 'Subjects'
+}
+
+type OverrideTarget = McpPermissionOverrideSnapshot['target']
+
+function updateTarget(target: OverrideTarget): { type: 'focus' | 'thread'; id: number } {
+  return { type: target.type, id: target.id }
+}
+
+function inheritedValue(value: boolean | null): string {
+  return value === null ? 'inherit' : value ? 'allow' : 'deny'
+}
+
+function PermissionChoice({
+  label,
+  value,
+  disabled,
+  onChange
+}: {
+  label: string
+  value: boolean | null
+  disabled: boolean
+  onChange: (value: boolean | null) => void
+}): React.JSX.Element {
+  return (
+    <select
+      aria-label={label}
+      className="h-7 min-w-24 rounded-md border border-input bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      value={inheritedValue(value)}
+      disabled={disabled}
+      onChange={(event) => onChange(
+        event.target.value === 'inherit' ? null : event.target.value === 'allow'
+      )}
+    >
+      <option value="inherit">Inherit</option>
+      <option value="allow">Allow</option>
+      <option value="deny">Deny</option>
+    </select>
+  )
+}
+
+function PermissionOverrideEditor({
+  model,
+  target,
+  title,
+  nested = false
+}: {
+  model: McpSettingsModel
+  target: OverrideTarget
+  title: string
+  nested?: boolean
+}): React.JSX.Element {
+  const rows = model.state?.permissionPolicy.overrides.filter((override) =>
+    override.target.type === target.type && override.target.id === target.id
+  ) ?? []
+  const value = (resource: McpPermissionResourceSelector, field: 'view' | 'edit'): boolean | null =>
+    rows.find((row) => row.resource === resource)?.[field] ?? null
+  const write = (
+    resource: McpPermissionResourceSelector,
+    field: 'view' | 'edit',
+    next: boolean | null
+  ): void => {
+    void model.update({
+      permission: { target: updateTarget(target), resource, [field]: next }
+    })
+  }
+
+  return (
+    <div className={nested ? 'border-t border-border/60 px-3 py-3' : 'px-4 py-4'}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
+        <PermissionChoice
+          label={`${title} view access`}
+          value={value('all', 'view')}
+          disabled={model.saving}
+          onChange={(next) => write('all', 'view', next)}
+        />
+        <PermissionChoice
+          label={`${title} edit access`}
+          value={value('all', 'edit')}
+          disabled={model.saving}
+          onChange={(next) => write('all', 'edit', next)}
+        />
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-7 text-muted-foreground hover:text-destructive"
+          aria-label={`Remove ${title} MCP access override`}
+          disabled={model.saving}
+          onClick={() => void model.update({ removePermissionTarget: updateTarget(target) })}
+        >
+          <Trash2 className="size-3.5" aria-hidden="true" />
+        </Button>
+      </div>
+      <details className="mt-2">
+        <summary className="cursor-pointer select-none text-xs text-muted-foreground">
+          Fine-grained permissions
+        </summary>
+        <div className="mt-2 divide-y divide-border/50 border-y border-border/50">
+          {MCP_PERMISSION_RESOURCES.map((resource) => (
+            <div key={resource} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 py-2">
+              <span className="text-xs">{permissionLabels[resource]}</span>
+              <PermissionChoice
+                label={`${title} ${permissionLabels[resource]} view access`}
+                value={value(resource, 'view')}
+                disabled={model.saving}
+                onChange={(next) => write(resource, 'view', next)}
+              />
+              <PermissionChoice
+                label={`${title} ${permissionLabels[resource]} edit access`}
+                value={value(resource, 'edit')}
+                disabled={model.saving}
+                onChange={(next) => write(resource, 'edit', next)}
+              />
+            </div>
+          ))}
+        </div>
+      </details>
+    </div>
+  )
+}
+
+function McpPermissionSettings({ model }: { model: McpSettingsModel }): React.JSX.Element {
+  const [focusId, setFocusId] = useState<number | null>(null)
+  const [preset, setPreset] = useState<'allow' | 'deny'>('deny')
+  const [defaultPreset, setDefaultPreset] = useState<'deny' | 'view' | 'edit'>('view')
+  const policy = model.state?.permissionPolicy
+  const focusIds = useMemo(() => [...new Set(policy?.overrides.map((override) =>
+    override.target.type === 'focus' ? override.target.id : override.target.focusId
+  ) ?? [])], [policy])
+  const configured = new Set(focusIds)
+  const availableFocuses = model.focuses.filter((focus) => !configured.has(focus.id))
+  const loadThreads = model.loadThreads
+
+  useEffect(() => {
+    for (const id of focusIds) void loadThreads(id)
+  }, [focusIds, loadThreads])
+
+  return (
+    <div className="mt-4 border-t border-border/65 pt-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-medium">Default access</h3>
+          <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+            View and edit are independent per record type. Edit also requires View.
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <select
+            aria-label="Default MCP access preset"
+            className="h-7 rounded-md border border-input bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            value={defaultPreset}
+            disabled={model.saving}
+            onChange={(event) => setDefaultPreset(
+              event.target.value as 'deny' | 'view' | 'edit'
+            )}
+          >
+            <option value="deny">Deny all</option>
+            <option value="view">View only</option>
+            <option value="edit">View and edit</option>
+          </select>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7"
+            disabled={model.saving}
+            onClick={() => void model.update({
+              permission: {
+                target: { type: 'default' },
+                resource: 'all',
+                view: defaultPreset !== 'deny',
+                edit: defaultPreset === 'edit'
+              }
+            })}
+          >
+            Apply
+          </Button>
+        </div>
+      </div>
+      <div className="mt-2 divide-y divide-border/55 border-y border-border/55">
+        {policy && MCP_PERMISSION_RESOURCES.map((resource) => {
+          const grant = policy.defaults[resource]
+          return (
+            <div key={resource} className="grid grid-cols-[1fr_5rem_5rem] items-center gap-3 py-2.5">
+              <span className="text-sm">{permissionLabels[resource]}</span>
+              <label className="flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-primary"
+                  aria-label={`View ${permissionLabels[resource]} by default`}
+                  checked={grant.view}
+                  disabled={model.saving}
+                  onChange={(event) => void model.update({
+                    permission: {
+                      target: { type: 'default' },
+                      resource,
+                      view: event.target.checked,
+                      ...(event.target.checked ? {} : { edit: false })
+                    }
+                  })}
+                />
+                View
+              </label>
+              <label className="flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-primary"
+                  aria-label={`Edit ${permissionLabels[resource]} by default`}
+                  checked={grant.edit && grant.view}
+                  disabled={model.saving || !grant.view}
+                  onChange={(event) => void model.update({
+                    permission: {
+                      target: { type: 'default' },
+                      resource,
+                      edit: event.target.checked
+                    }
+                  })}
+                />
+                Edit
+              </label>
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="mt-5">
+        <h3 className="text-sm font-medium">Focus and Thread overrides</h3>
+        <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+          Add only exceptions. A denied default with one allowed Focus is a whitelist; an allowed
+          default with one denied Focus is a blacklist. Thread rules take precedence inside a Focus.
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <select
+            aria-label="Focus for MCP access override"
+            className="h-8 min-w-52 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            value={focusId ?? ''}
+            disabled={model.saving || availableFocuses.length === 0}
+            onChange={(event) => setFocusId(event.target.value ? Number(event.target.value) : null)}
+          >
+            <option value="">Choose a Focus…</option>
+            {availableFocuses.map((focus) => (
+              <option key={focus.id} value={focus.id}>{focus.title}</option>
+            ))}
+          </select>
+          <select
+            aria-label="Initial MCP access override"
+            className="h-8 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            value={preset}
+            disabled={model.saving}
+            onChange={(event) => setPreset(event.target.value as 'allow' | 'deny')}
+          >
+            <option value="deny">Deny all</option>
+            <option value="allow">Allow all</option>
+          </select>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={model.saving || focusId === null}
+            onClick={() => {
+              if (focusId === null) return
+              void model.update({
+                permission: {
+                  target: { type: 'focus', id: focusId },
+                  resource: 'all',
+                  view: preset === 'allow',
+                  edit: preset === 'allow'
+                }
+              })
+              setFocusId(null)
+            }}
+          >
+            <Plus aria-hidden="true" />
+            Add override
+          </Button>
+        </div>
+      </div>
+
+      {focusIds.length > 0 && (
+        <div className="mt-3 divide-y divide-border/70 overflow-hidden rounded-lg border border-border/70">
+          {focusIds.map((configuredFocusId) => {
+            const focus = model.focuses.find((item) => item.id === configuredFocusId)
+            const focusTarget: OverrideTarget = { type: 'focus', id: configuredFocusId }
+            const threads = model.threadsByFocus[configuredFocusId] ?? []
+            const threadOverrides = policy?.overrides.filter((override) =>
+              override.target.type === 'thread' && override.target.focusId === configuredFocusId
+            ) ?? []
+            const threadIds = [...new Set(threadOverrides.map((override) => override.target.id))]
+            const availableThreads = threads.filter((thread) => !threadIds.includes(thread.id))
+            return (
+              <FocusPermissionGroup
+                key={configuredFocusId}
+                model={model}
+                focusTarget={focusTarget}
+                title={focus?.title ?? `Focus ${configuredFocusId}`}
+                threadIds={threadIds}
+                threads={threads}
+                availableThreads={availableThreads}
+              />
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function FocusPermissionGroup({
+  model,
+  focusTarget,
+  title,
+  threadIds,
+  threads,
+  availableThreads
+}: {
+  model: McpSettingsModel
+  focusTarget: Extract<OverrideTarget, { type: 'focus' }>
+  title: string
+  threadIds: number[]
+  threads: McpSettingsModel['threadsByFocus'][number]
+  availableThreads: McpSettingsModel['threadsByFocus'][number]
+}): React.JSX.Element {
+  const [threadId, setThreadId] = useState<number | null>(null)
+  const [preset, setPreset] = useState<'allow' | 'deny'>('deny')
+
+  return (
+    <section>
+      <PermissionOverrideEditor model={model} target={focusTarget} title={title} />
+      <div className="border-t border-border/60 bg-muted/15 px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            aria-label={`Thread override in ${title}`}
+            className="h-7 min-w-44 flex-1 rounded-md border border-input bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            value={threadId ?? ''}
+            disabled={model.saving || availableThreads.length === 0}
+            onChange={(event) => setThreadId(event.target.value ? Number(event.target.value) : null)}
+          >
+            <option value="">Add a Thread exception…</option>
+            {availableThreads.map((thread) => (
+              <option key={thread.id} value={thread.id}>{thread.title}</option>
+            ))}
+          </select>
+          <select
+            aria-label={`Initial Thread MCP access in ${title}`}
+            className="h-7 rounded-md border border-input bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            value={preset}
+            disabled={model.saving}
+            onChange={(event) => setPreset(event.target.value as 'allow' | 'deny')}
+          >
+            <option value="deny">Deny all</option>
+            <option value="allow">Allow all</option>
+          </select>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7"
+            disabled={model.saving || threadId === null}
+            onClick={() => {
+              if (threadId === null) return
+              void model.update({
+                permission: {
+                  target: { type: 'thread', id: threadId },
+                  resource: 'all',
+                  view: preset === 'allow',
+                  edit: preset === 'allow'
+                }
+              })
+              setThreadId(null)
+            }}
+          >
+            <Plus aria-hidden="true" />
+            Add Thread
+          </Button>
+        </div>
+      </div>
+      {threadIds.map((id) => {
+        const thread = threads.find((item) => item.id === id)
+        return (
+          <PermissionOverrideEditor
+            key={id}
+            model={model}
+            target={{ type: 'thread', id, focusId: focusTarget.id }}
+            title={thread?.title ?? `Thread ${id}`}
+            nested
+          />
+        )
+      })}
+    </section>
+  )
 }
 
 export function SettingsWorkspace({
@@ -200,22 +609,8 @@ export function SettingsWorkspace({
                         </span>
                       </span>
                     </label>
-                    <label className="flex cursor-pointer items-start gap-3 py-3">
-                      <input
-                        type="checkbox"
-                        className="mt-0.5 size-4 accent-primary"
-                        checked={mcp.state?.allowMutations ?? false}
-                        disabled={mcp.loading || mcp.saving}
-                        onChange={(event) => void mcp.update({ allowMutations: event.target.checked })}
-                      />
-                      <span>
-                        <span className="block text-sm font-medium">Allow safe MCP writes</span>
-                        <span className="mt-0.5 block text-xs text-muted-foreground">
-                          Permits Updates, Todos, completions, and review pokes. Deletes and moves are never exposed.
-                        </span>
-                      </span>
-                    </label>
                   </div>
+                  <McpPermissionSettings model={mcp} />
                   {mcp.error && (
                     <p className="mt-3 text-sm text-destructive" role="alert">{mcp.error}</p>
                   )}

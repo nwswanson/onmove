@@ -75,10 +75,14 @@ source, so clean clones produce the same Finder and Dock icon without a machine-
    }
    ```
 
-Keep OnMove open while using MCP. The server and sensitive-content access are off by default, and
-the server is read-only unless **Allow safe MCP writes** is enabled. Use **Allow sensitive content**
-only when the connected client should be able to read records marked sensitive. If the default port
-is already occupied, change **Local port** in Settings and update the client URL.
+Keep OnMove open while using MCP. The server and sensitive-content access are off by default.
+Under **Default access**, grant View and Edit independently for Focuses, Threads, Commitments,
+Routines, Updates, Todos, Notes, and Subjects. Edit also requires View. Add a Focus override only
+when it differs from those defaults, then optionally add a more-specific Thread override. This
+sparse hierarchy supports either a whitelist (deny by default, allow selected work) or a blacklist
+(allow by default, deny selected work) without generating a rule for every record. Use **Allow
+sensitive content** only when the connected client should be able to access effectively sensitive
+records. If the default port is occupied, change **Local port** and update the client URL.
 
 For hierarchy-shaped requests such as “Do X for Person Y's 1:1 in Team,” clients should call
 `onmove.resolve_target` first and execute its resolved Todo recommendation. This keeps duplicate

@@ -67,6 +67,31 @@ describe('database migrations', () => {
     expect(() => new AppDatabase(databasePath)).toThrow(/newer than supported/)
   })
 
+  it('migrates the legacy MCP write switch into bounded per-resource defaults', () => {
+    const current = new AppDatabase(databasePath)
+    current.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      DROP TABLE mcp_thread_permission_overrides;
+      DROP TABLE mcp_focus_permission_overrides;
+      DROP TABLE mcp_permission_defaults;
+      DELETE FROM schema_migrations WHERE version = 38;
+      UPDATE mcp_settings SET allow_mutations = 1;
+    `)
+    legacy.close()
+
+    const migrated = new AppDatabase(databasePath)
+    const policy = migrated.mcpSettings.get().permissionPolicy
+    expect(Object.keys(policy.defaults)).toHaveLength(8)
+    expect(Object.values(policy.defaults)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ view: true, edit: true })])
+    )
+    expect(Object.values(policy.defaults).every(({ view, edit }) => view && edit)).toBe(true)
+    expect(policy.overrides).toEqual([])
+    migrated.close()
+  })
+
   it('thins legacy per-edit rich-text history to the newest 30 recovery documents', () => {
     const current = new AppDatabase(databasePath)
     const focus = current.domain.focuses.create({ title: 'Legacy writing' })

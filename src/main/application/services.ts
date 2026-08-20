@@ -1,4 +1,8 @@
 import type {
+  CreateFocusInput,
+  CreateRoutineInput,
+  CreateThreadInput,
+  CreateTrackingCommitmentInput,
   CreateTodoInput,
   DueOverviewSnapshot,
   FocusSnapshot,
@@ -13,6 +17,10 @@ import type {
   TodoOverviewSnapshot,
   TodoParent,
   TodoSnapshot,
+  UpdateCommitmentInput,
+  UpdateFocusInput,
+  UpdateRoutineInput,
+  UpdateThreadInput,
   UpdateScopeCell,
   UpdateSnapshot
 } from '../../shared/contracts'
@@ -110,6 +118,31 @@ export interface UpdateApplicationTodo {
   name?: string
   dueDate?: string | null
   done?: boolean
+}
+
+export interface CreateApplicationFocus extends CreateFocusInput {
+  descriptionRichText?: OnMoveRichTextDocument
+}
+
+export type UpdateApplicationFocus = Omit<UpdateFocusInput, 'description'>
+
+export type CreateApplicationThread = CreateThreadInput
+
+export type UpdateApplicationThread = UpdateThreadInput
+
+export type CreateApplicationCommitment = CreateTrackingCommitmentInput
+
+export type UpdateApplicationCommitment = UpdateCommitmentInput
+
+export type CreateApplicationRoutine = CreateRoutineInput
+
+export type UpdateApplicationRoutine = UpdateRoutineInput
+
+export interface UpdateApplicationUpdate {
+  id: number
+  date?: string
+  state?: HealthState
+  sensitive?: boolean
 }
 
 export interface UpdateApplicationNote {
@@ -478,7 +511,10 @@ export class OnMoveQueryService {
     const visibleScope = {
       ...scope,
       subjects: scope.subjects.filter((subject) =>
-        this.sensitivity.canRead('subject', subject.id, access))
+        this.sensitivity.canReadInContext('subject', subject.id, access, {
+          focusId: id,
+          threadId: null
+        }))
     }
     const description = options.includeRichText === true
       ? this.domain.richTextDocuments.get({ type: 'focus', id, field: 'description' })
@@ -515,7 +551,9 @@ export class OnMoveQueryService {
     if (!focus) return null
     const scope = this.domain.threadScopes.get(id)
     const visibleSubjects = (subjects: typeof scope.subjects): typeof scope.subjects =>
-      subjects.filter((subject) => this.sensitivity.canRead('subject', subject.id, access))
+      subjects.filter((subject) => this.sensitivity.canReadInContext(
+        'subject', subject.id, access, { focusId: focus.id, threadId: id }
+      ))
     const commitments = this.domain.commitments.listForThread(id)
       .filter((commitment) => this.sensitivity.canRead('commitment', commitment.id, access))
     const routines = this.domain.routines.list()
@@ -554,7 +592,10 @@ export class OnMoveQueryService {
     const focus = thread ? this.domain.focuses.find(thread.focusId) : null
     if (!thread || !focus) return null
     const cells = this.domain.commitments.scopeMatrix(id).filter((cell) =>
-      this.sensitivity.canRead('subject', cell.subjectId, access))
+      this.sensitivity.canReadInContext('subject', cell.subjectId, access, {
+        focusId: focus.id,
+        threadId: thread.id
+      }))
     return {
       reference: { type: 'commitment', id },
       uri: uri({ type: 'commitment', id }),
@@ -687,7 +728,9 @@ export class OnMoveQueryService {
     const focus = thread ? this.domain.focuses.find(thread.focusId) : null
     if (!thread || !focus) return null
     const visibleSubject = (subject: { id: number } | null): boolean =>
-      subject === null || this.sensitivity.canRead('subject', subject.id, access)
+      subject === null || this.sensitivity.canReadInContext(
+        'subject', subject.id, access, { focusId: focus.id, threadId: thread.id }
+      )
     const projectRun = (run: typeof routine.currentRun) => {
       if (!run) return null
       const cells = run.cells.filter((cell) => visibleSubject(cell.subject))
@@ -744,7 +787,9 @@ export class OnMoveQueryService {
         const type = item.kind as 'thread' | 'commitment'
         const id = item.commitment?.id ?? item.thread?.id
         if (!id || !this.sensitivity.canRead(type, id, access)) return []
-        if (item.cell && !this.sensitivity.canRead('subject', item.cell.subjectId, access)) return []
+        if (item.cell && !this.sensitivity.canReadInContext(
+          'subject', item.cell.subjectId, access, this.sensitivity.contextFor(type, id)
+        )) return []
         return [{
           ...item,
           updates: item.updates.filter((update) =>
@@ -780,7 +825,8 @@ export class OnMoveQueryService {
   listTags(access: OnMoveAccessPolicy): unknown[] {
     return this.domain.tags.list().flatMap((tag) => {
       const uses = this.domain.tags.uses(tag.name).filter((use) =>
-        access.sensitiveContent === 'allow' || !use.effectiveSensitive)
+        (access.sensitiveContent === 'allow' || !use.effectiveSensitive) &&
+        this.sensitivity.canRead(use.source.type, use.source.id, access))
       return uses.length === 0 ? [] : [{ name: tag.name, useCount: uses.length }]
     })
   }
@@ -788,7 +834,9 @@ export class OnMoveQueryService {
   getTagUses(name: string, access: OnMoveAccessPolicy, limit = 50, offset = 0): unknown[] {
     const page = boundedPage(limit, offset)
     return plainProjection(this.domain.tags.uses(name)
-      .filter((use) => access.sensitiveContent === 'allow' || !use.effectiveSensitive)
+      .filter((use) =>
+        (access.sensitiveContent === 'allow' || !use.effectiveSensitive) &&
+        this.sensitivity.canRead(use.source.type, use.source.id, access))
       .slice(page.offset, page.offset + page.limit)) as unknown[]
   }
 
@@ -814,7 +862,6 @@ export class OnMoveQueryService {
     if (query.subject) assertSubjectSelector(query.subject)
 
     const focuses = this.domain.focuses.list()
-      .filter((focus) => this.sensitivity.canRead('focus', focus.id, access))
       .filter((focus) => !query.focus || matchesEntitySelector(focus, query.focus))
     const parents: ApplicationResolvedTargetCandidate[] = []
     for (const focus of focuses) {
@@ -842,7 +889,9 @@ export class OnMoveQueryService {
             }]
         for (const target of targets) {
           const allowedSubjects = [...new Map(target.subjects
-            .filter((subject) => this.sensitivity.canRead('subject', subject.id, access))
+            .filter((subject) => this.sensitivity.canReadInContext(
+              'subject', subject.id, access, { focusId: focus.id, threadId: thread.id }
+            ))
             .map((subject) => [subject.id, { id: subject.id, name: subject.name }] as const))
             .values()]
           parents.push({
@@ -900,7 +949,6 @@ export class OnMoveQueryService {
 
     const parents: NoteParent[] = []
     const focuses = this.domain.focuses.list()
-      .filter((focus) => this.sensitivity.canRead('focus', focus.id, access))
       .filter((focus) => matchesEntitySelector(focus, query.focus))
     for (const focus of focuses) {
       if (!query.thread) {
@@ -908,7 +956,6 @@ export class OnMoveQueryService {
         continue
       }
       const threads = this.domain.threads.listForFocus(focus.id)
-        .filter((thread) => this.sensitivity.canRead('thread', thread.id, access))
         .filter((thread) => matchesEntitySelector(thread, query.thread as ApplicationEntitySelector))
       for (const thread of threads) {
         if (!query.commitment) {
@@ -917,8 +964,6 @@ export class OnMoveQueryService {
         }
         const commitments = this.domain.commitments.listForThread(thread.id)
           .filter(trackingCommitment)
-          .filter((commitment) =>
-            this.sensitivity.canRead('commitment', commitment.id, access))
           .filter((commitment) => matchesEntitySelector(
             commitment,
             query.commitment as ApplicationEntitySelector
@@ -993,13 +1038,176 @@ export class OnMoveCommandService {
     private readonly audit: McpMutationAuditRepository
   ) {}
 
+  createFocus(
+    input: CreateApplicationFocus,
+    access: OnMoveAccessPolicy,
+    clientName?: string
+  ): FocusSnapshot {
+    this.assertCreateAt('focus', { focusId: null, threadId: null }, access)
+    this.assertSensitiveWrite(input.sensitive, access)
+    let description = input.description
+    if (input.descriptionRichText !== undefined) {
+      try {
+        description = onMoveRichTextDocumentToStored(input.descriptionRichText)
+      } catch (error) {
+        throw new ModelValidationError(
+          `Focus description rich text is invalid: ${error instanceof Error ? error.message : String(error)}`
+        )
+      }
+    }
+    return this.database.transaction(() => {
+      const created = this.domain.focuses.create({ ...input, description }).toSnapshot()
+      this.auditMutation('onmove.create_focus', 'focus', created.id, 'create', access, clientName)
+      return created
+    })
+  }
+
+  updateFocus(
+    id: number,
+    input: UpdateApplicationFocus,
+    access: OnMoveAccessPolicy,
+    clientName?: string
+  ): FocusSnapshot {
+    this.assertEditPermission('focus', id, access)
+    this.assertSensitiveWrite(input.sensitive, access)
+    return this.database.transaction(() => {
+      const updated = this.domain.focuses.requireModel(id).update(input).toSnapshot()
+      this.auditMutation('onmove.update_focus', 'focus', id, 'update', access, clientName)
+      return updated
+    })
+  }
+
+  createThread(
+    input: CreateApplicationThread,
+    access: OnMoveAccessPolicy,
+    clientName?: string
+  ): unknown {
+    const focus = this.domain.focuses.find(input.focusId)
+    if (!focus || !this.sensitivity.canRead('focus', focus.id, {
+      ...access,
+      permissionPolicy: undefined
+    })) throw new ModelNotFoundError('Focus', input.focusId)
+    this.assertCreateAt('thread', { focusId: focus.id, threadId: null }, access)
+    this.assertSensitiveWrite(input.sensitive, access)
+    return this.database.transaction(() => {
+      const created = this.domain.threads.create(input).snapshot()
+      this.auditMutation('onmove.create_thread', 'thread', created.id, 'create', access, clientName)
+      return created
+    })
+  }
+
+  updateThread(
+    id: number,
+    input: UpdateApplicationThread,
+    access: OnMoveAccessPolicy,
+    clientName?: string
+  ): unknown {
+    this.assertEditPermission('thread', id, access)
+    this.assertSensitiveWrite(input.sensitive, access)
+    return this.database.transaction(() => {
+      const updated = this.domain.threads.requireModel(id).update(input).snapshot()
+      this.auditMutation('onmove.update_thread', 'thread', id, 'update', access, clientName)
+      return updated
+    })
+  }
+
+  createCommitment(
+    input: CreateApplicationCommitment,
+    access: OnMoveAccessPolicy,
+    clientName?: string
+  ): unknown {
+    if (input.parent.type !== 'thread') {
+      throw new ModelValidationError('A Commitment must belong to one Thread')
+    }
+    this.assertVisibleParent(input.parent, access)
+    this.assertCreateAt(
+      'commitment', this.sensitivity.contextFor('thread', input.parent.id), access
+    )
+    this.assertSensitiveWrite(input.sensitive, access)
+    return this.database.transaction(() => {
+      const created = this.domain.commitments.create(input).snapshot()
+      this.auditMutation(
+        'onmove.create_commitment', 'commitment', created.id, 'create', access, clientName
+      )
+      return created
+    })
+  }
+
+  updateCommitment(
+    id: number,
+    input: UpdateApplicationCommitment,
+    access: OnMoveAccessPolicy,
+    clientName?: string
+  ): unknown {
+    this.assertEditPermission('commitment', id, access)
+    this.assertSensitiveWrite(input.sensitive, access)
+    return this.database.transaction(() => {
+      const updated = this.domain.commitments.requireModel(id).update(input).snapshot()
+      this.auditMutation(
+        'onmove.update_commitment', 'commitment', id, 'update', access, clientName
+      )
+      return updated
+    })
+  }
+
+  createRoutine(
+    input: CreateApplicationRoutine,
+    access: OnMoveAccessPolicy,
+    clientName?: string
+  ): unknown {
+    if (input.parent.type !== 'thread') {
+      throw new ModelValidationError('A Routine must belong to one Thread')
+    }
+    this.assertVisibleParent(input.parent, access)
+    this.assertCreateAt('routine', this.sensitivity.contextFor('thread', input.parent.id), access)
+    this.assertSensitiveWrite(input.sensitive, access)
+    return this.database.transaction(() => {
+      const created = this.domain.routines.create(input).snapshot()
+      this.auditMutation('onmove.create_routine', 'routine', created.id, 'create', access, clientName)
+      return created
+    })
+  }
+
+  updateRoutine(
+    id: number,
+    input: UpdateApplicationRoutine,
+    access: OnMoveAccessPolicy,
+    clientName?: string
+  ): unknown {
+    this.assertEditPermission('routine', id, access)
+    this.assertSensitiveWrite(input.sensitive, access)
+    return this.database.transaction(() => {
+      const updated = this.domain.routines.requireModel(id).update(input).snapshot()
+      this.auditMutation('onmove.update_routine', 'routine', id, 'update', access, clientName)
+      return updated
+    })
+  }
+
+  updateUpdate(
+    input: UpdateApplicationUpdate,
+    access: OnMoveAccessPolicy,
+    clientName?: string
+  ): UpdateSnapshot {
+    this.assertEditPermission('update', input.id, access)
+    this.assertSensitiveWrite(input.sensitive, access)
+    return this.database.transaction(() => {
+      const updated = this.domain.updates.requireModel(input.id).update({
+        date: input.date,
+        state: input.state,
+        sensitive: input.sensitive
+      }).toSnapshot()
+      this.auditMutation('onmove.update_update', 'update', input.id, 'update', access, clientName)
+      return updated
+    })
+  }
+
   createUpdate(
     input: CreateApplicationUpdate,
     access: OnMoveAccessPolicy,
     clientName?: string
   ): ApplicationUpdateSnapshot {
-    this.assertMutation(access)
     this.assertVisibleParent(input.parent, access)
+    this.assertCreatePermission('update', input.parent, access)
     if (input.sensitive && access.sensitiveContent === 'deny') {
       throw new ModelValidationError('MCP sensitive-content access is disabled')
     }
@@ -1045,8 +1253,8 @@ export class OnMoveCommandService {
     access: OnMoveAccessPolicy,
     clientName?: string
   ): TodoSnapshot {
-    this.assertMutation(access)
     this.assertVisibleParent(input.parent, access)
+    this.assertCreatePermission('todo', input.parent, access)
     if (input.subjectId !== undefined && input.sharedAcrossSubjects) {
       throw new ModelValidationError('a Todo cannot be both shared and assigned to one Subject')
     }
@@ -1079,8 +1287,7 @@ export class OnMoveCommandService {
     toolName = 'onmove.update_todo',
     clientName?: string
   ): TodoSnapshot {
-    this.assertMutation(access)
-    if (!this.sensitivity.canRead('todo', input.id, access)) throw new ModelNotFoundError('Todo', input.id)
+    this.assertEditPermission('todo', input.id, access)
     return this.database.transaction(() => {
       const updated = this.domain.todos.requireModel(input.id).update({
         name: input.name,
@@ -1135,7 +1342,6 @@ export class OnMoveCommandService {
     clientName: string | undefined,
     nextDocument: (current: OnMoveRichTextDocument) => OnMoveRichTextDocument
   ): RichTextDocumentSnapshot {
-    this.assertMutation(access)
     const { reference } = input
     assertPositiveId(reference.id, `${reference.type} id`)
     const validReference =
@@ -1149,12 +1355,7 @@ export class OnMoveCommandService {
     if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) {
       throw new ModelValidationError('expected rich-text revision must be a non-negative integer')
     }
-    if (!this.sensitivity.canRead(reference.type, reference.id, access)) {
-      throw new ModelNotFoundError(
-        reference.type === 'focus' ? 'Focus' : 'Update',
-        reference.id
-      )
-    }
+    this.assertEditPermission(reference.type, reference.id, access)
     return this.database.transaction(() => {
       const current = this.domain.richTextDocuments.get(reference as RichTextDocumentReference)
       if (current.revision !== input.expectedRevision) {
@@ -1245,14 +1446,11 @@ export class OnMoveCommandService {
     clientName: string | undefined,
     nextDocument: (current: OnMoveRichTextDocument) => OnMoveRichTextDocument
   ): RichTextDocumentSnapshot {
-    this.assertMutation(access)
     assertPositiveId(input.id, 'note id')
     if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) {
       throw new ModelValidationError('expected Note revision must be a non-negative integer')
     }
-    if (!this.sensitivity.canRead('note', input.id, access)) {
-      throw new ModelNotFoundError('Note', input.id)
-    }
+    this.assertEditPermission('note', input.id, access)
     return this.database.transaction(() => {
       const current = this.domain.notes.find(input.id)
       if (!current) throw new ModelNotFoundError('Note', input.id)
@@ -1311,8 +1509,8 @@ export class OnMoveCommandService {
     access: OnMoveAccessPolicy,
     clientName?: string
   ): unknown {
-    this.assertMutation(access)
     this.assertVisibleParent(input.target, access)
+    this.assertEditPermission(input.target.type, input.target.id, access)
     const cell = this.resolveScopeCell(input.target, input.subjectId)
     return this.database.transaction(() => {
       const result = input.target.type === 'thread'
@@ -1327,10 +1525,79 @@ export class OnMoveCommandService {
     })
   }
 
-  private assertMutation(access: OnMoveAccessPolicy): void {
-    if (access.mutations !== 'allow') {
+  private assertEditPermission(
+    resource: SensitiveEntityType,
+    id: number,
+    access: OnMoveAccessPolicy
+  ): void {
+    assertPositiveId(id, `${resource} id`)
+    if (!this.sensitivity.canRead(resource, id, access)) {
+      const label = resource[0].toUpperCase() + resource.slice(1)
+      throw new ModelNotFoundError(label, id)
+    }
+    if (!access.permissionPolicy && access.mutations !== 'allow') {
       throw new ModelValidationError('MCP mutations are disabled in OnMove settings')
     }
+    if (!this.sensitivity.canEdit(resource, id, access)) {
+      throw new ModelValidationError(
+        `MCP ${resource} editing is disabled for this item in OnMove settings`
+      )
+    }
+  }
+
+  private assertCreatePermission(
+    resource: 'update' | 'todo',
+    parent: { type: 'thread' | 'commitment'; id: number },
+    access: OnMoveAccessPolicy
+  ): void {
+    if (!access.permissionPolicy && access.mutations !== 'allow') {
+      throw new ModelValidationError('MCP mutations are disabled in OnMove settings')
+    }
+    const context = this.sensitivity.contextFor(parent.type, parent.id)
+    if (!this.sensitivity.canEditResource(resource, access, context)) {
+      throw new ModelValidationError(
+        `MCP ${resource} editing is disabled for this ${parent.type} in OnMove settings`
+      )
+    }
+  }
+
+  private assertCreateAt(
+    resource: SensitiveEntityType,
+    context: { focusId: number | null; threadId: number | null },
+    access: OnMoveAccessPolicy
+  ): void {
+    if (!access.permissionPolicy && access.mutations !== 'allow') {
+      throw new ModelValidationError('MCP mutations are disabled in OnMove settings')
+    }
+    if (!this.sensitivity.canEditResource(resource, access, context)) {
+      throw new ModelValidationError(
+        `MCP ${resource} editing is disabled for this hierarchy in OnMove settings`
+      )
+    }
+  }
+
+  private assertSensitiveWrite(value: boolean | undefined, access: OnMoveAccessPolicy): void {
+    if (value === true && access.sensitiveContent === 'deny') {
+      throw new ModelValidationError('MCP sensitive-content access is disabled')
+    }
+  }
+
+  private auditMutation(
+    toolName: string,
+    entityType: SensitiveEntityType,
+    entityId: number,
+    category: string,
+    access: OnMoveAccessPolicy,
+    clientName?: string
+  ): void {
+    this.audit.record({
+      toolName,
+      entityType,
+      entityId,
+      category,
+      clientName,
+      affectedSensitive: Boolean(this.sensitivity.isSensitive(entityType, entityId))
+    })
   }
 
   private assertVisibleParent(

@@ -86,7 +86,10 @@ The exact types can evolve, but the ownership boundary should resemble:
 ```ts
 interface OnMoveAccessPolicy {
   sensitiveContent: 'deny' | 'allow'
-  mutations: 'read-only' | 'allow'
+  permissionPolicy: {
+    defaults: Record<ResourceType, { view: boolean; edit: boolean }>
+    overrides: SparseFocusOrThreadOverride[]
+  }
 }
 
 interface OnMoveQueryService {
@@ -100,6 +103,14 @@ interface OnMoveQueryService {
 }
 
 interface OnMoveCommandService {
+  createFocus(/* ... */): FocusSnapshot
+  updateFocus(/* ... */): FocusSnapshot
+  createThread(/* ... */): ThreadSnapshot
+  updateThread(/* ... */): ThreadSnapshot
+  createCommitment(/* ... */): CommitmentSnapshot
+  updateCommitment(/* ... */): CommitmentSnapshot
+  createRoutine(/* ... */): RoutineSnapshot
+  updateRoutine(/* ... */): RoutineSnapshot
   createUpdate(input: CreateApplicationUpdate, access: OnMoveAccessPolicy): UpdateSnapshot
   createTodo(input: CreateApplicationTodo, access: OnMoveAccessPolicy): TodoSnapshot
   updateTodo(input: UpdateApplicationTodo, access: OnMoveAccessPolicy): TodoSnapshot
@@ -244,14 +255,29 @@ must not implicitly grant an external model access.
 The access decision is server configuration, not a tool argument. Do not add an
 `include_sensitive: true` argument that the model can use to grant itself access.
 
-Mutation permission should be controlled separately:
+Ordinary View/Edit permission is controlled separately from sensitive access. It is a sparse,
+hierarchical capability policy rather than one mutation switch:
 
 ```ts
 {
   sensitiveContent: 'deny' | 'allow',
-  mutations: 'read-only' | 'allow'
+  permissionPolicy: {
+    defaults: {
+      focus: { view: true, edit: false },
+      // thread, commitment, routine, update, todo, note, subject
+    },
+    overrides: [
+      { target: { type: 'focus', id: 12 }, resource: 'all', view: false, edit: false },
+      { target: { type: 'thread', id: 31 }, resource: 'note', view: true, edit: true }
+    ]
+  }
 }
 ```
+
+Resolve defaults first, then Focus wildcard/resource overrides, then Thread wildcard/resource
+overrides; the most specific non-inherited field wins, and Edit is effective only with View. Store
+only explicit exceptions. This supports default-deny whitelists and default-allow blacklists without
+creating a rule for every Focus or Thread.
 
 The effective policy should be re-read or invalidated when settings change so a long-running MCP
 session cannot retain stale permission.

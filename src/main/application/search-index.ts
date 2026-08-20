@@ -169,6 +169,31 @@ export class SearchIndexRepository {
       COALESCE(scope.sensitive, 0)
     )`
     if (access.sensitiveContent === 'deny') conditions.push(`${sensitivity} = 0`)
+    const permissionJoins = access.permissionPolicy
+      ? `JOIN mcp_permission_defaults permission_default
+           ON permission_default.resource_type = document.entity_type
+         LEFT JOIN mcp_focus_permission_overrides permission_focus_all
+           ON permission_focus_all.focus_id = document.focus_id
+          AND permission_focus_all.resource_type = 'all'
+         LEFT JOIN mcp_focus_permission_overrides permission_focus_resource
+           ON permission_focus_resource.focus_id = document.focus_id
+          AND permission_focus_resource.resource_type = document.entity_type
+         LEFT JOIN mcp_thread_permission_overrides permission_thread_all
+           ON permission_thread_all.thread_id = document.thread_id
+          AND permission_thread_all.resource_type = 'all'
+         LEFT JOIN mcp_thread_permission_overrides permission_thread_resource
+           ON permission_thread_resource.thread_id = document.thread_id
+          AND permission_thread_resource.resource_type = document.entity_type`
+      : ''
+    if (access.permissionPolicy) {
+      conditions.push(`COALESCE(
+        permission_thread_resource.can_view,
+        permission_thread_all.can_view,
+        permission_focus_resource.can_view,
+        permission_focus_all.can_view,
+        permission_default.can_view
+      ) = 1`)
+    }
     parameters.push(limit, offset)
 
     return this.database.all<SearchRow>(
@@ -188,6 +213,7 @@ export class SearchIndexRepository {
        LEFT JOIN commitments commitment ON commitment.id = document.commitment_id
        LEFT JOIN subjects subject ON subject.id = document.subject_id
        LEFT JOIN scopes scope ON scope.id = document.scope_id
+       ${permissionJoins}
        WHERE ${conditions.join(' AND ')}
        ORDER BY rank, document.updated_at DESC, document.id
        LIMIT ? OFFSET ?`,

@@ -727,8 +727,13 @@ foreground colors and do not rely on color alone to communicate selection or sta
   Electron main process and uses that process's existing `AppDatabase`; it must never open SQLite or
   run migrations independently. MCP and Electron call the typed application boundary in
   `src/main/application`; neither exposes SQL, raw tables, renderer models, or migration column names.
-- Re-read persisted MCP permissions on every request. Sensitive access and safe-write access are
-  independent and default off; the View-menu preference never grants MCP access.
+- Re-read persisted MCP permissions on every request. Sensitive access is an independent global
+  gate; ordinary access is a resource-specific View/Edit policy for Focus, Thread, Commitment,
+  Routine, Update, Todo, Note, and Subject. Edit also requires View. Resolve global defaults, then
+  sparse Focus wildcard/resource overrides, then sparse Thread wildcard/resource overrides; the
+  most specific non-inherited value wins. Never materialize an override row for every hierarchy
+  record. This must support both default-deny Focus whitelists and default-allow Focus blacklists.
+  The View-menu preference never grants MCP access.
 - Apply effective sensitivity before assembling output, including ancestors, Scope, and Subject
   cells. Hidden and missing IDs must have identical externally visible errors, and hidden records
   must not affect returned counts, tag uses, snippets, resources, or review items.
@@ -861,8 +866,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
   optional `richText` from `onmove.create_update` must not be confused with a malformed replacement
   of an existing rich-text field.
 - Keep mutations narrow, typed, auditable, and opt-in. Route them only through
-  `OnMoveCommandService`; never expose generic model updates, arbitrary fields, SQL, delete, import,
-  move, archive clearing, or lifecycle transitions without a separate product and confirmation
+  `OnMoveCommandService`. The non-destructive surface may create and edit Focuses, Threads,
+  Commitments, Routines, Updates, Todos, Notes, and their supported lifecycle metadata only when
+  the effective resource Edit grant is enabled. Never expose generic model dispatch, arbitrary
+  fields, SQL, delete, import, move, or archive clearing without a separate product and confirmation
   design. Return the refreshed canonical record and diagnostics after a successful mutation.
 - MCP operates beside the live editor, not against a second database connection or a database file
   snapshot. It must share the running main process's repositories and command services. Every
@@ -870,8 +877,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
   broadcast domain and rich-text changes so every main and pop-out window updates immediately.
   Preserve live-server tests so MCP-visible changes never require quitting, reopening, or navigating
   away from the active screen.
-- Server enablement, sensitive access, and write access are three independent persisted settings,
-  re-read for each request so revocation takes effect without reconnecting. The UI's “hide sensitive
+- Server enablement, sensitive access, and the hierarchical resource policy are independent
+  persisted settings, re-read for each request so revocation takes effect without reconnecting.
+  The UI's “hide sensitive
   content” preference is not authorization. Resolve effective sensitivity across ancestors and
   Scope/Subject cells before search, direct reads, counts, snippets, resources, or writes; expose
   hidden and nonexistent records identically to avoid leaking their existence.

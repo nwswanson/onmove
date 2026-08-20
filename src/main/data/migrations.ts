@@ -3617,6 +3617,61 @@ const migrations: readonly Migration[] = [
           ON rich_text_history(changed_at, document_type, entity_id);
       `)
     }
+  },
+  {
+    version: 38,
+    name: 'hierarchical_mcp_permissions',
+    up(database) {
+      database.exec(`
+        CREATE TABLE mcp_permission_defaults (
+          resource_type TEXT PRIMARY KEY CHECK (resource_type IN (
+            'focus', 'thread', 'commitment', 'routine',
+            'update', 'todo', 'note', 'subject'
+          )),
+          can_view INTEGER NOT NULL CHECK (can_view IN (0, 1)),
+          can_edit INTEGER NOT NULL CHECK (can_edit IN (0, 1)),
+          updated_at TEXT NOT NULL
+        ) STRICT, WITHOUT ROWID;
+
+        INSERT INTO mcp_permission_defaults (
+          resource_type, can_view, can_edit, updated_at
+        )
+        SELECT resource_type, 1, settings.allow_mutations, settings.updated_at
+        FROM mcp_settings settings
+        CROSS JOIN (
+          SELECT 'focus' AS resource_type UNION ALL SELECT 'thread' UNION ALL
+          SELECT 'commitment' UNION ALL SELECT 'routine' UNION ALL
+          SELECT 'update' UNION ALL SELECT 'todo' UNION ALL
+          SELECT 'note' UNION ALL SELECT 'subject'
+        );
+
+        CREATE TABLE mcp_focus_permission_overrides (
+          focus_id INTEGER NOT NULL REFERENCES focuses(id) ON DELETE CASCADE,
+          resource_type TEXT NOT NULL CHECK (resource_type IN (
+            'all', 'focus', 'thread', 'commitment', 'routine',
+            'update', 'todo', 'note', 'subject'
+          )),
+          can_view INTEGER CHECK (can_view IS NULL OR can_view IN (0, 1)),
+          can_edit INTEGER CHECK (can_edit IS NULL OR can_edit IN (0, 1)),
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (focus_id, resource_type),
+          CHECK (can_view IS NOT NULL OR can_edit IS NOT NULL)
+        ) STRICT, WITHOUT ROWID;
+
+        CREATE TABLE mcp_thread_permission_overrides (
+          thread_id INTEGER NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+          resource_type TEXT NOT NULL CHECK (resource_type IN (
+            'all', 'focus', 'thread', 'commitment', 'routine',
+            'update', 'todo', 'note', 'subject'
+          )),
+          can_view INTEGER CHECK (can_view IS NULL OR can_view IN (0, 1)),
+          can_edit INTEGER CHECK (can_edit IS NULL OR can_edit IN (0, 1)),
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (thread_id, resource_type),
+          CHECK (can_view IS NOT NULL OR can_edit IS NOT NULL)
+        ) STRICT, WITHOUT ROWID;
+      `)
+    }
   }
 ]
 

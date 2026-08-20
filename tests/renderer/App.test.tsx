@@ -8,6 +8,8 @@ import type {
   CommitmentSnapshot,
   DomainApi,
   FocusSnapshot,
+  McpPermissionOverrideSnapshot,
+  McpPermissionResource,
   McpSettingsSnapshot,
   NoteSnapshot,
   OnMoveApi,
@@ -449,6 +451,19 @@ function installApi(
     allowSensitive: false,
     allowMutations: false,
     updatedAt: '2026-08-10T12:00:00.000Z',
+    permissionPolicy: {
+      defaults: {
+        focus: { view: true, edit: false },
+        thread: { view: true, edit: false },
+        commitment: { view: true, edit: false },
+        routine: { view: true, edit: false },
+        update: { view: true, edit: false },
+        todo: { view: true, edit: false },
+        note: { view: true, edit: false },
+        subject: { view: true, edit: false }
+      },
+      overrides: []
+    },
     status: 'stopped',
     endpoint: null,
     error: null
@@ -496,11 +511,81 @@ function installApi(
       update: vi.fn(async (input) => {
         const serverEnabled = input.serverEnabled ?? mcpState.serverEnabled
         const serverPort = input.serverPort ?? mcpState.serverPort
+        let permissionPolicy = mcpState.permissionPolicy
+        if (input.permission) {
+          const { target, resource, view, edit } = input.permission
+          if (target.type === 'default') {
+            const resources: McpPermissionResource[] = resource === 'all'
+              ? Object.keys(permissionPolicy.defaults) as Array<keyof typeof permissionPolicy.defaults>
+              : [resource as McpPermissionResource]
+            const defaults = { ...permissionPolicy.defaults }
+            for (const key of resources) {
+              defaults[key] = {
+                view: view ?? defaults[key].view,
+                edit: edit ?? defaults[key].edit
+              }
+            }
+            permissionPolicy = { ...permissionPolicy, defaults }
+          } else {
+            let snapshotTarget: McpPermissionOverrideSnapshot['target']
+            if (target.type === 'focus') {
+              snapshotTarget = target
+            } else {
+              const focuses = await domain.listFocuses()
+              let focusId = 0
+              for (const focusItem of focuses) {
+                if ((await domain.listThreads(focusItem.id)).some((item) => item.id === target.id)) {
+                  focusId = focusItem.id
+                  break
+                }
+              }
+              snapshotTarget = { ...target, focusId }
+            }
+            const existing = permissionPolicy.overrides.find((override) =>
+              override.target.type === target.type && override.target.id === target.id &&
+              override.resource === resource
+            )
+            const next = {
+              target: snapshotTarget,
+              resource,
+              view: view === undefined ? existing?.view ?? null : view,
+              edit: edit === undefined ? existing?.edit ?? null : edit
+            }
+            permissionPolicy = {
+              ...permissionPolicy,
+              overrides: [
+                ...permissionPolicy.overrides.filter((override) => !(
+                  override.target.type === target.type && override.target.id === target.id &&
+                  override.resource === resource
+                )),
+                ...(next.view === null && next.edit === null ? [] : [next])
+              ]
+            }
+          }
+        }
+        if (input.removePermissionTarget) {
+          permissionPolicy = {
+            ...permissionPolicy,
+            overrides: permissionPolicy.overrides.filter((override) =>
+              input.removePermissionTarget?.type === 'focus'
+                ? !(override.target.type === 'focus' &&
+                    override.target.id === input.removePermissionTarget.id) &&
+                  !(override.target.type === 'thread' &&
+                    override.target.focusId === input.removePermissionTarget.id)
+                : !(override.target.type === 'thread' &&
+                    override.target.id === input.removePermissionTarget?.id)
+            )
+          }
+        }
         mcpState = {
           ...mcpState,
-          ...input,
+          ...(input.serverEnabled === undefined ? {} : { serverEnabled: input.serverEnabled }),
+          ...(input.serverPort === undefined ? {} : { serverPort: input.serverPort }),
+          ...(input.allowSensitive === undefined ? {} : { allowSensitive: input.allowSensitive }),
+          ...(input.allowMutations === undefined ? {} : { allowMutations: input.allowMutations }),
           serverEnabled,
           serverPort,
+          permissionPolicy,
           updatedAt: '2026-08-10T12:01:00.000Z',
           status: serverEnabled ? 'running' : 'stopped',
           endpoint: serverEnabled ? `http://127.0.0.1:${serverPort}/mcp` : null,
@@ -5286,9 +5371,9 @@ describe('App', () => {
     expect(screen.getByText('Model Context Protocol')).toBeVisible()
     const serverEnabled = screen.getByRole('checkbox', { name: /Run MCP server/i })
     const sensitiveAccess = screen.getByRole('checkbox', { name: /Allow sensitive content/i })
-    const mutationAccess = screen.getByRole('checkbox', { name: /Allow safe MCP writes/i })
+    const updateEditAccess = screen.getByRole('checkbox', { name: 'Edit Updates by default' })
     expect(sensitiveAccess).not.toBeChecked()
-    expect(mutationAccess).not.toBeChecked()
+    expect(updateEditAccess).not.toBeChecked()
     await user.click(serverEnabled)
     expect(api.mcp.update).toHaveBeenCalledWith({ serverEnabled: true })
     expect(await screen.findByText('http://127.0.0.1:47832/mcp')).toBeVisible()
@@ -5298,8 +5383,14 @@ describe('App', () => {
     await user.tab()
     expect(api.mcp.update).toHaveBeenCalledWith({ serverPort: 47_833 })
     expect(await screen.findByText('http://127.0.0.1:47833/mcp')).toBeVisible()
-    await user.click(mutationAccess)
-    expect(api.mcp.update).toHaveBeenCalledWith({ allowMutations: true })
+    await user.click(updateEditAccess)
+    expect(api.mcp.update).toHaveBeenCalledWith({
+      permission: {
+        target: { type: 'default' },
+        resource: 'update',
+        edit: true
+      }
+    })
     expect(screen.getByText('1 of 10 snapshots')).toBeVisible()
     expect(screen.getByRole('list', { name: 'Recent backups' })).toBeVisible()
 
@@ -5313,6 +5404,80 @@ describe('App', () => {
 
     await user.click(screen.getByRole('button', { name: 'Todos' }))
     expect(await screen.findByRole('heading', { name: 'Todos' })).toBeVisible()
+  })
+
+  it('configures sparse Focus and Thread MCP permission overrides', async () => {
+    const accessFocus = focus({ id: 41, title: 'Access-controlled Focus' })
+    const accessThread = thread({ id: 42, focusId: accessFocus.id, title: 'Private workstream' })
+    const api = installApi({
+      listFocuses: vi.fn().mockResolvedValue([accessFocus]),
+      listThreads: vi.fn(async (focusId) => focusId === accessFocus.id ? [accessThread] : [])
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Settings' }))
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Default MCP access preset' }),
+      'deny'
+    )
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+    expect(api.mcp.update).toHaveBeenCalledWith({
+      permission: {
+        target: { type: 'default' },
+        resource: 'all',
+        view: false,
+        edit: false
+      }
+    })
+    const focusPicker = await screen.findByRole('combobox', {
+      name: 'Focus for MCP access override'
+    })
+    await waitFor(() => expect(focusPicker).toBeEnabled())
+    await user.selectOptions(focusPicker, String(accessFocus.id))
+    await user.click(screen.getByRole('button', { name: 'Add override' }))
+    expect(api.mcp.update).toHaveBeenCalledWith({
+      permission: {
+        target: { type: 'focus', id: accessFocus.id },
+        resource: 'all',
+        view: false,
+        edit: false
+      }
+    })
+
+    const threadPicker = await screen.findByRole('combobox', {
+      name: `Thread override in ${accessFocus.title}`
+    })
+    await user.selectOptions(threadPicker, String(accessThread.id))
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: `Initial Thread MCP access in ${accessFocus.title}` }),
+      'allow'
+    )
+    await user.click(screen.getByRole('button', { name: 'Add Thread' }))
+    expect(api.mcp.update).toHaveBeenCalledWith({
+      permission: {
+        target: { type: 'thread', id: accessThread.id },
+        resource: 'all',
+        view: true,
+        edit: true
+      }
+    })
+
+    const fineGrained = screen.getAllByText('Fine-grained permissions')[0]
+    await user.click(fineGrained)
+    await user.selectOptions(
+      screen.getByRole('combobox', {
+        name: `${accessFocus.title} Notes view access`
+      }),
+      'allow'
+    )
+    expect(api.mcp.update).toHaveBeenCalledWith({
+      permission: {
+        target: { type: 'focus', id: accessFocus.id },
+        resource: 'note',
+        view: true
+      }
+    })
   })
 
   it('shows a useful error if focus storage fails to load', async () => {

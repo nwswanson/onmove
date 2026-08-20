@@ -93,6 +93,57 @@ test('serves MCP from the running app and immediately refreshes its open windows
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.patch_rich_text')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.update_rich_text')
 
+    await window.evaluate(async ({ threadId }) => {
+      await window.onmove.mcp.update({
+        permission: {
+          target: { type: 'thread', id: threadId },
+          resource: 'note',
+          view: false,
+          edit: false
+        }
+      })
+    }, { threadId: thread.id })
+    const hiddenNote = await client.callTool({
+      name: 'onmove.get_note',
+      arguments: { id: threadNote.id }
+    })
+    expect(hiddenNote.isError).toBe(true)
+
+    await window.evaluate(async ({ threadId }) => {
+      await window.onmove.mcp.update({
+        permission: {
+          target: { type: 'thread', id: threadId },
+          resource: 'note',
+          view: true,
+          edit: false
+        }
+      })
+    }, { threadId: thread.id })
+    const visibleNote = await client.callTool({
+      name: 'onmove.get_note',
+      arguments: { id: threadNote.id }
+    })
+    expect(visibleNote.isError).not.toBe(true)
+    const deniedNoteEdit = await client.callTool({
+      name: 'onmove.update_note',
+      arguments: {
+        id: threadNote.id,
+        expectedRevision: threadNote.revision,
+        richText: richText('This edit must be denied')
+      }
+    })
+    expect(deniedNoteEdit.isError).toBe(true)
+
+    await window.evaluate(async ({ threadId }) => {
+      await window.onmove.mcp.update({
+        permission: {
+          target: { type: 'thread', id: threadId },
+          resource: 'note',
+          edit: true
+        }
+      })
+    }, { threadId: thread.id })
+
     await window.evaluate((noteId) => {
       const testWindow = window as typeof window & {
         __mcpNoteChanges?: Array<{ id: number; value: string; revision: number }>

@@ -107,6 +107,7 @@ function plainRichTextDocument(text: string): OnMoveRichTextDocument {
 }
 
 type RichTextWriteTool =
+  | 'onmove.create_focus'
   | 'onmove.create_update'
   | 'onmove.update_note'
   | 'onmove.update_rich_text'
@@ -1289,7 +1290,7 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Use onmove.search for literal information that may appear anywhere in titles, Updates, Notes, Todos, Subjects, or other indexed text. Search is global by default: never assume the current UI Focus is applied. For a text mutation, set search includeRichText=true so Focus, Update, and Note hits return complete documents, revisions, targets, and write guides without follow-up getters. For a hierarchy-shaped request such as "do X for Person Y\'s 1:1 in Team", use onmove.resolve_target with Thread, Commitment, and Subject selectors, then follow its recommendedTodoRequest or writeGuide.createTodo. Use onmove.resolve_note to read a directly owned Note by hierarchy titles in one call. Each search result includes hierarchy IDs; use hierarchy.thread.id with onmove.get_thread, not the ID of a matching Update or Note. Prefer onmove.patch_note_text for localized Note edits and onmove.patch_rich_text for localized Focus-description or Update-observation edits; use their full-update counterparts only for structural edits. Rich-text writes use the editor-neutral contract only under richText. Omit color when no foreground color is intended; null is also accepted. Use highlight for the yellow highlighter; highlight-yellow is accepted as a mark alias. Before other mutations, inspect the matching writeGuide: Open parents must be unscoped, while scoped parents require a listed Subject or an explicitly shared Todo. Inspect diagnostics and warnings on every response. Sensitive content and mutations are controlled only in OnMove Settings.'
+        'Use onmove.search for literal information that may appear anywhere in titles, Updates, Notes, Todos, Subjects, or other indexed text. Search is global by default: never assume the current UI Focus is applied. For a text mutation, set search includeRichText=true so Focus, Update, and Note hits return complete documents, revisions, targets, and write guides without follow-up getters. For a hierarchy-shaped request such as "do X for Person Y\'s 1:1 in Team", use onmove.resolve_target with Thread, Commitment, and Subject selectors, then follow its recommendedTodoRequest or writeGuide.createTodo. Use onmove.resolve_note to read a directly owned Note by hierarchy titles in one call. Each search result includes hierarchy IDs; use hierarchy.thread.id with onmove.get_thread, not the ID of a matching Update or Note. Prefer onmove.patch_note_text for localized Note edits and onmove.patch_rich_text for localized Focus-description or Update-observation edits; use their full-update counterparts only for structural edits. Rich-text writes use the editor-neutral contract only under richText. Omit color when no foreground color is intended; null is also accepted. Use highlight for the yellow highlighter; highlight-yellow is accepted as a mark alias. Before other mutations, inspect the matching writeGuide: Open parents must be unscoped, while scoped parents require a listed Subject or an explicitly shared Todo. Inspect diagnostics and warnings on every response. OnMove Settings independently controls sensitive access and effective View/Edit grants by resource, Focus, and Thread; permission changes apply on the next call.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -1652,6 +1653,244 @@ export function createOnMoveMcpServer(
         candidateCount: candidates.length
       })
     }
+  )
+
+  const lifecycleStatusSchema = z.enum(['active', 'paused', 'done', 'cancelled'])
+  const optionalDueDateSchema = dateSchema.nullable().optional().describe(
+    'Optional due date in YYYY-MM-DD form; null explicitly removes the due date.'
+  )
+  const threadParentSchema = z.strictObject({
+    type: z.literal('thread'),
+    id: idSchema.describe('The owning Thread ID from onmove.get_thread or hierarchy.thread.id.')
+  })
+  const routineChecklistSchema = z.array(z.strictObject({
+    inspection: z.string().min(1).describe('An inspection phrased as a verification or confirmation.'),
+    required: z.boolean().optional().describe('Whether this check must be resolved before finalization; defaults to true.')
+  })).min(1)
+
+  server.registerTool(
+    'onmove.create_focus',
+    {
+      title: 'Create an OnMove focus',
+      description: 'Create a top-level Focus. Its description may be supplied as lossless rich text; a Default Note is created by the model.',
+      inputSchema: z.strictObject({
+        title: z.string().min(1).describe('The Focus title; duplicate titles are allowed.'),
+        richText: richTextDocumentSchema.optional().describe(
+          'Optional lossless rich-text Focus description. This is the only description write field.'
+        ),
+        status: lifecycleStatusSchema.optional(),
+        dueDate: optionalDueDateSchema,
+        needsReview: z.boolean().optional(),
+        sensitive: z.boolean().optional()
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false }
+    },
+    async (input) => {
+      let richText: OnMoveRichTextDocument | undefined
+      try {
+        richText = normalizedRichTextToolInput('onmove.create_focus', input, false)
+      } catch (error) {
+        if (!(error instanceof RichTextToolInputError)) throw error
+        return rejected('onmove.create_focus', input, error.code, richTextInputErrorResult(error))
+      }
+      return mutationResult(() => found(database.queries.getFocus(
+        database.commands.createFocus({
+          title: input.title,
+          descriptionRichText: richText,
+          status: input.status,
+          dueDate: input.dueDate,
+          needsReview: input.needsReview,
+          sensitive: input.sensitive
+        }, policy(), server.server.getClientVersion()?.name).id,
+        policy(),
+        { includeRichText: true }
+      )))
+    }
+  )
+
+  server.registerTool(
+    'onmove.update_focus',
+    {
+      title: 'Edit an OnMove focus',
+      description: 'Edit compact Focus metadata. Use onmove.patch_rich_text or onmove.update_rich_text for the description.',
+      inputSchema: z.strictObject({
+        id: idSchema.describe('The Focus ID.'),
+        title: z.string().min(1).optional(),
+        status: lifecycleStatusSchema.optional(),
+        dueDate: optionalDueDateSchema,
+        needsReview: z.boolean().optional(),
+        sensitive: z.boolean().optional()
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false }
+    },
+    async ({ id, ...input }) => mutationResult(() => {
+      database.commands.updateFocus(id, input, policy(), server.server.getClientVersion()?.name)
+      return found(database.queries.getFocus(id, policy()))
+    })
+  )
+
+  server.registerTool(
+    'onmove.create_thread',
+    {
+      title: 'Create an OnMove thread',
+      description: 'Create a Thread workstream inside one existing Focus. Scope remains inherited/open and can be configured in OnMove.',
+      inputSchema: z.strictObject({
+        focusId: idSchema.describe('The owning Focus ID.'),
+        title: z.string().min(1),
+        status: lifecycleStatusSchema.optional(),
+        dueDate: optionalDueDateSchema,
+        reviewFrequencyDays: z.number().int().positive().default(7),
+        needsReview: z.boolean().optional(),
+        sensitive: z.boolean().optional()
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false }
+    },
+    async (input) => mutationResult(() => {
+      const created = database.commands.createThread(
+        input, policy(), server.server.getClientVersion()?.name
+      ) as { id: number }
+      return withWriteGuide(found(database.queries.getThread(created.id, policy())))
+    })
+  )
+
+  server.registerTool(
+    'onmove.update_thread',
+    {
+      title: 'Edit an OnMove thread',
+      description: 'Edit Thread title, lifecycle, due date, review cadence, review inclusion, or sensitivity without changing its Scope or parent.',
+      inputSchema: z.strictObject({
+        id: idSchema.describe('The Thread ID.'),
+        title: z.string().min(1).optional(),
+        status: lifecycleStatusSchema.optional(),
+        dueDate: optionalDueDateSchema,
+        reviewFrequencyDays: z.number().int().positive().optional(),
+        needsReview: z.boolean().optional(),
+        sensitive: z.boolean().optional()
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false }
+    },
+    async ({ id, ...input }) => mutationResult(() => {
+      database.commands.updateThread(id, input, policy(), server.server.getClientVersion()?.name)
+      return withWriteGuide(found(database.queries.getThread(id, policy())))
+    })
+  )
+
+  server.registerTool(
+    'onmove.create_commitment',
+    {
+      title: 'Create an OnMove commitment',
+      description: 'Create a tracked Commitment under one Thread. Its effective Subjects always derive from that Thread.',
+      inputSchema: z.strictObject({
+        parent: threadParentSchema,
+        title: z.string().min(1),
+        status: lifecycleStatusSchema.optional(),
+        dueDate: optionalDueDateSchema,
+        cadenceDays: z.number().int().positive().nullable().optional(),
+        reviewFrequencyDays: z.number().int().positive().optional(),
+        needsReview: z.boolean().optional(),
+        sensitive: z.boolean().optional()
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false }
+    },
+    async (input) => mutationResult(() => {
+      const created = database.commands.createCommitment({
+        ...input,
+        type: 'tracking'
+      }, policy(), server.server.getClientVersion()?.name) as { id: number }
+      return withWriteGuide(found(database.queries.getCommitment(created.id, policy())))
+    })
+  )
+
+  server.registerTool(
+    'onmove.update_commitment',
+    {
+      title: 'Edit an OnMove commitment',
+      description: 'Edit a tracked Commitment without changing its Thread or derived Scope.',
+      inputSchema: z.strictObject({
+        id: idSchema.describe('The Commitment ID.'),
+        title: z.string().min(1).optional(),
+        status: lifecycleStatusSchema.optional(),
+        dueDate: optionalDueDateSchema,
+        cadenceDays: z.number().int().positive().nullable().optional(),
+        reviewFrequencyDays: z.number().int().positive().optional(),
+        needsReview: z.boolean().optional(),
+        sensitive: z.boolean().optional()
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false }
+    },
+    async ({ id, ...input }) => mutationResult(() => {
+      database.commands.updateCommitment(id, input, policy(), server.server.getClientVersion()?.name)
+      return withWriteGuide(found(database.queries.getCommitment(id, policy())))
+    })
+  )
+
+  server.registerTool(
+    'onmove.create_routine',
+    {
+      title: 'Create an OnMove routine',
+      description: 'Create a recurring immutable-checklist Routine under one Thread.',
+      inputSchema: z.strictObject({
+        parent: threadParentSchema,
+        name: z.string().min(1),
+        scheduleWeekdays: z.array(z.enum([
+          'monday', 'tuesday', 'wednesday', 'thursday', 'friday'
+        ])).max(5),
+        scopeId: idSchema.nullable().optional(),
+        sensitive: z.boolean().optional(),
+        needsAttestation: z.boolean().optional(),
+        checklist: routineChecklistSchema
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false }
+    },
+    async (input) => mutationResult(() => {
+      const created = database.commands.createRoutine(
+        input, policy(), server.server.getClientVersion()?.name
+      ) as { id: number }
+      return found(database.queries.getRoutine(created.id, policy()))
+    })
+  )
+
+  server.registerTool(
+    'onmove.update_routine',
+    {
+      title: 'Edit an OnMove routine',
+      description: 'Edit a Routine definition. A supplied checklist creates a future immutable template version and never rewrites prior Runs.',
+      inputSchema: z.strictObject({
+        id: idSchema.describe('The Routine ID.'),
+        name: z.string().min(1).optional(),
+        scheduleWeekdays: z.array(z.enum([
+          'monday', 'tuesday', 'wednesday', 'thursday', 'friday'
+        ])).max(5).optional(),
+        scopeId: idSchema.nullable().optional(),
+        sensitive: z.boolean().optional(),
+        needsAttestation: z.boolean().optional(),
+        checklist: routineChecklistSchema.optional()
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false }
+    },
+    async ({ id, ...input }) => mutationResult(() => {
+      database.commands.updateRoutine(id, input, policy(), server.server.getClientVersion()?.name)
+      return found(database.queries.getRoutine(id, policy()))
+    })
+  )
+
+  server.registerTool(
+    'onmove.update_update',
+    {
+      title: 'Edit OnMove update metadata',
+      description: 'Edit an Update date, state, or sensitivity. Use rich-text tools for its observation.',
+      inputSchema: z.strictObject({
+        id: idSchema.describe('The Update ID.'),
+        date: dateSchema.optional(),
+        state: z.enum(['red', 'yellow', 'green', 'none']).optional(),
+        sensitive: z.boolean().optional()
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false }
+    },
+    async (input) => mutationResult(() => {
+      database.commands.updateUpdate(input, policy(), server.server.getClientVersion()?.name)
+      return withUpdateContextWriteGuide(found(database.queries.getUpdate(input.id, policy())))
+    })
   )
 
   const parentSchema = z.object({

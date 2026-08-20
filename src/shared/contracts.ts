@@ -1377,18 +1377,69 @@ export interface McpSettingsSnapshot {
   serverEnabled: boolean
   serverPort: number
   allowSensitive: boolean
+  /** @deprecated Compatibility summary; use permissionPolicy defaults instead. */
   allowMutations: boolean
   updatedAt: string
+  permissionPolicy: McpPermissionPolicySnapshot
   status: 'stopped' | 'starting' | 'running' | 'error'
   endpoint: string | null
   error: string | null
+}
+
+/** Resources independently governed at the live MCP application boundary. */
+export const MCP_PERMISSION_RESOURCES = [
+  'focus',
+  'thread',
+  'commitment',
+  'routine',
+  'update',
+  'todo',
+  'note',
+  'subject'
+] as const
+export type McpPermissionResource = (typeof MCP_PERMISSION_RESOURCES)[number]
+export type McpPermissionResourceSelector = McpPermissionResource | 'all'
+
+export interface McpPermissionGrant {
+  view: boolean
+  edit: boolean
+}
+
+export interface McpPermissionOverrideSnapshot {
+  target:
+    | { type: 'focus'; id: number }
+    | { type: 'thread'; id: number; focusId: number }
+  resource: McpPermissionResourceSelector
+  /** Null means inherit from the next less-specific policy. */
+  view: boolean | null
+  /** Null means inherit from the next less-specific policy. */
+  edit: boolean | null
+}
+
+/**
+ * Global defaults plus sparse hierarchy overrides. Focus/Thread rows exist
+ * only after a user adds them; the policy never materializes the full matrix.
+ */
+export interface McpPermissionPolicySnapshot {
+  defaults: Record<McpPermissionResource, McpPermissionGrant>
+  overrides: McpPermissionOverrideSnapshot[]
+}
+
+export interface UpdateMcpPermissionInput {
+  target: { type: 'default' } | { type: 'focus' | 'thread'; id: number }
+  resource: McpPermissionResourceSelector
+  view?: boolean | null
+  edit?: boolean | null
 }
 
 export interface UpdateMcpSettingsInput {
   serverEnabled?: boolean
   serverPort?: number
   allowSensitive?: boolean
+  /** @deprecated Compatibility master update; changes every default edit grant. */
   allowMutations?: boolean
+  permission?: UpdateMcpPermissionInput
+  removePermissionTarget?: { type: 'focus' | 'thread'; id: number }
 }
 
 /** The small, non-persistent UI selection exposed only to an explicitly scoped MCP search. */

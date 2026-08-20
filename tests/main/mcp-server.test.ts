@@ -53,6 +53,15 @@ describe('OnMove MCP protocol adapter', () => {
       'onmove.resolve_note',
       'onmove.resolve_target',
       'onmove.search',
+      'onmove.create_focus',
+      'onmove.update_focus',
+      'onmove.create_thread',
+      'onmove.update_thread',
+      'onmove.create_commitment',
+      'onmove.update_commitment',
+      'onmove.create_routine',
+      'onmove.update_routine',
+      'onmove.update_update',
       'onmove.create_update',
       'onmove.patch_rich_text',
       'onmove.update_rich_text',
@@ -60,7 +69,7 @@ describe('OnMove MCP protocol adapter', () => {
       'onmove.update_note',
       'onmove.poke_review'
     ]))
-    expect(listed.tools).toHaveLength(24)
+    expect(listed.tools).toHaveLength(33)
 
     const templates = await client.listResourceTemplates()
     expect(templates.resourceTemplates.map(({ uriTemplate }) => uriTemplate)).toEqual(
@@ -1669,5 +1678,75 @@ describe('OnMove MCP protocol adapter', () => {
     expect(database.domain.updates.listForThread(thread.id)).toEqual([
       expect.objectContaining({ observation: expect.stringContaining('First evidence'), state: 'green' })
     ])
+  })
+
+  it('applies sparse Focus and Thread edit rules to the expanded mutation surface', async () => {
+    const deniedFocus = await client.callTool({
+      name: 'onmove.create_focus',
+      arguments: { title: 'Agent-created Focus' }
+    })
+    expect(deniedFocus.isError).toBe(true)
+
+    database.mcpSettings.update({
+      permission: {
+        target: { type: 'default' }, resource: 'focus', edit: true
+      }
+    })
+    const createdFocus = await client.callTool({
+      name: 'onmove.create_focus',
+      arguments: {
+        title: 'Agent-created Focus',
+        richText: richText('Structured Focus description')
+      }
+    })
+    expect(createdFocus.isError).not.toBe(true)
+    const focus = database.domain.focuses.list().find(({ title }) => title === 'Agent-created Focus')
+    expect(focus?.description).toContain('Structured Focus description')
+
+    database.mcpSettings.update({
+      permission: {
+        target: { type: 'focus', id: focus?.id as number },
+        resource: 'thread', view: true, edit: true
+      }
+    })
+    const createdThread = await client.callTool({
+      name: 'onmove.create_thread',
+      arguments: {
+        focusId: focus?.id,
+        title: 'Agent-created Thread',
+        reviewFrequencyDays: 5
+      }
+    })
+    expect(createdThread.isError).not.toBe(true)
+    const thread = database.domain.threads.listForFocus(focus?.id as number)[0]
+
+    database.mcpSettings.update({
+      permission: {
+        target: { type: 'thread', id: thread.id },
+        resource: 'thread', edit: false
+      }
+    })
+    const deniedThreadEdit = await client.callTool({
+      name: 'onmove.update_thread',
+      arguments: { id: thread.id, title: 'Should not persist' }
+    })
+    expect(deniedThreadEdit.isError).toBe(true)
+    expect(database.domain.threads.find(thread.id)?.title).toBe('Agent-created Thread')
+
+    database.mcpSettings.update({
+      permission: {
+        target: { type: 'thread', id: thread.id },
+        resource: 'thread', edit: true
+      }
+    })
+    const allowedThreadEdit = await client.callTool({
+      name: 'onmove.update_thread',
+      arguments: { id: thread.id, title: 'Renamed through MCP', dueDate: '2026-09-01' }
+    })
+    expect(allowedThreadEdit.isError).not.toBe(true)
+    expect(database.domain.threads.find(thread.id)).toMatchObject({
+      title: 'Renamed through MCP',
+      dueDate: '2026-09-01'
+    })
   })
 })

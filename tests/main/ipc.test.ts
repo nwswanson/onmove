@@ -435,6 +435,19 @@ describe('registerAppIpc', () => {
         allowSensitive: false,
         allowMutations: false,
         updatedAt: '2026-08-10T12:00:00.000Z',
+        permissionPolicy: {
+          defaults: {
+            focus: { view: true, edit: false },
+            thread: { view: true, edit: false },
+            commitment: { view: true, edit: false },
+            routine: { view: true, edit: false },
+            update: { view: true, edit: false },
+            todo: { view: true, edit: false },
+            note: { view: true, edit: false },
+            subject: { view: true, edit: false }
+          },
+          overrides: []
+        },
         status: 'stopped' as const,
         endpoint: null,
         error: null
@@ -445,6 +458,19 @@ describe('registerAppIpc', () => {
         allowSensitive: false,
         allowMutations: true,
         updatedAt: '2026-08-10T12:01:00.000Z',
+        permissionPolicy: {
+          defaults: {
+            focus: { view: true, edit: true },
+            thread: { view: true, edit: true },
+            commitment: { view: true, edit: true },
+            routine: { view: true, edit: true },
+            update: { view: true, edit: true },
+            todo: { view: true, edit: true },
+            note: { view: true, edit: true },
+            subject: { view: true, edit: true }
+          },
+          overrides: []
+        },
         status: 'running' as const,
         endpoint: 'http://127.0.0.1:47832/mcp',
         error: null
