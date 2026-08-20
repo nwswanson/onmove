@@ -37,7 +37,7 @@ export interface OnMoveMcpServerOptions {
   /** Called with committed rich-text state so open editors can apply an external revision. */
   onRichTextMutation?: (document: RichTextDocumentSnapshot) => void
   /** Read only for an explicit scope.mode=current search; never an implicit default filter. */
-  getCurrentUiContext?: () => McpUiContextSnapshot
+      getCurrentUiContext?: () => McpUiContextSnapshot
   /** Shared by protocol instances belonging to one running endpoint. */
   rejectedCallTracker?: RejectedCallTracker
 }
@@ -918,6 +918,14 @@ function result(value: unknown, diagnostics: McpDiagnostics = diagnosticsScope()
   }
 }
 
+function entityReadDiagnostics(value: unknown): McpDiagnostics {
+  const context = record(value)
+  const warnings = Array.isArray(context?.warnings)
+    ? context.warnings.filter((warning): warning is string => typeof warning === 'string')
+    : []
+  return { ...diagnosticsScope(), warnings }
+}
+
 function richTextInputErrorResult(error: RichTextToolInputError): {
   isError: true
   content: Array<{ type: 'text'; text: string }>
@@ -1583,7 +1591,17 @@ function decorateResolvedTarget(
   }
 }
 
-function decorateHierarchyPath(path: ApplicationHierarchyPath): Record<string, unknown> {
+type DecoratedHierarchyPath = ApplicationHierarchyPath & {
+  semanticPath: ApplicationSemanticTargetPath | null
+  recommendedUpdateRequest: {
+    tool: 'onmove.create_update'
+    arguments: ApplicationHierarchyPath['updateTarget'] & {
+      semanticPath: ApplicationSemanticTargetPath
+    }
+  } | null
+}
+
+function decorateHierarchyPath(path: ApplicationHierarchyPath): DecoratedHierarchyPath {
   const semanticPath: ApplicationSemanticTargetPath | null = path.hierarchy.thread
     ? {
         focus: path.hierarchy.focus,
@@ -1613,7 +1631,7 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Use onmove.search for discovery and hierarchy browsing. When a request names an entity or Subject, preserve it as the primary filter: search that specific name first, inspect subjectUses, and treat Subject-attributed uses as authoritative. If relevant records are returned, obey searchStatus.sufficient or searchStatus.doNotBroaden, stop discovery, and fetch those IDs directly—never follow with a global search for a generic container label. For follow-ups, use continuationToken or retain scope.mode=subject/thread/focus; broaden globally only when the user explicitly asks for all people or all records. Use onmove.review_subject for a compact person/entity situation inside one Thread instead of chaining searches. Search is global only when scope is omitted. Set hierarchy flags to expand structural paths; text=null browses, and view=hierarchy-only omits contents. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution and use recommendedUpdateRequest. Use onmove.resolve_target for exact hierarchy names. For text mutation, set includeRichText=true; use onmove.resolve_note for Notes and semantic patch tools for localized edits. Rich-text writes use only richText. Before mutations inspect writeGuide. create_update semanticPath is required whenever the user names a Subject. Use onmove.reparent_update to repair wrong placement. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and View/Edit grants by resource, Focus, and Thread.'
+        'Use onmove.search for discovery and hierarchy browsing. INITIAL SEARCH: send the user\'s specific entity/Subject name as text, omit scope or set scope={mode:"all"}, and omit continuationToken or set it to null. Never invent or synthesize a continuationToken; only reuse the exact non-null token returned by OnMove. When a request names an entity or Subject, preserve it as the primary filter: search that specific name first, inspect namedSubjectDiscovery and subjectUses, and treat Subject-attributed uses as authoritative. namedSubjectDiscovery includes canonical Subject, Focus, and Thread IDs plus ready review_subject requests. If relevant records are returned, obey searchStatus.sufficient or searchStatus.doNotBroaden, stop discovery, and fetch those IDs directly—never follow with a global search for a generic container label. For follow-ups, use the exact returned continuationToken or retain scope.mode=subject/thread/focus; broaden globally only when the user explicitly asks for all people or all records. Use onmove.review_subject for a compact person/entity situation inside one Thread instead of chaining searches. Search is global only when scope is omitted. Set hierarchy flags to expand structural paths; text=null browses, and view=hierarchy-only omits contents. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution and use recommendedUpdateRequest. Use onmove.resolve_target for exact hierarchy names. Selectors use either an ID or a name/title, never both. For text mutation, set includeRichText=true; use onmove.resolve_note for Notes and semantic patch tools for localized edits. Rich-text writes use only richText. Before mutations inspect writeGuide. create_update semanticPath is required whenever the user names a Subject. Use onmove.reparent_update to repair wrong placement. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and View/Edit grants by resource, Focus, and Thread.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -1676,24 +1694,36 @@ export function createOnMoveMcpServer(
       'onmove.get_thread', 'Get an OnMove thread',
       'Thread, a workstream inside one Focus containing Commitments, Updates, Todos, Routines, and a Note',
       'The Thread\'s own positive ID. When search matched an Update, Note, Todo, or Commitment, use searchResult.hierarchy.thread.id—not searchResult.reference.id.',
-      (id: number) => database.queries.getThread(id, policy())
+      (id: number, includeRichText: boolean) => database.queries.getThread(
+        id, policy(), { includeRichText }
+      )
     ],
     [
       'onmove.get_commitment', 'Get an OnMove commitment',
       'Commitment, a tracked obligation inside one Thread',
       'The Commitment\'s own positive ID, available as searchResult.hierarchy.commitment.id when the match belongs to one.',
-      (id: number) => database.queries.getCommitment(id, policy())
+      (id: number, includeRichText: boolean) => database.queries.getCommitment(
+        id, policy(), { includeRichText }
+      )
     ]
   ] as const) {
     server.registerTool(
       name,
       {
         title,
-        description: `Read one visible ${entityDescription} with its resolved hierarchy, Scope, direct evidence, Todos, and Note. This is an ID lookup, not a text search.`,
-        inputSchema: z.object({ id: idSchema.describe(idDescription) }),
+        description: `Read one visible ${entityDescription} with its resolved hierarchy, Scope, direct evidence, Todos, and Note. This is an ID lookup, not a text search. It defaults to a compact, resilient projection; set includeRichText=true only when lossless documents are needed. Unsupported rich-text structures produce warnings and never discard the rest of the entity response.`,
+        inputSchema: z.strictObject({
+          id: idSchema.describe(idDescription),
+          includeRichText: z.boolean().optional().describe(
+            'Defaults to false. False returns compact readable plain text. True requests lossless rich-text documents and revisions; an unsupported document is omitted with a diagnostic warning while the remaining entity still returns.'
+          )
+        }),
         annotations: { readOnlyHint: true }
       },
-      async ({ id }) => result(withWriteGuide(found(getter(id))))
+      async ({ id, includeRichText }) => {
+        const context = found(getter(id, includeRichText === true))
+        return result(withWriteGuide(context), entityReadDiagnostics(context))
+      }
     )
   }
 
@@ -1797,7 +1827,7 @@ export function createOnMoveMcpServer(
     'onmove.search',
     {
       title: 'Search OnMove',
-      description: 'Use this tool for discovery and hierarchy browsing. If the request names a Subject or entity, search for that specific name first and inspect subjectUses. When relevant records are returned in the requested context, stop discovery and fetch those record IDs directly; do not issue a second global search for a generic Thread or Commitment label. For additional discovery, retain the returned Subject, Thread, or Focus scope—prefer continuationToken—before broadening. Broaden to global only when the user asks for all people or all records. searchStatus.sufficient or searchStatus.doNotBroaden is an explicit stopping signal. text may be null for structural browsing; hierarchy-only omits record contents.',
+      description: 'Use this tool for discovery and hierarchy browsing. INITIAL SEARCH: send the user\'s specific name as text, use scope={mode:"all"} or omit scope, and OMIT continuationToken (or send null). Never invent, guess, copy from documentation, or synthesize a continuation token; only reuse the exact non-null token returned by an earlier response. If the request names a Subject or entity, search for that specific name first and inspect namedSubjectDiscovery and subjectUses. When relevant records are returned in the requested context, stop discovery and fetch those record IDs directly; do not issue a second global search for a generic Thread or Commitment label. For additional discovery, retain the returned Subject, Thread, or Focus scope with the exact returned continuationToken before broadening. Broaden to global only when the user asks for all people or all records. searchStatus.sufficient or searchStatus.doNotBroaden is an explicit stopping signal. text may be null for structural browsing; hierarchy-only omits record contents.',
       inputSchema: z.object({
         text: z.string().min(1).nullable().optional().describe(
           'Use for text discovery and hierarchy browsing. Search the specific entity or Subject name from the user request first. Do not replace a specific person query with a generic Thread or Commitment label. Null or omitted means structural browsing; with scope.mode=subject it lists records attributed to that Subject without another text term.'
@@ -1806,8 +1836,8 @@ export function createOnMoveMcpServer(
         kinds: z.array(z.enum(SEARCH_ENTITY_TYPES)).optional().describe(
           'Optional entity-type filter. Omit to search every indexed kind: focus, thread, commitment, routine, update, todo, note, and subject.'
         ),
-        continuationToken: z.string().min(1).optional().describe(
-          'Opaque token from a prior search. Omit scope when using it: the token preserves the prior Subject, Thread, or Focus scope and search-shape defaults so follow-up discovery does not accidentally broaden.'
+        continuationToken: z.string().min(1).nullable().optional().describe(
+          'Optional follow-up-only token. For an initial search, omit this field or send null. Never hallucinate or construct a token. Only pass the exact non-null continuationToken returned by a previous OnMove search/review response. When using one, omit scope because the token preserves the prior Subject, Thread, or Focus boundary.'
         ),
         view: z.enum(['compact', 'hierarchy-only']).optional().describe(
           'compact returns bounded record summaries plus paths and is the default. hierarchy-only returns paths and stopping metadata without item or subject-use contents; use it when locating a destination rather than reviewing evidence.'
@@ -1845,9 +1875,9 @@ export function createOnMoveMcpServer(
       offset,
       text,
     }) => {
-      const continuation = continuationToken
-        ? decodeSearchContinuation(continuationToken)
-        : null
+      const continuation = continuationToken === undefined || continuationToken === null
+        ? null
+        : decodeSearchContinuation(continuationToken)
       if (continuation && scope !== undefined && scope !== null) {
         throw new TypeError(
           'Omit scope when using continuationToken. Start a new search without the token to change scope.'
@@ -1938,6 +1968,35 @@ export function createOnMoveMcpServer(
           }, matches, access)
         : { paths: [], total: 0 }
       const hierarchyPaths = hierarchy.paths.map(decorateHierarchyPath)
+      const namedSubjectDiscovery = matchedSubjects.map((subject) => {
+        const applicablePaths = hierarchyPaths.filter((path) =>
+          path.subject?.id === subject.id && path.hierarchy.thread !== null)
+        const reviewContexts = [...new Map(applicablePaths.flatMap((path) => {
+          const thread = path.hierarchy.thread
+          if (!thread) return []
+          const key = `${path.hierarchy.focus.id}:${thread.id}`
+          return [[key, {
+            focus: path.hierarchy.focus,
+            thread,
+            displayPath: `${path.hierarchy.focus.title} > ${thread.title}[${subject.name}]`,
+            reviewSubjectRequest: {
+              tool: 'onmove.review_subject',
+              arguments: {
+                focus: { id: path.hierarchy.focus.id },
+                thread: { id: thread.id },
+                subject: { id: subject.id }
+              }
+            }
+          }] as const]
+        })).values()]
+        return { subject, applicablePaths, reviewContexts }
+      })
+      const itemsWithDiscovery = items.map((item) => {
+        if (item.reference.type !== 'subject') return item
+        const discovery = namedSubjectDiscovery.find(({ subject }) =>
+          subject.id === item.reference.id)
+        return discovery ? { ...item, subjectDiscovery: discovery } : item
+      })
       const appliedKinds = effectiveKinds?.length ? [...effectiveKinds] : 'all'
       const warnings = [...resolved.diagnostics.warnings]
       if (matches.length === 0 && hierarchyPaths.length === 0 && (
@@ -2012,8 +2071,9 @@ export function createOnMoveMcpServer(
         limit: effectiveLimit
       })
       return result({
-        items: effectiveView === 'hierarchy-only' ? [] : items,
+        items: effectiveView === 'hierarchy-only' ? [] : itemsWithDiscovery,
         subjectUses: effectiveView === 'hierarchy-only' ? [] : subjectUses,
+        namedSubjectDiscovery,
         hierarchyPaths,
         hierarchyNotation: HIERARCHY_NOTATION_GUIDE,
         searchStatus,
@@ -2031,26 +2091,38 @@ export function createOnMoveMcpServer(
     }
   )
 
-  const entitySelectorSchema = (entity: string, example: string) => z.object({
+  const entitySelectorSchema = (entity: string, example: string) => z.strictObject({
     id: idSchema.optional().describe(
-      `Optional ${entity} ID. Prefer an ID from search hierarchy metadata when already known.`
+      `Optional ${entity} ID. Prefer an ID from search hierarchy metadata when already known. ` +
+      'Provide either id or title, not both.'
     ),
     title: z.string().min(1).optional().describe(
-      `Optional exact ${entity} title, matched case-insensitively. Example: ${example}.`
+      `Optional exact ${entity} title, matched case-insensitively. Example: ${example}. ` +
+      'Provide either id or title, not both.'
     )
   }).refine(({ id, title }) => id !== undefined || title !== undefined, {
     message: `${entity} selector requires id or title`
-  })
-  const subjectSelectorSchema = z.object({
+  }).refine(({ id, title }) => id === undefined || title === undefined, {
+    message: `${entity} selector conflict: provide either id or title, not both`
+  }).describe(
+    `Choose exactly one ${entity} selector form: {id: positiveInteger} OR {title: exactName}.`
+  )
+  const subjectSelectorSchema = z.strictObject({
     id: idSchema.optional().describe(
-      'Optional canonical Subject ID from Scope data or a search result.'
+      'Optional canonical Subject ID from Scope data or a search result. ' +
+      'Provide either id or name, not both.'
     ),
     name: z.string().min(1).optional().describe(
-      'Optional exact Subject name, matched case-insensitively. Example: Person Y.'
+      'Optional exact Subject name, matched case-insensitively. Example: Person Y. ' +
+      'Provide either id or name, not both.'
     )
   }).refine(({ id, name }) => id !== undefined || name !== undefined, {
     message: 'Subject selector requires id or name'
-  })
+  }).refine(({ id, name }) => id === undefined || name === undefined, {
+    message: 'Subject selector conflict: provide either id or name, not both'
+  }).describe(
+    'Choose exactly one canonical Subject selector form: {id: positiveInteger} OR {name: exactName}.'
+  )
   server.registerTool(
     'onmove.resolve_target',
     {
@@ -2079,6 +2151,13 @@ export function createOnMoveMcpServer(
         decorateResolvedTarget(database, candidate, access))
       const parentCandidates = resolution.parentCandidates.map((candidate) =>
         decorateResolvedTarget(database, candidate, access))
+      const threadCandidates = resolution.threadCandidates.map((candidate) => ({
+        ...candidate,
+        retrySelectors: {
+          focus: { id: candidate.hierarchy.focus.id },
+          thread: { id: candidate.hierarchy.thread.id }
+        }
+      }))
       const warnings: string[] = []
       if (resolution.status === 'ambiguous') {
         warnings.push(
@@ -2087,6 +2166,11 @@ export function createOnMoveMcpServer(
       } else if (resolution.status === 'not_found' && parentCandidates.length > 0) {
         warnings.push(
           'The hierarchy matched, but the requested Subject is not currently applicable. Choose a Subject from parentCandidates.allowedSubjects or update Scope in OnMove.'
+        )
+      } else if (resolution.status === 'not_found' && threadCandidates.length > 0) {
+        warnings.push(
+          'No exact Thread title matched. threadCandidates contains safe shorthand matches. ' +
+          'Retry with exactly one returned Thread ID; candidates are suggestions, not an automatic resolution.'
         )
       } else if (resolution.status === 'not_found') {
         warnings.push(
@@ -2099,6 +2183,7 @@ export function createOnMoveMcpServer(
         hierarchyNotation: HIERARCHY_NOTATION_GUIDE,
         target: resolution.status === 'resolved' ? candidates[0] : null,
         candidates,
+        threadCandidates,
         ...(resolution.status === 'not_found' && parentCandidates.length > 0
           ? { parentCandidates }
           : {})
@@ -2134,10 +2219,33 @@ export function createOnMoveMcpServer(
     },
     async (input) => {
       const reviewed = database.queries.reviewSubject(input, policy())
+      const threadCandidates = reviewed.threadCandidates.map((candidate) => {
+        const subject = candidate.applicableSubjects.length === 1
+          ? candidate.applicableSubjects[0]
+          : null
+        return {
+          ...candidate,
+          recommendedReviewRequest: subject
+            ? {
+                tool: 'onmove.review_subject',
+                arguments: {
+                  focus: { id: candidate.hierarchy.focus.id },
+                  thread: { id: candidate.hierarchy.thread.id },
+                  subject: { id: subject.id }
+                }
+              }
+            : null
+        }
+      })
       const warnings: string[] = []
       if (reviewed.status === 'ambiguous') {
         warnings.push(
           'Multiple Subject/Thread paths matched. Add the Focus ID or use returned Subject and Thread IDs; do not broaden globally.'
+        )
+      } else if (reviewed.status === 'not_found' && threadCandidates.length > 0) {
+        warnings.push(
+          'No exact Thread title matched. threadCandidates contains safe shorthand title ' +
+          'matches. Retry with one returned Thread ID; do not treat a suggestion as resolved.'
         )
       } else if (reviewed.status === 'not_found') {
         warnings.push(
@@ -2173,6 +2281,7 @@ export function createOnMoveMcpServer(
         : null
       return result({
         ...reviewed,
+        threadCandidates,
         searchStatus: {
           sufficient: reviewed.status === 'resolved',
           doNotBroaden: reviewed.status === 'resolved',

@@ -308,12 +308,17 @@ Search is global by default. Omitting `scope`, passing `scope: null`, or using n
 IDs never inherits the Focus currently selected in OnMove. Narrowing is always named and explicit:
 
 ```json
-{ "text": "person x", "scope": { "mode": "all" } }
+{ "text": "person x", "scope": { "mode": "all" }, "continuationToken": null }
 { "text": "migration", "scope": { "mode": "focus", "focusId": 12 } }
 { "text": "risk", "scope": { "mode": "thread", "threadId": 19 } }
 { "text": "escalation", "scope": { "mode": "subject", "subjectId": 34 } }
 { "text": "risk", "scope": { "mode": "current" }, "kinds": ["thread", "update"] }
 ```
+
+The first line is the canonical initial named-discovery request: send the user's specific name,
+search `all`, and omit `continuationToken` or set it to `null`. Never construct, guess, or copy an
+example continuation token. Only a non-null token returned by OnMove is valid for a follow-up;
+only a supplied non-null invalid token is rejected.
 
 `all` searches the entire visible workspace, `focus` searches one Focus hierarchy, `thread`
 searches one Thread and its children, `subject` searches records attributed to one canonical Subject,
@@ -322,7 +327,11 @@ Focus and Subject selection. Every MCP response includes `diagnostics.appliedSco
 returns applied kinds, result count, and textual warnings.
 
 When the user names a person or other Subject, search that exact name first. The response's
-`subjectUses` is authoritative for records attributed to the matched canonical Subject. If
+`subjectUses` is authoritative for records attributed to the matched canonical Subject.
+`namedSubjectDiscovery` is returned both at response level and on the matching Subject item; it
+contains the canonical Subject ID, applicable paths with Focus and Thread IDs, and ready
+`reviewSubjectRequest` calls. That is sufficient to call `onmove.review_subject` without another
+hierarchy lookup. If
 `searchStatus.sufficient` or `searchStatus.doNotBroaden` is true, stop discovery and fetch those IDs
 directly; do not search globally for a generic parent label. Every response includes an opaque
 `continuationToken`. Passing it to a follow-up search while omitting `scope` preserves a discovered
@@ -338,6 +347,19 @@ Subject and Thread selectors. It resolves that intersection and returns Subject-
 sorted by `updatedAt`, open Subject/shared Todos, and currently applicable open Commitments with
 their Subject-cell state. A resolved review is a stopping signal and includes a continuation token
 for the same Subject × Thread boundary.
+
+Hierarchy selectors take exactly one key: `{ "id": 19 }` or `{ "title": "1:1s" }` for entities,
+and `{ "id": 34 }` or `{ "name": "Michael" }` for a Subject. Sending both is a selector conflict,
+not an instruction to prefer the ID. Resolution remains exact and case-insensitive. If a shorthand
+such as `my Xs` does not exactly equal a title such as `Foobar / Xs!`, `resolve_target` and
+`review_subject` stay `not_found` but return bounded `threadCandidates` with exact IDs and a ready
+retry instead of silently guessing.
+
+`onmove.get_thread` and `onmove.get_commitment` default to `includeRichText: false`, which is the
+compact and most forward-compatible read. Set it to `true` only when lossless Update/Note documents
+are required. If one stored document uses an unsupported newer structure, the response retains the
+entity and readable plain-text projection, omits only that lossless document, and explains the
+degradation in `diagnostics.warnings`.
 
 For a text mutation, set `includeRichText: true` on `onmove.search`. Focus, Update, and Note hits
 then include `editableRichText` with the complete document, readable projection, revision,

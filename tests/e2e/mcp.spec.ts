@@ -440,7 +440,7 @@ test('serves MCP from the running app and immediately refreshes its open windows
     expect(recoveredUpdate.isError).not.toBe(true)
     const updatedThread = await client.callTool({
       name: 'onmove.get_thread',
-      arguments: { id: thread.id }
+      arguments: { id: thread.id, includeRichText: true }
     })
     expect(updatedThread.structuredContent).toMatchObject({
       updates: expect.arrayContaining([expect.objectContaining({

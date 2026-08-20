@@ -199,7 +199,10 @@ Discovery is Subject-first when the request names a person or other canonical Su
 name search returns `subjectUses`, which is authoritative for attributed records, plus an explicit
 `searchStatus`. `sufficient=true` or `doNotBroaden=true` tells the client to stop discovery and fetch
 the returned IDs directly rather than searching globally for a generic hierarchy label. A response
-also returns an opaque continuation token. Follow-up searches may change their text while the token
+also returns `namedSubjectDiscovery`, colocating the canonical Subject ID, applicable Focus/Thread
+paths, and ready Subject-review calls. It returns an opaque continuation token as well. Initial
+searches omit that field or send null; clients must never synthesize it, and validation rejects only
+a supplied non-null invalid token. Follow-up searches may change their text while the exact token
 preserves the discovered Subject and any existing Thread or Focus restriction. Starting without the
 token is required to intentionally change scope. Named scopes support `all`, `focus`, `thread`,
 `subject`, and the explicitly requested live `current` context.
@@ -213,6 +216,11 @@ an exact Subject inside an exact Thread and returns one compact projection conta
 Updates in the Thread and its child Commitments (ordered by `updatedAt`), open exact/shared Todos,
 and currently applicable open Commitments with Subject-cell state. Its resolved response is a hard
 stopping signal and supplies a continuation token restricted to that Subject × Thread intersection.
+All hierarchy selectors take either one ID or one title/name. Dual selectors are rejected as
+conflicts. Exact resolution does not guess through shorthand; a safe token/title overlap can instead
+return bounded Thread candidates with exact-ID retry data. Direct Thread and Commitment reads are
+compact by default, allow opt-in lossless rich text, and degrade unsupported individual documents to
+diagnostic warnings without losing the rest of the response.
 
 Read tools should support bounded filters such as status, date range, parent, Subject, open/closed,
 and result limit. They should not accept raw SQL fragments or arbitrary field expressions.

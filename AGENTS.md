@@ -775,7 +775,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
   return `searchStatus.sufficient=true` and `doNotBroaden=true` with textual instructions to stop
   discovery and fetch those record IDs directly. Never encourage a second global search for a
   generic Thread/Commitment term after a sufficient Subject match.
-- Return an opaque scope-preserving continuation token from search. A unique Subject-name match
+- Make `continuationToken` optional and nullable. An initial search must omit it or send null, and
+  tool instructions must explicitly forbid inventing or synthesizing a value. Decode and reject
+  only a supplied non-null token; follow-ups may use only the exact opaque token returned by
+  OnMove. Return a scope-preserving continuation token from search. A unique Subject-name match
   promotes the token to Subject scope while retaining any existing Thread or Focus restriction;
   follow-up text may change without losing that boundary. Reject an explicit replacement scope in
   the same request as a continuation token. Deliberate broadening starts a new search without the
@@ -789,6 +792,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
   `Team management > 1:1s[Michael]` form identify one semantic path; IDs in the accompanying
   hierarchy references remain authoritative. Every executable Subject path supplies a complete
   recommended Update request rather than requiring the caller to reconstruct parent attribution.
+  A named Subject hit must also carry one `namedSubjectDiscovery` object in the same result, with
+  its canonical Subject ID, every bounded applicable path, Focus and Thread IDs, and ready
+  `review_subject` requests. Do not force an agent to correlate a standalone Subject result with a
+  separate hierarchy query.
 - Search globally by default. Omitted or null `scope`, `focusId`, `threadId`, and `subjectId` must never inherit
   the current UI selection. Use one named `scope` object with explicit modes: `all` for the visible
   workspace, `focus` for one Focus hierarchy, `thread` for one Thread and its children, `subject`
@@ -811,11 +818,22 @@ foreground colors and do not rely on color alone to communicate selection or sta
   Subject in the target's effective Scope—and return a directly usable recommended write request.
   Match names exactly and case-insensitively so punctuation-bearing names such as `1:1` are not
   damaged by FTS tokenization. Return candidates for duplicates and never guess through ambiguity.
+  Every name/ID selector accepts exactly one representation: ID or title/name. Reject a payload
+  containing both with an explicit selector-conflict error, even if they happen to agree, so a
+  stale name cannot be silently paired with a different ID. Exact Thread resolution remains the
+  authority; when shorthand such as “my Xs” does not exactly match `Foobar / Xs!`, return bounded,
+  readable Thread candidates and a ready exact-ID retry rather than resolving the shorthand or
+  returning an unexplained `not_found`.
 - Use `onmove.review_subject` for a high-level “what has Person X been doing in Thread Y?” request.
   Resolve one exact Subject × Thread path and return, in one bounded read, Subject-attributed Updates
   ordered by `updatedAt`, open exact/shared Todos, and currently applicable open Commitments with
   Subject-cell state. A resolved review is sufficient and `doNotBroaden`; return a continuation token
   for the same Subject × Thread intersection instead of requiring follow-up discovery calls.
+- Keep direct entity reads resilient to rich-text evolution. `get_thread` and `get_commitment`
+  default to compact readable projections with `includeRichText=false`; lossless rich text is
+  opt-in. If one requested document contains an unsupported newer structure, omit only that
+  document, preserve the readable entity and siblings, and return a diagnostic warning rather
+  than aborting the whole response.
 - Keep applicability and the UI selection separate at the API boundary. A write target is a typed
   parent `{ type, id }`; Subject attribution is a separate named object. An Open parent accepts only
   `attribution: { mode: "unscoped" }`. A bounded parent accepts exactly one currently allowed

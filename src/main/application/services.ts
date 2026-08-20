@@ -71,6 +71,8 @@ export interface ApplicationEntityContext {
   commitments: unknown[]
   routines: unknown[]
   threads: unknown[]
+  /** Non-fatal projection problems; the readable remainder of the entity is still usable. */
+  warnings?: string[]
 }
 
 export interface ApplicationNoteContext {
@@ -269,6 +271,17 @@ export interface ApplicationTargetResolution {
   candidates: ApplicationResolvedTargetCandidate[]
   /** Parent matches before applying an optional Subject selector, for safe recovery hints. */
   parentCandidates: ApplicationResolvedTargetCandidate[]
+  /** Safe shorthand suggestions; these never count as an exact resolution. */
+  threadCandidates: ApplicationThreadCandidate[]
+}
+
+export interface ApplicationThreadCandidate {
+  hierarchy: {
+    focus: { id: number; title: string }
+    thread: { id: number; title: string }
+  }
+  displayPath: string
+  applicableSubjects: Array<{ id: number; name: string }>
 }
 
 export interface BrowseApplicationHierarchyQuery {
@@ -340,6 +353,8 @@ export interface ApplicationSubjectReviewResult {
   status: 'resolved' | 'ambiguous' | 'not_found'
   requested: ReviewApplicationSubjectQuery
   candidates: ApplicationSubjectReviewCandidate[]
+  /** Safe shorthand suggestions; the caller must retry with one exact returned Thread ID. */
+  threadCandidates: ApplicationThreadCandidate[]
   review: null | {
     subject: { id: number; name: string }
     hierarchy: ApplicationSubjectReviewCandidate['hierarchy']
@@ -531,6 +546,12 @@ function assertEntitySelector(
   if (selector.title !== undefined && normalizedLookup(selector.title).length === 0) {
     throw new ModelValidationError(`${label} title cannot be empty`)
   }
+  if (selector.id !== undefined && selector.title !== undefined) {
+    throw new ModelValidationError(
+      `${label} selector conflict: provide either id or title, not both. ` +
+      'Use the returned ID by itself once discovery has resolved the name.'
+    )
+  }
 }
 
 function assertSubjectSelector(selector: ApplicationSubjectSelector): void {
@@ -541,6 +562,30 @@ function assertSubjectSelector(selector: ApplicationSubjectSelector): void {
   if (selector.name !== undefined && normalizedLookup(selector.name).length === 0) {
     throw new ModelValidationError('subject name cannot be empty')
   }
+  if (selector.id !== undefined && selector.name !== undefined) {
+    throw new ModelValidationError(
+      'subject selector conflict: provide either id or name, not both. ' +
+      'Use the returned canonical Subject ID by itself once discovery has resolved the name.'
+    )
+  }
+}
+
+const SHORTHAND_WORDS = new Set(['a', 'an', 'my', 'our', 'the'])
+
+function shorthandTokens(value: string): string[] {
+  return value.normalize('NFKC').toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []
+}
+
+function shorthandThreadScore(requested: string, candidate: string): number {
+  const requestedTokens = shorthandTokens(requested)
+    .filter((token) => !SHORTHAND_WORDS.has(token))
+  const candidateTokens = shorthandTokens(candidate)
+  if (requestedTokens.length === 0 || candidateTokens.length === 0) return 0
+  const candidateSet = new Set(candidateTokens)
+  const matched = requestedTokens.filter((token) => candidateSet.has(token))
+  if (matched.length !== requestedTokens.length) return 0
+  // Prefer a compact suffix/title match while retaining longer descriptive titles as candidates.
+  return (matched.length * 100) - Math.max(0, candidateTokens.length - matched.length)
 }
 
 function matchesEntitySelector(
@@ -672,7 +717,11 @@ export class OnMoveQueryService {
     }
   }
 
-  getThread(id: number, access: OnMoveAccessPolicy): ApplicationEntityContext | null {
+  getThread(
+    id: number,
+    access: OnMoveAccessPolicy,
+    options: ApplicationEntityReadOptions = { includeRichText: true }
+  ): ApplicationEntityContext | null {
     assertPositiveId(id, 'thread id')
     const thread = this.domain.threads.find(id)
     if (!thread || !this.sensitivity.canRead('thread', id, access)) return null
@@ -688,6 +737,8 @@ export class OnMoveQueryService {
     const routines = this.domain.routines.list()
       .filter((routine) => routine.parent.type === 'thread' && routine.parent.id === id)
       .filter((routine) => this.sensitivity.canRead('routine', routine.id, access))
+    const warnings: string[] = []
+    const includeRichText = options.includeRichText !== false
     return {
       reference: { type: 'thread', id },
       uri: uri({ type: 'thread', id }),
@@ -702,16 +753,21 @@ export class OnMoveQueryService {
         subjects: visibleSubjects(scope.subjects),
         focusSubjects: visibleSubjects(scope.focusSubjects)
       }),
-      updates: this.visibleUpdates({ type: 'thread', id }, access),
+      updates: this.visibleUpdates({ type: 'thread', id }, access, includeRichText, warnings),
       todos: this.visibleTodos({ type: 'thread', id }, access),
-      notes: this.visibleNotes({ type: 'thread', id }, access),
+      notes: this.visibleNotes({ type: 'thread', id }, access, includeRichText, warnings),
       commitments: commitments.map((commitment) => plainProjection(commitment)),
       routines: routines.map((routine) => plainProjection(routine)),
-      threads: []
+      threads: [],
+      ...(warnings.length > 0 ? { warnings } : {})
     }
   }
 
-  getCommitment(id: number, access: OnMoveAccessPolicy): ApplicationEntityContext | null {
+  getCommitment(
+    id: number,
+    access: OnMoveAccessPolicy,
+    options: ApplicationEntityReadOptions = { includeRichText: true }
+  ): ApplicationEntityContext | null {
     assertPositiveId(id, 'commitment id')
     const commitment = this.domain.commitments.find(id)
     if (!commitment || !trackingCommitment(commitment) ||
@@ -725,6 +781,8 @@ export class OnMoveQueryService {
         focusId: focus.id,
         threadId: thread.id
       }))
+    const warnings: string[] = []
+    const includeRichText = options.includeRichText !== false
     return {
       reference: { type: 'commitment', id },
       uri: uri({ type: 'commitment', id }),
@@ -739,12 +797,15 @@ export class OnMoveQueryService {
         scopeId: this.domain.scopeApplications.get({ type: 'commitment', id }).effectiveScopeId,
         cells
       }),
-      updates: this.visibleUpdates({ type: 'commitment', id }, access),
+      updates: this.visibleUpdates(
+        { type: 'commitment', id }, access, includeRichText, warnings
+      ),
       todos: this.visibleTodos({ type: 'commitment', id }, access),
-      notes: this.visibleNotes({ type: 'commitment', id }, access),
+      notes: this.visibleNotes({ type: 'commitment', id }, access, includeRichText, warnings),
       commitments: [],
       routines: [],
-      threads: []
+      threads: [],
+      ...(warnings.length > 0 ? { warnings } : {})
     }
   }
 
@@ -1296,6 +1357,12 @@ export class OnMoveQueryService {
     const page = boundedPage(query.limit ?? 10, 0)
     const subjects = this.domain.subjects.list()
       .filter((subject) => matchesSubjectSelector(subject, query.subject))
+    const threadCandidates = this.threadCandidates(query.thread, query.focus, access)
+      .map((candidate) => ({
+        ...candidate,
+        applicableSubjects: candidate.applicableSubjects.filter((subject) =>
+          matchesSubjectSelector(subject, query.subject))
+      }))
     const candidates: ApplicationSubjectReviewCandidate[] = []
     for (const focus of this.domain.focuses.list()) {
       if (query.focus && !matchesEntitySelector(focus, query.focus)) continue
@@ -1327,14 +1394,26 @@ export class OnMoveQueryService {
       ? 'resolved'
       : candidates.length === 0 ? 'not_found' : 'ambiguous'
     if (status !== 'resolved') {
-      return { status, requested: structuredClone(query), candidates, review: null }
+      return {
+        status,
+        requested: structuredClone(query),
+        candidates,
+        threadCandidates,
+        review: null
+      }
     }
 
     const target = candidates[0]
     const { subject, hierarchy } = target
     const thread = this.domain.threads.find(hierarchy.thread.id)
     if (!thread) {
-      return { status: 'not_found', requested: structuredClone(query), candidates: [], review: null }
+      return {
+        status: 'not_found',
+        requested: structuredClone(query),
+        candidates: [],
+        threadCandidates,
+        review: null
+      }
     }
     const commitments = this.domain.commitments.listForThread(thread.id)
       .filter(trackingCommitment)
@@ -1429,6 +1508,7 @@ export class OnMoveQueryService {
       status,
       requested: structuredClone(query),
       candidates,
+      threadCandidates: [],
       review: {
         subject,
         hierarchy,
@@ -1466,6 +1546,7 @@ export class OnMoveQueryService {
     if (query.focus) assertEntitySelector(query.focus, 'focus')
     if (query.commitment) assertEntitySelector(query.commitment, 'commitment')
     if (query.subject) assertSubjectSelector(query.subject)
+    const threadCandidates = this.threadCandidates(query.thread, query.focus, access)
 
     const focuses = this.domain.focuses.list()
       .filter((focus) => !query.focus || matchesEntitySelector(focus, query.focus))
@@ -1525,7 +1606,10 @@ export class OnMoveQueryService {
         : candidates.length === 0 ? 'not_found' : 'ambiguous',
       requested: query,
       candidates,
-      parentCandidates: parents
+      parentCandidates: parents,
+      threadCandidates: candidates.length === 0 && parents.length === 0
+        ? threadCandidates
+        : []
     }
   }
 
@@ -1599,18 +1683,32 @@ export class OnMoveQueryService {
 
   private visibleUpdates(
     parent: { type: 'thread' | 'commitment'; id: number },
-    access: OnMoveAccessPolicy
+    access: OnMoveAccessPolicy,
+    includeRichText = true,
+    warnings: string[] = []
   ): unknown[] {
     const updates = parent.type === 'thread'
       ? this.domain.updates.listForThread(parent.id)
       : this.domain.updates.listForCommitment(parent.id)
     return updates.filter((update) => this.sensitivity.canRead('update', update.id, access))
-      .map((update) => updateProjection(
-        update,
-        this.domain.richTextDocuments.get({
-          type: 'update', id: update.id, field: 'observation'
-        })
-      ))
+      .map((update) => {
+        if (!includeRichText) return plainProjection(update)
+        try {
+          return updateProjection(
+            update,
+            this.domain.richTextDocuments.get({
+              type: 'update', id: update.id, field: 'observation'
+            })
+          )
+        } catch (error) {
+          warnings.push(
+            `Update ${update.id} contains unsupported rich text. Its compact plain-text ` +
+            `projection was returned instead; other Thread data is unaffected. ` +
+            `Detail: ${error instanceof Error ? error.message : String(error)}`
+          )
+          return plainProjection(update)
+        }
+      })
   }
 
   private visibleTodos(parent: TodoParent, access: OnMoveAccessPolicy): unknown[] {
@@ -1622,15 +1720,65 @@ export class OnMoveQueryService {
   private visibleNotes(
     parent: { type: 'focus' | 'thread' | 'commitment'; id: number },
     access: OnMoveAccessPolicy,
-    includeRichText = false
+    includeRichText = false,
+    warnings: string[] = []
   ): unknown[] {
     return this.domain.notes.list(parent)
       .filter((note) => this.sensitivity.canRead('note', note.id, access))
-      .map((note) => ({
-        ...plainProjection(note) as NoteSnapshot,
-        ...(includeRichText
-          ? { richText: onMoveRichTextDocumentFromStored(note.content) }
-          : {})
+      .map((note) => {
+        const plain = plainProjection(note) as NoteSnapshot
+        if (!includeRichText) return plain
+        try {
+          return { ...plain, richText: onMoveRichTextDocumentFromStored(note.content) }
+        } catch (error) {
+          warnings.push(
+            `Note ${note.id} contains unsupported rich text. Its compact plain-text ` +
+            `projection was returned instead; other Thread data is unaffected. ` +
+            `Detail: ${error instanceof Error ? error.message : String(error)}`
+          )
+          return plain
+        }
+      })
+  }
+
+  private threadCandidates(
+    selector: ApplicationEntitySelector,
+    focusSelector: ApplicationEntitySelector | undefined,
+    access: OnMoveAccessPolicy
+  ): ApplicationThreadCandidate[] {
+    if (selector.title === undefined || selector.id !== undefined) return []
+    const candidates: Array<ApplicationThreadCandidate & { score: number }> = []
+    for (const focus of this.domain.focuses.list()) {
+      if (focusSelector && !matchesEntitySelector(focus, focusSelector)) continue
+      if (!this.sensitivity.canRead('focus', focus.id, access)) continue
+      for (const thread of this.domain.threads.listForFocus(focus.id)) {
+        if (!this.sensitivity.canRead('thread', thread.id, access)) continue
+        const score = shorthandThreadScore(selector.title, thread.title)
+        if (score <= 0 || matchesEntitySelector(thread, selector)) continue
+        const applicableSubjects = this.domain.threadScopes.get(thread.id).subjects
+          .filter((subject) => this.sensitivity.canReadInContext(
+            'subject', subject.id, access, { focusId: focus.id, threadId: thread.id }
+          ))
+          .map((subject) => ({ id: subject.id, name: subject.name }))
+        candidates.push({
+          hierarchy: {
+            focus: { id: focus.id, title: focus.title },
+            thread: { id: thread.id, title: thread.title }
+          },
+          displayPath: `${focus.title} > ${thread.title}`,
+          applicableSubjects,
+          score
+        })
+      }
+    }
+    return candidates
+      .sort((left, right) => right.score - left.score ||
+        left.displayPath.localeCompare(right.displayPath, undefined, { sensitivity: 'base' }))
+      .slice(0, 10)
+      .map((candidate) => ({
+        hierarchy: candidate.hierarchy,
+        displayPath: candidate.displayPath,
+        applicableSubjects: candidate.applicableSubjects
       }))
   }
 }

@@ -7,6 +7,7 @@ import { AppDatabase } from '../../src/main/database'
 import { createOnMoveMcpServer } from '../../src/mcp/server'
 import type { McpUiContextSnapshot } from '../../src/shared/contracts'
 import type { OnMoveRichTextDocument } from '../../src/shared/rich-text-document'
+import { RICH_TEXT_PREFIX } from '../../src/shared/rich-text-value'
 
 function richText(text: string): OnMoveRichTextDocument {
   return {
@@ -137,12 +138,24 @@ describe('OnMove MCP protocol adapter', () => {
     expect(searchSchema).toContain('includeScopes')
     expect(searchSchema).toContain('hierarchy browsing')
     expect(searchSchema).toContain('continuationToken')
+    expect(searchSchema).toContain('For an initial search, omit this field or send null')
+    expect(searchSchema).toContain('Never hallucinate or construct a token')
     expect(searchSchema).toContain('hierarchy-only')
     expect(searchSchema).toContain('preserve a previously returned Thread ID')
     expect(search.description).toContain('stop discovery')
     expect(search.description).toContain('searchStatus.doNotBroaden')
+    expect(search.description).toContain('INITIAL SEARCH')
+    expect(search.description).toContain('OMIT continuationToken')
     expect(threadSchema).toContain('hierarchy.thread.id')
     expect(threadSchema).toContain('not searchResult.reference.id')
+    expect(threadSchema).toContain('Defaults to false')
+    expect(threadSchema).toContain('unsupported document is omitted')
+    expect(JSON.stringify(resolveTarget.inputSchema)).toContain(
+      'Provide either id or title, not both'
+    )
+    expect(JSON.stringify(resolveTarget.inputSchema)).toContain(
+      'Provide either id or name, not both'
+    )
     expect(createUpdate.description).toContain('Open parents require unscoped attribution')
     expect(updateSchema).toContain('writeGuide.createUpdate.allowedSubjects')
     expect(updateSchema).toContain('Team management')
@@ -188,6 +201,141 @@ describe('OnMove MCP protocol adapter', () => {
     expect(noteSchema).toContain('"additionalProperties":false')
     expect(noteSchema).toContain('null is accepted and canonicalized to omission')
     expect(noteSchema).toContain('"type":"null"')
+  })
+
+  it('treats omitted or null continuation tokens as initial searches and rejects only invalid values', async () => {
+    const withNull = await client.callTool({
+      name: 'onmove.search',
+      arguments: {
+        text: 'launch readiness',
+        scope: { mode: 'all' },
+        continuationToken: null
+      }
+    })
+    expect(withNull.isError).not.toBe(true)
+    expect(withNull.structuredContent).toMatchObject({
+      items: [expect.objectContaining({ reference: { type: 'focus', id: 1 } })],
+      diagnostics: {
+        appliedScope: { mode: 'all', source: 'explicit' },
+        warnings: []
+      },
+      continuationToken: expect.stringMatching(/^onmove-search-v1\./u)
+    })
+
+    const omitted = await client.callTool({
+      name: 'onmove.search',
+      arguments: { text: 'launch readiness' }
+    })
+    expect(omitted.isError).not.toBe(true)
+
+    const invented = await client.callTool({
+      name: 'onmove.search',
+      arguments: { text: 'launch readiness', continuationToken: 'invented-token' }
+    })
+    expect(invented.isError).toBe(true)
+    expect(JSON.stringify(invented)).toContain(
+      'continuationToken is not a valid OnMove search continuation token'
+    )
+  })
+
+  it('rejects conflicting hierarchy selectors instead of silently preferring their IDs', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const first = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'ID one Thread',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    database.domain.threads.create({
+      focusId: focus.id,
+      title: 'ID two name',
+      reviewFrequencyDays: 7
+    })
+
+    const entityConflict = await client.callTool({
+      name: 'onmove.resolve_target',
+      arguments: { thread: { id: first.id, title: 'ID two name' } }
+    })
+    expect(entityConflict.isError).toBe(true)
+    expect(JSON.stringify(entityConflict)).toContain(
+      'Thread selector conflict: provide either id or title, not both'
+    )
+
+    const subject = database.domain.threadScopes.addSubject(first.id, { name: 'Person one' })
+      .subjects[0]
+    const subjectConflict = await client.callTool({
+      name: 'onmove.review_subject',
+      arguments: {
+        thread: { id: first.id },
+        subject: { id: subject.id, name: 'Somebody else' }
+      }
+    })
+    expect(subjectConflict.isError).toBe(true)
+    expect(JSON.stringify(subjectConflict)).toContain(
+      'Subject selector conflict: provide either id or name, not both'
+    )
+  })
+
+  it('keeps get_thread usable when a stored rich-text structure is unsupported', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Future rich text owner',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const update = database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      observation: 'Original evidence'
+    }).toSnapshot()
+    database.domain.richTextDocuments.save(
+      { type: 'update', id: update.id, field: 'observation' },
+      `${RICH_TEXT_PREFIX}${JSON.stringify({
+        root: {
+          type: 'root',
+          children: [{
+            type: 'future-widget',
+            children: [{ type: 'text', text: 'Readable future evidence', version: 1 }],
+            version: 1
+          }],
+          version: 1
+        }
+      })}`
+    )
+
+    const compact = await client.callTool({
+      name: 'onmove.get_thread',
+      arguments: { id: thread.id }
+    })
+    expect(compact.isError).not.toBe(true)
+    expect(compact.structuredContent).toMatchObject({
+      reference: { type: 'thread', id: thread.id },
+      updates: [expect.objectContaining({
+        id: update.id,
+        observation: 'Readable future evidence'
+      })],
+      diagnostics: { warnings: [] }
+    })
+    expect((compact.structuredContent as {
+      updates: Array<Record<string, unknown>>
+    }).updates[0]).not.toHaveProperty('observationRichText')
+
+    const expanded = await client.callTool({
+      name: 'onmove.get_thread',
+      arguments: { id: thread.id, includeRichText: true }
+    })
+    expect(expanded.isError).not.toBe(true)
+    expect(expanded.structuredContent).toMatchObject({
+      reference: { type: 'thread', id: thread.id },
+      updates: [expect.objectContaining({
+        id: update.id,
+        observation: 'Readable future evidence'
+      })],
+      diagnostics: {
+        warnings: [expect.stringContaining('Update ' + update.id + ' contains unsupported rich text')]
+      }
+    })
+    expect((expanded.structuredContent as {
+      updates: Array<Record<string, unknown>>
+    }).updates[0]).not.toHaveProperty('observationRichText')
   })
 
   it('keeps advertised patch tools callable and breaks repeated invalid-rich-text loops', async () => {
@@ -1023,7 +1171,7 @@ describe('OnMove MCP protocol adapter', () => {
     })
 
     const threadRead = await client.callTool({
-      name: 'onmove.get_thread', arguments: { id: thread.id }
+      name: 'onmove.get_thread', arguments: { id: thread.id, includeRichText: true }
     })
     expect(threadRead.structuredContent).toMatchObject({
       updates: [{
@@ -1855,6 +2003,43 @@ describe('OnMove MCP protocol adapter', () => {
           })
         })
       ]),
+      namedSubjectDiscovery: [{
+        subject: { id: michael.id, name: 'Michael' },
+        applicablePaths: expect.arrayContaining([
+          expect.objectContaining({
+            hierarchy: {
+              focus: { id: focus.id, title: focus.title },
+              thread: { id: team.id, title: 'Team management' },
+              commitment: { id: oneToOnes.id, title: '1:1s' }
+            },
+            subject: { id: michael.id, name: 'Michael' }
+          })
+        ]),
+        reviewContexts: [expect.objectContaining({
+          focus: { id: focus.id, title: focus.title },
+          thread: { id: team.id, title: team.title },
+          reviewSubjectRequest: {
+            tool: 'onmove.review_subject',
+            arguments: {
+              focus: { id: focus.id },
+              thread: { id: team.id },
+              subject: { id: michael.id }
+            }
+          }
+        })]
+      }],
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          reference: { type: 'subject', id: michael.id },
+          subjectDiscovery: expect.objectContaining({
+            subject: { id: michael.id, name: 'Michael' },
+            reviewContexts: [expect.objectContaining({
+              focus: { id: focus.id, title: focus.title },
+              thread: { id: team.id, title: team.title }
+            })]
+          })
+        })
+      ]),
       searchStatus: {
         sufficient: true,
         doNotBroaden: true,
@@ -2156,6 +2341,105 @@ describe('OnMove MCP protocol adapter', () => {
           mode: 'subject',
           threadId: thread.id,
           subjectId: michael.id
+        }
+      }
+    })
+  })
+
+  it('returns safe Thread title candidates for shorthand review queries without guessing', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Foobar / Xs!',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const scope = database.domain.threadScopes.addSubject(thread.id, { name: 'Michael' })
+    const michael = scope.subjects[0]
+
+    const discovery = await client.callTool({
+      name: 'onmove.search',
+      arguments: { text: 'my Xs', includeThreads: true }
+    })
+    expect(discovery.isError).not.toBe(true)
+    expect(discovery.structuredContent).toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          reference: { type: 'thread', id: thread.id },
+          title: 'Foobar / Xs!'
+        })
+      ])
+    })
+
+    const targetSuggestion = await client.callTool({
+      name: 'onmove.resolve_target',
+      arguments: { thread: { title: 'my Xs' } }
+    })
+    expect(targetSuggestion.isError).not.toBe(true)
+    expect(targetSuggestion.structuredContent).toMatchObject({
+      status: 'not_found',
+      target: null,
+      threadCandidates: [expect.objectContaining({
+        hierarchy: {
+          focus: { id: focus.id, title: focus.title },
+          thread: { id: thread.id, title: thread.title }
+        },
+        retrySelectors: {
+          focus: { id: focus.id },
+          thread: { id: thread.id }
+        }
+      })],
+      diagnostics: {
+        warnings: [expect.stringContaining('No exact Thread title matched')]
+      }
+    })
+
+    const shorthand = await client.callTool({
+      name: 'onmove.review_subject',
+      arguments: {
+        thread: { title: 'my Xs' },
+        subject: { name: 'Michael' }
+      }
+    })
+    expect(shorthand.isError).not.toBe(true)
+    expect(shorthand.structuredContent).toMatchObject({
+      status: 'not_found',
+      review: null,
+      candidates: [],
+      threadCandidates: [expect.objectContaining({
+        hierarchy: {
+          focus: { id: focus.id, title: focus.title },
+          thread: { id: thread.id, title: 'Foobar / Xs!' }
+        },
+        applicableSubjects: [{ id: michael.id, name: 'Michael' }],
+        recommendedReviewRequest: {
+          tool: 'onmove.review_subject',
+          arguments: {
+            focus: { id: focus.id },
+            thread: { id: thread.id },
+            subject: { id: michael.id }
+          }
+        }
+      })],
+      diagnostics: {
+        warnings: [expect.stringContaining('No exact Thread title matched')]
+      }
+    })
+
+    const exactRetry = await client.callTool({
+      name: 'onmove.review_subject',
+      arguments: {
+        focus: { id: focus.id },
+        thread: { id: thread.id },
+        subject: { id: michael.id }
+      }
+    })
+    expect(exactRetry.structuredContent).toMatchObject({
+      status: 'resolved',
+      review: {
+        subject: { id: michael.id, name: 'Michael' },
+        hierarchy: {
+          focus: { id: focus.id, title: focus.title },
+          thread: { id: thread.id, title: thread.title }
         }
       }
     })

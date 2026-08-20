@@ -102,11 +102,30 @@ pass the returned `continuationToken`, which preserves a discovered Subject and 
 or Thread restriction. Alternatively, use `scope.mode` with `subject`, `thread`, or `focus` and the
 returned ID. Broaden to `all` only when the user actually requests every person or record.
 
+For the initial lookup, omit `continuationToken` or explicitly send `null`; never invent one:
+
+```json
+{
+  "text": "Michael",
+  "scope": { "mode": "all" },
+  "continuationToken": null
+}
+```
+
+Only reuse the exact non-null token from an OnMove response. A named Subject result includes
+`namedSubjectDiscovery`, which puts the canonical Subject ID and every applicable Focus/Thread path
+beside ready `review_subject` arguments. Selectors use either an ID or a title/name, never both.
+
 For a compact situation review, call `onmove.review_subject` with an exact Subject and Thread (plus
 an optional Focus for disambiguation). One response resolves the path and returns that Subject's
 Updates in the Thread, sorted by `updatedAt`, together with open Subject Todos and applicable open
 Commitments. It also returns a scope-preserving continuation token. This replaces separate Subject,
 Thread, Update, Todo, and Commitment searches.
+If an informal Thread phrase does not exactly match, the resolver returns `threadCandidates` with
+exact titles and IDs for an explicit retry; it does not guess. Direct `get_thread` and
+`get_commitment` calls are compact by default. Pass `includeRichText: true` only when lossless
+documents are needed; unsupported newer rich-text structures become per-document warnings rather
+than aborting the entity read.
 
 Set `text` to `null` for hierarchy-only browsing. In particular,
 `{ text: null, scope: { mode: "subject", subjectId: 28 } }` returns records already attributed to
