@@ -715,6 +715,96 @@ foreground colors and do not rely on color alone to communicate selection or sta
   running, and stop the listener before closing the shared database. Successful MCP mutations must
   broadcast the generic in-process domain-change event to every open renderer window.
 
+### MCP API design lessons and regression constraints
+
+- Design the MCP surface for an agent that knows none of OnMove's implementation terminology. Tool
+  names, descriptions, parameter descriptions, errors, and returned guides must define Focuses,
+  Threads, Commitments, Subjects, Scopes, Notes, Updates, and Todos at the point where the agent
+  needs them. IDs must be self-describing (`focusId`, `threadId`, `subjectId`) rather than generic
+  hierarchy ids. A search hit's `reference.id` identifies the matched record; its
+  `hierarchy.thread.id` or `hierarchy.commitment.id` identifies a containing record. Never require
+  the caller to infer or interchange those meanings.
+- General discovery must work when a name or literal string may occur anywhere: titles,
+  descriptions, rich-text Updates and Notes, Todos, Routine templates, Subjects, or Tags. Back it
+  with the maintained FTS5 projection and readable rich-text extraction, not a collection of
+  entity-specific `LIKE` queries. `get_thread` and other direct getters retrieve known entity ids;
+  they are not substitutes for global search.
+- Search globally by default. Omitted or null `scope`, `focusId`, and `subjectId` must never inherit
+  the current UI selection. Use one named `scope` object with explicit modes: `all` for the visible
+  workspace, `focus` for one Focus hierarchy, `subject` for one canonical Subject, and `current`
+  only when the caller deliberately requests the live UI context. Return the normalized
+  `diagnostics.appliedScope` on every response, plus applied kinds and result counts where relevant,
+  so an agent can tell what the server actually searched.
+- Treat an empty narrow search as diagnosable, not conclusive. A focus-, subject-, current-, or
+  kinds-filtered empty result must include a plain-language warning such as “Retry with scope mode
+  all to search globally.” Put important recovery guidance in textual MCP content as well as
+  structured metadata because clients and models do not all inspect structured output reliably.
+- Preserve regression tests for arbitrary literal strings globally, inside the matching Focus,
+  inside the matching Subject, against unrelated records, and embedded within longer titles or
+  rich text. Also test omitted and explicit-null scope, a deliberately narrow empty result, applied
+  scope diagnostics, Unicode/case behavior, and sensitive ancestors. These tests exist because
+  simple searches previously disappeared behind an implicit current-Focus filter.
+- Use `onmove.resolve_target` for relational language such as “do X for Person Y's 1:1 in Team.”
+  Resolve in hierarchy order—optional Focus, Thread, optional child Commitment, then optional
+  Subject in the target's effective Scope—and return a directly usable recommended write request.
+  Match names exactly and case-insensitively so punctuation-bearing names such as `1:1` are not
+  damaged by FTS tokenization. Return candidates for duplicates and never guess through ambiguity.
+- Keep applicability and the UI selection separate at the API boundary. A write target is a typed
+  parent `{ type, id }`; Subject attribution is a separate named object. An Open parent accepts only
+  `attribution: { mode: "unscoped" }`. A bounded parent accepts exactly one currently allowed
+  Subject for an Update, while Todo rules may additionally support `all-subjects`. Never silently
+  discard a supplied Subject or borrow one from the current UI context, because that changes the
+  semantic cell receiving evidence.
+- Every readable mutation target must return a `writeGuide` that states its current attribution
+  mode, allowed Subjects, and executable argument shape. Invalid attribution—including the former
+  confusing “an open parent cannot target a subject” case—must return the target's inspection call,
+  allowed choices, a semantic explanation, and a ready-to-run retry when only one correction is
+  possible. The caller should not need knowledge of Scope internals to recover.
+- Keep one canonical name for every structured write field. Rich-text writes accept only the
+  top-level `richText` field; never restore the former `document` compatibility alias or advertise
+  both names. Agents responded to dual aliases by sending both. The internal application service
+  may use different implementation vocabulary, but that must not leak into the MCP schema.
+- Rich-text reads expose both a readable plain-text projection and a lossless editor-neutral
+  versioned document. The plain projection is for search and comprehension and must remain
+  read-only. All MCP-writable rich-text fields use the same AST and accept full-document replacement
+  through `richText`, preserving paragraphs, nested lists and checklists, multi-block quotes, links,
+  tags, colors, soft breaks, and marks. Never accept a plain string write that can flatten formatting.
+- Keep the rich-text schema practical for LLM clients. Describe every node, field, mark, color,
+  protocol, limit, and minimal valid example. The canonical yellow highlight mark is `highlight`;
+  accept `highlight-yellow` only as an input mark alias and canonicalize it on read. This mark alias
+  must not become another root document field. Missing or invalid rich text must name `richText`,
+  identify the bad nested value, list supported values, and include a corrected example.
+- Validate semantic rich-text details in the handler when doing so produces a more actionable error
+  than an opaque MCP SDK “invalid arguments” response. Test invalid requests through a real MCP
+  client, not only the converter, because transport schema validation can reject input before the
+  handler can add recovery metadata. In particular, preserve regression coverage for mixed marks
+  such as `marks: ["italic", "highlight-yellow"]`, unsupported marks, unsafe links, missing
+  `richText`, and the rejected root-level `document` field. Rejected input must not mutate SQLite.
+- A Note update is a read-edit-write operation. Require the revision returned by `onmove.get_note`,
+  reject stale revisions without writing, and tell the agent to re-read, reconcile, and retry. Do
+  not invent a merge. A blank Update remains a valid explicit record, so omitting optional
+  `richText` from `onmove.create_update` must not be confused with a malformed Note replacement.
+- Keep mutations narrow, typed, auditable, and opt-in. Route them only through
+  `OnMoveCommandService`; never expose generic model updates, arbitrary fields, SQL, delete, import,
+  move, archive clearing, or lifecycle transitions without a separate product and confirmation
+  design. Return the refreshed canonical record and diagnostics after a successful mutation.
+- MCP operates beside the live editor, not against a second database connection or a database file
+  snapshot. It must share the running main process's repositories and command services. Every
+  successful write must synchronously commit, refresh the search projection as designed, and
+  broadcast domain and rich-text changes so every main and pop-out window updates immediately.
+  Preserve live-server tests so MCP-visible changes never require quitting, reopening, or navigating
+  away from the active screen.
+- Server enablement, sensitive access, and write access are three independent persisted settings,
+  re-read for each request so revocation takes effect without reconnecting. The UI's “hide sensitive
+  content” preference is not authorization. Resolve effective sensitivity across ancestors and
+  Scope/Subject cells before search, direct reads, counts, snippets, resources, or writes; expose
+  hidden and nonexistent records identically to avoid leaking their existence.
+- Treat compatibility as tolerant reading and explicit canonical writing, not a reason to multiply
+  schema choices. When an older form must temporarily remain, prefer normalizing it behind the
+  boundary without encouraging it in guides, and add a removal test when it is retired. New API
+  additions should have one obvious request shape, one vocabulary, diagnostic metadata, textual
+  recovery, and end-to-end tests from MCP client through the shared live application state.
+
 ## Required verification
 
 Run `pnpm check` for every change. Run `pnpm test:e2e` for navigation, preload, persistence, window,
