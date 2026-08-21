@@ -764,7 +764,7 @@ describe('App', () => {
       name: 'Sprint execution, pinned Thread'
     }))
     const contextual = await screen.findByRole('navigation', {
-      name: 'Pinned Thread children'
+      name: 'Pinned Thread sections'
     })
     expect(screen.queryByRole('button', { name: /^Back to/ })).not.toBeInTheDocument()
     expect(within(contextual).getByRole('button', {
@@ -773,7 +773,7 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Sprint execution' })).toBeVisible()
 
     const secondCommitmentButton = within(contextual).getByRole('button', {
-      name: 'Open Sprint execution commitment Publish the weekly plan'
+      name: 'Publish the weekly plan'
     })
     expect(secondCommitmentButton).not.toHaveAttribute('aria-current')
     await user.click(secondCommitmentButton)

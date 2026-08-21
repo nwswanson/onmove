@@ -14,9 +14,9 @@
   visible entries. A pinned Focus moves out of the ordinary Focuses group and otherwise keeps its
   normal navigation, drop-target, status, and context-menu behavior. A pinned Thread remains owned
   by its Focus and opens that Focus with a parentless contextual projection: select Thread Overview,
-  nest its current Commitments beneath it, and render no Back action. Never auto-select the first
-  Commitment merely because the Thread was opened from a primary pin. Keep the child collection
-  generic so Routines or other kinds can join it later without changing the persisted pin contract.
+  render its current Commitments as full top-level sibling rows, and render no Back action. Never
+  auto-select the first Commitment merely because the Thread was opened from a primary pin. Keep
+  the projection generic so Routines or other kinds can join it later without changing the persisted pin contract.
   Focus and Thread context menus declare a receiver-owned checked Pin
   item; deleted targets cascade their references, while closed or sensitivity-hidden targets retain
   the preference but remain absent from navigation until visible again.

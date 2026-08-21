@@ -490,7 +490,7 @@ describe('Focus presentation adapters', () => {
     ]))
   })
 
-  it('projects a pinned Thread as an Overview root with current Commitments nested beneath it', () => {
+  it('projects a pinned Thread as an Overview root with current Commitments as peer rows', () => {
     const current: CommitmentSnapshot = {
       ...commitment,
       id: 31,
@@ -507,13 +507,11 @@ describe('Focus presentation adapters', () => {
 
     const items = pinnedThreadContextSidebarItems(
       thread,
-      undefined,
       [closed, current],
-      false,
       true
     )
 
-    expect(items).toHaveLength(1)
+    expect(items).toHaveLength(2)
     expect(items[0]).toEqual(expect.objectContaining({
       id: 'thread:10',
       label: 'Overview',
@@ -524,13 +522,13 @@ describe('Focus presentation adapters', () => {
         ])
       })
     }))
-    expect(items[0]?.childCollection).toEqual(expect.objectContaining({
-      id: 'commitments',
-      items: [expect.objectContaining({
-        id: '31',
-        label: 'Improve ticket quality'
-      })]
+    expect(items[0]?.childCollection).toBeUndefined()
+    expect(items[1]).toEqual(expect.objectContaining({
+      id: '31',
+      label: 'Improve ticket quality',
+      group: { id: 'active', label: 'Active' }
     }))
+    expect(items.some(({ id }) => id === '32')).toBe(false)
   })
 
   it('keeps Thread drop targets alphabetically ordered without sorting Commitments', () => {
