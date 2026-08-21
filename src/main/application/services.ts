@@ -26,12 +26,13 @@ import type {
 } from '../../shared/contracts'
 import {
   onMoveRichTextDocumentFromStored,
+  onMoveRichTextDocumentToMarkdown,
   onMoveRichTextDocumentToStored,
   patchOnMoveRichTextDocument,
   type OnMoveRichTextMark,
   type OnMoveRichTextDocument
 } from '../../shared/rich-text-document'
-import { richTextPlainText } from '../../shared/rich-text-value'
+import { richTextPlainText, serializedRichTextEditorState } from '../../shared/rich-text-value'
 import type { DomainStore } from '../data/domain'
 import { ModelNotFoundError, ModelValidationError } from '../data/model'
 import type { SqliteAdapter } from '../data/sqlite-adapter'
@@ -85,7 +86,10 @@ export interface ApplicationNoteContext {
   uri: string
   contextPath: Array<{ type: 'focus' | 'thread' | 'commitment'; id: number; title: string }>
   effectiveSensitive: boolean
-  note: NoteSnapshot & { richText: OnMoveRichTextDocument }
+  note: NoteSnapshot & {
+    contentFormat: 'plain-text' | 'markdown'
+    richText?: OnMoveRichTextDocument
+  }
 }
 
 export interface CreateApplicationUpdate {
@@ -122,6 +126,7 @@ export interface ReparentApplicationUpdateResult {
 }
 
 export interface ApplicationUpdateSnapshot extends UpdateSnapshot {
+  observationFormat: 'plain-text' | 'markdown'
   /** Lossless editor-neutral form of the plain observation projection. */
   observationRichText: OnMoveRichTextDocument
   /** Optimistic-concurrency token for editing the observation. */
@@ -133,7 +138,10 @@ export interface ApplicationUpdateContext {
   uri: string
   contextPath: Array<{ type: 'focus' | 'thread' | 'commitment'; id: number; title: string }>
   effectiveSensitive: boolean
-  update: ApplicationUpdateSnapshot | UpdateSnapshot
+  update: ApplicationUpdateSnapshot | (UpdateSnapshot & {
+    observationFormat: 'plain-text' | 'markdown'
+    observationRevision?: number
+  })
   warnings?: string[]
 }
 
@@ -523,7 +531,7 @@ function boundedPage(limit = 50, offset = 0): { limit: number; offset: number } 
 function plainProjection(value: unknown, key = ''): unknown {
   if (typeof value === 'string') {
     return ['description', 'observation', 'content', 'note'].includes(key)
-      ? richTextPlainText(value)
+      ? readableRichText(value).value
       : value
   }
   if (Array.isArray(value)) return value.map((entry) => plainProjection(entry))
@@ -534,6 +542,21 @@ function plainProjection(value: unknown, key = ''): unknown {
       plainProjection(entryValue, entryKey)
     ])
   )
+}
+
+function readableRichText(value: string): {
+  value: string
+  format: 'plain-text' | 'markdown'
+} {
+  if (!serializedRichTextEditorState(value)) return { value, format: 'plain-text' }
+  try {
+    return {
+      value: onMoveRichTextDocumentToMarkdown(onMoveRichTextDocumentFromStored(value)),
+      format: 'markdown'
+    }
+  } catch {
+    return { value: richTextPlainText(value), format: 'plain-text' }
+  }
 }
 
 function compactPlainText(value: string, maximum = 280): string {
@@ -553,11 +576,37 @@ function updateProjection(
   update: UpdateSnapshot,
   document: RichTextDocumentSnapshot
 ): ApplicationUpdateSnapshot {
+  const readable = readableRichText(update.observation)
   return {
-    ...plainProjection(update) as UpdateSnapshot,
+    ...update,
+    observation: readable.value,
+    observationFormat: readable.format,
     observationRichText: onMoveRichTextDocumentFromStored(document.value),
     observationRevision: document.revision
   }
+}
+
+function readableUpdateProjection(
+  update: UpdateSnapshot,
+  observationRevision?: number
+): UpdateSnapshot & {
+  observationFormat: 'plain-text' | 'markdown'
+  observationRevision?: number
+} {
+  const readable = readableRichText(update.observation)
+  return {
+    ...update,
+    observation: readable.value,
+    observationFormat: readable.format,
+    ...(observationRevision === undefined ? {} : { observationRevision })
+  }
+}
+
+function readableNoteProjection(note: NoteSnapshot): NoteSnapshot & {
+  contentFormat: 'plain-text' | 'markdown'
+} {
+  const readable = readableRichText(note.content)
+  return { ...note, content: readable.value, contentFormat: readable.format }
 }
 
 function normalizedLookup(value: string): string {
@@ -729,6 +778,9 @@ export class OnMoveQueryService {
       effectiveSensitive: Boolean(this.sensitivity.isSensitive('focus', id)),
       entity: {
         ...plainProjection(focus) as FocusSnapshot,
+        descriptionFormat: focus.description === null
+          ? 'plain-text'
+          : readableRichText(focus.description).format,
         ...(description
           ? {
               descriptionRichText: onMoveRichTextDocumentFromStored(description.value),
@@ -838,13 +890,21 @@ export class OnMoveQueryService {
     }
   }
 
-  getUpdate(id: number, access: OnMoveAccessPolicy): ApplicationUpdateContext | null {
+  getUpdate(
+    id: number,
+    access: OnMoveAccessPolicy,
+    options: ApplicationEntityReadOptions = { includeRichText: true }
+  ): ApplicationUpdateContext | null {
     assertPositiveId(id, 'update id')
     const update = this.domain.updates.find(id)
-    return update ? this.updateContext(update, access) : null
+    return update ? this.updateContext(update, access, options) : null
   }
 
-  getUpdates(ids: readonly number[], access: OnMoveAccessPolicy): ApplicationUpdatesResult {
+  getUpdates(
+    ids: readonly number[],
+    access: OnMoveAccessPolicy,
+    options: ApplicationEntityReadOptions = { includeRichText: true }
+  ): ApplicationUpdatesResult {
     if (ids.length < 1 || ids.length > 50) {
       throw new ModelValidationError('Update ids must contain between 1 and 50 values')
     }
@@ -856,7 +916,7 @@ export class OnMoveQueryService {
     const unavailableIds: number[] = []
     for (const id of uniqueIds) {
       const update = byId.get(id)
-      const context = update ? this.updateContext(update, access) : null
+      const context = update ? this.updateContext(update, access, options) : null
       if (context) items.push(context)
       else unavailableIds.push(id)
     }
@@ -925,7 +985,8 @@ export class OnMoveQueryService {
 
   private updateContext(
     update: UpdateSnapshot,
-    access: OnMoveAccessPolicy
+    access: OnMoveAccessPolicy,
+    options: ApplicationEntityReadOptions = { includeRichText: true }
   ): ApplicationUpdateContext | null {
     const id = update.id
     if (!this.sensitivity.canRead('update', id, access)) return null
@@ -973,13 +1034,19 @@ export class OnMoveQueryService {
       const document = this.domain.richTextDocuments.get({
         type: 'update', id, field: 'observation'
       })
-      return { ...base, update: updateProjection(update, document) }
+      if (options.includeRichText === false) onMoveRichTextDocumentFromStored(document.value)
+      return {
+        ...base,
+        update: options.includeRichText === false
+          ? readableUpdateProjection(update, document.revision)
+          : updateProjection(update, document)
+      }
     } catch (error) {
       return {
         ...base,
-        update: plainProjection(update) as UpdateSnapshot,
+        update: readableUpdateProjection(update),
         warnings: [
-          `Update ${id} contains unsupported rich text. Plain observation text was returned ` +
+          `Update ${id} contains unsupported rich text. Readable observation text was returned ` +
           `without a lossless rich-text document. Detail: ` +
           `${error instanceof Error ? error.message : String(error)}`
         ]
@@ -987,7 +1054,11 @@ export class OnMoveQueryService {
     }
   }
 
-  getNote(id: number, access: OnMoveAccessPolicy): ApplicationNoteContext | null {
+  getNote(
+    id: number,
+    access: OnMoveAccessPolicy,
+    options: ApplicationEntityReadOptions = { includeRichText: true }
+  ): ApplicationNoteContext | null {
     assertPositiveId(id, 'note id')
     const note = this.domain.notes.find(id)
     if (!note || !this.sensitivity.canRead('note', id, access)) return null
@@ -1031,8 +1102,10 @@ export class OnMoveQueryService {
       contextPath,
       effectiveSensitive: Boolean(this.sensitivity.isSensitive('note', id)),
       note: {
-        ...plainProjection(note) as NoteSnapshot,
-        richText: onMoveRichTextDocumentFromStored(note.content)
+        ...readableNoteProjection(note),
+        ...(options.includeRichText === false
+          ? {}
+          : { richText: onMoveRichTextDocumentFromStored(note.content) })
       }
     }
   }
@@ -1752,7 +1825,8 @@ export class OnMoveQueryService {
    */
   resolveNote(
     query: ResolveApplicationNoteQuery,
-    access: OnMoveAccessPolicy
+    access: OnMoveAccessPolicy,
+    options: ApplicationEntityReadOptions = { includeRichText: true }
   ): ApplicationNoteResolution {
     if (!query || typeof query !== 'object') {
       throw new ModelValidationError('Note resolution query is required')
@@ -1801,7 +1875,7 @@ export class OnMoveQueryService {
       .filter((note) => this.sensitivity.canRead('note', note.id, access))
       .filter((note) => matchesEntitySelector(note, query.note))
       .flatMap((note) => {
-        const context = this.getNote(note.id, access)
+        const context = this.getNote(note.id, access, options)
         return context ? [context] : []
       }))
     return {
@@ -1824,21 +1898,25 @@ export class OnMoveQueryService {
       : this.domain.updates.listForCommitment(parent.id)
     return updates.filter((update) => this.sensitivity.canRead('update', update.id, access))
       .map((update) => {
-        if (!includeRichText) return plainProjection(update)
         try {
+          const document = this.domain.richTextDocuments.get({
+            type: 'update', id: update.id, field: 'observation'
+          })
+          if (!includeRichText) {
+            onMoveRichTextDocumentFromStored(document.value)
+            return readableUpdateProjection(update, document.revision)
+          }
           return updateProjection(
             update,
-            this.domain.richTextDocuments.get({
-              type: 'update', id: update.id, field: 'observation'
-            })
+            document
           )
         } catch (error) {
           warnings.push(
-            `Update ${update.id} contains unsupported rich text. Its compact plain-text ` +
+            `Update ${update.id} contains unsupported rich text. Its compact readable ` +
             `projection was returned instead; other Thread data is unaffected. ` +
             `Detail: ${error instanceof Error ? error.message : String(error)}`
           )
-          return plainProjection(update)
+          return readableUpdateProjection(update)
         }
       })
   }
@@ -1858,13 +1936,16 @@ export class OnMoveQueryService {
     return this.domain.notes.list(parent)
       .filter((note) => this.sensitivity.canRead('note', note.id, access))
       .map((note) => {
-        const plain = plainProjection(note) as NoteSnapshot
-        if (!includeRichText) return plain
+        const plain = readableNoteProjection(note)
         try {
+          if (!includeRichText) {
+            onMoveRichTextDocumentFromStored(note.content)
+            return plain
+          }
           return { ...plain, richText: onMoveRichTextDocumentFromStored(note.content) }
         } catch (error) {
           warnings.push(
-            `Note ${note.id} contains unsupported rich text. Its compact plain-text ` +
+            `Note ${note.id} contains unsupported rich text. Its compact readable ` +
             `projection was returned instead; other Thread data is unaffected. ` +
             `Detail: ${error instanceof Error ? error.message : String(error)}`
           )

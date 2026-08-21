@@ -80,8 +80,9 @@ The observation uses the same editor-neutral rich-text document contract as Note
 
 Omitting `richText`, or sending an empty `blocks` array, creates a valid blank Update. The former
 plain `observation` write parameter is intentionally absent because it cannot represent formatting.
-Responses and parent contexts expose `observation` as a readable plain-text projection,
-`observationRichText` as the lossless document, `observationRevision` for concurrency, and an
+Compact responses and parent contexts expose `observation` as readable Markdown, preserving links
+and structure while legacy plain text remains unchanged. Expanded reads add
+`observationRichText` as the lossless document; `observationRevision` provides concurrency and an
 `observationWriteGuide` with directly usable semantic edit requests.
 
 ### Resolving a hierarchy and creating Todos
@@ -142,9 +143,9 @@ Focus description, revision, and `descriptionWriteGuide`; directly owned `notes`
 complete rich-text documents and current write guides rather than compact summaries. This is useful
 when the Focus is already known and avoids separate reads.
 
-The returned `note.content` is a
-read-only plain-text projection for comprehension and search. `note.richText` is the complete,
-lossless document to edit and send back:
+The returned `note.content` is read-only Markdown for comprehension. `note.richText` is omitted by
+default; request `includeRichText: true` on the selected Note only when a complete structural
+replacement is actually pending. It is then the lossless document to edit and send back:
 
 ```json
 {
@@ -355,7 +356,13 @@ budget, and stable cursor. Send only that token on the next-page call; changing 
 starts a new search. Broaden only when the user requests all people or all records.
 
 Search always returns records. Compact responses default to ten records and cap pages at 25. One
-`projection` object controls optional `hierarchy`, `subjects`, `scopes`, and `richText` output.
+`projection` object controls optional `hierarchy`, `subjects`, and `scopes` output. Leave `richText`
+omitted for discovery, reading, review, link inspection, and semantic patches. The exceptional
+`richText: true` projection is accepted only with
+`richTextPurpose: "structural-replacement"` when discovery itself immediately precedes a complete
+document replacement.
+Search `snippet` values are deliberately bounded plain-text match excerpts, not full content
+renderings. Once a record is selected, its compact ID/path getter returns the readable Markdown.
 Optional projections are reduced before the record page when necessary to honor `page.maxBytes`;
 every response reports `hasMore` and its measured structured-response byte count.
 
@@ -372,18 +379,17 @@ such as `my Xs` does not exactly equal a title such as `Foobar / Xs!`, `resolve_
 `review_subject` stay `not_found` but return bounded `threadCandidates` with exact IDs and a ready
 retry instead of silently guessing.
 
-`onmove.get_thread_by_id` and `onmove.get_commitment_by_id` default to `includeRichText: false`, which is the
-compact and most forward-compatible read. Set it to `true` only when lossless Update/Note documents
-are required. If one stored document uses an unsupported newer structure, the response retains the
-entity and readable plain-text projection, omits only that lossless document, and explains the
+Focus, Thread, Commitment, Update, and Note ID/path reads default to `includeRichText: false`, which
+is the compact and most forward-compatible read. Set it to `true` only immediately before a complete
+structural replacement. If one stored document uses an unsupported newer structure, the response
+retains the entity and readable fallback, omits only that lossless document, and explains the
 degradation in `diagnostics.warnings`.
 
-For a text mutation, set `projection: { "richText": true }` on `onmove.search`. Focus, Update, and
-Note hits
-then include `editableRichText` with the complete document, readable projection, revision,
-self-describing target, and semantic patch/full-write guides. This collapses the common
-search → parent read → field read sequence into one read followed by one guarded patch. The option
-applies uniformly to Focus descriptions, Update observations, and Note content.
+For a localized text mutation, use the compact Markdown and revision with the semantic patch tool;
+it preserves surrounding links and formatting without sending the AST. For full structural
+replacement, first resolve the target, then call its by-ID/path getter with `includeRichText: true`.
+Only when that target cannot be selected before expansion should search use
+`projection: { "richText": true, "richTextPurpose": "structural-replacement" }`.
 
 Set `text` to `null` (or omit it) for a queryless list. Filter records with `kinds`, named `scope`,
 or structured `date`, `createdAt`, and `updatedAt` ranges rather than dummy search text. `date`
@@ -391,10 +397,12 @@ means an Update's recorded local date or a dated entity's due date. Creation and
 instants use inclusive local-calendar ranges interpreted through the request's IANA `timeZone`.
 All search records expose `date`, `createdAt`, and `updatedAt`.
 
-Use `onmove.get_updates_by_ids({ ids: [...] })` to hydrate up to 50 known Update IDs in one bounded read.
-It preserves first-seen order and reports hidden or missing records as `unavailableIds`. A malformed
-or newer rich-text observation degrades to readable plain text with a diagnostic warning rather
-than failing the search, single getter, bulk getter, or containing entity read.
+Use `onmove.get_updates_by_ids({ ids: [...] })` to hydrate up to 50 known Update IDs in one bounded
+read. It defaults to Markdown without lossless documents and enforces a 32 KiB response budget
+(configurable with `maxBytes`). Hidden or missing records appear in `unavailableIds`; visible records
+that did not fit appear in `omittedIds` for a subsequent bounded request. A malformed or newer
+rich-text observation degrades to readable fallback text with a diagnostic warning rather than
+failing the search, single getter, bulk getter, or containing entity read.
 
 Each search hit identifies the matched record under `reference` and its owners under `hierarchy`.
 For example, when an Update matches, pass `hierarchy.thread.id` to `onmove.get_thread_by_id`; do not pass

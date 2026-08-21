@@ -6,7 +6,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AppDatabase } from '../../src/main/database'
 import { createOnMoveMcpServer } from '../../src/mcp/server'
 import type { McpUiContextSnapshot } from '../../src/shared/contracts'
-import type { OnMoveRichTextDocument } from '../../src/shared/rich-text-document'
+import {
+  onMoveRichTextDocumentToStored,
+  type OnMoveRichTextDocument
+} from '../../src/shared/rich-text-document'
 import { RICH_TEXT_PREFIX } from '../../src/shared/rich-text-value'
 
 function richText(text: string): OnMoveRichTextDocument {
@@ -185,7 +188,7 @@ describe('OnMove MCP protocol adapter', () => {
     expect(threadSchema).toContain('hierarchy.thread.id')
     expect(threadSchema).toContain('not searchResult.reference.id')
     expect(threadSchema).toContain('Defaults to false')
-    expect(threadSchema).toContain('unsupported document is omitted')
+    expect(threadSchema).toContain('renders rich fields as Markdown')
     expect(JSON.stringify(resolveTarget.inputSchema)).toContain(
       'Provide either id or title, not both'
     )
@@ -412,7 +415,11 @@ describe('OnMove MCP protocol adapter', () => {
       name: 'onmove.search_notes',
       arguments: {
         text: 'notepagingneedle',
-        projection: { hierarchy: true, richText: true },
+        projection: {
+          hierarchy: true,
+          richText: true,
+          richTextPurpose: 'structural-replacement'
+        },
         page: { size: 1 }
       }
     })
@@ -564,7 +571,11 @@ describe('OnMove MCP protocol adapter', () => {
         id: update.id,
         observation: 'Readable future evidence'
       })],
-      diagnostics: { warnings: [] }
+      diagnostics: {
+        warnings: expect.arrayContaining([
+          expect.stringContaining('Lossless rich text was omitted')
+        ])
+      }
     })
     expect((compact.structuredContent as {
       updates: Array<Record<string, unknown>>
@@ -714,7 +725,7 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: {
         text: 'lookupfocusasdf lookupupdateasdf lookupnoteasdf',
         kinds: ['focus', 'update', 'note'],
-        projection: { richText: true }
+        projection: { richText: true, richTextPurpose: 'structural-replacement' }
       }
     })
     expect(search.isError).not.toBe(true)
@@ -728,7 +739,8 @@ describe('OnMove MCP protocol adapter', () => {
         editableRichText: expect.objectContaining({
           kind: 'focus-description',
           target: { type: 'focus-description', focusId: focus.id },
-          plainText: 'lookupfocusasdf unique description',
+          markdown: 'lookupfocusasdf unique description',
+          format: 'plain-text',
           revision: 1,
           writeGuide: expect.objectContaining({
             patchRichText: expect.objectContaining({ tool: 'onmove.patch_rich_text' })
@@ -740,7 +752,8 @@ describe('OnMove MCP protocol adapter', () => {
         editableRichText: expect.objectContaining({
           kind: 'update-observation',
           target: { type: 'update-observation', updateId: update.id },
-          plainText: 'lookupupdateasdf unique evidence',
+          markdown: 'lookupupdateasdf unique evidence',
+          format: 'plain-text',
           revision: 0,
           writeGuide: expect.objectContaining({
             patchRichText: expect.objectContaining({ tool: 'onmove.patch_rich_text' })
@@ -752,7 +765,8 @@ describe('OnMove MCP protocol adapter', () => {
         editableRichText: expect.objectContaining({
           kind: 'note-content',
           target: { type: 'note-content', noteId: note.id },
-          plainText: 'lookupnoteasdf unique note',
+          markdown: 'lookupnoteasdf unique note',
+          format: 'plain-text',
           revision: 1,
           writeGuide: expect.objectContaining({
             patchNoteText: expect.objectContaining({ tool: 'onmove.patch_note_text' })
@@ -777,6 +791,86 @@ describe('OnMove MCP protocol adapter', () => {
     expect(patched.structuredContent).toMatchObject({
       note: { content: 'lookupnoteasdf edited note', revision: 2 }
     })
+  })
+
+  it('requires an explicit structural-replacement purpose before search expands rich text', async () => {
+    const rejected = await client.callTool({
+      name: 'onmove.search_notes',
+      arguments: { text: 'launch', projection: { richText: true } }
+    })
+    expect(rejected.isError).toBe(true)
+    expect(JSON.stringify(rejected)).toContain('structural-replacement')
+
+    const compact = await client.callTool({
+      name: 'onmove.search_notes',
+      arguments: { text: 'launch' }
+    })
+    expect(compact.isError).not.toBe(true)
+    expect(JSON.stringify(compact.structuredContent)).not.toContain('editableRichText')
+  })
+
+  it('returns compact Markdown by ID and bounds bulk Update responses', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Compact rich-text reads',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const note = database.domain.notes.list({ type: 'thread', id: thread.id })[0]
+    const linked = {
+      version: 1 as const,
+      blocks: [{
+        type: 'paragraph' as const,
+        children: [{
+          type: 'link' as const,
+          url: 'https://example.com/context',
+          children: [{ type: 'text' as const, text: 'linked context' }]
+        }]
+      }]
+    }
+    database.domain.richTextDocuments.save(
+      { type: 'note', id: note.id, field: 'content' },
+      onMoveRichTextDocumentToStored(linked)
+    )
+    const updateIds = Array.from({ length: 12 }, (_, index) => database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      observation: `bulk-${index} ${'context '.repeat(180)}`
+    }).id)
+
+    const noteRead = await client.callTool({
+      name: 'onmove.get_note_by_id', arguments: { id: note.id }
+    })
+    expect(noteRead.structuredContent).toMatchObject({
+      note: {
+        content: '[linked context](https://example.com/context)',
+        contentFormat: 'markdown'
+      },
+      diagnostics: {
+        warnings: expect.arrayContaining([
+          expect.stringContaining('includeRichText=true')
+        ])
+      }
+    })
+    expect((noteRead.structuredContent as { note: Record<string, unknown> }).note)
+      .not.toHaveProperty('richText')
+
+    const bulk = await client.callTool({
+      name: 'onmove.get_updates_by_ids',
+      arguments: { ids: updateIds, maxBytes: 4_096 }
+    })
+    expect(bulk.isError).not.toBe(true)
+    expect(bulk.structuredContent).toMatchObject({
+      hasMore: true,
+      omittedIds: expect.any(Array),
+      budget: { maxBytes: 4_096 }
+    })
+    const structured = bulk.structuredContent as {
+      items: Array<{ update: Record<string, unknown> }>
+      omittedIds: number[]
+    }
+    expect(structured.omittedIds.length).toBeGreaterThan(0)
+    expect(structured.items.every(({ update }) => !('observationRichText' in update))).toBe(true)
+    expect(Buffer.byteLength(JSON.stringify(bulk.structuredContent), 'utf8')).toBeLessThanOrEqual(4_096)
   })
 
   it('resolves Team → 1:1 → Person Y and supplies an executable subject Todo request', async () => {
@@ -1107,7 +1201,7 @@ describe('OnMove MCP protocol adapter', () => {
     database.mcpSettings.update({ allowMutations: true })
 
     const read = await client.callTool({
-      name: 'onmove.get_note_by_id', arguments: { id: note.id }
+      name: 'onmove.get_note_by_id', arguments: { id: note.id, includeRichText: true }
     })
     expect(read.isError).not.toBe(true)
     expect(read.structuredContent).toMatchObject({
@@ -1159,7 +1253,8 @@ describe('OnMove MCP protocol adapter', () => {
     expect(updated.structuredContent).toMatchObject({
       reference: { type: 'note', id: note.id },
       note: {
-        content: 'Updated live through MCP',
+        content: '*<mark>Updated live through MCP</mark>*',
+        contentFormat: 'markdown',
         revision: note.revision + 1,
         richText: {
           version: 1,
@@ -1236,7 +1331,10 @@ describe('OnMove MCP protocol adapter', () => {
         currentRevision: note.revision + 1
       },
       recovery: {
-        inspect: { tool: 'onmove.get_note_by_id', arguments: { id: note.id } },
+        inspect: {
+          tool: 'onmove.get_note_by_id',
+          arguments: { id: note.id, includeRichText: true }
+        },
         retry: null
       }
     })
@@ -1280,7 +1378,8 @@ describe('OnMove MCP protocol adapter', () => {
         reference: { type: 'note', id: note.id },
         contextPath: [{ type: 'focus', id: focus.id, title: 'Launch readiness' }],
         note: {
-          content: 'hello world',
+          content: '**<span style="color: blue">hello world</span>**',
+          contentFormat: 'markdown',
           revision: note.revision + 1,
           richText: { blocks: [{ children: [{ marks: ['bold'], color: 'blue' }] }] }
         },
@@ -1309,7 +1408,8 @@ describe('OnMove MCP protocol adapter', () => {
     expect(patched.isError).not.toBe(true)
     expect(patched.structuredContent).toMatchObject({
       note: {
-        content: 'hi there',
+        content: '***<span style="color: blue">hi there</span>***',
+        contentFormat: 'markdown',
         revision: note.revision + 2,
         richText: {
           blocks: [{
@@ -1351,7 +1451,8 @@ describe('OnMove MCP protocol adapter', () => {
     })
     expect(focusRead.structuredContent).toMatchObject({
       entity: {
-        description: 'hello world',
+        description: '**<span style="color: blue">hello world</span>**',
+        descriptionFormat: 'markdown',
         descriptionRevision: 1,
         descriptionRichText: {
           blocks: [{ children: [{ text: 'hello world', marks: ['bold'], color: 'blue' }] }]
@@ -1380,7 +1481,8 @@ describe('OnMove MCP protocol adapter', () => {
     expect(focusPatched.isError).not.toBe(true)
     expect(focusPatched.structuredContent).toMatchObject({
       entity: {
-        description: 'hi there',
+        description: '***<span style="color: blue">hi there</span>***',
+        descriptionFormat: 'markdown',
         descriptionRevision: 2,
         descriptionRichText: {
           blocks: [{ children: [{
@@ -1441,7 +1543,8 @@ describe('OnMove MCP protocol adapter', () => {
         { type: 'thread', id: thread.id, title: 'Rich-text owner' }
       ],
       update: {
-        observation: 'Risk is high',
+        observation: '**<span style="color: red">Risk is high</span>**',
+        observationFormat: 'markdown',
         observationRevision: 0,
         observationWriteGuide: {
           updateRichText: { tool: 'onmove.update_rich_text' }
@@ -1461,7 +1564,9 @@ describe('OnMove MCP protocol adapter', () => {
     })
     expect(updatePatched.structuredContent).toMatchObject({
       update: {
-        observation: 'Risk is contained',
+        observation: '**<span style="color: red">Risk is </span>**' +
+          '***<span style="color: red">contained</span>***',
+        observationFormat: 'markdown',
         observationRevision: 1,
         observationRichText: {
           blocks: [{ children: [
@@ -1491,7 +1596,12 @@ describe('OnMove MCP protocol adapter', () => {
         expectedRevision: 0,
         currentRevision: 1
       },
-      recovery: { inspect: { tool: 'onmove.get_update_by_id', arguments: { id: updateId } } }
+      recovery: {
+        inspect: {
+          tool: 'onmove.get_update_by_id',
+          arguments: { id: updateId, includeRichText: true }
+        }
+      }
     })
 
     const accidentalClear = await client.callTool({
@@ -1512,7 +1622,10 @@ describe('OnMove MCP protocol adapter', () => {
         target: { type: 'update-observation', updateId }
       },
       recovery: {
-        inspect: { tool: 'onmove.get_update_by_id', arguments: { id: updateId } },
+        inspect: {
+          tool: 'onmove.get_update_by_id',
+          arguments: { id: updateId, includeRichText: true }
+        },
         retry: {
           tool: 'onmove.update_rich_text',
           arguments: { clear: true }
@@ -1674,7 +1787,7 @@ describe('OnMove MCP protocol adapter', () => {
     expect(properties).not.toHaveProperty('content')
     expect(JSON.stringify(patchNote.inputSchema)).toContain('NOTE_TEXT_AMBIGUOUS')
     expect(JSON.stringify(patchNote.inputSchema)).toContain('clear')
-    expect(JSON.stringify(resolveNote.inputSchema)).toContain('Defaults to true')
+    expect(JSON.stringify(resolveNote.inputSchema)).toContain('Defaults to false')
 
     const focus = database.domain.focuses.requireModel(1).toSnapshot()
     const note = database.domain.notes.list({ type: 'focus', id: focus.id })[0]
@@ -1759,7 +1872,8 @@ describe('OnMove MCP protocol adapter', () => {
     expect(created.isError).not.toBe(true)
     expect(created.structuredContent).toMatchObject({
       parent: { type: 'thread', id: thread.id },
-      observation: expect.stringContaining('Delivery evidence in the review'),
+      observation: expect.stringContaining('[*review*](https://example.com/review)'),
+      observationFormat: 'markdown',
       observationRichText: document,
       state: 'green'
     })
@@ -2897,8 +3011,10 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: { text: null, kinds: ['update'], page: { size: 1 } }
     })
     const token = (firstPage.structuredContent as { continuationToken: string }).continuationToken
-    const last = token.at(-1) as string
-    const tampered = `${token.slice(0, -1)}${last === 'a' ? 'b' : 'a'}`
+    const separator = token.lastIndexOf('.')
+    const signatureStart = separator + 1
+    const signatureFirst = token[signatureStart]
+    const tampered = `${token.slice(0, signatureStart)}${signatureFirst === 'a' ? 'b' : 'a'}${token.slice(signatureStart + 1)}`
     const rejected = await client.callTool({
       name: 'onmove.search',
       arguments: { continuationToken: tampered }
@@ -2978,7 +3094,7 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: {
         text: 'readable malformed evidence',
         kinds: ['update'],
-        projection: { richText: true }
+        projection: { richText: true, richTextPurpose: 'structural-replacement' }
       }
     })
     expect(searched.isError).not.toBe(true)
@@ -2988,7 +3104,9 @@ describe('OnMove MCP protocol adapter', () => {
         snippet: 'Readable malformed evidence'
       })],
       diagnostics: {
-        warnings: [expect.stringContaining('plain text was retained')]
+        warnings: expect.arrayContaining([
+          expect.stringContaining('plain text was retained')
+        ])
       }
     })
     expect((searched.structuredContent as {
@@ -3002,7 +3120,11 @@ describe('OnMove MCP protocol adapter', () => {
     expect(bulk.isError).not.toBe(true)
     expect(bulk.structuredContent).toMatchObject({
       unavailableIds: [999_999],
-      diagnostics: { warnings: [expect.stringContaining('unsupported rich text')] }
+      diagnostics: {
+        warnings: expect.arrayContaining([
+          expect.stringContaining('unsupported rich text')
+        ])
+      }
     })
     const bulkItems = (bulk.structuredContent as {
       items: Array<{ reference: { id: number }; update: { observation: string } }>
@@ -3082,7 +3204,8 @@ describe('OnMove MCP protocol adapter', () => {
     expect(updated.isError).not.toBe(true)
     expect(updated.structuredContent).toMatchObject({
       note: {
-        content: 'Michael reference',
+        content: '[Michael reference](https://example.com/michael)',
+        contentFormat: 'markdown',
         richText: {
           blocks: [{
             children: [{

@@ -856,9 +856,11 @@ foreground colors and do not rely on color alone to communicate selection or sta
   ordered by `updatedAt`, open exact/shared Todos, and currently applicable open Commitments with
   Subject-cell state. A resolved review is sufficient and `doNotBroaden`; return a continuation token
   for the same Subject × Thread intersection instead of requiring follow-up discovery calls.
-- Keep direct entity reads resilient to rich-text evolution. `get_thread_by_id` and `get_commitment_by_id`
-  default to compact readable projections with `includeRichText=false`; lossless rich text is
-  opt-in. If one requested document contains an unsupported newer structure, omit only that
+- Keep direct entity reads resilient to rich-text evolution. Focus, Thread, Commitment, Update,
+  and Note ID/path reads default to compact readable projections with `includeRichText=false`;
+  lossless rich text is opt-in. Render supported Lexical content as Markdown so links, lists, quotes,
+  checklists, and common formatting survive; leave legacy plain text unchanged. If one requested
+  document contains an unsupported newer structure, omit only that
   document, preserve the readable entity and siblings, and return a diagnostic warning rather
   than aborting the whole response.
 - Keep applicability and the UI selection separate at the API boundary. A write target is a typed
@@ -885,9 +887,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
   top-level `richText` field; never restore the former `document` compatibility alias or advertise
   both names. Agents responded to dual aliases by sending both. The internal application service
   may use different implementation vocabulary, but that must not leak into the MCP schema.
-- Rich-text reads expose both a readable plain-text projection and a lossless editor-neutral
-  versioned document. The plain projection is for search and comprehension and must remain
-  read-only. All full-document MCP rich-text writes use the same AST under `richText`, preserving
+- Compact rich-text reads expose a readable Markdown projection and omit the lossless document.
+  Expanded reads additionally expose the editor-neutral versioned document. Markdown is for search
+  and comprehension and must remain read-only. All full-document MCP rich-text writes use the same
+  AST under `richText`, preserving
   paragraphs, nested lists and checklists, multi-block quotes, links, tags, colors, soft breaks, and
   marks. Never accept a plain string full-document write that can flatten formatting.
 - Canonicalize accidental `tag:true` markers out of text nodes inside links before persistence and
@@ -906,16 +909,18 @@ foreground colors and do not rely on color alone to communicate selection or sta
   discriminated object (`focus-description` with `focusId`, or `update-observation` with
   `updateId`) so IDs cannot be silently reinterpreted. Notes retain their Note-specific tools;
   never add overlapping aliases for the same field.
-- Return edit-ready state at the first useful read boundary. `get_focus_by_id(includeRichText=true)` must
+- Return edit-ready state only when explicitly requested. `get_focus_by_id(includeRichText=true)` must
   include the Focus description document, revision, and write guide as well as expanded Notes;
-  `get_update_by_id` must return an Update's hierarchy, full observation document, revision, and guide.
+  `get_update_by_id(includeRichText=true)` must return an Update's hierarchy, full observation
+  document, revision, and guide. Compact reads retain revisions and semantic patch guides without
+  carrying the full AST.
   Thread/Commitment Update arrays and `create_update` results must also carry the observation
   revision and guide so a known Update can be patched without another exploratory call.
 - Protect Focus descriptions and Update observations with the same optimistic concurrency,
   formatting preservation, accidental-empty guard, metadata-only audit, sensitivity policy, and
   live rich-text broadcast as Notes. Map semantic patch failures to field-neutral
   `RICH_TEXT_*` recovery codes and return the exact `get_focus_by_id(includeRichText=true)` or
-  `get_update_by_id` request needed to recover. Routine Run-item notes remain governed by attestation
+  `get_update_by_id(includeRichText=true)` request needed to recover. Routine Run-item notes remain governed by attestation
   finalization and are not generic MCP rich-text mutation targets.
 - Let callers avoid discovery call explosions. `onmove.get_focus_by_id` must optionally return directly
   owned Notes with complete rich text and write guides through `includeRichText=true`.
@@ -941,15 +946,18 @@ foreground colors and do not rely on color alone to communicate selection or sta
   across the running HTTP endpoint with bounded state; the third unchanged failure must explicitly
   identify persistent payload features and tell the caller what to change instead of enabling a
   blind retry loop.
-- Let `onmove.search(projection={richText:true})` return edit-ready state for every searchable MCP-writable
-  rich-text field: Focus descriptions, Update observations, and Note content. Each matching hit
-  must include its full lossless document, revision, self-describing target, and write guides so a
-  common text mutation is one search plus one guarded semantic patch.
+- Do not make lossless rich text attractive during discovery. Search projections default to no
+  rich text, and `richText=true` must also require
+  `richTextPurpose="structural-replacement"`; reject the unacknowledged expansion. Use it only when
+  discovery itself is immediately followed by complete structural replacement. Ordinary reading,
+  review, summarization, link inspection, and semantic patches use compact Markdown. Once an ID is
+  known, prefer one `get_*_by_id(includeRichText=true)` over expanding every search hit.
 - Keep Update hydration free of agent-visible N+1 calls. `onmove.get_updates_by_ids` accepts up to 50
-  Update IDs, performs one bounded repository read, preserves first-seen input order, and returns
-  hidden and missing IDs together as `unavailableIds`. Unsupported or malformed rich text must
-  retain the readable plain observation and add a warning rather than aborting either the single or
-  bulk read.
+  Update IDs, performs one bounded repository read, defaults to Markdown without lossless documents,
+  and enforces a response byte budget. Return trailing records that do not fit as `omittedIds` with
+  an explicit bounded retry instruction; return hidden and missing IDs as `unavailableIds`.
+  Unsupported or malformed rich text must retain readable fallback text and add a warning rather
+  than aborting either the single or bulk read.
 - Validate semantic rich-text details in the handler when doing so produces a more actionable error
   than an opaque MCP SDK “invalid arguments” response. Test invalid requests through a real MCP
   client, not only the converter, because transport schema validation can reject input before the

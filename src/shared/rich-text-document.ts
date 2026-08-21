@@ -490,6 +490,76 @@ export function onMoveRichTextDocumentFromStored(value: string): OnMoveRichTextD
   })
 }
 
+function markdownText(value: string): string {
+  return value
+    .replace(/([\\`*_[\]<>!|~])/gu, '\\$1')
+    .replace(/(^|\n)([>#+-])(?=\s)/gu, '$1\\$2')
+    .replace(/(^|\n)(\d+)\.(?=\s)/gu, '$1$2\\.')
+}
+
+function markdownTextRun(node: OnMoveRichTextText): string {
+  if (node.text.length === 0) return ''
+  let value = markdownText(node.text)
+  if (node.color) value = `<span style="color: ${node.color}">${value}</span>`
+  for (const mark of [...(node.marks ?? [])].reverse()) {
+    if (mark === 'bold') value = `**${value}**`
+    else if (mark === 'italic') value = `*${value}*`
+    else if (mark === 'underline') value = `<u>${value}</u>`
+    else if (mark === 'strikethrough') value = `~~${value}~~`
+    else value = `<mark>${value}</mark>`
+  }
+  return value
+}
+
+function markdownInline(node: OnMoveRichTextInline): string {
+  if (node.type === 'line-break') return '  \n'
+  if (node.type === 'text') return markdownTextRun(node)
+  const label = node.children.map(markdownTextRun).join('')
+  const url = node.url
+    .replace(/\\/gu, '%5C')
+    .replace(/\(/gu, '%28')
+    .replace(/\)/gu, '%29')
+    .replace(/ /gu, '%20')
+  return `[${label}](${url})`
+}
+
+function markdownList(list: OnMoveRichTextList, depth = 0): string {
+  const indentation = '  '.repeat(depth)
+  const start = list.type === 'numbered-list' ? list.start ?? 1 : 1
+  const lines: string[] = []
+  list.items.forEach((item, index) => {
+    const marker = list.type === 'numbered-list'
+      ? `${start + index}. `
+      : list.type === 'checklist'
+        ? `- [${item.checked === true ? 'x' : ' '}] `
+        : '- '
+    const content = item.content.map(markdownInline).join('').split('\n')
+    lines.push(`${indentation}${marker}${content[0] ?? ''}`)
+    const continuationIndent = `${indentation}${' '.repeat(marker.length)}`
+    lines.push(...content.slice(1).map((line) => `${continuationIndent}${line}`))
+    for (const child of item.children ?? []) lines.push(markdownList(child, depth + 1))
+  })
+  return lines.join('\n')
+}
+
+function markdownBlock(block: OnMoveRichTextBlock): string {
+  if (block.type === 'paragraph') return block.children.map(markdownInline).join('')
+  if (block.type !== 'quote') return markdownList(block)
+  return block.blocks.map(markdownBlock).join('\n\n').split('\n')
+    .map((line) => line.length > 0 ? `> ${line}` : '>')
+    .join('\n')
+}
+
+/**
+ * Renders the editor-neutral document as readable Markdown for compact API reads.
+ * Standard Markdown carries links and common marks; small safe HTML spans preserve
+ * underline, highlight, and foreground colors that Markdown cannot represent.
+ */
+export function onMoveRichTextDocumentToMarkdown(document: OnMoveRichTextDocument): string {
+  const canonical = assertOnMoveRichTextDocument(document)
+  return canonical.blocks.map(markdownBlock).join('\n\n')
+}
+
 function validateText(
   value: unknown,
   budget: ValidationBudget,

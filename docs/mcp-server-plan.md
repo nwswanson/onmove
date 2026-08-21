@@ -163,8 +163,8 @@ Where relevant, the response should also contain:
 - Whether content is directly or effectively sensitive.
 - Stable OnMove entity references suitable for later deep links.
 
-Rich text should be returned as readable plain text by default. Raw Lexical envelopes should not be
-the model-facing representation.
+Rich text should be returned as readable Markdown by default, while legacy plain text remains
+unchanged. Raw Lexical envelopes should be opt-in and never the default model-facing representation.
 
 ## Initial MCP surface
 

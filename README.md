@@ -138,8 +138,9 @@ replaces separate Subject,
 Thread, Update, Todo, and Commitment searches.
 If an informal Thread phrase does not exactly match, the resolver returns `threadCandidates` with
 exact titles and IDs for an explicit retry; it does not guess. Direct `get_thread_by_id` and
-`get_commitment_by_id` calls are compact by default. Pass `includeRichText: true` only when lossless
-documents are needed; unsupported newer rich-text structures become per-document warnings rather
+`get_commitment_by_id` calls are compact by default. Rich fields render as Markdown, preserving
+links and structure without carrying the lossless AST. Pass `includeRichText: true` only immediately
+before full structural replacement; unsupported newer rich-text structures become per-document warnings rather
 than aborting the entity read.
 
 Set `text` to `null` for queryless listing. For example,
@@ -151,25 +152,26 @@ created in the wrong place, `onmove.reparent_update` moves that existing record 
 its rich text, revision, date, state, or sensitivity. Its response also supplies an undo request.
 Search pages default to ten records, return explicit `hasMore`, honor `page.maxBytes`, and provide a
 signed continuation token only when another page exists. Use `onmove.get_updates_by_ids` to hydrate several
-returned Update IDs in one call.
+returned Update IDs in one call. Its default 32 KiB response budget returns records that did not fit
+as `omittedIds` for a later bounded call.
 
 For a localized Note edit, resolve and read it with `onmove.get_note_by_path` (or
 `onmove.get_note_by_id` when
 its ID is known), then call `onmove.patch_note_text` with its revision, exact `findText`, and
 `replaceText`. The server preserves surrounding formatting. Use `onmove.update_note` with the
-returned editor-neutral `note.richText` only for structural document edits. The plain
-`note.content` field is a read-only search/prose projection. Stale revisions and accidental
+returned editor-neutral `note.richText` only for structural document edits. The Markdown
+`note.content` field is a read-only projection. Stale revisions and accidental
 text-erasing changes are rejected, and successful edits synchronize into open OnMove windows.
 `onmove.create_update` uses the same document shape for its optional rich-text observation. Both
 Focus descriptions and existing Update observations expose the same safety model: read a Focus with
-`includeRichText: true` or an Update with `onmove.get_update_by_id`, then follow the returned
+`includeRichText: true` or an Update with `onmove.get_update_by_id(includeRichText=true)`, then follow the returned
 `descriptionWriteGuide` or `observationWriteGuide`. Use `onmove.patch_rich_text` for exact localized
 changes and `onmove.update_rich_text` only for structural replacement. Full-document tools accept
 the document only through the root-level `richText` field; there is no `document` compatibility
-alias. For the shortest text-edit path, call `onmove.search` with
-`projection: { "richText": true }`; matching
-Focus descriptions, Update observations, and Notes return their complete document, revision,
-self-describing target, and write guides directly in the search result.
+alias. Do not expand rich text during ordinary search. If discovery itself must immediately feed a
+full structural replacement, explicitly acknowledge it with
+`projection: { "richText": true, "richTextPurpose": "structural-replacement" }`; otherwise use the
+compact Markdown result and re-read only the selected ID with `includeRichText: true` if necessary.
 
 See [`docs/mcp-server.md`](docs/mcp-server.md) for the available tools, search behavior, and security
 boundary.

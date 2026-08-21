@@ -4,6 +4,7 @@ import {
   assertOnMoveRichTextDocument,
   onMoveRichTextDocumentSchema,
   onMoveRichTextDocumentFromStored,
+  onMoveRichTextDocumentToMarkdown,
   onMoveRichTextDocumentToStored,
   patchOnMoveRichTextDocument,
   type OnMoveRichTextDocument
@@ -70,6 +71,30 @@ describe('OnMove rich-text API document', () => {
     expect(stored).toContain('"type":"tag"')
     expect(onMoveRichTextDocumentFromStored(stored)).toEqual(formatted)
     expect(richTextPlainText(stored)).toContain('Important context with evidence and @Person1')
+  })
+
+  it('renders compact Markdown without discarding links, lists, or nonstandard marks', () => {
+    expect(onMoveRichTextDocumentToMarkdown(formatted)).toBe([
+      '**<mark><span style="color: red">Important</span></mark>** context with ' +
+        '[*evidence*](https://example.com/context) and ' +
+        '<span style="color: blue">@Person1</span>',
+      '',
+      '> - [x] Verify the rollout',
+      '>   - Nested evidence',
+      '> - [ ] Confirm support coverage',
+      '',
+      '4. Preserve pasted numbering'
+    ].join('\n'))
+  })
+
+  it('escapes structural punctuation that was ordinary editor text', () => {
+    expect(onMoveRichTextDocumentToMarkdown({
+      version: 1,
+      blocks: [{
+        type: 'paragraph',
+        children: [{ type: 'text', text: '# Heading-like text\n1. Not a list | still text!' }]
+      }]
+    })).toBe('\\# Heading-like text\n1\\. Not a list \\| still text\\!')
   })
 
   it('projects legacy plain text into editable paragraphs without losing blank lines', () => {

@@ -353,6 +353,12 @@ function diagnosticsScope(scope: AppliedSearchScope = GLOBAL_SCOPE): McpDiagnost
   return { appliedScope: scope, warnings: [] }
 }
 
+const RICH_TEXT_OMITTED_WARNING =
+  'Lossless rich text was omitted to keep this read compact. Rich fields are rendered as ' +
+  'Markdown (legacy plain text remains unchanged). Request includeRichText=true only immediately ' +
+  'before a full structural replacement that must preserve exact links and formatting; localized ' +
+  'semantic patches do not require the full document.'
+
 interface UpdateWriteGuide {
   tool: 'onmove.create_update'
   parent: { type: 'thread' | 'commitment'; id: number }
@@ -458,7 +464,8 @@ function richTextFieldWriteGuide(
       expectedRevision,
       instruction:
         `Use full-document replacement only for structural ${label} edits. Copy the returned ` +
-        'richText document, edit it, and submit it with the revision just read. If populated ' +
+        'richText document, edit it, and submit it with the revision just read. If richText is ' +
+        'absent, re-query the record with includeRichText=true first. If populated ' +
         'text is intentionally being emptied, also send clear=true.',
       requestExample: {
         target,
@@ -533,7 +540,8 @@ function searchableRichText(
     return {
       kind: 'focus-description',
       target: { type: 'focus-description', focusId: value.reference.id },
-      plainText: entity.description ?? '',
+      markdown: entity.description ?? '',
+      format: entity.descriptionFormat ?? 'markdown',
       richText: entity.descriptionRichText,
       revision: entity.descriptionRevision,
       writeGuide: entity.descriptionWriteGuide
@@ -542,7 +550,8 @@ function searchableRichText(
   if (value.reference.type === 'update') {
     const context = record(withUpdateContextWriteGuide(database.queries.getUpdate(
       value.reference.id,
-      access
+      access,
+      { includeRichText: true }
     )))
     const contextWarnings = Array.isArray(context?.warnings)
       ? context.warnings.filter((warning): warning is string => typeof warning === 'string')
@@ -554,7 +563,8 @@ function searchableRichText(
     return {
       kind: 'update-observation',
       target: { type: 'update-observation', updateId: value.reference.id },
-      plainText: update.observation ?? '',
+      markdown: update.observation ?? '',
+      format: update.observationFormat ?? 'markdown',
       richText: update.observationRichText,
       revision: update.observationRevision,
       writeGuide: update.observationWriteGuide
@@ -563,14 +573,16 @@ function searchableRichText(
   if (value.reference.type === 'note') {
     const context = record(withNoteWriteGuide(database.queries.getNote(
       value.reference.id,
-      access
+      access,
+      { includeRichText: true }
     )))
     const note = record(context?.note)
     if (!note || !Number.isSafeInteger(note.revision) || !('richText' in note)) return null
     return {
       kind: 'note-content',
       target: { type: 'note-content', noteId: value.reference.id },
-      plainText: note.content ?? '',
+      markdown: note.content ?? '',
+      format: note.contentFormat ?? 'markdown',
       richText: note.richText,
       revision: note.revision,
       writeGuide: context?.writeGuide
@@ -779,8 +791,9 @@ function noteWriteGuide(value: unknown): NoteWriteGuide | null {
       instruction:
         'Use full-document replacement only for structural edits. Send the revision just read as ' +
         'expectedRevision. A stale revision is rejected; read the Note again and reconcile before ' +
-        'retrying. Copy note.richText, edit that document, and submit it as richText; note.content ' +
-        'is a read-only plain-text projection. If a populated Note is intentionally being emptied, ' +
+        'retrying. If note.richText is absent, re-query with includeRichText=true before replacing ' +
+        'the document. Copy note.richText, edit it, and submit it as richText; note.content is a ' +
+        'read-only Markdown projection. If a populated Note is intentionally being emptied, ' +
         'also send clear=true.',
       requestExample: {
         id: noteId,
@@ -970,6 +983,11 @@ function entityReadDiagnostics(value: unknown): McpDiagnostics {
     ? context.warnings.filter((warning): warning is string => typeof warning === 'string')
     : []
   return { ...diagnosticsScope(), warnings }
+}
+
+function compactEntityReadDiagnostics(value: unknown): McpDiagnostics {
+  const diagnostics = entityReadDiagnostics(value)
+  return { ...diagnostics, warnings: [...diagnostics.warnings, RICH_TEXT_OMITTED_WARNING] }
 }
 
 function richTextInputErrorResult(error: RichTextToolInputError): {
@@ -1361,7 +1379,10 @@ function noteRevisionConflictResult(error: NoteRevisionConflictError): {
       message: error.message
     },
     recovery: {
-      inspect: { tool: 'onmove.get_note_by_id', arguments: { id: error.issue.noteId } },
+      inspect: {
+        tool: 'onmove.get_note_by_id',
+        arguments: { id: error.issue.noteId, includeRichText: true }
+      },
       retry: null
     },
     diagnostics: diagnosticsScope()
@@ -1452,7 +1473,10 @@ function richTextInspectRequest(target: RichTextFieldTarget): {
 } {
   return target.type === 'focus-description'
     ? { tool: 'onmove.get_focus_by_id', arguments: { id: target.focusId, includeRichText: true } }
-    : { tool: 'onmove.get_update_by_id', arguments: { id: target.updateId } }
+    : {
+        tool: 'onmove.get_update_by_id',
+        arguments: { id: target.updateId, includeRichText: true }
+      }
 }
 
 function richTextRevisionConflictResult(
@@ -1534,7 +1558,7 @@ function richTextPatchErrorResult(
   const instruction = error.code === 'NOTE_TEXT_AMBIGUOUS'
     ? `Retry with occurrence set to a number from 1 through ${error.matchCount}.`
     : error.code === 'NOTE_TEXT_NOT_FOUND'
-      ? 'Read the field again and use exact case-sensitive text from its plain-text projection.'
+      ? 'Read the field again and use exact case-sensitive text from its Markdown projection.'
       : error.message
   const structuredContent = {
     error: {
@@ -1677,7 +1701,7 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Choose reads by intent. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Use onmove.search only for cross-kind discovery, queryless structured listing, or Subject hierarchy projection. INITIAL SEARCH: send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility and omit continuationToken. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Use projection={hierarchy,subjects,scopes,richText}; omitted projection fields are false. Never invent or alter a continuationToken. A next-page request sends only the exact non-null signed token, which preserves the complete query and cursor. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop discovery and fetch returned IDs directly. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. For text mutation request rich text through projection.richText or the entity getter. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and View/Edit grants by resource, Focus, and Thread.'
+        'Choose reads by intent. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Do not request richText for discovery, review, summarization, or semantic text patches. Request includeRichText=true on one known entity only immediately before a full structural replacement. Search richText is an exceptional fallback and requires projection.richTextPurpose=structural-replacement. Use onmove.search only for cross-kind discovery, queryless structured listing, or Subject hierarchy projection. INITIAL SEARCH: send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility and omit continuationToken. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Use projection={hierarchy,subjects,scopes}; omitted projection fields are false. Never invent or alter a continuationToken. A next-page request sends only the exact non-null signed token, which preserves the complete query and cursor. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop discovery and fetch returned IDs directly. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and View/Edit grants by resource, Focus, and Thread.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -1713,6 +1737,9 @@ export function createOnMoveMcpServer(
               ? context.warnings.filter((warning): warning is string => typeof warning === 'string')
               : []
           })
+    if (!includeRichText && resolution.status === 'resolved') {
+      warnings.push(RICH_TEXT_OMITTED_WARNING)
+    }
     return result({
       status: resolution.status,
       requested: resolution.requested,
@@ -1744,13 +1771,13 @@ export function createOnMoveMcpServer(
     'onmove.get_focus_by_id',
     {
       title: 'Get an OnMove focus by ID',
-      description: 'Read one visible Focus, a top-level area containing Threads. Set includeRichText=true to return the lossless Focus description, its semantic write guide, and each directly owned Note with its lossless rich text and write guides in this same response.',
+      description: 'Read one visible Focus, a top-level area containing Threads. The default compact response renders rich fields as Markdown. Set includeRichText=true only immediately before full structural replacement to return the lossless Focus description and directly owned Notes.',
       inputSchema: z.strictObject({
         id: idSchema.describe(
           'The Focus\'s own positive ID, available as searchResult.hierarchy.focus.id.'
         ),
         includeRichText: z.boolean().optional().describe(
-          'When true, include the complete Focus description document and directly owned Note documents with revisions and write guides. Defaults to false for a compact read.'
+          'Defaults to false. Set true only immediately before full structural replacement; ordinary reading, review, and semantic patches should use compact Markdown.'
         )
       }),
       annotations: { readOnlyHint: true }
@@ -1761,9 +1788,12 @@ export function createOnMoveMcpServer(
         policy(),
         { includeRichText: includeRichText === true }
       ))
-      return result(includeRichText
+      const output = includeRichText
         ? withFocusDescriptionWriteGuide(withEmbeddedNoteWriteGuides(context))
-        : context)
+        : context
+      return result(output, includeRichText
+        ? entityReadDiagnostics(output)
+        : compactEntityReadDiagnostics(output))
     }
   )
 
@@ -1789,18 +1819,21 @@ export function createOnMoveMcpServer(
       name,
       {
         title,
-        description: `Read one visible ${entityDescription} with its resolved hierarchy, Scope, direct evidence, Todos, and Note. This is an ID lookup, not a text search. It defaults to a compact, resilient projection; set includeRichText=true only when lossless documents are needed. Unsupported rich-text structures produce warnings and never discard the rest of the entity response.`,
+        description: `Read one visible ${entityDescription} with its resolved hierarchy, Scope, direct evidence, Todos, and Note. This is an ID lookup, not a text search. It defaults to compact Markdown; set includeRichText=true only immediately before full structural replacement. Unsupported rich-text structures produce warnings and never discard the rest of the entity response.`,
         inputSchema: z.strictObject({
           id: idSchema.describe(idDescription),
           includeRichText: z.boolean().optional().describe(
-            'Defaults to false. False returns compact readable plain text. True requests lossless rich-text documents and revisions; an unsupported document is omitted with a diagnostic warning while the remaining entity still returns.'
+            'Defaults to false and renders rich fields as Markdown. Set true only immediately before full structural replacement; discovery, summarization, and semantic patches should leave it false.'
           )
         }),
         annotations: { readOnlyHint: true }
       },
       async ({ id, includeRichText }) => {
         const context = found(getter(id, includeRichText === true))
-        return result(withWriteGuide(context), entityReadDiagnostics(context))
+        const output = withWriteGuide(context)
+        return result(output, includeRichText
+          ? entityReadDiagnostics(output)
+          : compactEntityReadDiagnostics(output))
       }
     )
   }
@@ -1809,32 +1842,49 @@ export function createOnMoveMcpServer(
     'onmove.get_note_by_id',
     {
       title: 'Get an OnMove note by ID',
-      description: 'Read one visible Note by its own ID, including hierarchy context, a read-only plain-text content projection, the lossless editor-neutral note.richText document, current revision, and the safe update contract. Use a note searchResult.reference.id or an ID from a parent context\'s notes array.',
-      inputSchema: z.object({
+      description: 'Read one visible Note by its own ID. The default compact response renders content as Markdown and omits the lossless document. Set includeRichText=true only immediately before full structural replacement.',
+      inputSchema: z.strictObject({
         id: idSchema.describe(
           'The Note\'s own positive ID from searchResult.reference.id or a parent context\'s notes array.'
+        ),
+        includeRichText: z.boolean().optional().describe(
+          'Defaults to false. Set true only when immediately replacing the complete rich-text document; searching, reading, summarizing, and semantic patches should leave it false.'
         )
       }),
       annotations: { readOnlyHint: true }
     },
-    async ({ id }) => result(withNoteWriteGuide(found(database.queries.getNote(id, policy()))))
+    async ({ id, includeRichText }) => {
+      const context = withNoteWriteGuide(found(database.queries.getNote(
+        id, policy(), { includeRichText: includeRichText === true }
+      )))
+      return result(context, includeRichText
+        ? entityReadDiagnostics(context)
+        : compactEntityReadDiagnostics(context))
+    }
   )
 
   server.registerTool(
     'onmove.get_update_by_id',
     {
       title: 'Get an OnMove update by ID',
-      description: 'Read one visible Update by its own ID, including hierarchy context, exact Scope/Subject attribution, the plain-text observation, its lossless rich-text document, current revision, and semantic write guide.',
+      description: 'Read one visible Update by its own ID with hierarchy and Scope/Subject attribution. The default compact response renders observation as Markdown and omits the lossless document. Set includeRichText=true only immediately before full structural replacement.',
       inputSchema: z.strictObject({
         id: idSchema.describe(
           'The Update\'s own positive ID from searchResult.reference.id or a parent context\'s updates array.'
+        ),
+        includeRichText: z.boolean().optional().describe(
+          'Defaults to false. Set true only when immediately replacing the complete rich-text document; ordinary reading and semantic patches should leave it false.'
         )
       }),
       annotations: { readOnlyHint: true }
     },
-    async ({ id }) => {
-      const context = found(database.queries.getUpdate(id, policy()))
-      return result(withUpdateContextWriteGuide(context), entityReadDiagnostics(context))
+    async ({ id, includeRichText }) => {
+      const context = withUpdateContextWriteGuide(found(database.queries.getUpdate(
+        id, policy(), { includeRichText: includeRichText === true }
+      )))
+      return result(context, includeRichText
+        ? entityReadDiagnostics(context)
+        : compactEntityReadDiagnostics(context))
     }
   )
 
@@ -1842,21 +1892,66 @@ export function createOnMoveMcpServer(
     'onmove.get_updates_by_ids',
     {
       title: 'Get multiple OnMove updates',
-      description: 'Read up to 50 Updates by their own IDs in one database-backed call. This avoids one get_update_by_id call per search result and preserves input order. Missing and non-visible IDs are reported together as unavailableIds.',
+      description: 'Read Updates by their own IDs in one bounded call. Markdown is the default; lossless rich text is omitted. A hard byte budget may defer trailing IDs into omittedIds so a bulk lookup cannot consume the client context window.',
       inputSchema: z.strictObject({
         ids: z.array(idSchema).min(1).max(50).describe(
           'One to 50 Update IDs from searchResult.reference.id, subjectUses, review_subject, or parent update arrays.'
+        ),
+        includeRichText: z.boolean().optional().describe(
+          'Defaults to false. Set true only when immediately replacing every requested document; prefer one get_update_by_id(includeRichText=true) for an actual edit.'
+        ),
+        maxBytes: z.number().int().min(4_096).max(131_072).optional().describe(
+          'Hard UTF-8 response budget. Defaults to 32768 bytes. IDs that do not fit are returned in omittedIds for a later bounded request.'
         )
       }),
       annotations: { readOnlyHint: true }
     },
-    async ({ ids }) => {
-      const contexts = database.queries.getUpdates(ids, policy())
+    async ({ ids, includeRichText, maxBytes }) => {
+      const budget = maxBytes ?? 32_768
+      const contexts = database.queries.getUpdates(
+        ids, policy(), { includeRichText: includeRichText === true }
+      )
+      const candidates = contexts.items.map(withUpdateContextWriteGuide)
+      const items: unknown[] = []
+      const omittedIds: number[] = []
       const warnings = contexts.items.flatMap((context) => context.warnings ?? [])
-      return result({
-        items: contexts.items.map(withUpdateContextWriteGuide),
-        unavailableIds: contexts.unavailableIds
-      }, { ...diagnosticsScope(), warnings, resultCount: contexts.items.length })
+      if (!includeRichText) warnings.push(RICH_TEXT_OMITTED_WARNING)
+      for (const candidate of candidates) {
+        const reference = record(record(candidate)?.reference)
+        const id = Number(reference?.id)
+        const trial = {
+          items: [...items, candidate],
+          unavailableIds: contexts.unavailableIds,
+          omittedIds,
+          hasMore: false,
+          budget: { maxBytes: budget }
+        }
+        if (Buffer.byteLength(JSON.stringify(trial), 'utf8') + 2_048 <= budget) {
+          items.push(candidate)
+        } else if (Number.isSafeInteger(id)) {
+          omittedIds.push(id)
+        }
+      }
+      if (omittedIds.length > 0) {
+        warnings.push(
+          `${omittedIds.length} Update ID(s) were omitted to honor maxBytes. ` +
+          'Request those omittedIds in a later call; use a larger maxBytes only when necessary.'
+        )
+      }
+      const response = {
+        items,
+        unavailableIds: contexts.unavailableIds,
+        omittedIds,
+        hasMore: omittedIds.length > 0,
+        budget: {
+          maxBytes: budget,
+          returnedItems: items.length,
+          omittedItems: omittedIds.length
+        }
+      }
+      return result(response, {
+        ...diagnosticsScope(), warnings, resultCount: items.length
+      })
     }
   )
 
@@ -1877,7 +1972,7 @@ export function createOnMoveMcpServer(
     `Exact case-insensitive ${label} title. Example: ${example}. Paths use titles only; use the corresponding get-by-ID tool for an ID.`
   )
   const includePathRichTextSchema = z.boolean().optional().describe(
-    'Defaults to false. True includes lossless rich-text documents and their revisions.'
+    'Defaults to false and returns Markdown. Set true only immediately before a full structural replacement; ordinary reads and semantic patches should leave it false.'
   )
 
   server.registerTool(
@@ -2049,9 +2144,18 @@ export function createOnMoveMcpServer(
       'Include bounded Scope metadata on applicable Subject paths.'
     ),
     richText: z.boolean().optional().describe(
-      'Include lossless editable rich text where supported; malformed documents degrade to plain text with warnings.'
+      'Expensive opt-in. Leave false/omitted for discovery and ordinary reads; Markdown is returned by direct compact reads. Set true only immediately before a full structural replacement, together with richTextPurpose=structural-replacement.'
+    ),
+    richTextPurpose: z.literal('structural-replacement').optional().describe(
+      'Required acknowledgment when richText=true. Do not send for searching, reviewing, summarizing, semantic text patches, or link inspection that does not modify the complete document.'
     )
-  }).optional().describe(
+  }).refine(
+    ({ richText, richTextPurpose }) => richText !== true || richTextPurpose === 'structural-replacement',
+    {
+      message: 'richText=true is allowed only with richTextPurpose=structural-replacement; omit richText for discovery and compact Markdown reads.',
+      path: ['richTextPurpose']
+    }
+  ).optional().describe(
     'Response projection. Omitted fields default false. Example: {hierarchy:true,subjects:true,scopes:false,richText:false}.'
   )
   const searchPageSchema = z.strictObject({
@@ -2071,9 +2175,18 @@ export function createOnMoveMcpServer(
       'Include direct canonical Subject attribution on matching records when present.'
     ),
     richText: z.boolean().optional().describe(
-      'Include lossless editable rich text for matching Focuses, Updates, or Notes when supported.'
+      'Expensive opt-in. Leave false/omitted for discovery. Set true only immediately before a full structural replacement, together with richTextPurpose=structural-replacement.'
+    ),
+    richTextPurpose: z.literal('structural-replacement').optional().describe(
+      'Required acknowledgment when richText=true; ordinary search and semantic patches do not need lossless documents.'
     )
-  }).optional().describe('Optional fields to add to each record. Omitted fields default false.')
+  }).refine(
+    ({ richText, richTextPurpose }) => richText !== true || richTextPurpose === 'structural-replacement',
+    {
+      message: 'richText=true is allowed only with richTextPurpose=structural-replacement; omit richText for discovery.',
+      path: ['richTextPurpose']
+    }
+  ).optional().describe('Optional fields to add to each record. Omitted fields default false.')
   const entitySearchSchema = z.strictObject({
     text: z.string().min(1).optional().describe(
       'Required on an initial call: the literal text to discover within this entity kind. Omit only when sending a returned continuationToken.'
@@ -2160,6 +2273,12 @@ export function createOnMoveMcpServer(
       ...resolved.query
     }, access)
     const warnings = [...resolved.diagnostics.warnings]
+    if (projection.richText) {
+      warnings.push(
+        'Lossless rich text was explicitly expanded for structural replacement. Do not carry ' +
+        'these documents into unrelated discovery or review calls.'
+      )
+    }
     const cursors = [...searched.itemCursors]
     let records = searched.items.map((match) => {
       let editableRichText: Record<string, unknown> | null = null
@@ -2305,7 +2424,7 @@ export function createOnMoveMcpServer(
       toolName,
       {
         title,
-        description: `Search only visible ${kind} records by text. ${kind === 'todo' ? 'Use returned Todo IDs with Todo mutation tools.' : kind === 'subject' ? 'Use the canonical Subject ID with Subject-scoped search, review_subject, or resolve_work_target.' : `Use get_${kind}_by_id when an ID is known${['focus', 'thread', 'commitment', 'routine', 'note'].includes(kind) ? ` and get_${kind}_by_path for an exact hierarchy path` : ''}.`} This does not search other entity kinds.`,
+        description: `Search only visible ${kind} records by text. ${kind === 'todo' ? 'Use returned Todo IDs with Todo mutation tools.' : kind === 'subject' ? 'Use the canonical Subject ID with Subject-scoped search, review_subject, or resolve_work_target.' : `Use get_${kind}_by_id when an ID is known${['focus', 'thread', 'commitment', 'routine', 'note'].includes(kind) ? ` and get_${kind}_by_path for an exact hierarchy path` : ''}.`} This does not search other entity kinds. Search snippets are bounded plain-text match excerpts, not field renderings; read the selected ID for Markdown. Do not request richText for discovery or reading; only a pending full structural replacement justifies its explicit purpose acknowledgment.`,
         inputSchema: entitySearchSchema,
         annotations: { readOnlyHint: true }
       },
@@ -2317,7 +2436,7 @@ export function createOnMoveMcpServer(
     'onmove.search',
     {
       title: 'Search or list OnMove records',
-      description: 'Use for both FTS discovery and queryless structured listing. INITIAL REQUEST: send text for language search, or text=null with kinds to list records without FTS. Date filters are database predicates, never search terms. Request optional expansion only through projection. Responses always contain records, hasMore, a hard byte-budget report, and a signed continuationToken only when another record page exists. A continuation request sends only that exact token; it preserves text, local-date filters, timezone, scope, sort, kinds, projection, page size, byte budget, and stable cursor. Never invent or alter a token.',
+      description: 'Use for FTS discovery, queryless structured listing, and cross-kind hierarchy browsing. INITIAL REQUEST: send text for language search, or text=null with kinds to list records without FTS. Search snippets are bounded plain-text match excerpts; use the selected entity getter for Markdown. Date filters are database predicates, never search terms. Do not request richText for discovery, reading, review, or semantic patches. Lossless documents are an expensive exceptional projection requiring richTextPurpose=structural-replacement. Responses contain records, hasMore, a hard byte budget, and a signed continuationToken only when another page exists. A continuation request sends only that exact token; never invent or alter it.',
       inputSchema: z.strictObject({
         text: z.string().min(1).nullable().optional().describe(
           'Non-null uses full-text search. Null or omitted is queryless list mode and returns records selected by kinds, scope, and date filters.'
@@ -2410,6 +2529,12 @@ export function createOnMoveMcpServer(
       const searched = database.queries.searchPage(query, access)
       const matches = searched.items
       const warnings = [...resolved.diagnostics.warnings]
+      if (projection.richText) {
+        warnings.push(
+          'Lossless rich text was explicitly expanded for structural replacement. Do not carry ' +
+          'these documents into unrelated discovery or review calls.'
+        )
+      }
       const decorateSearchItems = (values: readonly SearchResult[]) => values.map((match) => {
         let editableRichText: Record<string, unknown> | null = null
         if (projection.richText) {
@@ -2892,7 +3017,7 @@ export function createOnMoveMcpServer(
     commitmentTitle: exactPathTitleSchema('Commitment', 'Ticket quality').optional(),
     noteTitle: exactPathTitleSchema('Note', 'Default'),
     includeRichText: z.boolean().optional().describe(
-      'Include the complete lossless note.richText document. Defaults to true so the resolved Note can be edited immediately.'
+      'Defaults to false. Set true only immediately before a full structural replacement; ordinary reads return Markdown.'
     )
   }).refine(
     ({ threadTitle, commitmentTitle }) => commitmentTitle === undefined || threadTitle !== undefined,
@@ -2919,8 +3044,10 @@ export function createOnMoveMcpServer(
           : { commitment: { title: commitmentTitle } }),
         note: { title: noteTitle }
       }
-      const resolution = database.queries.resolveNote(query, policy())
-      const include = includeRichText !== false
+      const include = includeRichText === true
+      const resolution = database.queries.resolveNote(
+        query, policy(), { includeRichText: include }
+      )
       const candidates = resolution.candidates.map((candidate) => withNoteWriteGuide(
         include ? candidate : withoutNoteRichText(candidate)
       ))
@@ -2929,6 +3056,7 @@ export function createOnMoveMcpServer(
         : resolution.status === 'not_found'
           ? ['No directly owned visible Note matched. Check each exact title or use search_notes; this tool never searches descendant Notes implicitly.']
           : []
+      if (!include && resolution.status === 'resolved') warnings.push(RICH_TEXT_OMITTED_WARNING)
       return result({
         status: resolution.status,
         requested: {
@@ -3043,7 +3171,9 @@ export function createOnMoveMcpServer(
       const created = database.commands.createThread(
         input, policy(), server.server.getClientVersion()?.name
       ) as { id: number }
-      return withWriteGuide(found(database.queries.getThread(created.id, policy())))
+      return withWriteGuide(found(database.queries.getThread(
+        created.id, policy(), { includeRichText: false }
+      )))
     })
   )
 
@@ -3065,7 +3195,9 @@ export function createOnMoveMcpServer(
     },
     async ({ id, ...input }) => mutationResult(() => {
       database.commands.updateThread(id, input, policy(), server.server.getClientVersion()?.name)
-      return withWriteGuide(found(database.queries.getThread(id, policy())))
+      return withWriteGuide(found(database.queries.getThread(
+        id, policy(), { includeRichText: false }
+      )))
     })
   )
 
@@ -3091,7 +3223,9 @@ export function createOnMoveMcpServer(
         ...input,
         type: 'tracking'
       }, policy(), server.server.getClientVersion()?.name) as { id: number }
-      return withWriteGuide(found(database.queries.getCommitment(created.id, policy())))
+      return withWriteGuide(found(database.queries.getCommitment(
+        created.id, policy(), { includeRichText: false }
+      )))
     })
   )
 
@@ -3114,7 +3248,9 @@ export function createOnMoveMcpServer(
     },
     async ({ id, ...input }) => mutationResult(() => {
       database.commands.updateCommitment(id, input, policy(), server.server.getClientVersion()?.name)
-      return withWriteGuide(found(database.queries.getCommitment(id, policy())))
+      return withWriteGuide(found(database.queries.getCommitment(
+        id, policy(), { includeRichText: false }
+      )))
     })
   )
 
@@ -3183,7 +3319,9 @@ export function createOnMoveMcpServer(
     },
     async (input) => mutationResult(() => {
       database.commands.updateUpdate(input, policy(), server.server.getClientVersion()?.name)
-      return withUpdateContextWriteGuide(found(database.queries.getUpdate(input.id, policy())))
+      return withUpdateContextWriteGuide(found(database.queries.getUpdate(
+        input.id, policy(), { includeRichText: false }
+      )))
     })
   )
 
@@ -3322,8 +3460,8 @@ export function createOnMoveMcpServer(
         }
         if (!(error instanceof ScopeTargetValidationError)) throw error
         const context = error.issue.parent.type === 'thread'
-          ? database.queries.getThread(error.issue.parent.id, policy())
-          : database.queries.getCommitment(error.issue.parent.id, policy())
+          ? database.queries.getThread(error.issue.parent.id, policy(), { includeRichText: false })
+          : database.queries.getCommitment(error.issue.parent.id, policy(), { includeRichText: false })
         return scopeTargetErrorResult(error, normalized, updateWriteGuide(context))
       }
     }
@@ -3362,7 +3500,7 @@ export function createOnMoveMcpServer(
             semanticPath: destination.semanticPath
           }, policy(), server.server.getClientVersion()?.name)
           const context = withUpdateContextWriteGuide(found(
-            database.queries.getUpdate(input.id, policy())
+            database.queries.getUpdate(input.id, policy(), { includeRichText: false })
           ))
           return {
             ...record(context),
@@ -3389,8 +3527,8 @@ export function createOnMoveMcpServer(
         }
         if (!(error instanceof ScopeTargetValidationError)) throw error
         const context = error.issue.parent.type === 'thread'
-          ? database.queries.getThread(error.issue.parent.id, policy())
-          : database.queries.getCommitment(error.issue.parent.id, policy())
+          ? database.queries.getThread(error.issue.parent.id, policy(), { includeRichText: false })
+          : database.queries.getCommitment(error.issue.parent.id, policy(), { includeRichText: false })
         return reparentScopeTargetErrorResult(error, input, updateWriteGuide(context))
       }
     }
@@ -3430,8 +3568,8 @@ export function createOnMoveMcpServer(
       } catch (error) {
         if (!(error instanceof ScopeTargetValidationError)) throw error
         const context = error.issue.parent.type === 'thread'
-          ? database.queries.getThread(error.issue.parent.id, policy())
-          : database.queries.getCommitment(error.issue.parent.id, policy())
+          ? database.queries.getThread(error.issue.parent.id, policy(), { includeRichText: false })
+          : database.queries.getCommitment(error.issue.parent.id, policy(), { includeRichText: false })
         return todoScopeTargetErrorResult(error, normalized, todoWriteGuide(context))
       }
     }
@@ -3566,7 +3704,7 @@ export function createOnMoveMcpServer(
     'onmove.update_rich_text',
     {
       title: 'Replace an OnMove rich-text field',
-      description: 'Replace a Focus description or Update observation with a complete editor-neutral rich-text document using optimistic concurrency. Prefer onmove.search(projection={richText:true}) followed by onmove.patch_rich_text for localized changes. Notes use onmove.update_note.',
+      description: 'Replace a Focus description or Update observation with a complete editor-neutral rich-text document using optimistic concurrency. First read the one known entity with includeRichText=true. Do not expand search results for this; localized changes should use patch_rich_text from the compact Markdown read. Notes use onmove.update_note.',
       inputSchema: z.strictObject({
         target: richTextFieldTargetSchema,
         expectedRevision: z.number().int().nonnegative().describe(
@@ -3694,7 +3832,7 @@ export function createOnMoveMcpServer(
     'onmove.update_note',
     {
       title: 'Update an OnMove note',
-      description: 'Replace one visible Note with a complete editor-neutral rich-text document using optimistic concurrency. Prefer onmove.search(projection={richText:true}) followed by onmove.patch_note_text for localized changes; use get_note_by_id when its ID is already known. The plain note.content projection is intentionally not writable, so formatting cannot be flattened accidentally.',
+      description: 'Replace one visible Note with a complete editor-neutral rich-text document using optimistic concurrency. First call get_note_by_id(includeRichText=true) for this known Note. Do not expand search results for this; localized changes should use patch_note_text from the compact Markdown read. The Markdown note.content projection is intentionally not writable, so formatting cannot be flattened accidentally.',
       inputSchema: z.strictObject({
         id: idSchema.describe(
           'The Note\'s own positive ID from onmove.get_note_by_id, a Note search hit, or a parent context.'
@@ -3798,8 +3936,8 @@ function registerResources(server: McpServer, database: AppDatabase): void {
   const policy = () => database.mcpSettings.accessPolicy()
   const entityTemplates = [
     ['focus', (id: number) => database.queries.getFocus(id, policy())],
-    ['thread', (id: number) => database.queries.getThread(id, policy())],
-    ['commitment', (id: number) => database.queries.getCommitment(id, policy())],
+    ['thread', (id: number) => database.queries.getThread(id, policy(), { includeRichText: false })],
+    ['commitment', (id: number) => database.queries.getCommitment(id, policy(), { includeRichText: false })],
     ['routine', (id: number) => database.queries.getRoutine(id, policy())]
   ] as const
   for (const [type, getter] of entityTemplates) {
@@ -3823,12 +3961,14 @@ function registerResources(server: McpServer, database: AppDatabase): void {
     new ResourceTemplate('onmove://note/{id}', { list: undefined }),
     {
       title: 'OnMove note',
-      description: 'Hierarchy-aware Note with plain-text projection, lossless rich-text document, revision, and safe write guide.',
+      description: 'Hierarchy-aware Note with compact Markdown content and revision. Use get_note_by_id(includeRichText=true) immediately before full structural replacement.',
       mimeType: 'application/json'
     },
     async (uri, variables) => resource(
       uri,
-      withNoteWriteGuide(found(database.queries.getNote(variableId(variables.id), policy())))
+      withNoteWriteGuide(found(database.queries.getNote(
+        variableId(variables.id), policy(), { includeRichText: false }
+      )))
     )
   )
 

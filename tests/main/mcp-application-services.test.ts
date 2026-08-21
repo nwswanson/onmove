@@ -74,7 +74,7 @@ describe('OnMove MCP application services', () => {
     return { focusId: focus.id, threadId: thread.id, commitmentId: commitment.id }
   }
 
-  it('indexes ordinary-language content, reindexes edits, and projects rich text as plain text', () => {
+  it('indexes ordinary-language content, reindexes edits, and projects rich text as Markdown', () => {
     const { focusId, threadId } = hierarchy()
     const created = database.domain.updates.create({
       parent: { type: 'thread', id: threadId },
@@ -167,7 +167,9 @@ describe('OnMove MCP application services', () => {
     }, writable, 'integration-test')
     expect(created.scope).toEqual({ scopeId: first.scopeId, subjectId: platform.id })
     expect(created).toMatchObject({
-      observation: 'Scoped operational evidence',
+      observation: '**<span style="color: green">Scoped operational </span>**' +
+        '[*evidence*](https://example.com/evidence)',
+      observationFormat: 'markdown',
       observationRichText: formattedEvidence
     })
     expect(database.domain.updates.find(created.id)?.observation).toContain('"type":"link"')
@@ -360,7 +362,9 @@ describe('OnMove MCP application services', () => {
     })
     expect(richTextPlainText(updated.value)).toBe('Person Y has completed the readiness review.')
     expect(database.queries.getNote(note.id, denied)?.note).toMatchObject({
-      content: 'Person Y has completed the readiness review.',
+      content: '**<span style="color: blue">Person Y</span>** has completed the ' +
+        '[*readiness review*](https://example.com/readiness).',
+      contentFormat: 'markdown',
       richText: formatted,
       revision: note.revision + 1
     })
@@ -471,7 +475,8 @@ describe('OnMove MCP application services', () => {
     })
     expect(database.queries.getFocus(focusId, denied, { includeRichText: true })?.entity)
       .toMatchObject({
-        description: 'Deliver a durable operating model',
+        description: 'Deliver a *durable* operating model',
+        descriptionFormat: 'markdown',
         descriptionRevision: 1,
         descriptionRichText: {
           blocks: [{
@@ -509,7 +514,9 @@ describe('OnMove MCP application services', () => {
       ],
       update: {
         id: created.id,
-        observation: 'Customer risk is contained',
+        observation: '**<span style="color: red">Customer risk is </span>**' +
+          '***<span style="color: red">contained</span>***',
+        observationFormat: 'markdown',
         observationRevision: 1,
         observationRichText: {
           blocks: [{
@@ -589,7 +596,8 @@ describe('OnMove MCP application services', () => {
       addMarks: ['italic']
     }, writable)
     expect(database.queries.getNote(note.id, denied)?.note).toMatchObject({
-      content: 'hi there',
+      content: '***<span style="color: blue">hi there</span>***',
+      contentFormat: 'markdown',
       revision: patched.revision,
       richText: {
         blocks: [{
