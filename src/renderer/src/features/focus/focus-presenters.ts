@@ -613,6 +613,43 @@ export function focusContextSidebarItems(
   ]
 }
 
+/**
+ * Root projection used when a Thread itself is a primary destination. The
+ * Thread overview remains selected while its current Commitments are visible
+ * as nested children. Future child kinds (including Routines) belong in the
+ * same receiver-owned collection rather than in another navigation mode.
+ */
+export function pinnedThreadContextSidebarItems(
+  thread: ThreadSnapshot,
+  summary: StatusSummary = EMPTY_STATUS_SUMMARY,
+  commitments: readonly CommitmentSnapshot[] = [],
+  hideSensitiveContent = false,
+  pinned = true
+): ContextualSidebarItemModel[] {
+  const paused = thread.status === 'paused'
+  const sunflower = statusSunflowerModel(summary, hideSensitiveContent)
+  return [{
+    id: threadSidebarItemId(thread.id),
+    label: 'Overview',
+    ariaLabel: `${thread.title} overview${paused ? ', paused' : ''}`,
+    icon: paused ? 'paused' : 'sunflower',
+    ...(paused ? {} : { sunflower }),
+    childCollection: contextWorkChildCollection(thread.title, commitments, []),
+    tone: paused ? 'muted' : 'default',
+    ...sidebarIndicatorProps(thread.sensitive, thread.needsReview),
+    contextMenu: {
+      ariaLabel: `${thread.title} actions`,
+      items: workContextMenuItems(
+        thread.sensitive,
+        thread.needsReview,
+        true,
+        pinned
+      )
+    },
+    group: { id: 'thread', label: thread.title }
+  }]
+}
+
 export function commitmentContextSidebarItems(
   commitments: readonly CommitmentSnapshot[]
 ): ContextualSidebarItemModel[] {

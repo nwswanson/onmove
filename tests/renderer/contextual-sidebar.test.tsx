@@ -664,6 +664,45 @@ describe('ContextualSidebarNavigation', () => {
     expect(onCommitmentSelect).toHaveBeenCalledWith('review')
   })
 
+  it('replaces the contextual root without inventing Back navigation or selecting a child', () => {
+    const onPinnedSelect = vi.fn()
+    const focusRoot = level('focus:1', 'Focus', [
+      { id: 'overall', label: 'Overall' },
+      { id: 'thread:10', label: 'Sprint execution' }
+    ])
+    const pinnedThreadRoot = level(
+      'pinned-thread:10',
+      'Sprint execution',
+      [
+        { id: 'thread:10', label: 'Overview' },
+        { id: '20', label: 'Improve ticket quality' }
+      ],
+      { onSelect: onPinnedSelect }
+    )
+    const navigation = new ContextualSidebarNavigation(focusRoot)
+
+    expect(navigation.replaceRoot(pinnedThreadRoot, 'thread:10')).toBe(true)
+    expect(navigation.root).toBe(pinnedThreadRoot)
+    expect(navigation.getSnapshot()).toMatchObject({
+      level: pinnedThreadRoot,
+      parent: null,
+      canGoBack: false,
+      selectedItemId: 'thread:10'
+    })
+    expect(onPinnedSelect).toHaveBeenCalledWith('thread:10')
+    expect(navigation.back()).toBe(false)
+    expect(() => navigation.navigateToPath(focusRoot, 'overall')).toThrow(
+      'does not belong to navigation root "pinned-thread:10"'
+    )
+
+    expect(navigation.replaceRoot(focusRoot, 'overall')).toBe(true)
+    expect(navigation.getSnapshot()).toMatchObject({
+      level: focusRoot,
+      canGoBack: false,
+      selectedItemId: 'overall'
+    })
+  })
+
   it('rejects invalid deep links before changing the active path', () => {
     const root = level('focus:1', 'Focus', [{ id: 'overall', label: 'Overall' }])
     const commitments = level(

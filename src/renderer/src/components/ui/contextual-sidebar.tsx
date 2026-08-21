@@ -621,7 +621,7 @@ export interface ContextualSidebarChildSelection {
  * retained per level so returning to a parent restores its prior selection.
  */
 export class ContextualSidebarNavigation {
-  readonly root: ContextualSidebarLevelBase
+  private rootLevel: ContextualSidebarLevelBase
 
   private currentLevel: ContextualSidebarLevelBase
   private readonly selections = new Map<ContextualSidebarLevelBase, string | null>()
@@ -636,16 +636,49 @@ export class ContextualSidebarNavigation {
     if (root.parent) {
       throw new Error('Contextual sidebar navigation must start with a top-level parentless level.')
     }
-    this.root = root
+    this.rootLevel = root
     this.currentLevel = root
     this.snapshot = this.createSnapshot()
   }
 
   getSnapshot = (): ContextualSidebarNavigationSnapshot => this.snapshot
 
+  get root(): ContextualSidebarLevelBase {
+    return this.rootLevel
+  }
+
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
+  }
+
+  /**
+   * Replaces the complete contextual projection with another parentless root.
+   * Primary destinations use this when the same workspace needs a different
+   * sidebar lens; unlike entering a child level, the replacement has no Back.
+   */
+  replaceRoot(root: ContextualSidebarLevelBase, selectedItemId?: string): boolean {
+    if (root.parent) {
+      throw new Error('A contextual sidebar root projection must be parentless.')
+    }
+    if (selectedItemId !== undefined) {
+      if (!root.hasItem(selectedItemId)) {
+        throw new Error(
+          `Cannot select missing item "${selectedItemId}" in contextual sidebar root "${root.id}".`
+        )
+      }
+      if (root.getItem(selectedItemId)?.disabled) return false
+    }
+
+    this.rootLevel = root
+    this.currentLevel = root
+    this.childSelections.delete(root)
+    if (selectedItemId !== undefined) {
+      this.selections.set(root, selectedItemId)
+      root.notifySelection(selectedItemId)
+    }
+    this.publish()
+    return true
   }
 
   navigateTo(level: ContextualSidebarLevelBase): void {
@@ -677,9 +710,9 @@ export class ContextualSidebarNavigation {
     for (let candidate: ContextualSidebarLevelBase | null = level; candidate; candidate = candidate.parent) {
       path.unshift(candidate)
     }
-    if (path[0] !== this.root) {
+    if (path[0] !== this.rootLevel) {
       throw new Error(
-        `Contextual sidebar level "${level.id}" does not belong to navigation root "${this.root.id}".`
+        `Contextual sidebar level "${level.id}" does not belong to navigation root "${this.rootLevel.id}".`
       )
     }
 
@@ -735,12 +768,12 @@ export class ContextualSidebarNavigation {
   }
 
   reset(): void {
-    this.childSelections.delete(this.root)
-    if (this.currentLevel === this.root) {
+    this.childSelections.delete(this.rootLevel)
+    if (this.currentLevel === this.rootLevel) {
       this.publish()
       return
     }
-    this.currentLevel = this.root
+    this.currentLevel = this.rootLevel
     this.publish()
   }
 

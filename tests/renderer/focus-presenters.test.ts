@@ -21,6 +21,7 @@ import {
   focusDrawerAdapter,
   focusPrimaryNavigationItems,
   focusOverviewTimelineModel,
+  pinnedThreadContextSidebarItems,
   pinnedPrimaryNavigationItems,
   focusScopeEditorModel,
   statusSunflowerModel,
@@ -487,6 +488,49 @@ describe('Focus presentation adapters', () => {
     )[1]?.contextMenu?.items).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'pin', checked: true })
     ]))
+  })
+
+  it('projects a pinned Thread as an Overview root with current Commitments nested beneath it', () => {
+    const current: CommitmentSnapshot = {
+      ...commitment,
+      id: 31,
+      parent: { type: 'thread', id: thread.id },
+      title: 'Improve ticket quality'
+    }
+    const closed: CommitmentSnapshot = {
+      ...commitment,
+      id: 32,
+      parent: { type: 'thread', id: thread.id },
+      title: 'Retired checklist',
+      status: 'done'
+    }
+
+    const items = pinnedThreadContextSidebarItems(
+      thread,
+      undefined,
+      [closed, current],
+      false,
+      true
+    )
+
+    expect(items).toHaveLength(1)
+    expect(items[0]).toEqual(expect.objectContaining({
+      id: 'thread:10',
+      label: 'Overview',
+      group: { id: 'thread', label: 'Sprint execution' },
+      contextMenu: expect.objectContaining({
+        items: expect.arrayContaining([
+          expect.objectContaining({ id: 'pin', checked: true })
+        ])
+      })
+    }))
+    expect(items[0]?.childCollection).toEqual(expect.objectContaining({
+      id: 'commitments',
+      items: [expect.objectContaining({
+        id: '31',
+        label: 'Improve ticket quality'
+      })]
+    }))
   })
 
   it('keeps Thread drop targets alphabetically ordered without sorting Commitments', () => {

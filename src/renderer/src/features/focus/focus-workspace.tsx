@@ -29,6 +29,7 @@ import {
   ContextualSidebarNavigation,
   type ContextualSidebarChildMove,
   type ContextualSidebarItemMove,
+  type ContextualSidebarLevelBase,
   useContextualSidebarNavigation
 } from '@/components/ui/contextual-sidebar'
 import { Dialog, DialogField } from '@/components/ui/dialog'
@@ -61,6 +62,7 @@ import {
   focusDrawerAdapter,
   focusOverviewTimelineModel,
   focusScopeEditorModel,
+  pinnedThreadContextSidebarItems,
   threadDrawerAdapter,
   threadWorkingContextModel,
   threadSidebarItemId
@@ -404,6 +406,9 @@ export function FocusWorkspace({
       })
   )
   const [threadCommitmentLevels] = useState(
+    () => new Map<number, ContextualSidebarLevel>()
+  )
+  const [pinnedThreadChildLevels] = useState(
     () => new Map<number, ContextualSidebarLevel>()
   )
 
@@ -814,6 +819,74 @@ export function FocusWorkspace({
     visibleThreadCommitments
   ])
 
+  const pinnedThreadChildLevelFor = useCallback((
+    thread: ThreadSnapshot
+  ): ContextualSidebarLevel => {
+    const existing = pinnedThreadChildLevels.get(thread.id)
+    if (existing) return existing
+
+    const itemId = threadSidebarItemId(thread.id)
+    const created = new ContextualSidebarLevel({
+      id: `pinned-thread:${thread.id}:children`,
+      title: 'Thread',
+      ariaLabel: 'Pinned Thread children',
+      items: pinnedThreadContextSidebarItems(
+        thread,
+        model.threadStatusSummaries[thread.id],
+        visibleThreadCommitments[thread.id] ?? [],
+        hideSensitiveContent,
+        pinnedThreadIds.has(thread.id)
+      ),
+      initialSelectedItemId: itemId,
+      onSelect: () => {
+        setStandaloneCommitmentRoute(null)
+        setStandaloneThreadRoute(thread.id)
+      },
+      onSelectChild: () => {
+        setStandaloneCommitmentRoute(null)
+        setStandaloneThreadRoute(null)
+      },
+      onChildContextMenuAction: (
+        _parentItemId,
+        _collectionId,
+        childItemId,
+        actionId,
+        checked
+      ) => childContextMenuRequest.current(childItemId, actionId, checked),
+      onContextMenuAction: (_itemId, actionId, checked) =>
+        contextMenuRequest.current(itemId, actionId, checked)
+    })
+    pinnedThreadChildLevels.set(thread.id, created)
+    return created
+  }, [
+    hideSensitiveContent,
+    model.threadStatusSummaries,
+    pinnedThreadChildLevels,
+    pinnedThreadIds,
+    visibleThreadCommitments
+  ])
+
+  const pinnedThreadIdForLevel = useCallback((
+    level: ContextualSidebarLevelBase
+  ): number | null => {
+    for (const [threadId, candidate] of pinnedThreadChildLevels) {
+      if (candidate === level) return threadId
+    }
+    return null
+  }, [pinnedThreadChildLevels])
+
+  function restoreFocusRoot(itemId = 'overall'): void {
+    navigation.replaceRoot(focusLevel, itemId)
+  }
+
+  function activePinnedThreadLevel(
+    parent: CommitmentParent
+  ): ContextualSidebarLevel | null {
+    if (parent.type !== 'thread') return null
+    const level = pinnedThreadChildLevels.get(parent.id) ?? null
+    return level && navigation.root === level ? level : null
+  }
+
   function commitmentParentForLevel(
     level: ContextualSidebarLevel
   ): CommitmentParent | null {
@@ -849,6 +922,31 @@ export function FocusWorkspace({
         )
       )
     }
+    for (const [threadId, level] of pinnedThreadChildLevels) {
+      const thread = visibleThreadRecords.find(({ id }) => id === threadId)
+      if (!thread) continue
+      level.setItems(pinnedThreadContextSidebarItems(
+        thread,
+        model.threadStatusSummaries[threadId],
+        visibleThreadCommitments[threadId] ?? [],
+        hideSensitiveContent,
+        pinnedThreadIds.has(threadId)
+      ))
+    }
+    const activePinnedThreadId = pinnedThreadIdForLevel(navigation.root)
+    const activePinnedThread = activePinnedThreadId === null
+      ? null
+      : visibleThreadRecords.find(({ id }) => id === activePinnedThreadId) ?? null
+    if (
+      activePinnedThreadId !== null &&
+      (!activePinnedThread || !pinnedThreadIds.has(activePinnedThreadId))
+    ) {
+      navigation.replaceRoot(
+        focusLevel,
+        activePinnedThread ? threadSidebarItemId(activePinnedThread.id) : 'overall'
+      )
+      return
+    }
     navigation.refresh()
   }, [
     focusCommitmentsLevel,
@@ -867,6 +965,8 @@ export function FocusWorkspace({
     hideSensitiveContent,
     navigation,
     pinnedThreadIds,
+    pinnedThreadChildLevels,
+    pinnedThreadIdForLevel,
     threadCommitmentLevels
   ])
 
@@ -899,10 +999,31 @@ export function FocusWorkspace({
       if (!commitment) return
     }
 
-    navigation.reset()
     const threadIsInSidebar = thread
       ? visibleThreadRecords.some(({ id }) => id === thread.id)
       : false
+    if (
+      thread &&
+      threadIsInSidebar &&
+      destination.commitmentId === null &&
+      destination.contextualMode === 'children'
+    ) {
+      const level = pinnedThreadChildLevelFor(thread)
+      level.setItems(pinnedThreadContextSidebarItems(
+        thread,
+        model.threadStatusSummaries[thread.id],
+        visibleThreadCommitments[thread.id] ?? [],
+        hideSensitiveContent,
+        pinnedThreadIds.has(thread.id)
+      ))
+      navigation.replaceRoot(level, threadSidebarItemId(thread.id))
+      onSelectedSubjectChange(destination.subjectId)
+      appliedDestinationRequest.current = destination.requestId
+      onDestinationApplied?.(destination.requestId)
+      return
+    }
+
+    navigation.replaceRoot(focusLevel)
     if (thread && !threadIsInSidebar) {
       navigation.select('overall')
       onSelectedSubjectChange(destination.subjectId)
@@ -922,19 +1043,6 @@ export function FocusWorkspace({
     }
     queueMicrotask(() => setStandaloneThreadRoute(null))
     const parentItemId = contextItemIdForCommitmentParent(parent)
-    if (
-      thread &&
-      destination.commitmentId === null &&
-      destination.contextualMode === 'children'
-    ) {
-      // This route intentionally targets the generic child level. Its current
-      // adapter exposes Commitments; Routines can join without changing pins.
-      navigation.navigateToPath(commitmentsLevelFor(parent))
-      onSelectedSubjectChange(destination.subjectId)
-      appliedDestinationRequest.current = destination.requestId
-      onDestinationApplied?.(destination.requestId)
-      return
-    }
     if (destination.commitmentId === null) {
       navigation.select(parentItemId)
     } else {
@@ -965,14 +1073,17 @@ export function FocusWorkspace({
     onDestinationApplied?.(destination.requestId)
   }, [
     destination,
-    commitmentsLevelFor,
     focus.id,
+    focusLevel,
     focus.sensitive,
     hideSensitiveContent,
     model.threads,
+    model.threadStatusSummaries,
     navigation,
     onDestinationApplied,
     onSelectedSubjectChange,
+    pinnedThreadChildLevelFor,
+    pinnedThreadIds,
     visibleFocusCommitments,
     visibleThreadCommitments,
     visibleThreadRecords
@@ -994,8 +1105,11 @@ export function FocusWorkspace({
   const levelCommitmentParent = commitmentParentForLevel(
     navigationSnapshot.level as ContextualSidebarLevel
   )
+  const childProjectionIsActive =
+    navigationSnapshot.level === focusLevel ||
+    pinnedThreadIdForLevel(navigationSnapshot.level) !== null
   const childCommitmentParent =
-    navigationSnapshot.level === focusLevel &&
+    childProjectionIsActive &&
     navigationSnapshot.selectedChild &&
     !navigationSnapshot.selectedChild.childItemId.startsWith('routine:')
       ? commitmentParentForContextItem(
@@ -1372,8 +1486,7 @@ export function FocusWorkspace({
     if (routeUsesThread) {
       setStandaloneCommitmentRoute(null)
       setStandaloneThreadRoute(null)
-      navigation.reset()
-      navigation.select('overall')
+      restoreFocusRoot('overall')
     }
     try {
       await onRefreshStatusSummary()
@@ -1558,10 +1671,28 @@ export function FocusWorkspace({
         pinnedThreadIds
       )
     )
-    if (navigation.getSnapshot().level === level) {
+    const pinnedLevel = activePinnedThreadLevel(created.parent)
+    if (pinnedLevel && created.parent.type === 'thread') {
+      const thread = visibleThreadRecords.find(({ id }) => id === created.parent.id)
+      if (thread) {
+        pinnedLevel.setItems(pinnedThreadContextSidebarItems(
+          thread,
+          model.threadStatusSummaries[thread.id],
+          nextCommitments,
+          hideSensitiveContent,
+          pinnedThreadIds.has(thread.id)
+        ))
+      }
+      navigation.refresh()
+      navigation.selectChild(
+        contextItemIdForCommitmentParent(created.parent),
+        'commitments',
+        String(created.id)
+      )
+    } else if (navigation.getSnapshot().level === level) {
       navigation.navigateToPath(level, String(created.id))
     } else {
-      navigation.reset()
+      restoreFocusRoot()
       navigation.selectChild(
         contextItemIdForCommitmentParent(created.parent),
         'commitments',
@@ -1688,6 +1819,22 @@ export function FocusWorkspace({
   function drillIntoCommitments(parent: CommitmentParent): void {
     setStandaloneCommitmentRoute(null)
     setStandaloneThreadRoute(null)
+    const pinnedLevel = activePinnedThreadLevel(parent)
+    if (pinnedLevel) {
+      const firstCommitment = buildCommitmentListModel(
+        visibleCommitmentsFor(parent)
+      ).current[0]
+      if (firstCommitment) {
+        navigation.selectChild(
+          contextItemIdForCommitmentParent(parent),
+          'commitments',
+          String(firstCommitment.id)
+        )
+      } else {
+        navigation.select(contextItemIdForCommitmentParent(parent))
+      }
+      return
+    }
     const level = commitmentsLevelFor(parent)
     level.setItems(
       commitmentContextSidebarItems(visibleCommitmentsFor(parent))
@@ -1700,11 +1847,16 @@ export function FocusWorkspace({
     commitmentId: number
   ): void {
     setStandaloneThreadRoute(null)
-    navigation.reset()
     const parentItemId = contextItemIdForCommitmentParent(parent)
     const isCurrent = buildCommitmentListModel(
       visibleCommitmentsFor(parent)
     ).current.some(({ id }) => id === commitmentId)
+    const pinnedLevel = activePinnedThreadLevel(parent)
+    if (pinnedLevel && isCurrent) {
+      navigation.selectChild(parentItemId, 'commitments', String(commitmentId))
+      return
+    }
+    if (!pinnedLevel) restoreFocusRoot()
     if (isCurrent) {
       navigation.selectChild(parentItemId, 'commitments', String(commitmentId))
       return
@@ -1714,7 +1866,10 @@ export function FocusWorkspace({
   }
 
   function openRoutine(parent: CommitmentParent, routineId: number): void {
-    navigation.reset()
+    // The pinned Thread projection currently exposes tracking Commitments only.
+    // Routines can join the same generic child collection later; until then,
+    // opening one returns to the ordinary Focus hierarchy first.
+    restoreFocusRoot()
     navigation.selectChild(
       contextItemIdForCommitmentParent(parent),
       'commitments',
@@ -2156,7 +2311,7 @@ export function FocusWorkspace({
               onOpenThread={(threadId) => {
                 setStandaloneCommitmentRoute(null)
                 onSelectedSubjectChange(null)
-                navigation.reset()
+                restoreFocusRoot()
                 const threadIsInSidebar = visibleThreadRecords.some(({ id }) => id === threadId)
                 if (threadIsInSidebar) {
                   setStandaloneThreadRoute(null)

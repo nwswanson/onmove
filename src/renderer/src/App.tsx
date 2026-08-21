@@ -562,15 +562,19 @@ export function App(): React.JSX.Element {
               if (!pin) return
               setTagsDestination(null)
               if (pin.target.type === 'focus') {
-                setFocusDestination(null)
-                application.selectFocus(pin.target.id)
+                openWorkContext({
+                  focusId: pin.target.id,
+                  threadId: null,
+                  commitmentId: null,
+                  subjectId: focusSubjectSelections[pin.target.id] ?? null
+                })
                 return
               }
               openWorkContext({
                 focusId: pin.target.focusId,
                 threadId: pin.target.id,
                 commitmentId: null,
-                subjectId: null,
+                subjectId: focusSubjectSelections[pin.target.focusId] ?? null,
                 contextualMode: 'children'
               })
             }}
@@ -588,8 +592,13 @@ export function App(): React.JSX.Element {
               }
             }}
             onSelectFocus={(focusId) => {
-              setFocusDestination(null)
-              application.selectFocus(Number(focusId))
+              const numericFocusId = Number(focusId)
+              openWorkContext({
+                focusId: numericFocusId,
+                threadId: null,
+                commitmentId: null,
+                subjectId: focusSubjectSelections[numericFocusId] ?? null
+              })
             }}
             onFocusContextMenuAction={(focusId, actionId, checked) => {
               if (typeof checked !== 'boolean') return

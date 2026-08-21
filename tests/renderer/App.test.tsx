@@ -718,9 +718,19 @@ describe('App', () => {
     expect(screen.queryByText('Pinned')).not.toBeInTheDocument()
   })
 
-  it('opens a pinned Thread directly in its generic child drilldown', async () => {
+  it('opens a pinned Thread on its parentless Overview projection without selecting a Commitment', async () => {
     const currentFocus = focus({ id: 1, title: 'Project Atlas' })
     const currentThread = thread({ id: 21, focusId: 1, title: 'Sprint execution' })
+    const firstCommitment = commitment({
+      id: 31,
+      parent: { type: 'thread', id: currentThread.id },
+      title: 'Improve ticket quality'
+    })
+    const secondCommitment = commitment({
+      id: 32,
+      parent: { type: 'thread', id: currentThread.id },
+      title: 'Publish the weekly plan'
+    })
     const pins: NavigationPinSnapshot[] = [{
       target: { type: 'thread', id: currentThread.id, focusId: currentFocus.id },
       title: currentThread.title,
@@ -733,7 +743,11 @@ describe('App', () => {
     installApi(
       {
         listFocuses: vi.fn().mockResolvedValue([currentFocus]),
-        listThreads: vi.fn().mockResolvedValue([currentThread])
+        listThreads: vi.fn().mockResolvedValue([currentThread]),
+        listCommitments: vi.fn(async (parent) =>
+          parent.type === 'thread' && parent.id === currentThread.id
+            ? [firstCommitment, secondCommitment]
+            : [])
       },
       {
         navigationPins: {
@@ -749,9 +763,26 @@ describe('App', () => {
     await user.click(await screen.findByRole('button', {
       name: 'Sprint execution, pinned Thread'
     }))
-    expect(await screen.findByRole('navigation', { name: 'Thread commitments' })).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Back to Focus sections' })).toBeVisible()
-    expect(screen.getByRole('heading', { name: 'Commitments' })).toBeVisible()
+    const contextual = await screen.findByRole('navigation', {
+      name: 'Pinned Thread children'
+    })
+    expect(screen.queryByRole('button', { name: /^Back to/ })).not.toBeInTheDocument()
+    expect(within(contextual).getByRole('button', {
+      name: 'Sprint execution overview'
+    })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('heading', { name: 'Sprint execution' })).toBeVisible()
+
+    const secondCommitmentButton = within(contextual).getByRole('button', {
+      name: 'Open Sprint execution commitment Publish the weekly plan'
+    })
+    expect(secondCommitmentButton).not.toHaveAttribute('aria-current')
+    await user.click(secondCommitmentButton)
+    expect(await screen.findByRole('heading', { name: 'Publish the weekly plan' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: /^Back to/ })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Project Atlas' }))
+    expect(await screen.findByRole('navigation', { name: 'Focus sections' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Project Atlas' })).toBeVisible()
   })
 
   it('pins a Thread from its contextual row and reflects checked state', async () => {
