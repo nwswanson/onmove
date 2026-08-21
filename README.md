@@ -135,7 +135,8 @@ For the initial lookup, omit `continuationToken` or explicitly send `null`; neve
 ```
 
 Only reuse the exact non-null token from an OnMove response, and send it as the only argument on the
-next-page call. The signed token preserves the complete query and stable cursor. A named Subject result includes
+next-page call. The signed token preserves the complete query, stable cursor, and search-index
+generation. If live edits cause `SEARCH_CURSOR_STALE`, restart the same search without the token. A named Subject result includes
 `namedSubjectDiscovery`, which puts the canonical Subject ID and every applicable Focus/Thread path
 beside ready `review_subject` arguments. Selectors use either an ID or a title/name, never both.
 
@@ -159,8 +160,11 @@ return attributed records plus currently applicable hierarchy paths. `createdAt`
 accept the same inclusive local-date range along with an IANA `timeZone`. If an Update was
 created in the wrong place, `onmove.reparent_update` moves that existing record without replacing
 its rich text, revision, date, state, or sensitivity. Its response also supplies an undo request.
-Search pages default to ten records, return explicit `hasMore`, honor `page.maxBytes`, and provide a
-signed continuation token only when another page exists. Use `onmove.get_updates_by_ids` to hydrate several
+Search pages default to ten records, return explicit `hasMore`, and provide a signed continuation
+token only when another primary page exists. `page.maxBytes` budgets the complete MCP result—not
+just its structured half—and has an 8 KiB minimum. The `projections` metadata separately reports
+whether primary records, Subject uses, and hierarchy paths are complete. Search snippets and
+queryless previews are capped at 200 characters. Use `onmove.get_updates_by_ids` to hydrate several
 returned Update IDs in one call. Its default 32 KiB response budget returns records that did not fit
 as `omittedIds` for a later bounded call.
 
@@ -177,10 +181,9 @@ Focus descriptions and existing Update observations expose the same safety model
 `descriptionWriteGuide` or `observationWriteGuide`. Use `onmove.patch_rich_text` for exact localized
 changes and `onmove.update_rich_text` only for structural replacement. Full-document tools accept
 the document only through the root-level `richText` field; there is no `document` compatibility
-alias. Do not expand rich text during ordinary search. If discovery itself must immediately feed a
-full structural replacement, explicitly acknowledge it with
-`projection: { "richText": true, "richTextPurpose": "structural-replacement" }`; otherwise use the
-compact Markdown result and re-read only the selected ID with `includeRichText: true` if necessary.
+alias. Search never expands lossless rich text: it returns only compact snippets and metadata. Read
+the selected ID directly with `includeRichText: true` only when a complete structural replacement
+actually requires the lossless document.
 
 See [`docs/mcp-server.md`](docs/mcp-server.md) for the available tools, search behavior, and security
 boundary.

@@ -788,7 +788,7 @@ foreground colors and do not rely on color alone to communicate selection or sta
   text matching alone. A null or omitted `text` performs a queryless record list selected by
   `kinds`, named scope, and structured date predicates; it must never invent an FTS term. Control
   auxiliary output through one receiver-owned `projection` object with `hierarchy`, `subjects`,
-  `scopes`, and `richText` booleans. Never restore the overlapping `includeThreads`,
+  and `scopes` booleans. Search never hydrates rich text. Never restore the overlapping `includeThreads`,
   `includeCommitments`, `includeSubjects`, `includeScopes`, or `view=hierarchy-only` controls.
   Records are the stable primary result; projections may add their containing IDs and bounded
   applicability paths without recursively multiplying unrelated descendants. A Subject-name match
@@ -797,19 +797,21 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - Make Subject-first discovery the default agent workflow whenever the user's request names a
   person or other canonical Subject. Search the specific name before generic hierarchy labels;
   treat returned `subjectUses` as authoritative for attributed records. When relevant uses exist,
-  return `searchStatus.sufficient=true` and `doNotBroaden=true` with textual instructions to stop
-  discovery and fetch those record IDs directly. Never encourage a second global search for a
-  generic Thread/Commitment term after a sufficient Subject match.
+  return `doNotBroaden=true` with textual instructions to stop global discovery and fetch those
+  record IDs directly. Set `sufficient=true` only when every requested auxiliary projection needed
+  for that result is complete; otherwise instruct the caller to continue within the returned
+  Subject boundary. Never encourage a second global search for a generic Thread/Commitment term.
 - Make `continuationToken` optional and nullable. An initial search must omit it or send null, and
   tool instructions must explicitly forbid inventing or synthesizing a value. Decode and reject
   only a supplied non-null token; follow-ups may use only the exact opaque token returned by
   OnMove. Sign every token and preserve the complete immutable request: text, all three local-date
-  predicates, timezone, named scope, sort, kinds, projection, page size, byte budget, and stable
-  `(sort value, source key)` cursor. A next-page request contains only that token; reject sibling
+  predicates, timezone, named scope, sort, kinds, projection, page size, byte budget, stable
+  `(sort value, source key)` cursor, and durable index generation. A next-page request contains only that token; reject sibling
   filters rather than ambiguously merging them. Return explicit `hasMore`; return no token when the
-  bounded query is complete. Deliberate query or scope changes start a fresh request.
+  bounded query is complete. Reject a token after a live index rebuild with
+  `SEARCH_CURSOR_STALE`. Deliberate query or scope changes start a fresh request.
 - Keep search output bounded and purpose-specific. Default to ten records and cap a requested page
-  at 25. Enforce the caller's structured-response byte budget by dropping optional projection data
+  at 25. Enforce the caller's complete MCP-result byte budget by dropping optional projection data
   before shortening the record page, and emit a token from the last record actually returned.
   Never return an unbounded hierarchy fanout merely because one Subject or parent matched.
 - Expose `date`, `createdAt`, and `updatedAt` on every search record. `date` is the Update's recorded
@@ -956,12 +958,22 @@ foreground colors and do not rely on color alone to communicate selection or sta
   across the running HTTP endpoint with bounded state; the third unchanged failure must explicitly
   identify persistent payload features and tell the caller what to change instead of enabling a
   blind retry loop.
-- Do not make lossless rich text attractive during discovery. Search projections default to no
-  rich text, and `richText=true` must also require
-  `richTextPurpose="structural-replacement"`; reject the unacknowledged expansion. Use it only when
-  discovery itself is immediately followed by complete structural replacement. Ordinary reading,
-  review, summarization, link inspection, and semantic patches use compact Markdown. Once an ID is
-  known, prefer one `get_*_by_id(includeRichText=true)` over expanding every search hit.
+- Never return lossless rich text from any search tool. Search owns bounded plain-text match
+  snippets and compact identity/context metadata only. Reject `richText` and `richTextPurpose` as
+  unknown search projection fields. Ordinary reads use compact Markdown; only a direct getter for
+  one selected durable ID may accept `includeRichText=true`, immediately before a complete
+  structural replacement.
+- Keep search result volume truthful and bounded. Full-text snippets and queryless previews are at
+  most 200 characters. Every search advertises a typed output schema, defaults to ten records, caps
+  pages at 25, and enforces `page.maxBytes` against the complete MCP result (both textual and
+  structured copies), with an 8 KiB minimum. Return separate completeness metadata for primary
+  records, Subject uses, and hierarchy paths; a complete primary page must never imply that a
+  truncated auxiliary projection is exhaustive.
+- Sign continuation tokens over the full query, stable record cursor, and durable search-index
+  generation. If live writes rebuild the index between pages, return `SEARCH_CURSOR_STALE` and tell
+  the client to restart the same search without the token. Never continue against a changed index.
+  For natural-language discovery, remove only a conservative stop-word set so a request such as
+  “what has Michael been doing” searches for Michael rather than generic wrapper terms.
 - Keep Update hydration free of agent-visible N+1 calls. `onmove.get_updates_by_ids` accepts up to 50
   Update IDs, performs one bounded repository read, defaults to Markdown without lossless documents,
   and enforces a response byte budget. Return trailing records that do not fit as `omittedIds` with

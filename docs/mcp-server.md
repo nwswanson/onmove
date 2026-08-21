@@ -364,19 +364,22 @@ hierarchy lookup. If
 directly; do not search globally for a generic parent label. A paged search response includes an
 opaque `continuationToken` only when another page exists. The token is signed and preserves the complete
 request: text, all local-date filters, timezone, scope, sort, kinds, projection, page size, byte
-budget, and stable cursor. Send only that token on the next-page call; changing the query or scope
-starts a new search. Broaden only when the user requests all people or all records.
+budget, stable cursor, and durable search-index generation. Send only that token on the next-page
+call; changing the query or scope starts a new search. A live write between pages returns
+`SEARCH_CURSOR_STALE`; restart the same search without the old token. Broaden only when the user
+requests all people or all records.
 
 Search always returns records. Compact responses default to ten records and cap pages at 25. One
-`projection` object controls optional `hierarchy`, `subjects`, and `scopes` output. Leave `richText`
-omitted for discovery, reading, review, link inspection, and semantic patches. The exceptional
-`richText: true` projection is accepted only with
-`richTextPurpose: "structural-replacement"` when discovery itself immediately precedes a complete
-document replacement.
+`projection` object controls optional `hierarchy`, `subjects`, and `scopes` output. Search does not
+accept a rich-text projection and never returns a lossless document.
 Search `snippet` values are deliberately bounded plain-text match excerpts, not full content
-renderings. Once a record is selected, its compact ID/path getter returns the readable Markdown.
-Optional projections are reduced before the record page when necessary to honor `page.maxBytes`;
-every response reports `hasMore` and its measured structured-response byte count.
+renderings; queryless previews use the same 200-character ceiling. Once a record is selected, its
+compact ID/path getter returns readable Markdown. Optional projections are reduced before the
+record page when necessary to honor `page.maxBytes`. That budget applies to the complete MCP result,
+including both its textual and structured copies, and has an 8 KiB minimum. `projections.primary`,
+`projections.subjectUses`, and `projections.hierarchy` each report returned count, known total,
+completeness, and byte-budget truncation independently. `hasMore` and the continuation token refer
+only to the primary record page; never infer auxiliary completeness from them.
 
 For “what has Michael been doing in the 1:1s Thread?”, call `onmove.review_subject` with the exact
 Subject and Thread selectors. It resolves that intersection and returns Subject-attributed Updates
@@ -400,14 +403,16 @@ degradation in `diagnostics.warnings`.
 For a localized text mutation, use the compact Markdown and revision with the semantic patch tool;
 it preserves surrounding links and formatting without sending the AST. For full structural
 replacement, first resolve the target, then call its by-ID/path getter with `includeRichText: true`.
-Only when that target cannot be selected before expansion should search use
-`projection: { "richText": true, "richTextPurpose": "structural-replacement" }`.
+Search is intentionally not a fallback document hydration path.
 
 Set `text` to `null` (or omit it) for a queryless list. Filter records with `kinds`, named `scope`,
 or structured `date`, `createdAt`, and `updatedAt` ranges rather than dummy search text. `date`
 means an Update's recorded local date or a dated entity's due date. Creation and modification
 instants use inclusive local-calendar ranges interpreted through the request's IANA `timeZone`.
 All search records expose `date`, `createdAt`, and `updatedAt`.
+Natural-language wrappers use a conservative stop-word pass: a query such as “what has Michael been
+doing” retains Michael as the effective FTS term. This is deterministic lexical planning, not an
+embedding or general-language query engine.
 
 Use `onmove.get_updates_by_ids({ ids: [...] })` to hydrate up to 50 known Update IDs in one bounded
 read. It defaults to Markdown without lossless documents and enforces a 32 KiB response budget

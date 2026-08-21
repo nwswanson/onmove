@@ -134,11 +134,10 @@ interface SearchProjectionInput {
   hierarchy: boolean
   subjects: boolean
   scopes: boolean
-  richText: boolean
 }
 
 interface SearchContinuationPayload {
-  version: 2
+  version: 3
   text: string | null
   query: Pick<SearchQuery, 'focusId' | 'threadId' | 'subjectId'>
   appliedScope: AppliedSearchScope
@@ -151,11 +150,12 @@ interface SearchContinuationPayload {
   projection: SearchProjectionInput
   pageSize: number
   maxBytes: number
+  indexGeneration: number
   /** Null is valid only for a preconfigured first page emitted by another MCP tool. */
   cursor: SearchPageCursor | null
 }
 
-const SEARCH_CONTINUATION_PREFIX = 'onmove-search-v2.'
+const SEARCH_CONTINUATION_PREFIX = 'onmove-search-v3.'
 const SEARCH_CONTINUATION_SECRET = randomBytes(32)
 
 function encodeSearchContinuation(payload: SearchContinuationPayload): string {
@@ -189,7 +189,7 @@ function decodeSearchContinuation(token: string): SearchContinuationPayload {
     const query = parsed.query
     const appliedScope = parsed.appliedScope
     if (
-      parsed.version !== 2 || !query || !appliedScope || !parsed.projection ||
+      parsed.version !== 3 || !query || !appliedScope || !parsed.projection ||
       !parsed.sort || parsed.cursor === undefined ||
       (typeof parsed.text !== 'string' && parsed.text !== null) ||
       !['all', 'focus', 'thread', 'subject', 'current'].includes(appliedScope.mode) ||
@@ -198,7 +198,8 @@ function decodeSearchContinuation(token: string): SearchContinuationPayload {
       typeof parsed.timeZone !== 'string' || parsed.timeZone.length === 0 ||
       !Number.isSafeInteger(parsed.pageSize) || Number(parsed.pageSize) < 1 ||
       Number(parsed.pageSize) > 25 || !Number.isSafeInteger(parsed.maxBytes) ||
-      Number(parsed.maxBytes) < 4_096 || Number(parsed.maxBytes) > 131_072 ||
+      Number(parsed.maxBytes) < 8_192 || Number(parsed.maxBytes) > 131_072 ||
+      !Number.isSafeInteger(parsed.indexGeneration) || Number(parsed.indexGeneration) < 0 ||
       (parsed.cursor !== null && (
         typeof parsed.cursor.sourceKey !== 'string' || parsed.cursor.sourceKey.length === 0 ||
         !['string', 'number'].includes(typeof parsed.cursor.sortValue)
@@ -521,74 +522,6 @@ function withFocusDescriptionWriteGuide(value: unknown): unknown {
       )
     }
   }
-}
-
-function searchableRichText(
-  database: AppDatabase,
-  value: SearchResult,
-  access: ReturnType<AppDatabase['mcpSettings']['accessPolicy']>
-): Record<string, unknown> | null {
-  if (value.reference.type === 'focus') {
-    const context = record(withFocusDescriptionWriteGuide(database.queries.getFocus(
-      value.reference.id,
-      access,
-      { includeRichText: true }
-    )))
-    const entity = record(context?.entity)
-    if (!entity || !Number.isSafeInteger(entity.descriptionRevision) ||
-        !('descriptionRichText' in entity)) return null
-    return {
-      kind: 'focus-description',
-      target: { type: 'focus-description', focusId: value.reference.id },
-      markdown: entity.description ?? '',
-      format: entity.descriptionFormat ?? 'markdown',
-      richText: entity.descriptionRichText,
-      revision: entity.descriptionRevision,
-      writeGuide: entity.descriptionWriteGuide
-    }
-  }
-  if (value.reference.type === 'update') {
-    const context = record(withUpdateContextWriteGuide(database.queries.getUpdate(
-      value.reference.id,
-      access,
-      { includeRichText: true }
-    )))
-    const contextWarnings = Array.isArray(context?.warnings)
-      ? context.warnings.filter((warning): warning is string => typeof warning === 'string')
-      : []
-    if (contextWarnings.length > 0) throw new Error(contextWarnings.join(' '))
-    const update = record(context?.update)
-    if (!update || !Number.isSafeInteger(update.observationRevision) ||
-        !('observationRichText' in update)) return null
-    return {
-      kind: 'update-observation',
-      target: { type: 'update-observation', updateId: value.reference.id },
-      markdown: update.observation ?? '',
-      format: update.observationFormat ?? 'markdown',
-      richText: update.observationRichText,
-      revision: update.observationRevision,
-      writeGuide: update.observationWriteGuide
-    }
-  }
-  if (value.reference.type === 'note') {
-    const context = record(withNoteWriteGuide(database.queries.getNote(
-      value.reference.id,
-      access,
-      { includeRichText: true }
-    )))
-    const note = record(context?.note)
-    if (!note || !Number.isSafeInteger(note.revision) || !('richText' in note)) return null
-    return {
-      kind: 'note-content',
-      target: { type: 'note-content', noteId: value.reference.id },
-      markdown: note.content ?? '',
-      format: note.contentFormat ?? 'markdown',
-      richText: note.richText,
-      revision: note.revision,
-      writeGuide: context?.writeGuide
-    }
-  }
-  return null
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -972,9 +905,16 @@ function result(value: unknown, diagnostics: McpDiagnostics = diagnosticsScope()
     ? { ...(value as Record<string, unknown>), diagnostics }
     : { items: value, diagnostics }
   return {
-    content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
+    // MCP clients commonly retain both content and structuredContent. Compact JSON avoids
+    // needlessly doubling whitespace in the model context while preserving identical data.
+    content: [{ type: 'text', text: JSON.stringify(structuredContent) }],
     structuredContent
   }
+}
+
+/** Measures the complete MCP tool result, including duplicated text and structured payloads. */
+function resultPayloadBytes(value: unknown, diagnostics: McpDiagnostics): number {
+  return Buffer.byteLength(JSON.stringify(result(value, diagnostics)), 'utf8')
 }
 
 function entityReadDiagnostics(value: unknown): McpDiagnostics {
@@ -1701,7 +1641,7 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Choose reads by intent. For a compact queryless inventory use list_focuses, list_threads, list_commitments, or list_routines; these return hierarchy and one explicit projection row per applicable Subject without child Updates, Notes, or rich-text documents. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Do not request richText for discovery, review, summarization, or semantic text patches. Request includeRichText=true on one known entity only immediately before a full structural replacement. Search richText is an exceptional fallback and requires projection.richTextPurpose=structural-replacement. Use onmove.search only for cross-kind discovery, queryless structured listing, or Subject hierarchy projection. INITIAL SEARCH: send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility and omit continuationToken. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Use projection={hierarchy,subjects,scopes}; omitted projection fields are false. Never invent or alter a continuationToken. A next-page request sends only the exact non-null signed token, which preserves the complete query and cursor. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop discovery and fetch returned IDs directly. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and View/Edit grants by resource, Focus, and Thread.'
+        'Choose reads by intent. For a compact queryless inventory use list_focuses, list_threads, list_commitments, or list_routines; these return hierarchy and one explicit projection row per applicable Subject without child Updates, Notes, or rich-text documents. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Search never returns lossless rich text. Request includeRichText=true on one known entity only immediately before a full structural replacement. Use onmove.search only for cross-kind discovery, queryless structured listing, or Subject hierarchy projection. INITIAL SEARCH: send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility and omit continuationToken. Natural-language wrappers retain meaningful entity terms. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Use projection={hierarchy,subjects,scopes}; omitted projection fields are false. Inspect projections.*.complete before treating auxiliary paths or Subject uses as exhaustive. Never invent or alter a continuationToken. A next-page request sends only the exact non-null signed token, which preserves the complete query and cursor; if SEARCH_CURSOR_STALE is returned, restart without it. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop global discovery and fetch returned IDs or continue only inside the returned boundary. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and View/Edit grants by resource, Focus, and Thread.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -2199,28 +2139,16 @@ export function createOnMoveMcpServer(
     ),
     scopes: z.boolean().optional().describe(
       'Include bounded Scope metadata on applicable Subject paths.'
-    ),
-    richText: z.boolean().optional().describe(
-      'Expensive opt-in. Leave false/omitted for discovery and ordinary reads; Markdown is returned by direct compact reads. Set true only immediately before a full structural replacement, together with richTextPurpose=structural-replacement.'
-    ),
-    richTextPurpose: z.literal('structural-replacement').optional().describe(
-      'Required acknowledgment when richText=true. Do not send for searching, reviewing, summarizing, semantic text patches, or link inspection that does not modify the complete document.'
     )
-  }).refine(
-    ({ richText, richTextPurpose }) => richText !== true || richTextPurpose === 'structural-replacement',
-    {
-      message: 'richText=true is allowed only with richTextPurpose=structural-replacement; omit richText for discovery and compact Markdown reads.',
-      path: ['richTextPurpose']
-    }
-  ).optional().describe(
-    'Response projection. Omitted fields default false. Example: {hierarchy:true,subjects:true,scopes:false,richText:false}.'
+  }).optional().describe(
+    'Compact response projection. Omitted fields default false. Search never returns lossless rich-text documents; use a direct get-by-ID tool with includeRichText=true only before a structural replacement.'
   )
   const searchPageSchema = z.strictObject({
     size: z.number().int().min(1).max(25).optional().describe(
       'Maximum records in this page. Defaults to 10 and never exceeds 25.'
     ),
-    maxBytes: z.number().int().min(4_096).max(131_072).optional().describe(
-      'Hard structured-response UTF-8 byte budget. Defaults to 32768. Oversized auxiliary projections are removed before records.'
+    maxBytes: z.number().int().min(8_192).max(131_072).optional().describe(
+      'Hard UTF-8 budget for the complete MCP tool result, including both text and structuredContent. Defaults to 32768; the minimum practical envelope is 8192. Oversized auxiliary projections are removed before records.'
     )
   }).optional()
 
@@ -2230,22 +2158,12 @@ export function createOnMoveMcpServer(
     ),
     subjects: z.boolean().optional().describe(
       'Include direct canonical Subject attribution on matching records when present.'
-    ),
-    richText: z.boolean().optional().describe(
-      'Expensive opt-in. Leave false/omitted for discovery. Set true only immediately before a full structural replacement, together with richTextPurpose=structural-replacement.'
-    ),
-    richTextPurpose: z.literal('structural-replacement').optional().describe(
-      'Required acknowledgment when richText=true; ordinary search and semantic patches do not need lossless documents.'
     )
-  }).refine(
-    ({ richText, richTextPurpose }) => richText !== true || richTextPurpose === 'structural-replacement',
-    {
-      message: 'richText=true is allowed only with richTextPurpose=structural-replacement; omit richText for discovery.',
-      path: ['richTextPurpose']
-    }
-  ).optional().describe('Optional fields to add to each record. Omitted fields default false.')
+  }).optional().describe(
+    'Optional compact metadata. Search results never include lossless rich text; fetch one chosen ID directly if a structural edit requires it.'
+  )
   const entitySearchSchema = z.strictObject({
-    text: z.string().min(1).optional().describe(
+    text: z.string().min(1).max(1_000).optional().describe(
       'Required on an initial call: the literal text to discover within this entity kind. Omit only when sending a returned continuationToken.'
     ),
     scope: searchScopeSchema,
@@ -2264,6 +2182,153 @@ export function createOnMoveMcpServer(
     continuationToken: z.string().min(1).nullable().optional().describe(
       'Initial call: omit or null. Next page: send only this exact signed token and omit every other field.'
     )
+  })
+
+  const searchReferenceOutputSchema = z.strictObject({
+    type: z.enum(SEARCH_ENTITY_TYPES),
+    id: z.number().int().positive()
+  })
+  const searchEntityReferenceOutputSchema = z.strictObject({
+    id: z.number().int().positive(),
+    title: z.string()
+  }).nullable()
+  const searchRecordOutputSchema = z.looseObject({
+    reference: searchReferenceOutputSchema,
+    uri: z.string(),
+    field: z.string(),
+    title: z.string(),
+    snippet: z.string().max(200),
+    rank: z.number(),
+    effectiveSensitive: z.boolean(),
+    date: z.string().nullable(),
+    createdAt: z.string(),
+    updatedAt: z.string(),
+    contextPath: z.array(z.string()).optional(),
+    hierarchy: z.strictObject({
+      focus: searchEntityReferenceOutputSchema,
+      thread: searchEntityReferenceOutputSchema,
+      commitment: searchEntityReferenceOutputSchema
+    }).optional(),
+    subject: z.strictObject({ id: z.number().int().positive(), name: z.string() })
+      .nullable().optional()
+  })
+  const searchStatusOutputSchema = z.strictObject({
+    sufficient: z.boolean(),
+    doNotBroaden: z.boolean(),
+    reason: z.string(),
+    nextAction: z.string()
+  })
+  const searchBudgetOutputSchema = z.strictObject({
+    maxBytes: z.number().int(),
+    responseBytes: z.number().int(),
+    structuredBytes: z.number().int(),
+    estimatedToolResultBytes: z.number().int(),
+    recordsTruncated: z.boolean(),
+    projectionTruncated: z.boolean()
+  })
+  const diagnosticsOutputSchema = z.looseObject({
+    appliedScope: z.object({
+      requestedMode: z.enum(['all', 'focus', 'thread', 'subject', 'current']),
+      mode: z.enum(['all', 'focus', 'thread', 'subject', 'current']),
+      focusId: z.number().int().positive().nullable(),
+      threadId: z.number().int().positive().nullable(),
+      subjectId: z.number().int().positive().nullable(),
+      source: z.enum(['default', 'explicit', 'current-ui']),
+      description: z.string()
+    }),
+    warnings: z.array(z.string())
+  })
+  const appliedRangeOutputSchema = z.strictObject({
+    from: dateSchema.optional(),
+    to: dateSchema.optional()
+  }).nullable()
+  const appliedSortOutputSchema = z.strictObject({
+    field: z.enum(['relevance', 'date', 'createdAt', 'updatedAt']),
+    direction: z.enum(['asc', 'desc'])
+  })
+  const appliedProjectionOutputSchema = z.strictObject({
+    hierarchy: z.boolean(),
+    subjects: z.boolean(),
+    scopes: z.boolean().optional()
+  })
+  const appliedQueryOutputSchema = z.strictObject({
+    text: z.string().nullable(),
+    kinds: z.union([z.literal('all'), z.array(z.enum(SEARCH_ENTITY_TYPES))]).optional(),
+    kind: z.enum(SEARCH_ENTITY_TYPES).optional(),
+    date: appliedRangeOutputSchema,
+    createdAt: appliedRangeOutputSchema,
+    updatedAt: appliedRangeOutputSchema,
+    timeZone: z.string(),
+    sort: appliedSortOutputSchema,
+    projection: appliedProjectionOutputSchema
+  })
+  const entitySearchOutputSchema = z.object({
+    records: z.array(searchRecordOutputSchema),
+    hasMore: z.boolean(),
+    continuationToken: z.string().nullable(),
+    searchStatus: searchStatusOutputSchema,
+    appliedQuery: appliedQueryOutputSchema,
+    budget: searchBudgetOutputSchema,
+    diagnostics: diagnosticsOutputSchema
+  })
+  const projectionCompletenessOutputSchema = z.strictObject({
+    requested: z.boolean(),
+    returned: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative().nullable(),
+    complete: z.boolean(),
+    truncatedByBudget: z.boolean()
+  })
+  const hierarchyPathOutputSchema = z.looseObject({
+    kind: z.enum(['focus', 'thread', 'commitment', 'subject']),
+    displayPath: z.string(),
+    relativePath: z.string(),
+    hierarchy: z.strictObject({
+      focus: searchEntityReferenceOutputSchema.unwrap(),
+      thread: searchEntityReferenceOutputSchema,
+      commitment: searchEntityReferenceOutputSchema
+    }),
+    subject: z.strictObject({ id: z.number().int().positive(), name: z.string() }).nullable(),
+    scope: z.looseObject({
+      id: z.number().int().positive(),
+      name: z.string(),
+      dimension: z.string(),
+      applicationMode: z.string()
+    }).nullable().optional(),
+    semanticPath: z.looseObject({}).nullable(),
+    recommendedUpdateRequest: z.unknown().nullable()
+  })
+  const namedSubjectDiscoveryOutputSchema = z.looseObject({
+    subject: z.strictObject({ id: z.number().int().positive(), name: z.string() }),
+    applicablePaths: z.array(hierarchyPathOutputSchema),
+    reviewContexts: z.array(z.unknown())
+  })
+  const hierarchyNotationOutputSchema = z.strictObject({
+    object: z.string(),
+    example: z.strictObject({
+      thread: z.string(),
+      commitment: z.string(),
+      subject: z.string()
+    }),
+    display: z.string(),
+    semantics: z.string()
+  })
+  const globalSearchOutputSchema = z.object({
+    items: z.array(searchRecordOutputSchema),
+    subjectUses: z.array(searchRecordOutputSchema),
+    namedSubjectDiscovery: z.array(namedSubjectDiscoveryOutputSchema),
+    hierarchyPaths: z.array(hierarchyPathOutputSchema),
+    hierarchyNotation: hierarchyNotationOutputSchema.optional(),
+    projections: z.strictObject({
+      primary: projectionCompletenessOutputSchema,
+      subjectUses: projectionCompletenessOutputSchema,
+      hierarchy: projectionCompletenessOutputSchema
+    }),
+    searchStatus: searchStatusOutputSchema,
+    hasMore: z.boolean(),
+    continuationToken: z.string().nullable(),
+    appliedQuery: appliedQueryOutputSchema,
+    budget: searchBudgetOutputSchema,
+    diagnostics: diagnosticsOutputSchema
   })
   type EntitySearchInput = z.infer<typeof entitySearchSchema>
   const runEntitySearch = (
@@ -2311,8 +2376,7 @@ export function createOnMoveMcpServer(
     const projection: SearchProjectionInput = continuation?.projection ?? {
       hierarchy: input.projection?.hierarchy ?? false,
       subjects: input.projection?.subjects ?? false,
-      scopes: false,
-      richText: input.projection?.richText ?? false
+      scopes: false
     }
     const pageSize = continuation?.pageSize ?? input.page?.size ?? 10
     const maxBytes = continuation?.maxBytes ?? input.page?.maxBytes ?? 32_768
@@ -2329,30 +2393,16 @@ export function createOnMoveMcpServer(
       limit: pageSize,
       ...resolved.query
     }, access)
-    const warnings = [...resolved.diagnostics.warnings]
-    if (projection.richText) {
-      warnings.push(
-        'Lossless rich text was explicitly expanded for structural replacement. Do not carry ' +
-        'these documents into unrelated discovery or review calls.'
+    if (continuation && continuation.indexGeneration !== searched.generation) {
+      throw new TypeError(
+        'SEARCH_CURSOR_STALE: OnMove data changed after this search page was created. ' +
+        'Restart the same search without continuationToken; do not reuse the stale token.'
       )
     }
+    const warnings = [...resolved.diagnostics.warnings]
     const cursors = [...searched.itemCursors]
     let records = searched.items.map((match) => {
-      let editableRichText: Record<string, unknown> | null = null
-      if (projection.richText) {
-        try {
-          editableRichText = searchableRichText(database, match, access)
-        } catch (error) {
-          warnings.push(
-            `${kind} ${match.reference.id} rich text could not be expanded; plain text was retained. ` +
-            `${error instanceof Error ? error.message : String(error)}`
-          )
-        }
-      }
-      const record: Record<string, unknown> = {
-        ...match,
-        ...(editableRichText ? { editableRichText } : {})
-      }
+      const record: Record<string, unknown> = { ...match }
       if (!projection.hierarchy) {
         delete record.hierarchy
         delete record.contextPath
@@ -2364,7 +2414,7 @@ export function createOnMoveMcpServer(
     let projectionTruncated = false
     const continuationFor = (cursor: SearchPageCursor | null): string | null => cursor
       ? encodeSearchContinuation({
-          version: 2,
+          version: 3,
           text,
           query: resolved.query,
           appliedScope: resolved.diagnostics.appliedScope,
@@ -2377,6 +2427,7 @@ export function createOnMoveMcpServer(
           projection,
           pageSize,
           maxBytes,
+          indexGeneration: searched.generation,
           cursor
         })
       : null
@@ -2406,13 +2457,14 @@ export function createOnMoveMcpServer(
           sort,
           projection: {
             hierarchy: projection.hierarchy,
-            subjects: projection.subjects,
-            richText: projection.richText
+            subjects: projection.subjects
           }
         },
         budget: {
           maxBytes,
           responseBytes: 0,
+          structuredBytes: 0,
+          estimatedToolResultBytes: 0,
           recordsTruncated,
           projectionTruncated
         }
@@ -2424,14 +2476,14 @@ export function createOnMoveMcpServer(
       appliedKinds: [kind],
       resultCount: searched.items.length
     })
-    const bytes = (): number => Buffer.byteLength(JSON.stringify({
+    const structuredBytes = (): number => Buffer.byteLength(JSON.stringify({
       ...response(), diagnostics: diagnostics()
     }), 'utf8')
-    const exceeds = (): boolean => bytes() + 512 > maxBytes
+    const payloadBytes = (): number => resultPayloadBytes(response(), diagnostics())
+    const exceeds = (): boolean => payloadBytes() + 512 > maxBytes
     if (exceeds()) {
       records = records.map((record) => {
         const compact = { ...record }
-        delete compact.editableRichText
         delete compact.hierarchy
         delete compact.contextPath
         delete compact.subject
@@ -2456,12 +2508,12 @@ export function createOnMoveMcpServer(
     if (recordsTruncated) warnings.push('The record page was shortened to honor page.maxBytes.')
     const finalResponse = response()
     const budget = finalResponse.budget as Record<string, unknown>
-    for (let pass = 0; pass < 3; pass += 1) {
-      budget.responseBytes = Buffer.byteLength(JSON.stringify({
-        ...finalResponse, diagnostics: diagnostics()
-      }), 'utf8')
+    for (let pass = 0; pass < 4; pass += 1) {
+      budget.structuredBytes = structuredBytes()
+      budget.estimatedToolResultBytes = resultPayloadBytes(finalResponse, diagnostics())
+      budget.responseBytes = budget.estimatedToolResultBytes
     }
-    if (Number(budget.responseBytes) > maxBytes) {
+    if (Number(budget.estimatedToolResultBytes) > maxBytes) {
       throw new TypeError(`The safe entity search response exceeded page.maxBytes=${maxBytes}`)
     }
     return result(finalResponse, diagnostics())
@@ -2481,8 +2533,9 @@ export function createOnMoveMcpServer(
       toolName,
       {
         title,
-        description: `Search only visible ${kind} records by text. ${kind === 'todo' ? 'Use returned Todo IDs with Todo mutation tools.' : kind === 'subject' ? 'Use the canonical Subject ID with Subject-scoped search, review_subject, or resolve_work_target.' : `Use get_${kind}_by_id when an ID is known${['focus', 'thread', 'commitment', 'routine', 'note'].includes(kind) ? ` and get_${kind}_by_path for an exact hierarchy path` : ''}.`} This does not search other entity kinds. Search snippets are bounded plain-text match excerpts, not field renderings; read the selected ID for Markdown. Do not request richText for discovery or reading; only a pending full structural replacement justifies its explicit purpose acknowledgment.`,
+        description: `Search only visible ${kind} records by text. ${kind === 'todo' ? 'Use returned Todo IDs with Todo mutation tools.' : kind === 'subject' ? 'Use the canonical Subject ID with Subject-scoped search, review_subject, or resolve_work_target.' : `Use get_${kind}_by_id when an ID is known${['focus', 'thread', 'commitment', 'routine', 'note'].includes(kind) ? ` and get_${kind}_by_path for an exact hierarchy path` : ''}.`} This does not search other entity kinds. Search returns only bounded match snippets and compact metadata—never lossless rich text. Read the selected ID for Markdown; request includeRichText=true there only immediately before a full structural replacement.`,
         inputSchema: entitySearchSchema,
+        outputSchema: entitySearchOutputSchema,
         annotations: { readOnlyHint: true }
       },
       async (input) => runEntitySearch(kind, input)
@@ -2493,9 +2546,9 @@ export function createOnMoveMcpServer(
     'onmove.search',
     {
       title: 'Search or list OnMove records',
-      description: 'Use for FTS discovery, queryless structured listing, and cross-kind hierarchy browsing. INITIAL REQUEST: send text for language search, or text=null with kinds to list records without FTS. Search snippets are bounded plain-text match excerpts; use the selected entity getter for Markdown. Date filters are database predicates, never search terms. Do not request richText for discovery, reading, review, or semantic patches. Lossless documents are an expensive exceptional projection requiring richTextPurpose=structural-replacement. Responses contain records, hasMore, a hard byte budget, and a signed continuationToken only when another page exists. A continuation request sends only that exact token; never invent or alter it.',
+      description: 'Use for FTS discovery, queryless structured listing, and cross-kind hierarchy browsing. INITIAL REQUEST: send text for language search, or text=null with kinds to list records without FTS. Natural-language wrappers such as "what has Michael been doing" retain the meaningful entity terms. Search returns bounded match snippets and compact metadata only—never lossless rich-text documents. Use the selected entity getter for Markdown and request includeRichText=true there only before a structural replacement. Date filters are database predicates, never search terms. Responses identify primary and auxiliary projection completeness, enforce a complete tool-result byte budget, and return a signed continuationToken only when another primary page exists. A continuation request sends only that exact token; never invent or alter it.',
       inputSchema: z.strictObject({
-        text: z.string().min(1).nullable().optional().describe(
+        text: z.string().min(1).max(1_000).nullable().optional().describe(
           'Non-null uses full-text search. Null or omitted is queryless list mode and returns records selected by kinds, scope, and date filters.'
         ),
         kinds: z.array(z.enum(SEARCH_ENTITY_TYPES)).min(1).max(8).optional().describe(
@@ -2526,6 +2579,7 @@ export function createOnMoveMcpServer(
           'Initial request: omit or null. Next page: send only the exact non-null token returned by OnMove; do not send text, filters, scope, sort, kinds, projection, or page again.'
         )
       }),
+      outputSchema: globalSearchOutputSchema,
       annotations: { readOnlyHint: true }
     },
     async (input) => {
@@ -2565,8 +2619,7 @@ export function createOnMoveMcpServer(
       const projection: SearchProjectionInput = continuation?.projection ?? {
         hierarchy: input.projection?.hierarchy ?? false,
         subjects: input.projection?.subjects ?? false,
-        scopes: input.projection?.scopes ?? false,
-        richText: input.projection?.richText ?? false
+        scopes: input.projection?.scopes ?? false
       }
       const pageSize = continuation?.pageSize ?? input.page?.size ?? 10
       const maxBytes = continuation?.maxBytes ?? input.page?.maxBytes ?? 32_768
@@ -2584,30 +2637,16 @@ export function createOnMoveMcpServer(
       }
       const access = policy()
       const searched = database.queries.searchPage(query, access)
-      const matches = searched.items
-      const warnings = [...resolved.diagnostics.warnings]
-      if (projection.richText) {
-        warnings.push(
-          'Lossless rich text was explicitly expanded for structural replacement. Do not carry ' +
-          'these documents into unrelated discovery or review calls.'
+      if (continuation && continuation.indexGeneration !== searched.generation) {
+        throw new TypeError(
+          'SEARCH_CURSOR_STALE: OnMove data changed after this search page was created. ' +
+          'Restart the same search without continuationToken; do not reuse the stale token.'
         )
       }
+      const matches = searched.items
+      const warnings = [...resolved.diagnostics.warnings]
       const decorateSearchItems = (values: readonly SearchResult[]) => values.map((match) => {
-        let editableRichText: Record<string, unknown> | null = null
-        if (projection.richText) {
-          try {
-            editableRichText = searchableRichText(database, match, access)
-          } catch (error) {
-            warnings.push(
-              `${match.reference.type} ${match.reference.id} rich text could not be expanded; ` +
-              `plain text was retained. Detail: ${error instanceof Error ? error.message : String(error)}`
-            )
-          }
-        }
-        const projected: Record<string, unknown> = {
-          ...match,
-          ...(editableRichText ? { editableRichText } : {})
-        }
+        const projected: Record<string, unknown> = { ...match }
         if (!projection.hierarchy) {
           delete projected.hierarchy
           delete projected.contextPath
@@ -2622,9 +2661,11 @@ export function createOnMoveMcpServer(
             const subject = match.subject ?? { id: match.reference.id, name: match.title }
             return [[subject.id, subject] as const]
           })).values()].slice(0, pageSize)
-      const rawSubjectUses = matchedSubjects.flatMap((subject) =>
-        database.queries.search({
+      const subjectUsePages = matchedSubjects.map((subject) => ({
+        subject,
+        page: database.queries.searchPage({
           text: null,
+          kinds: SEARCH_ENTITY_TYPES.filter((type) => type !== 'subject'),
           focusId: resolved.query.focusId,
           threadId: resolved.query.threadId,
           subjectId: subject.id,
@@ -2635,9 +2676,15 @@ export function createOnMoveMcpServer(
           sort: { field: 'updatedAt', direction: 'desc' },
           limit: pageSize
         }, access)
-          .filter(({ reference }) => reference.type !== 'subject')
-          .map((use) => ({ ...use, matchedSubject: subject })))
-        .slice(0, pageSize)
+      }))
+      const allSubjectUses = subjectUsePages.flatMap(({ subject, page }) =>
+        page.items.map((use) => ({ ...use, matchedSubject: subject })))
+      const rawSubjectUses = allSubjectUses.slice(0, pageSize)
+      const subjectUsesCompleteBeforeBudget =
+        subjectUsePages.every(({ page }) => !page.hasMore) && allSubjectUses.length <= pageSize
+      const subjectUseTotal = subjectUsePages.every(({ page }) => !page.hasMore)
+        ? allSubjectUses.length
+        : null
       let subjectUses = decorateSearchItems(rawSubjectUses)
       const subjectMatched = matchedSubjects.length > 0 || resolved.query.subjectId !== null
       const hierarchyRequested = projection.scopes || (projection.subjects && subjectMatched)
@@ -2653,7 +2700,11 @@ export function createOnMoveMcpServer(
             offset: 0
           }, matches, access)
         : { paths: [], total: 0 }
-      let hierarchyPaths = hierarchy.paths.map(decorateHierarchyPath)
+      // Subject-attributed paths are the actionable discovery result. Keep them ahead of generic
+      // ancestor rows so a tight byte budget never preserves chrome while discarding the target.
+      let hierarchyPaths = [...hierarchy.paths]
+        .sort((left, right) => Number(right.subject !== null) - Number(left.subject !== null))
+        .map(decorateHierarchyPath)
       let namedSubjectDiscovery = matchedSubjects.map((subject) => {
         const applicablePaths = hierarchyPaths.filter((path) =>
           path.subject?.id === subject.id && path.hierarchy.thread !== null)
@@ -2684,6 +2735,8 @@ export function createOnMoveMcpServer(
         return discovery ? { ...item, subjectDiscovery: discovery } : item
       })
       const itemCursors = [...searched.itemCursors]
+      const initialSubjectUseCount = subjectUses.length
+      const initialHierarchyPathCount = hierarchyPaths.length
       const appliedKinds = effectiveKinds?.length ? [...effectiveKinds] : 'all'
       if (matches.length === 0 && (
         resolved.diagnostics.appliedScope.mode !== 'all' || appliedKinds !== 'all' ||
@@ -2702,7 +2755,7 @@ export function createOnMoveMcpServer(
 
       const continuationFor = (cursor: SearchPageCursor | null): string | null => cursor
         ? encodeSearchContinuation({
-            version: 2,
+            version: 3,
             text: normalizedText,
             query: resolved.query,
             appliedScope: resolved.diagnostics.appliedScope,
@@ -2715,6 +2768,7 @@ export function createOnMoveMcpServer(
             projection,
             pageSize,
             maxBytes,
+            indexGeneration: searched.generation,
             cursor
           })
         : null
@@ -2723,18 +2777,28 @@ export function createOnMoveMcpServer(
         const lastCursor = itemCursors.at(-1) ?? null
         const globalComplete = resolved.diagnostics.appliedScope.mode === 'all' && !hasMore
         const doNotBroaden = authoritativeSubjectResult || globalComplete
+        const hierarchyComplete = !hierarchyRequested || hierarchyPaths.length === hierarchy.total
+        const subjectUsesRequested = projection.subjects && matchedSubjects.length > 0
+        const subjectUsesComplete = !subjectUsesRequested || (
+          subjectUsesCompleteBeforeBudget && subjectUses.length === initialSubjectUseCount
+        )
+        const auxiliaryComplete = hierarchyComplete && subjectUsesComplete
         const foundSubjectNames = [...new Set(matchedSubjects.map(({ name }) => name))]
         const searchStatus = {
-          sufficient: doNotBroaden,
+          sufficient: doNotBroaden && auxiliaryComplete,
           doNotBroaden,
-          reason: authoritativeSubjectResult
+          reason: !auxiliaryComplete
+            ? 'Relevant discovery may be present, but at least one requested auxiliary projection is incomplete. Do not broaden globally; continue within the returned Subject/Focus/Thread boundary or use the matching list/review tool.'
+            : authoritativeSubjectResult
             ? relevantSubjectUpdates.length > 0
               ? `Relevant Subject-attributed Updates were found for ${foundSubjectNames.join(', ') || `Subject ${resolved.query.subjectId}`}; subjectUses is authoritative.`
               : 'The requested Subject boundary returned authoritative attributed records.'
             : globalComplete
               ? 'The global structured query is complete; every matching visible record was returned.'
               : 'Another bounded page remains; continue with the exact signed continuationToken.',
-          nextAction: doNotBroaden
+          nextAction: !auxiliaryComplete
+            ? 'Use scope.mode=subject/focus/thread with the returned ID, onmove.review_subject, or a compact list tool; do not infer completeness from the truncated projection.'
+            : doNotBroaden
             ? 'Stop discovery and use the returned record IDs directly.'
             : 'Call onmove.search again with only continuationToken.'
         }
@@ -2743,7 +2807,30 @@ export function createOnMoveMcpServer(
           subjectUses,
           namedSubjectDiscovery,
           hierarchyPaths,
-          hierarchyNotation: HIERARCHY_NOTATION_GUIDE,
+          ...(hierarchyRequested ? { hierarchyNotation: HIERARCHY_NOTATION_GUIDE } : {}),
+          projections: {
+            primary: {
+              requested: true,
+              returned: items.length,
+              total: null,
+              complete: !hasMore,
+              truncatedByBudget: recordsTruncatedByBudget
+            },
+            subjectUses: {
+              requested: subjectUsesRequested,
+              returned: subjectUses.length,
+              total: subjectUsesRequested ? subjectUseTotal : 0,
+              complete: subjectUsesComplete,
+              truncatedByBudget: subjectUses.length < initialSubjectUseCount
+            },
+            hierarchy: {
+              requested: hierarchyRequested,
+              returned: hierarchyPaths.length,
+              total: hierarchyRequested ? hierarchy.total : 0,
+              complete: hierarchyComplete,
+              truncatedByBudget: hierarchyPaths.length < initialHierarchyPathCount
+            }
+          },
           searchStatus,
           hasMore,
           continuationToken: hasMore ? continuationFor(lastCursor) : null,
@@ -2760,6 +2847,8 @@ export function createOnMoveMcpServer(
           budget: {
             maxBytes,
             responseBytes: 0,
+            structuredBytes: 0,
+            estimatedToolResultBytes: 0,
             recordsTruncated: recordsTruncatedByBudget,
             projectionTruncated: projectionTruncatedByBudget
           }
@@ -2774,11 +2863,12 @@ export function createOnMoveMcpServer(
         hierarchyPathCount: hierarchyPaths.length,
         hierarchyPathTotal: hierarchy.total
       })
-      const measuredBytes = (): number => Buffer.byteLength(JSON.stringify({
+      const structuredBytes = (): number => Buffer.byteLength(JSON.stringify({
         ...response(), diagnostics: diagnostics()
       }), 'utf8')
+      const payloadBytes = (): number => resultPayloadBytes(response(), diagnostics())
       // Leave room for final truncation warnings and the decimal byte count itself.
-      const exceedsBudget = (): boolean => measuredBytes() + 768 > maxBytes
+      const exceedsBudget = (): boolean => payloadBytes() + 768 > maxBytes
       while (exceedsBudget() && hierarchyPaths.length > 0) {
         hierarchyPaths = hierarchyPaths.slice(0, -1)
         projectionTruncatedByBudget = true
@@ -2795,7 +2885,6 @@ export function createOnMoveMcpServer(
         items = items.map((item) => {
           const compact = { ...item }
           delete compact.subjectDiscovery
-          delete compact.editableRichText
           if (projection.hierarchy) {
             delete compact.hierarchy
             delete compact.contextPath
@@ -2818,9 +2907,10 @@ export function createOnMoveMcpServer(
             : {})
         }))
       }
-      if (measuredBytes() > maxBytes) {
+      if (payloadBytes() > maxBytes) {
         throw new TypeError(
-          `page.maxBytes=${maxBytes} is too small for one safe result and required diagnostics`
+          `page.maxBytes=${maxBytes} is too small for one safe result and required diagnostics; ` +
+          `at least ${payloadBytes()} bytes are required for this response shape`
         )
       }
       if (projectionTruncatedByBudget) {
@@ -2839,12 +2929,12 @@ export function createOnMoveMcpServer(
       }
       const finalResponse = response()
       const budget = finalResponse.budget as Record<string, unknown>
-      for (let pass = 0; pass < 3; pass += 1) {
-        budget.responseBytes = Buffer.byteLength(JSON.stringify({
-          ...finalResponse, diagnostics: diagnostics()
-        }), 'utf8')
+      for (let pass = 0; pass < 4; pass += 1) {
+        budget.structuredBytes = structuredBytes()
+        budget.estimatedToolResultBytes = resultPayloadBytes(finalResponse, diagnostics())
+        budget.responseBytes = budget.estimatedToolResultBytes
       }
-      if (Number(budget.responseBytes) > maxBytes) {
+      if (Number(budget.estimatedToolResultBytes) > maxBytes) {
         throw new TypeError(`The safe search response exceeded page.maxBytes=${maxBytes}`)
       }
       return result(finalResponse, diagnostics())
@@ -3010,9 +3100,20 @@ export function createOnMoveMcpServer(
           'The Subject is not currently applicable to the selected Thread. Verify the exact hierarchy path before broadening.'
         )
       }
-      const continuationToken = reviewed.review
+      const reviewSearchGeneration = reviewed.review
+        ? database.queries.searchPage({
+            text: null,
+            focusId: reviewed.review.hierarchy.focus.id,
+            threadId: reviewed.review.hierarchy.thread.id,
+            subjectId: reviewed.review.subject.id,
+            kinds: ['update', 'todo', 'commitment'],
+            sort: { field: 'updatedAt', direction: 'desc' },
+            limit: 1
+          }, policy()).generation
+        : null
+      const continuationToken = reviewed.review && reviewSearchGeneration !== null
         ? encodeSearchContinuation({
-            version: 2,
+            version: 3,
             text: null,
             query: {
               focusId: reviewed.review.hierarchy.focus.id,
@@ -3036,11 +3137,11 @@ export function createOnMoveMcpServer(
             projection: {
               hierarchy: true,
               subjects: true,
-              scopes: false,
-              richText: false
+              scopes: false
             },
             pageSize: Math.min(input.limit ?? 10, 25),
             maxBytes: 32_768,
+            indexGeneration: reviewSearchGeneration,
             cursor: null
           })
         : null

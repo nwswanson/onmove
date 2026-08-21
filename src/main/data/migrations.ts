@@ -3685,6 +3685,17 @@ const migrations: readonly Migration[] = [
         UPDATE search_index_state SET dirty = 1 WHERE singleton = 1;
       `)
     }
+  },
+  {
+    version: 40,
+    name: 'search_index_generation',
+    up(database) {
+      database.exec(`
+        ALTER TABLE search_index_state
+          ADD COLUMN generation INTEGER NOT NULL DEFAULT 0;
+        UPDATE search_index_state SET dirty = 1 WHERE singleton = 1;
+      `)
+    }
   }
 ]
 

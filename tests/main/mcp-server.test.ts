@@ -295,12 +295,34 @@ describe('OnMove MCP protocol adapter', () => {
     expect(searchSchema).toContain('hierarchy')
     expect(searchSchema).toContain('subjects')
     expect(searchSchema).toContain('scopes')
-    expect(searchSchema).toContain('richText')
+    expect(searchSchema).not.toContain('richTextPurpose')
+    expect(searchSchema).toContain('never returns lossless rich-text documents')
     expect(searchSchema).toContain('queryless list mode')
     expect(searchSchema).toContain('createdAt')
     expect(searchSchema).toContain('updatedAt')
     expect(searchSchema).toContain('IANA timezone')
-    expect(searchSchema).toContain('Hard structured-response')
+    expect(searchSchema).toContain('complete MCP tool result')
+    expect(search.outputSchema).toMatchObject({
+      type: 'object',
+      properties: expect.objectContaining({
+        items: expect.any(Object),
+        projections: expect.any(Object),
+        searchStatus: expect.any(Object),
+        budget: expect.any(Object),
+        diagnostics: expect.any(Object)
+      })
+    })
+    for (const tool of tools.filter(({ name }) => name.startsWith('onmove.search_'))) {
+      expect(tool.outputSchema).toMatchObject({
+        type: 'object',
+        properties: expect.objectContaining({
+          records: expect.any(Object),
+          searchStatus: expect.any(Object),
+          budget: expect.any(Object),
+          diagnostics: expect.any(Object)
+        })
+      })
+    }
     expect(searchSchema).not.toContain('includeThreads')
     expect(searchSchema).not.toContain('includeCommitments')
     expect(searchSchema).not.toContain('includeSubjects')
@@ -543,11 +565,7 @@ describe('OnMove MCP protocol adapter', () => {
       name: 'onmove.search_notes',
       arguments: {
         text: 'notepagingneedle',
-        projection: {
-          hierarchy: true,
-          richText: true,
-          richTextPurpose: 'structural-replacement'
-        },
+        projection: { hierarchy: true },
         page: { size: 1 }
       }
     })
@@ -557,16 +575,15 @@ describe('OnMove MCP protocol adapter', () => {
         records: Array<{
           reference: { type: string; id: number }
           hierarchy: unknown
-          editableRichText: unknown
         }>
         hasMore: boolean
         continuationToken: string | null
       }
       expect(content.records[0]).toMatchObject({
         reference: { type: 'note' },
-        hierarchy: expect.any(Object),
-        editableRichText: expect.any(Object)
+        hierarchy: expect.any(Object)
       })
+      expect(content.records[0]).not.toHaveProperty('editableRichText')
       seen.push(content.records[0].reference.id)
       if (!content.hasMore) break
       page = await client.callTool({
@@ -587,6 +604,17 @@ describe('OnMove MCP protocol adapter', () => {
     })
     expect(wrongSearch.isError).toBe(true)
     expect(JSON.stringify(wrongSearch)).toContain('different entity search')
+
+    database.domain.richTextDocuments.save(
+      { type: 'note', id: notes[0].id, field: 'content' },
+      'Notepagingneedle changed while paging'
+    )
+    const stale = await client.callTool({
+      name: 'onmove.search_notes',
+      arguments: { continuationToken: noteToken }
+    })
+    expect(stale.isError).toBe(true)
+    expect(JSON.stringify(stale)).toContain('SEARCH_CURSOR_STALE')
   })
 
   it('treats omitted or null continuation tokens as initial searches and rejects only invalid values', async () => {
@@ -826,7 +854,7 @@ describe('OnMove MCP protocol adapter', () => {
     })
   })
 
-  it('returns every editable rich-text field directly from one expanded search', async () => {
+  it('keeps search compact and requires a direct ID read for lossless rich text', async () => {
     const focus = database.domain.focuses.requireModel(1).toSnapshot()
     const thread = database.domain.threads.create({
       focusId: focus.id,
@@ -846,14 +874,11 @@ describe('OnMove MCP protocol adapter', () => {
       { type: 'note', id: note.id, field: 'content' },
       'lookupnoteasdf unique note'
     )
-    database.mcpSettings.update({ allowMutations: true })
-
     const search = await client.callTool({
       name: 'onmove.search',
       arguments: {
         text: 'lookupfocusasdf lookupupdateasdf lookupnoteasdf',
-        kinds: ['focus', 'update', 'note'],
-        projection: { richText: true, richTextPurpose: 'structural-replacement' }
+        kinds: ['focus', 'update', 'note']
       }
     })
     expect(search.isError).not.toBe(true)
@@ -862,72 +887,34 @@ describe('OnMove MCP protocol adapter', () => {
     }).items
     expect(items).toHaveLength(3)
     expect(items).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        reference: { type: 'focus', id: focus.id },
-        editableRichText: expect.objectContaining({
-          kind: 'focus-description',
-          target: { type: 'focus-description', focusId: focus.id },
-          markdown: 'lookupfocusasdf unique description',
-          format: 'plain-text',
-          revision: 1,
-          writeGuide: expect.objectContaining({
-            patchRichText: expect.objectContaining({ tool: 'onmove.patch_rich_text' })
-          })
-        })
-      }),
-      expect.objectContaining({
-        reference: { type: 'update', id: update.id },
-        editableRichText: expect.objectContaining({
-          kind: 'update-observation',
-          target: { type: 'update-observation', updateId: update.id },
-          markdown: 'lookupupdateasdf unique evidence',
-          format: 'plain-text',
-          revision: 0,
-          writeGuide: expect.objectContaining({
-            patchRichText: expect.objectContaining({ tool: 'onmove.patch_rich_text' })
-          })
-        })
-      }),
-      expect.objectContaining({
-        reference: { type: 'note', id: note.id },
-        editableRichText: expect.objectContaining({
-          kind: 'note-content',
-          target: { type: 'note-content', noteId: note.id },
-          markdown: 'lookupnoteasdf unique note',
-          format: 'plain-text',
-          revision: 1,
-          writeGuide: expect.objectContaining({
-            patchNoteText: expect.objectContaining({ tool: 'onmove.patch_note_text' })
-          })
-        })
-      })
+      expect.objectContaining({ reference: { type: 'focus', id: focus.id } }),
+      expect.objectContaining({ reference: { type: 'update', id: update.id } }),
+      expect.objectContaining({ reference: { type: 'note', id: note.id } })
     ]))
+    expect(items.every((item) => !('editableRichText' in item))).toBe(true)
 
-    const noteHit = items.find((item) =>
-      (item.reference as { type?: string } | undefined)?.type === 'note'
-    ) as { editableRichText: { revision: number } }
-    const patched = await client.callTool({
-      name: 'onmove.patch_note_text',
-      arguments: {
-        id: note.id,
-        expectedRevision: noteHit.editableRichText.revision,
-        findText: 'unique note',
-        replaceText: 'edited note'
-      }
+    const direct = await client.callTool({
+      name: 'onmove.get_note_by_id',
+      arguments: { id: note.id, includeRichText: true }
     })
-    expect(patched.isError).not.toBe(true)
-    expect(patched.structuredContent).toMatchObject({
-      note: { content: 'lookupnoteasdf edited note', revision: 2 }
+    expect(direct.isError).not.toBe(true)
+    expect(direct.structuredContent).toMatchObject({
+      note: {
+        content: 'lookupnoteasdf unique note',
+        richText: expect.any(Object),
+        revision: 1
+      }
     })
   })
 
-  it('requires an explicit structural-replacement purpose before search expands rich text', async () => {
+  it('rejects rich-text expansion fields on search instead of encouraging oversized reads', async () => {
     const rejected = await client.callTool({
       name: 'onmove.search_notes',
       arguments: { text: 'launch', projection: { richText: true } }
     })
     expect(rejected.isError).toBe(true)
-    expect(JSON.stringify(rejected)).toContain('structural-replacement')
+    expect(JSON.stringify(rejected)).toContain('Unrecognized key')
+    expect(JSON.stringify(rejected)).toContain('richText')
 
     const compact = await client.callTool({
       name: 'onmove.search_notes',
@@ -2463,7 +2450,7 @@ describe('OnMove MCP protocol adapter', () => {
         }
       }
     })
-    expect(discovery.isError).not.toBe(true)
+    expect(discovery.isError, JSON.stringify(discovery)).not.toBe(true)
     expect(discovery.structuredContent).toMatchObject({
       hierarchyNotation: {
         example: { thread: 'Team management', commitment: '1:1s', subject: 'Michael' },
@@ -2825,6 +2812,7 @@ describe('OnMove MCP protocol adapter', () => {
       name: 'onmove.search',
       arguments: { continuationToken }
     })
+    expect(followUp.isError, JSON.stringify(followUp)).not.toBe(true)
     expect(followUp.structuredContent).toMatchObject({
       items: expect.arrayContaining([
         expect.objectContaining({ reference: { type: 'update', id: commitmentUpdate.id } }),
@@ -3129,7 +3117,7 @@ describe('OnMove MCP protocol adapter', () => {
         expect(page.continuationToken).toBeNull()
         break
       }
-      expect(page.continuationToken).toMatch(/^onmove-search-v2\./u)
+      expect(page.continuationToken).toMatch(/^onmove-search-v3\./u)
       response = await client.callTool({
         name: 'onmove.search',
         arguments: { continuationToken: page.continuationToken }
@@ -3153,6 +3141,30 @@ describe('OnMove MCP protocol adapter', () => {
     })
     expect(rejected.isError).toBe(true)
     expect(JSON.stringify(rejected)).toContain('invalid or incompatible')
+
+    const staleFirst = await client.callTool({
+      name: 'onmove.search',
+      arguments: {
+        text: null,
+        kinds: ['update'],
+        scope: { mode: 'thread', threadId: thread.id },
+        page: { size: 1 }
+      }
+    })
+    const staleToken = (staleFirst.structuredContent as {
+      continuationToken: string
+    }).continuationToken
+    database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      observation: 'A live edit invalidates the prior index generation'
+    })
+    const stale = await client.callTool({
+      name: 'onmove.search',
+      arguments: { continuationToken: staleToken }
+    })
+    expect(stale.isError).toBe(true)
+    expect(JSON.stringify(stale)).toContain('SEARCH_CURSOR_STALE')
+    expect(JSON.stringify(stale)).toContain('without continuationToken')
   })
 
   it('keeps compact pages below the configured response byte limit', async () => {
@@ -3175,20 +3187,26 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: {
         text: null,
         kinds: ['update'],
-        page: { size: 25, maxBytes: 4096 }
+        page: { size: 25, maxBytes: 8192 }
       }
     })
     expect(compact.isError).not.toBe(true)
-    const bytes = Buffer.byteLength(JSON.stringify(compact.structuredContent), 'utf8')
-    expect(bytes).toBeLessThanOrEqual(4096)
+    const completeBytes = Buffer.byteLength(JSON.stringify(compact), 'utf8')
+    expect(completeBytes).toBeLessThanOrEqual(8192)
     expect(compact.structuredContent).toMatchObject({
       hasMore: true,
       budget: {
-        maxBytes: 4096,
-        responseBytes: bytes,
+        maxBytes: 8192,
+        structuredBytes: expect.any(Number),
+        estimatedToolResultBytes: expect.any(Number),
         recordsTruncated: true
       }
     })
+    const reportedBudget = (compact.structuredContent as {
+      budget: { structuredBytes: number; estimatedToolResultBytes: number }
+    }).budget
+    expect(reportedBudget.structuredBytes).toBeLessThanOrEqual(8192)
+    expect(reportedBudget.estimatedToolResultBytes).toBeLessThanOrEqual(8192)
   })
 
   it('degrades malformed rich text to plain Update text with warnings in search and bulk reads', async () => {
@@ -3225,8 +3243,7 @@ describe('OnMove MCP protocol adapter', () => {
       name: 'onmove.search',
       arguments: {
         text: 'readable malformed evidence',
-        kinds: ['update'],
-        projection: { richText: true, richTextPurpose: 'structural-replacement' }
+        kinds: ['update']
       }
     })
     expect(searched.isError).not.toBe(true)
@@ -3235,11 +3252,7 @@ describe('OnMove MCP protocol adapter', () => {
         reference: { type: 'update', id: malformed.id },
         snippet: 'Readable malformed evidence'
       })],
-      diagnostics: {
-        warnings: expect.arrayContaining([
-          expect.stringContaining('plain text was retained')
-        ])
-      }
+      diagnostics: { warnings: expect.any(Array) }
     })
     expect((searched.structuredContent as {
       items: Array<Record<string, unknown>>
@@ -3287,7 +3300,7 @@ describe('OnMove MCP protocol adapter', () => {
         text: 'matrixpersonunique',
         kinds: ['subject'],
         projection: { hierarchy: true, subjects: true, scopes: true },
-        page: { size: 5, maxBytes: 4096 }
+        page: { size: 5, maxBytes: 8192 }
       }
     })
     expect(response.isError).not.toBe(true)
@@ -3297,17 +3310,24 @@ describe('OnMove MCP protocol adapter', () => {
       subjectUses: unknown[]
       hasMore: boolean
       searchStatus: { sufficient: boolean; doNotBroaden: boolean }
+      projections: {
+        hierarchy: { complete: boolean; returned: number; total: number }
+      }
       diagnostics: { hierarchyPathTotal: number }
     }
     expect(structured.items).toHaveLength(1)
     expect(structured.hierarchyPaths.length).toBeLessThanOrEqual(5)
     expect(structured.subjectUses.length).toBeLessThanOrEqual(5)
     expect(structured.hasMore).toBe(false)
-    expect(structured.searchStatus).toMatchObject({ sufficient: true, doNotBroaden: true })
+    expect(structured.searchStatus).toMatchObject({ sufficient: false, doNotBroaden: true })
+    expect(structured.projections.hierarchy).toMatchObject({
+      complete: false,
+      returned: structured.hierarchyPaths.length,
+      total: structured.diagnostics.hierarchyPathTotal
+    })
     expect(structured.diagnostics.hierarchyPathTotal).toBeGreaterThan(5)
     expect(scope.subjects[0].name).toBe('Matrixpersonunique')
-    expect(Buffer.byteLength(JSON.stringify(response.structuredContent), 'utf8'))
-      .toBeLessThanOrEqual(4096)
+    expect(Buffer.byteLength(JSON.stringify(response), 'utf8')).toBeLessThanOrEqual(8192)
   })
 
   it('canonicalizes accidental tag markers out of link text before storing and indexing', async () => {

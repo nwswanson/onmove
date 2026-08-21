@@ -242,4 +242,43 @@ describe('OnMove MCP full-workspace search regressions', () => {
       })
     }
   })
+
+  it('keeps the named entity as the useful term in a natural-language discovery request', () => {
+    const { thread } = hierarchy('Natural language')
+    const michael = database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      observation: 'Michael completed the operating review'
+    }).toSnapshot()
+    database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      observation: 'What has the team been doing this week'
+    })
+
+    const results = database.queries.search({
+      text: 'what has Michael been doing',
+      kinds: ['update']
+    }, visible)
+
+    expect(results.map(({ reference }) => reference)).toEqual([
+      { type: 'update', id: michael.id }
+    ])
+  })
+
+  it('bounds queryless previews instead of returning entire indexed documents', () => {
+    const { thread } = hierarchy('Compact list')
+    database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      observation: 'Long evidence '.repeat(100)
+    })
+
+    const [result] = database.queries.search({
+      text: null,
+      kinds: ['update'],
+      threadId: thread.id,
+      limit: 1
+    }, visible)
+
+    expect(result.snippet.length).toBeLessThanOrEqual(200)
+    expect(result.snippet.endsWith('…')).toBe(true)
+  })
 })

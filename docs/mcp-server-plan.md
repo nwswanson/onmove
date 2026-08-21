@@ -206,8 +206,8 @@ method.
 - `onmove.review_subject`
 
 `onmove.search` is also a queryless structured list and bounded hierarchy browser. `text=null`
-lists records without FTS; one `projection` object controls hierarchy, Subject, Scope, and rich-text
-expansion. A Subject
+lists records without FTS; one `projection` object controls hierarchy, Subject, and Scope metadata.
+Search never hydrates lossless rich-text documents. A Subject
 name match automatically returns bounded attributed `subjectUses` plus every currently applicable
 Subject-cell path. Responses define
 both explicit object notation and a readable form such as `Team management > 1:1s[Michael]`.
@@ -223,14 +223,18 @@ paths, and ready Subject-review calls. It returns an opaque signed continuation 
 page exists. Initial
 searches omit that field or send null; clients must never synthesize it, and validation rejects only
 a supplied non-null invalid token. A next-page request contains only the exact token; it preserves
-text, date ranges, timezone, scope, sort, kinds, projection, byte budget, and stable cursor.
-Starting without the token is required to intentionally change the query. Named scopes support
+text, date ranges, timezone, scope, sort, kinds, projection, byte budget, stable cursor, and search
+index generation. A live rebuild rejects the old token with `SEARCH_CURSOR_STALE`; restart without
+it. Starting without the token is required to intentionally change the query. Named scopes support
 `all`, `focus`, `thread`,
 `subject`, and the explicitly requested live `current` context.
 
-Search always returns records. Optional projections are trimmed before record pages to enforce the
-configured byte budget. Compact search defaults to ten records, caps pages at 25, and returns
-explicit `hasMore`.
+Search always returns records. Snippets and queryless previews are capped at 200 characters.
+Optional projections are trimmed before record pages to enforce a complete MCP-result byte budget
+(text plus structuredContent), with an 8 KiB minimum. Compact search defaults to ten records, caps
+pages at 25, and returns explicit `hasMore`. Independent completeness metadata prevents a complete
+primary page from disguising truncated Subject-use or hierarchy projections. Search tools publish
+typed output schemas.
 
 `onmove.review_subject` is the high-level alternative to a multi-query agent workflow. It resolves
 an exact Subject inside an exact Thread and returns one compact projection containing that Subject's

@@ -55,6 +55,8 @@ export interface SearchPage {
   itemCursors: SearchPageCursor[]
   hasMore: boolean
   nextCursor: SearchPageCursor | null
+  /** Increments whenever the durable search projection is rebuilt. */
+  generation: number
 }
 
 export interface SearchHierarchyReference {
@@ -125,6 +127,11 @@ function plainText(value: string | null): string {
   return richTextPlainText(value ?? '').replace(/\s+/gu, ' ').trim()
 }
 
+function compactSnippet(value: string | null): string {
+  const text = plainText(value)
+  return text.length > 200 ? `${text.slice(0, 199)}…` : text
+}
+
 function sourceKey(type: SearchEntityType, id: number, field: string): string {
   return `${type}:${id}:${field}`
 }
@@ -134,9 +141,22 @@ function resourceUri(type: SearchEntityType, id: number): string {
   return `onmove://${type}/${id}`
 }
 
+const SEARCH_STOP_WORDS = new Set([
+  'a', 'about', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'being', 'by',
+  'did', 'do', 'does', 'doing', 'for', 'from', 'had', 'has', 'have', 'how',
+  'i', 'in', 'is', 'it', 'its', 'me', 'my', 'of', 'on', 'or', 'our', 'that',
+  'the', 'their', 'them', 'they', 'this', 'to', 'was', 'we', 'were', 'what',
+  'when', 'where', 'which', 'who', 'why', 'with', 'you', 'your'
+])
+
 function ftsExpression(text: string): string {
   const tokens = text.normalize('NFKC').match(/[\p{L}\p{N}_]+/gu) ?? []
-  const unique = [...new Set(tokens.map((token) => token.toLocaleLowerCase()))].slice(0, 24)
+  const normalized = [...new Set(tokens.map((token) => token.toLocaleLowerCase()))]
+  // Natural-language discovery requests commonly wrap the useful entity name in generic prose
+  // ("what has Michael been doing"). Removing only a conservative stop-word set retains that
+  // name as the primary FTS term without introducing opaque semantic ranking.
+  const meaningful = normalized.filter((token) => !SEARCH_STOP_WORDS.has(token))
+  const unique = (meaningful.length > 0 ? meaningful : normalized).slice(0, 24)
   if (unique.length === 0) throw new TypeError('search text must contain letters or numbers')
   return unique.map((token) => `"${token.replaceAll('"', '""')}"*`).join(' OR ')
 }
@@ -219,7 +239,9 @@ export class SearchIndexRepository {
       this.insertRows('note', this.noteRows())
       this.insertRows('subject', this.subjectRows())
       this.database.run(
-        'UPDATE search_index_state SET dirty = 0, indexed_at = ? WHERE singleton = 1',
+        `UPDATE search_index_state
+         SET dirty = 0, indexed_at = ?, generation = generation + 1
+         WHERE singleton = 1`,
         [now.toISOString()]
       )
     })
@@ -233,6 +255,9 @@ export class SearchIndexRepository {
   searchPage(query: SearchQuery, access: OnMoveAccessPolicy): SearchPage {
     if (query.text !== null && (typeof query.text !== 'string' || query.text.trim().length === 0)) {
       throw new TypeError('search text cannot be empty; use null for queryless listing')
+    }
+    if (query.text !== null && query.text.length > 1_000) {
+      throw new TypeError('search text must be at most 1000 characters')
     }
     const limit = query.limit ?? 25
     const offset = query.offset ?? 0
@@ -386,8 +411,12 @@ export class SearchIndexRepository {
     }
     parameters.push(limit + 1, offset)
     const snippet = textSearch
-      ? "snippet(search_documents_fts, 1, '', '', ' … ', 24)"
-      : 'document.body'
+      // Let FTS choose the matching title/body column so the excerpt is evidence for the hit.
+      ? "snippet(search_documents_fts, -1, '', '', ' … ', 24)"
+      : `CASE
+           WHEN length(document.body) > 200 THEN substr(document.body, 1, 199) || '…'
+           ELSE document.body
+         END`
     const from = textSearch
       ? `search_documents_fts
          JOIN search_documents document ON document.id = search_documents_fts.rowid`
@@ -417,6 +446,10 @@ export class SearchIndexRepository {
     const hasMore = rows.length > limit
     const pageRows = rows.slice(0, limit)
     const last = pageRows.at(-1)
+    const state = this.database.get<{ generation: number }>(
+      'SELECT generation FROM search_index_state WHERE singleton = 1'
+    )
+    if (!state) throw new Error('search index state is unavailable')
     return {
       items: this.projectRows(pageRows),
       itemCursors: pageRows.map((row) => ({
@@ -426,7 +459,8 @@ export class SearchIndexRepository {
       hasMore,
       nextCursor: hasMore && last
         ? { sortValue: last.sort_value, sourceKey: last.source_key }
-        : null
+        : null,
+      generation: Number(state.generation)
     }
   }
 
@@ -452,7 +486,7 @@ export class SearchIndexRepository {
       subject: row.subject_id === null
         ? null
         : { id: Number(row.subject_id), name: row.subject_name as string },
-      snippet: plainText(row.snippet),
+      snippet: compactSnippet(row.snippet),
       rank: Number(row.rank),
       effectiveSensitive: Boolean(row.effective_sensitive),
       date: row.date_value,

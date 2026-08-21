@@ -128,6 +128,31 @@ describe('database migrations', () => {
     raw.close()
   })
 
+  it('adds a durable search generation and marks the projection for rebuilding', () => {
+    const current = new AppDatabase(databasePath)
+    current.queries.search({ text: null }, current.mcpSettings.accessPolicy())
+    current.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      ALTER TABLE search_index_state DROP COLUMN generation;
+      DELETE FROM schema_migrations WHERE version = 40;
+    `)
+    legacy.close()
+
+    const migrated = new AppDatabase(databasePath)
+    migrated.close()
+
+    const raw = new DatabaseSync(databasePath)
+    expect(raw.prepare(
+      'SELECT dirty, generation FROM search_index_state WHERE singleton = 1'
+    ).get()).toEqual({ dirty: 1, generation: 0 })
+    expect(raw.prepare(
+      'SELECT version FROM schema_migrations WHERE version = 40'
+    ).get()).toEqual({ version: 40 })
+    raw.close()
+  })
+
   it('thins legacy per-edit rich-text history to the newest 30 recovery documents', () => {
     const current = new AppDatabase(databasePath)
     const focus = current.domain.focuses.create({ title: 'Legacy writing' })
