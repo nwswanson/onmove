@@ -85,6 +85,7 @@ test('serves MCP from the running app and immediately refreshes its open windows
 
     const tools = await client.listTools()
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.search')
+    expect(tools.tools.map(({ name }) => name)).toContain('onmove.continue_search')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.get_note_by_path')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.resolve_work_target')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.review_subject')

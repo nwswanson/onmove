@@ -812,13 +812,14 @@ foreground colors and do not rely on color alone to communicate selection or sta
   record IDs directly. Set `sufficient=true` only when every requested auxiliary projection needed
   for that result is complete; otherwise instruct the caller to continue within the returned
   Subject boundary. Never encourage a second global search for a generic Thread/Commitment term.
-- Make `continuationToken` optional and nullable. An initial search must omit it or send null, and
-  tool instructions must explicitly forbid inventing or synthesizing a value. Decode and reject
-  only a supplied non-null token; follow-ups may use only the exact opaque token returned by
-  OnMove. Sign every token and preserve the complete immutable request: text, all three local-date
+- Keep pagination input structurally separate from initial search input. Initial search tools expose
+  criteria only and never accept `continuationToken`; `onmove.continue_search` accepts exactly one
+  required opaque token and no search body. Tool instructions must explicitly forbid inventing,
+  altering, or synthesizing a value. Follow-ups may use only the exact opaque token returned by
+  OnMove. Sign every token and preserve its originating response shape plus the complete immutable request: text, all three local-date
   predicates, timezone, named scope, sort, kinds, projection, page size, byte budget, stable
-  `(sort value, source key)` cursor, and durable index generation. A next-page request contains only that token; reject sibling
-  filters rather than ambiguously merging them. Return explicit `hasMore`; return no token when the
+  `(sort value, source key)` cursor, and durable index generation. Reject sibling filters at the
+  continuation tool schema rather than ambiguously merging or silently ignoring them. Return explicit `hasMore`; return no token when the
   bounded query is complete. Reject a token after a live index rebuild with
   `SEARCH_CURSOR_STALE`. Deliberate query or scope changes start a fresh request.
 - Keep search output bounded and purpose-specific. Default to ten records and cap a requested page
@@ -980,9 +981,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
   structured copies), with an 8 KiB minimum. Return separate completeness metadata for primary
   records, Subject uses, and hierarchy paths; a complete primary page must never imply that a
   truncated auxiliary projection is exhaustive.
-- Sign continuation tokens over the full query, stable record cursor, and durable search-index
-  generation. If live writes rebuild the index between pages, return `SEARCH_CURSOR_STALE` and tell
-  the client to restart the same search without the token. Never continue against a changed index.
+- Sign continuation tokens over the originating search shape, full query, stable record cursor, and
+  durable search-index generation. If live writes rebuild the index between pages, return
+  `SEARCH_CURSOR_STALE` and tell the client to restart the original search tool with its criteria.
+  Never continue against a changed index.
   For natural-language discovery, remove only a conservative stop-word set so a request such as
   “what has Michael been doing” searches for Michael rather than generic wrapper terms.
 - Keep Update hydration free of agent-visible N+1 calls. `onmove.get_updates_by_ids` accepts up to 50

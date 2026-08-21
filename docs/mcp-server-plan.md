@@ -203,6 +203,7 @@ method.
 - `onmove.list_tags`
 - `onmove.get_tag_uses`
 - `onmove.search`
+- `onmove.continue_search`
 - `onmove.review_subject`
 
 `onmove.search` is also a queryless structured list and bounded hierarchy browser. `text=null`
@@ -220,12 +221,13 @@ name search returns `subjectUses`, which is authoritative for attributed records
 the returned IDs directly rather than searching globally for a generic hierarchy label. A response
 also returns `namedSubjectDiscovery`, colocating the canonical Subject ID, applicable Focus/Thread
 paths, and ready Subject-review calls. It returns an opaque signed continuation token when another
-page exists. Initial
-searches omit that field or send null; clients must never synthesize it, and validation rejects only
-a supplied non-null invalid token. A next-page request contains only the exact token; it preserves
-text, date ranges, timezone, scope, sort, kinds, projection, byte budget, stable cursor, and search
-index generation. A live rebuild rejects the old token with `SEARCH_CURSOR_STALE`; restart without
-it. Starting without the token is required to intentionally change the query. Named scopes support
+page exists. Initial search tools contain criteria only and do not accept that token; clients must
+never synthesize one. `onmove.continue_search` accepts only the exact returned token, which preserves
+text, date ranges, timezone, scope, sort, kinds, projection, byte budget, stable cursor, search index
+generation, and originating response shape. A request therefore cannot ambiguously combine old
+cursor state with new filters.
+A live rebuild rejects the old token with `SEARCH_CURSOR_STALE`; restart the original search tool
+with its criteria. A new original-search call is required to intentionally change the query. Named scopes support
 `all`, `focus`, `thread`,
 `subject`, and the explicitly requested live `current` context.
 

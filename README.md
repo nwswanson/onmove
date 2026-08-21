@@ -95,6 +95,7 @@ Use the tool whose name matches what you know:
   `get_commitment_by_path`, `get_routine_by_path`, or `get_note_by_path`.
 - Unknown text: `search_focuses`, `search_threads`, `search_commitments`, `search_routines`,
   `search_updates`, `search_notes`, `search_todos`, or `search_subjects`.
+- Next page from any search: `continue_search` with only the returned opaque token.
 
 Path tools accept titles only and return `ambiguous` instead of guessing duplicate names. Updates
 do not have a by-path getter because several Updates may occupy the same hierarchy and Subject;
@@ -124,19 +125,19 @@ instead of globally searching a generic container label such as “1:1s.” Use 
 `subject`, `thread`, or `focus` and the returned ID for a new narrowed query. Broaden to `all` only
 when the user actually requests every person or record.
 
-For the initial lookup, omit `continuationToken` or explicitly send `null`; never invent one:
+Initial search tools accept search criteria only; they do not accept `continuationToken`:
 
 ```json
 {
   "text": "Michael",
-  "scope": { "mode": "all" },
-  "continuationToken": null
+  "scope": { "mode": "all" }
 }
 ```
 
-Only reuse the exact non-null token from an OnMove response, and send it as the only argument on the
-next-page call. The signed token preserves the complete query, stable cursor, and search-index
-generation. If live edits cause `SEARCH_CURSOR_STALE`, restart the same search without the token. A named Subject result includes
+If the response has `hasMore=true`, call `onmove.continue_search` with the exact non-null token as
+its only argument. The signed token preserves the originating search, complete query, stable cursor,
+and search-index generation. Never repeat the search body alongside it. If live edits cause
+`SEARCH_CURSOR_STALE`, restart the original search tool with its criteria. A named Subject result includes
 `namedSubjectDiscovery`, which puts the canonical Subject ID and every applicable Focus/Thread path
 beside ready `review_subject` arguments. Selectors use either an ID or a title/name, never both.
 

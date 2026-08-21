@@ -137,7 +137,10 @@ interface SearchProjectionInput {
 }
 
 interface SearchContinuationPayload {
-  version: 3
+  version: 4
+  origin:
+    | { type: 'global' }
+    | { type: 'entity'; kind: SearchEntityType }
   text: string | null
   query: Pick<SearchQuery, 'focusId' | 'threadId' | 'subjectId'>
   appliedScope: AppliedSearchScope
@@ -155,7 +158,7 @@ interface SearchContinuationPayload {
   cursor: SearchPageCursor | null
 }
 
-const SEARCH_CONTINUATION_PREFIX = 'onmove-search-v3.'
+const SEARCH_CONTINUATION_PREFIX = 'onmove-search-v4.'
 const SEARCH_CONTINUATION_SECRET = randomBytes(32)
 
 function encodeSearchContinuation(payload: SearchContinuationPayload): string {
@@ -189,7 +192,7 @@ function decodeSearchContinuation(token: string): SearchContinuationPayload {
     const query = parsed.query
     const appliedScope = parsed.appliedScope
     if (
-      parsed.version !== 3 || !query || !appliedScope || !parsed.projection ||
+      parsed.version !== 4 || !parsed.origin || !query || !appliedScope || !parsed.projection ||
       !parsed.sort || parsed.cursor === undefined ||
       (typeof parsed.text !== 'string' && parsed.text !== null) ||
       !['all', 'focus', 'thread', 'subject', 'current'].includes(appliedScope.mode) ||
@@ -205,6 +208,16 @@ function decodeSearchContinuation(token: string): SearchContinuationPayload {
         !['string', 'number'].includes(typeof parsed.cursor.sortValue)
       ))
     ) throw new Error('invalid continuation payload')
+    if (
+      !['global', 'entity'].includes(parsed.origin.type) ||
+      (parsed.origin.type === 'entity' && !SEARCH_ENTITY_TYPES.includes(parsed.origin.kind))
+    ) throw new Error('invalid continuation origin')
+    if (
+      parsed.origin.type === 'entity' && (
+        typeof parsed.text !== 'string' || parsed.text.trim().length === 0 ||
+        parsed.kinds?.length !== 1 || parsed.kinds[0] !== parsed.origin.kind
+      )
+    ) throw new Error('invalid entity continuation origin')
     for (const value of [query.focusId, query.threadId, query.subjectId]) {
       if (value !== null && value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
         throw new Error('invalid continuation scope')
@@ -1641,7 +1654,7 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Choose reads by intent. For a compact queryless inventory use list_focuses, list_threads, list_commitments, or list_routines; these return hierarchy and one explicit projection row per applicable Subject without child Updates, Notes, or rich-text documents. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Search never returns lossless rich text. Request includeRichText=true on one known entity only immediately before a full structural replacement. Use onmove.search only for cross-kind discovery, queryless structured listing, or Subject hierarchy projection. INITIAL SEARCH: send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility and omit continuationToken. Natural-language wrappers retain meaningful entity terms. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Use projection={hierarchy,subjects,scopes}; omitted projection fields are false. Inspect projections.*.complete before treating auxiliary paths or Subject uses as exhaustive. Never invent or alter a continuationToken. A next-page request sends only the exact non-null signed token, which preserves the complete query and cursor; if SEARCH_CURSOR_STALE is returned, restart without it. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop global discovery and fetch returned IDs or continue only inside the returned boundary. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and View/Edit grants by resource, Focus, and Thread.'
+        'Choose reads by intent. For a compact queryless inventory use list_focuses, list_threads, list_commitments, or list_routines; these return hierarchy and one explicit projection row per applicable Subject without child Updates, Notes, or rich-text documents. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Search never returns lossless rich text. Request includeRichText=true on one known entity only immediately before a full structural replacement. Use onmove.search only for initial cross-kind discovery, queryless structured listing, or Subject hierarchy projection. Send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility. Initial search tools never accept continuationToken. Natural-language wrappers retain meaningful entity terms. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Use projection={hierarchy,subjects,scopes}; omitted projection fields are false. Inspect projections.*.complete before treating auxiliary paths or Subject uses as exhaustive. Never invent or alter a continuationToken. For another page call onmove.continue_search with only the exact non-null signed token; it preserves the originating search, complete query, and stable cursor. If SEARCH_CURSOR_STALE is returned, restart the original search tool with its criteria. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop global discovery and fetch returned IDs or continue only inside the returned boundary. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and View/Edit grants by resource, Focus, and Thread.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -2163,8 +2176,8 @@ export function createOnMoveMcpServer(
     'Optional compact metadata. Search results never include lossless rich text; fetch one chosen ID directly if a structural edit requires it.'
   )
   const entitySearchSchema = z.strictObject({
-    text: z.string().min(1).max(1_000).optional().describe(
-      'Required on an initial call: the literal text to discover within this entity kind. Omit only when sending a returned continuationToken.'
+    text: z.string().min(1).max(1_000).describe(
+      'The literal text to discover within this entity kind. For another page, call onmove.continue_search with the returned token instead of repeating this request.'
     ),
     scope: searchScopeSchema,
     date: localDateRangeSchema.optional(),
@@ -2178,10 +2191,37 @@ export function createOnMoveMcpServer(
       direction: z.enum(['asc', 'desc'])
     }).optional(),
     projection: entitySearchProjectionSchema,
-    page: searchPageSchema,
-    continuationToken: z.string().min(1).nullable().optional().describe(
-      'Initial call: omit or null. Next page: send only this exact signed token and omit every other field.'
-    )
+    page: searchPageSchema
+  })
+
+  const globalSearchSchema = z.strictObject({
+    text: z.string().min(1).max(1_000).nullable().optional().describe(
+      'Non-null uses full-text search. Null or omitted is queryless list mode and returns records selected by kinds, scope, and date filters.'
+    ),
+    kinds: z.array(z.enum(SEARCH_ENTITY_TYPES)).min(1).max(8).optional().describe(
+      'Record kinds to return: focus, thread, commitment, routine, update, todo, note, subject. Omit for all kinds.'
+    ),
+    scope: searchScopeSchema,
+    date: localDateRangeSchema.optional().describe(
+      'Filter the semantic local date: Update recorded date, or due date for dated Focuses, Threads, Commitments, and Todos. Timezone does not shift this field.'
+    ),
+    createdAt: localDateRangeSchema.optional().describe(
+      'Filter creation instants by inclusive local calendar dates in timeZone.'
+    ),
+    updatedAt: localDateRangeSchema.optional().describe(
+      'Filter modification instants by inclusive local calendar dates in timeZone.'
+    ),
+    timeZone: z.string().min(1).optional().describe(
+      'IANA timezone for createdAt and updatedAt boundaries, such as America/Chicago. Defaults to the running app timezone.'
+    ),
+    sort: z.strictObject({
+      field: z.enum(['relevance', 'date', 'createdAt', 'updatedAt']).describe(
+        'relevance requires non-null text; queryless listing defaults to updatedAt.'
+      ),
+      direction: z.enum(['asc', 'desc']).describe('Stable primary sort direction.')
+    }).optional(),
+    projection: searchProjectionSchema,
+    page: searchPageSchema
   })
 
   const searchReferenceOutputSchema = z.strictObject({
@@ -2333,21 +2373,11 @@ export function createOnMoveMcpServer(
   type EntitySearchInput = z.infer<typeof entitySearchSchema>
   const runEntitySearch = (
     kind: SearchEntityType,
-    input: EntitySearchInput
+    input: EntitySearchInput,
+    continuation: SearchContinuationPayload | null = null
   ): ReturnType<typeof result> => {
-    const continuation = input.continuationToken === undefined || input.continuationToken === null
-      ? null
-      : decodeSearchContinuation(input.continuationToken)
     if (continuation) {
-      const conflicts = Object.entries(input).filter(([key, value]) =>
-        key !== 'continuationToken' && value !== undefined)
-      if (conflicts.length > 0) {
-        throw new TypeError(
-          `A continuation request must contain only continuationToken; remove ${conflicts
-            .map(([key]) => key).join(', ')}.`
-        )
-      }
-      if (continuation.kinds?.length !== 1 || continuation.kinds[0] !== kind) {
+      if (continuation.origin.type !== 'entity' || continuation.origin.kind !== kind) {
         throw new TypeError(`continuationToken belongs to a different entity search, not ${kind}`)
       }
     }
@@ -2396,7 +2426,7 @@ export function createOnMoveMcpServer(
     if (continuation && continuation.indexGeneration !== searched.generation) {
       throw new TypeError(
         'SEARCH_CURSOR_STALE: OnMove data changed after this search page was created. ' +
-        'Restart the same search without continuationToken; do not reuse the stale token.'
+        'Restart the original entity search; do not reuse the stale token.'
       )
     }
     const warnings = [...resolved.diagnostics.warnings]
@@ -2414,7 +2444,8 @@ export function createOnMoveMcpServer(
     let projectionTruncated = false
     const continuationFor = (cursor: SearchPageCursor | null): string | null => cursor
       ? encodeSearchContinuation({
-          version: 3,
+          version: 4,
+          origin: { type: 'entity', kind },
           text,
           query: resolved.query,
           appliedScope: resolved.diagnostics.appliedScope,
@@ -2444,7 +2475,7 @@ export function createOnMoveMcpServer(
             ? 'Another stable page remains for this entity-specific search.'
             : `The complete visible ${kind} search was returned.`,
           nextAction: hasMore
-            ? 'Call this same search tool again with only continuationToken.'
+            ? 'Call onmove.continue_search with only this continuationToken.'
             : 'Stop discovery and use the returned record IDs.'
         },
         appliedQuery: {
@@ -2519,7 +2550,7 @@ export function createOnMoveMcpServer(
     return result(finalResponse, diagnostics())
   }
 
-  for (const [toolName, title, kind] of [
+  const entitySearchTools = [
     ['onmove.search_focuses', 'Search OnMove focuses', 'focus'],
     ['onmove.search_threads', 'Search OnMove threads', 'thread'],
     ['onmove.search_commitments', 'Search OnMove commitments', 'commitment'],
@@ -2528,12 +2559,13 @@ export function createOnMoveMcpServer(
     ['onmove.search_notes', 'Search OnMove notes', 'note'],
     ['onmove.search_todos', 'Search OnMove todos', 'todo'],
     ['onmove.search_subjects', 'Search OnMove subjects', 'subject']
-  ] as const) {
+  ] as const
+  for (const [toolName, title, kind] of entitySearchTools) {
     server.registerTool(
       toolName,
       {
         title,
-        description: `Search only visible ${kind} records by text. ${kind === 'todo' ? 'Use returned Todo IDs with Todo mutation tools.' : kind === 'subject' ? 'Use the canonical Subject ID with Subject-scoped search, review_subject, or resolve_work_target.' : `Use get_${kind}_by_id when an ID is known${['focus', 'thread', 'commitment', 'routine', 'note'].includes(kind) ? ` and get_${kind}_by_path for an exact hierarchy path` : ''}.`} This does not search other entity kinds. Search returns only bounded match snippets and compact metadata—never lossless rich text. Read the selected ID for Markdown; request includeRichText=true there only immediately before a full structural replacement.`,
+        description: `Search only visible ${kind} records by text. ${kind === 'todo' ? 'Use returned Todo IDs with Todo mutation tools.' : kind === 'subject' ? 'Use the canonical Subject ID with Subject-scoped search, review_subject, or resolve_work_target.' : `Use get_${kind}_by_id when an ID is known${['focus', 'thread', 'commitment', 'routine', 'note'].includes(kind) ? ` and get_${kind}_by_path for an exact hierarchy path` : ''}.`} This does not search other entity kinds. Search returns only bounded match snippets and compact metadata—never lossless rich text. Read the selected ID for Markdown; request includeRichText=true there only immediately before a full structural replacement. If hasMore=true, call onmove.continue_search with only the returned token; this initial search tool does not accept continuationToken.`,
         inputSchema: entitySearchSchema,
         outputSchema: entitySearchOutputSchema,
         annotations: { readOnlyHint: true }
@@ -2542,60 +2574,15 @@ export function createOnMoveMcpServer(
     )
   }
 
-  server.registerTool(
-    'onmove.search',
-    {
-      title: 'Search or list OnMove records',
-      description: 'Use for FTS discovery, queryless structured listing, and cross-kind hierarchy browsing. INITIAL REQUEST: send text for language search, or text=null with kinds to list records without FTS. Natural-language wrappers such as "what has Michael been doing" retain the meaningful entity terms. Search returns bounded match snippets and compact metadata only—never lossless rich-text documents. Use the selected entity getter for Markdown and request includeRichText=true there only before a structural replacement. Date filters are database predicates, never search terms. Responses identify primary and auxiliary projection completeness, enforce a complete tool-result byte budget, and return a signed continuationToken only when another primary page exists. A continuation request sends only that exact token; never invent or alter it.',
-      inputSchema: z.strictObject({
-        text: z.string().min(1).max(1_000).nullable().optional().describe(
-          'Non-null uses full-text search. Null or omitted is queryless list mode and returns records selected by kinds, scope, and date filters.'
-        ),
-        kinds: z.array(z.enum(SEARCH_ENTITY_TYPES)).min(1).max(8).optional().describe(
-          'Record kinds to return: focus, thread, commitment, routine, update, todo, note, subject. Omit for all kinds.'
-        ),
-        scope: searchScopeSchema,
-        date: localDateRangeSchema.optional().describe(
-          'Filter the semantic local date: Update recorded date, or due date for dated Focuses, Threads, Commitments, and Todos. Timezone does not shift this field.'
-        ),
-        createdAt: localDateRangeSchema.optional().describe(
-          'Filter creation instants by inclusive local calendar dates in timeZone.'
-        ),
-        updatedAt: localDateRangeSchema.optional().describe(
-          'Filter modification instants by inclusive local calendar dates in timeZone.'
-        ),
-        timeZone: z.string().min(1).optional().describe(
-          'IANA timezone for createdAt and updatedAt boundaries, such as America/Chicago. Defaults to the running app timezone.'
-        ),
-        sort: z.strictObject({
-          field: z.enum(['relevance', 'date', 'createdAt', 'updatedAt']).describe(
-            'relevance requires non-null text; queryless listing defaults to updatedAt.'
-          ),
-          direction: z.enum(['asc', 'desc']).describe('Stable primary sort direction.')
-        }).optional(),
-        projection: searchProjectionSchema,
-        page: searchPageSchema,
-        continuationToken: z.string().min(1).nullable().optional().describe(
-          'Initial request: omit or null. Next page: send only the exact non-null token returned by OnMove; do not send text, filters, scope, sort, kinds, projection, or page again.'
+  type GlobalSearchInput = z.infer<typeof globalSearchSchema>
+  const runGlobalSearch = (
+    input: GlobalSearchInput,
+    continuation: SearchContinuationPayload | null = null
+  ): ReturnType<typeof result> => {
+      if (continuation?.origin.type === 'entity') {
+        throw new TypeError(
+          'continuationToken belongs to an entity-specific search, not onmove.search'
         )
-      }),
-      outputSchema: globalSearchOutputSchema,
-      annotations: { readOnlyHint: true }
-    },
-    async (input) => {
-      const continuation = input.continuationToken === undefined ||
-        input.continuationToken === null
-        ? null
-        : decodeSearchContinuation(input.continuationToken)
-      if (continuation) {
-        const conflicting = Object.entries(input).filter(([key, value]) =>
-          key !== 'continuationToken' && value !== undefined)
-        if (conflicting.length > 0) {
-          throw new TypeError(
-            `A continuation request must contain only continuationToken; remove ${conflicting
-              .map(([key]) => key).join(', ')}. The signed token already preserves the full query.`
-          )
-        }
       }
       const resolved = continuation
         ? {
@@ -2640,7 +2627,7 @@ export function createOnMoveMcpServer(
       if (continuation && continuation.indexGeneration !== searched.generation) {
         throw new TypeError(
           'SEARCH_CURSOR_STALE: OnMove data changed after this search page was created. ' +
-          'Restart the same search without continuationToken; do not reuse the stale token.'
+          'Restart onmove.search with the original criteria; do not reuse the stale token.'
         )
       }
       const matches = searched.items
@@ -2755,7 +2742,8 @@ export function createOnMoveMcpServer(
 
       const continuationFor = (cursor: SearchPageCursor | null): string | null => cursor
         ? encodeSearchContinuation({
-            version: 3,
+            version: 4,
+            origin: { type: 'global' },
             text: normalizedText,
             query: resolved.query,
             appliedScope: resolved.diagnostics.appliedScope,
@@ -2800,7 +2788,7 @@ export function createOnMoveMcpServer(
             ? 'Use scope.mode=subject/focus/thread with the returned ID, onmove.review_subject, or a compact list tool; do not infer completeness from the truncated projection.'
             : doNotBroaden
             ? 'Stop discovery and use the returned record IDs directly.'
-            : 'Call onmove.search again with only continuationToken.'
+            : 'Call onmove.continue_search with only this continuationToken.'
         }
         return {
           items,
@@ -2938,6 +2926,46 @@ export function createOnMoveMcpServer(
         throw new TypeError(`The safe search response exceeded page.maxBytes=${maxBytes}`)
       }
       return result(finalResponse, diagnostics())
+  }
+
+  server.registerTool(
+    'onmove.search',
+    {
+      title: 'Search or list OnMove records',
+      description: 'Use for initial FTS discovery, queryless structured listing, and cross-kind hierarchy browsing. Send text for language search, or text=null with kinds to list records without FTS. Natural-language wrappers such as "what has Michael been doing" retain the meaningful entity terms. Search returns bounded match snippets and compact metadata only—never lossless rich-text documents. Use the selected entity getter for Markdown and request includeRichText=true there only before a structural replacement. Date filters are database predicates, never search terms. Responses identify primary and auxiliary projection completeness, enforce a complete tool-result byte budget, and return a signed continuationToken only when another primary page exists. To fetch that page call onmove.continue_search; never attach a token to this initial-search tool or repeat the search body with it.',
+      inputSchema: globalSearchSchema,
+      outputSchema: globalSearchOutputSchema,
+      annotations: { readOnlyHint: true }
+    },
+    async (input) => runGlobalSearch(input)
+  )
+
+  server.registerTool(
+    'onmove.continue_search',
+    {
+      title: 'Continue an OnMove search',
+      description: 'Fetch exactly one next page from any OnMove search tool. Pass only the exact non-null continuationToken returned by the preceding page. The signed token identifies the originating search, filters, scope, projection, sort, page budget, index generation, and stable cursor. Do not repeat or modify the search body. Never invent, alter, or reuse a stale token.',
+      inputSchema: z.strictObject({
+        continuationToken: z.string().min(1).describe(
+          'Required opaque token returned by an OnMove search response with hasMore=true. No search criteria belong in this request.'
+        )
+      }),
+      outputSchema: z.union([globalSearchOutputSchema, entitySearchOutputSchema]),
+      annotations: { readOnlyHint: true }
+    },
+    async ({ continuationToken }) => {
+      const continuation = decodeSearchContinuation(continuationToken)
+      if (continuation.origin.type === 'global') {
+        return runGlobalSearch({}, continuation)
+      }
+      if (typeof continuation.text !== 'string' || continuation.text.trim().length === 0) {
+        throw new TypeError('continuationToken contains an invalid entity-search query')
+      }
+      return runEntitySearch(
+        continuation.origin.kind,
+        { text: continuation.text },
+        continuation
+      )
     }
   )
 
@@ -3113,7 +3141,8 @@ export function createOnMoveMcpServer(
         : null
       const continuationToken = reviewed.review && reviewSearchGeneration !== null
         ? encodeSearchContinuation({
-            version: 3,
+            version: 4,
+            origin: { type: 'global' },
             text: null,
             query: {
               focusId: reviewed.review.hierarchy.focus.id,

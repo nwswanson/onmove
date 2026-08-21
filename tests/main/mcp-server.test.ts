@@ -74,6 +74,7 @@ describe('OnMove MCP protocol adapter', () => {
       'onmove.search_notes',
       'onmove.search_todos',
       'onmove.search_subjects',
+      'onmove.continue_search',
       'onmove.resolve_work_target',
       'onmove.review_subject',
       'onmove.search',
@@ -94,7 +95,7 @@ describe('OnMove MCP protocol adapter', () => {
       'onmove.update_note',
       'onmove.poke_review'
     ]))
-    expect(listed.tools).toHaveLength(51)
+    expect(listed.tools).toHaveLength(52)
     expect(listed.tools.map(({ name }) => name)).not.toEqual(expect.arrayContaining([
       'onmove.get_focus',
       'onmove.get_thread',
@@ -274,6 +275,8 @@ describe('OnMove MCP protocol adapter', () => {
   it('advertises named scope semantics and self-describing entity IDs in tool schemas', async () => {
     const tools = (await client.listTools()).tools
     const search = tools.find(({ name }) => name === 'onmove.search')!
+    const continueSearch = tools.find(({ name }) => name === 'onmove.continue_search')!
+    const searchNotes = tools.find(({ name }) => name === 'onmove.search_notes')!
     const getThread = tools.find(({ name }) => name === 'onmove.get_thread_by_id')!
     const resolveTarget = tools.find(({ name }) => name === 'onmove.resolve_work_target')!
     const createUpdate = tools.find(({ name }) => name === 'onmove.create_update')!
@@ -281,6 +284,7 @@ describe('OnMove MCP protocol adapter', () => {
     const patchRichText = tools.find(({ name }) => name === 'onmove.patch_rich_text')!
     const updateRichText = tools.find(({ name }) => name === 'onmove.update_rich_text')!
     const searchSchema = JSON.stringify(search.inputSchema)
+    const continuationSchema = JSON.stringify(continueSearch.inputSchema)
     const threadSchema = JSON.stringify(getThread.inputSchema)
     const updateSchema = JSON.stringify(createUpdate.inputSchema)
     const resolveTargetSchema = resolveTarget.inputSchema as {
@@ -328,13 +332,23 @@ describe('OnMove MCP protocol adapter', () => {
     expect(searchSchema).not.toContain('includeSubjects')
     expect(searchSchema).not.toContain('includeScopes')
     expect(searchSchema).not.toContain('hierarchy-only')
-    expect(searchSchema).toContain('continuationToken')
-    expect(searchSchema).toContain('Initial request: omit or null')
-    expect(searchSchema).toContain('do not send text, filters, scope, sort, kinds, projection, or page again')
+    expect(searchSchema).not.toContain('continuationToken')
+    expect(JSON.stringify(searchNotes.inputSchema)).not.toContain('continuationToken')
+    expect(continuationSchema).toContain('continuationToken')
+    expect(continuationSchema).not.toContain('projection')
+    expect(continueSearch.inputSchema).toMatchObject({
+      type: 'object',
+      required: ['continuationToken'],
+      additionalProperties: false,
+      properties: { continuationToken: expect.any(Object) }
+    })
+    expect(continueSearch.description).toContain('Pass only the exact non-null continuationToken')
+    expect(continueSearch.description).toContain('Do not repeat or modify the search body')
     expect(searchSchema).toContain('preserve a previously returned Thread ID')
     expect(search.description).toContain('queryless structured listing')
     expect(search.description).toContain('signed continuationToken')
-    expect(search.description).toContain('INITIAL REQUEST')
+    expect(search.description).toContain('initial FTS discovery')
+    expect(search.description).toContain('onmove.continue_search')
     expect(threadSchema).toContain('hierarchy.thread.id')
     expect(threadSchema).toContain('not searchResult.reference.id')
     expect(threadSchema).toContain('Defaults to false')
@@ -587,7 +601,7 @@ describe('OnMove MCP protocol adapter', () => {
       seen.push(content.records[0].reference.id)
       if (!content.hasMore) break
       page = await client.callTool({
-        name: 'onmove.search_notes',
+        name: 'onmove.continue_search',
         arguments: { continuationToken: content.continuationToken }
       })
     }
@@ -598,36 +612,46 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: { text: 'notepagingneedle', page: { size: 1 } }
     })
     const noteToken = (first.structuredContent as { continuationToken: string }).continuationToken
-    const wrongSearch = await client.callTool({
-      name: 'onmove.search_updates',
+    const mixedContinuation = await client.callTool({
+      name: 'onmove.continue_search',
+      arguments: { continuationToken: noteToken, text: 'notepagingneedle' }
+    })
+    expect(mixedContinuation.isError).toBe(true)
+    expect(JSON.stringify(mixedContinuation)).toContain('Unrecognized key')
+
+    const continued = await client.callTool({
+      name: 'onmove.continue_search',
       arguments: { continuationToken: noteToken }
     })
-    expect(wrongSearch.isError).toBe(true)
-    expect(JSON.stringify(wrongSearch)).toContain('different entity search')
+    expect(continued.isError).not.toBe(true)
+    expect(continued.structuredContent).toMatchObject({
+      records: [expect.objectContaining({
+        reference: expect.objectContaining({ type: 'note' })
+      })]
+    })
 
     database.domain.richTextDocuments.save(
       { type: 'note', id: notes[0].id, field: 'content' },
       'Notepagingneedle changed while paging'
     )
     const stale = await client.callTool({
-      name: 'onmove.search_notes',
+      name: 'onmove.continue_search',
       arguments: { continuationToken: noteToken }
     })
     expect(stale.isError).toBe(true)
     expect(JSON.stringify(stale)).toContain('SEARCH_CURSOR_STALE')
   })
 
-  it('treats omitted or null continuation tokens as initial searches and rejects only invalid values', async () => {
-    const withNull = await client.callTool({
+  it('separates initial search criteria from opaque continuation requests', async () => {
+    const initial = await client.callTool({
       name: 'onmove.search',
       arguments: {
         text: 'launch readiness',
-        scope: { mode: 'all' },
-        continuationToken: null
+        scope: { mode: 'all' }
       }
     })
-    expect(withNull.isError).not.toBe(true)
-    expect(withNull.structuredContent).toMatchObject({
+    expect(initial.isError).not.toBe(true)
+    expect(initial.structuredContent).toMatchObject({
       items: [expect.objectContaining({ reference: { type: 'focus', id: 1 } })],
       diagnostics: {
         appliedScope: { mode: 'all', source: 'explicit' },
@@ -637,15 +661,16 @@ describe('OnMove MCP protocol adapter', () => {
       hasMore: false
     })
 
-    const omitted = await client.callTool({
-      name: 'onmove.search',
-      arguments: { text: 'launch readiness' }
-    })
-    expect(omitted.isError).not.toBe(true)
-
-    const invented = await client.callTool({
+    const mixed = await client.callTool({
       name: 'onmove.search',
       arguments: { text: 'launch readiness', continuationToken: 'invented-token' }
+    })
+    expect(mixed.isError).toBe(true)
+    expect(JSON.stringify(mixed)).toContain('Unrecognized key')
+
+    const invented = await client.callTool({
+      name: 'onmove.continue_search',
+      arguments: { continuationToken: 'invented-token' }
     })
     expect(invented.isError).toBe(true)
     expect(JSON.stringify(invented)).toContain(
@@ -2809,7 +2834,7 @@ describe('OnMove MCP protocol adapter', () => {
       continuationToken: string
     }).continuationToken
     const followUp = await client.callTool({
-      name: 'onmove.search',
+      name: 'onmove.continue_search',
       arguments: { continuationToken }
     })
     expect(followUp.isError, JSON.stringify(followUp)).not.toBe(true)
@@ -3117,9 +3142,9 @@ describe('OnMove MCP protocol adapter', () => {
         expect(page.continuationToken).toBeNull()
         break
       }
-      expect(page.continuationToken).toMatch(/^onmove-search-v3\./u)
+      expect(page.continuationToken).toMatch(/^onmove-search-v4\./u)
       response = await client.callTool({
-        name: 'onmove.search',
+        name: 'onmove.continue_search',
         arguments: { continuationToken: page.continuationToken }
       })
     }
@@ -3136,7 +3161,7 @@ describe('OnMove MCP protocol adapter', () => {
     const signatureFirst = token[signatureStart]
     const tampered = `${token.slice(0, signatureStart)}${signatureFirst === 'a' ? 'b' : 'a'}${token.slice(signatureStart + 1)}`
     const rejected = await client.callTool({
-      name: 'onmove.search',
+      name: 'onmove.continue_search',
       arguments: { continuationToken: tampered }
     })
     expect(rejected.isError).toBe(true)
@@ -3159,12 +3184,12 @@ describe('OnMove MCP protocol adapter', () => {
       observation: 'A live edit invalidates the prior index generation'
     })
     const stale = await client.callTool({
-      name: 'onmove.search',
+      name: 'onmove.continue_search',
       arguments: { continuationToken: staleToken }
     })
     expect(stale.isError).toBe(true)
     expect(JSON.stringify(stale)).toContain('SEARCH_CURSOR_STALE')
-    expect(JSON.stringify(stale)).toContain('without continuationToken')
+    expect(JSON.stringify(stale)).toContain('Restart onmove.search with the original criteria')
   })
 
   it('keeps compact pages below the configured response byte limit', async () => {

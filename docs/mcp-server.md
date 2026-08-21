@@ -296,13 +296,15 @@ The read contract deliberately separates three intents:
 | Known durable ID | `get_focus_by_id`, `get_thread_by_id`, `get_commitment_by_id`, `get_routine_by_id`, `get_update_by_id`, `get_note_by_id` |
 | Exact title hierarchy | `get_focus_by_path`, `get_thread_by_path`, `get_commitment_by_path`, `get_routine_by_path`, `get_note_by_path` |
 | Text discovery in one kind | `search_focuses`, `search_threads`, `search_commitments`, `search_routines`, `search_updates`, `search_notes`, `search_todos`, `search_subjects` |
+| Next page from any search | `continue_search` with only the returned opaque token |
 
 Path schemas contain title fields only. Matching is exact and case-insensitive; duplicate exact
 paths return `ambiguous` with candidates. They never accept IDs or perform fuzzy search. Updates
 have no by-path getter because a parent/Subject/date path is not a unique Update identity. Use
 `get_updates_by_ids` for bounded bulk hydration. Specialized searches share stable signed cursors,
 explicit `hasMore`, structured date filters, projections, and byte budgets with global search, but
-they cannot return another entity kind.
+they cannot return another entity kind. All initial search tools accept criteria only;
+`continue_search` verifies the token's signed origin and returns the corresponding response shape.
 
 The four dedicated list tools are intentionally narrower than either search or detailed getters.
 They return compact summary metadata and the complete owning hierarchy, but no child collections:
@@ -336,17 +338,17 @@ Search is global by default. Omitting `scope`, passing `scope: null`, or using n
 IDs never inherits the Focus currently selected in OnMove. Narrowing is always named and explicit:
 
 ```json
-{ "text": "person x", "scope": { "mode": "all" }, "continuationToken": null }
+{ "text": "person x", "scope": { "mode": "all" } }
 { "text": "migration", "scope": { "mode": "focus", "focusId": 12 } }
 { "text": "risk", "scope": { "mode": "thread", "threadId": 19 } }
 { "text": "escalation", "scope": { "mode": "subject", "subjectId": 34 } }
 { "text": "risk", "scope": { "mode": "current" }, "kinds": ["thread", "update"] }
 ```
 
-The first line is the canonical initial named-discovery request: send the user's specific name,
-search `all`, and omit `continuationToken` or set it to `null`. Never construct, guess, or copy an
-example continuation token. Only a non-null token returned by OnMove is valid for a follow-up;
-only a supplied non-null invalid token is rejected.
+The first line is the canonical initial named-discovery request: send the user's specific name and
+search `all`. Initial search tools accept criteria only and do not expose `continuationToken` in
+their input schemas. Never construct, guess, or copy an example continuation token. Only a token
+returned by OnMove with `hasMore=true` is valid for `onmove.continue_search`.
 
 `all` searches the entire visible workspace, `focus` searches one Focus hierarchy, `thread`
 searches one Thread and its children, `subject` searches records attributed to one canonical Subject,
@@ -364,9 +366,10 @@ hierarchy lookup. If
 directly; do not search globally for a generic parent label. A paged search response includes an
 opaque `continuationToken` only when another page exists. The token is signed and preserves the complete
 request: text, all local-date filters, timezone, scope, sort, kinds, projection, page size, byte
-budget, stable cursor, and durable search-index generation. Send only that token on the next-page
-call; changing the query or scope starts a new search. A live write between pages returns
-`SEARCH_CURSOR_STALE`; restart the same search without the old token. Broaden only when the user
+budget, stable cursor, durable search-index generation, and the originating search response shape.
+Send only that token to `onmove.continue_search`; never repeat criteria beside it. Changing the
+query or scope starts a new call to the original search tool. A live write between pages returns
+`SEARCH_CURSOR_STALE`; restart the original search with its criteria. Broaden only when the user
 requests all people or all records.
 
 Search always returns records. Compact responses default to ten records and cap pages at 25. One
