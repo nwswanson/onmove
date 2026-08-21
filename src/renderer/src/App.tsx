@@ -38,6 +38,7 @@ import type {
 } from '@/features/application/application-navigation'
 import { NewFocusDialog } from '@/features/focus/focus-ui'
 import { focusPrimaryNavigationItems } from '@/features/focus/focus-presenters'
+import { pinnedPrimaryNavigationItems } from '@/features/focus/focus-presenters'
 import { FocusWorkspace } from '@/features/focus/focus-workspace'
 import { SettingsWorkspace } from '@/features/settings/settings-workspace'
 import { TodoWorkspace } from '@/features/todos/todo-workspace'
@@ -120,9 +121,11 @@ function AppToolbar({
 }
 
 interface AppSidebarProps {
+  pinnedItems: readonly SidebarNavigationItemModel[]
   focusItems: readonly SidebarNavigationItemModel[]
   navigationBadges: NavigationBadgeCounts | null
   selectedFocusId: string | null
+  selectedPinnedItemId: string | null
   selectedView: 'todos' | 'tags' | 'review' | 'routines' | 'due' | 'archive' | 'focus' | 'settings'
   enabled: boolean
   width: number
@@ -134,6 +137,12 @@ interface AppSidebarProps {
   onArchive: () => void
   onSettings: () => void
   onSelectFocus: (focusId: string) => void
+  onSelectPinned: (itemId: string) => void
+  onPinnedContextMenuAction: (
+    itemId: string,
+    actionId: string,
+    checked?: boolean
+  ) => void
   onFocusContextMenuAction: (
     focusId: string,
     actionId: string,
@@ -144,9 +153,11 @@ interface AppSidebarProps {
 }
 
 function AppSidebar({
+  pinnedItems,
   focusItems,
   navigationBadges,
   selectedFocusId,
+  selectedPinnedItemId,
   selectedView,
   enabled,
   width,
@@ -158,6 +169,8 @@ function AppSidebar({
   onArchive,
   onSettings,
   onSelectFocus,
+  onSelectPinned,
+  onPinnedContextMenuAction,
   onFocusContextMenuAction,
   onNewFocus,
   onShowData
@@ -241,6 +254,18 @@ function AppSidebar({
           />
         </SidebarGroup>
 
+        {pinnedItems.length > 0 && (
+          <SidebarGroup className="mt-5">
+            <SidebarGroupLabel>Pinned</SidebarGroupLabel>
+            <SidebarNavigation
+              items={pinnedItems}
+              selectedItemId={selectedPinnedItemId}
+              onSelect={onSelectPinned}
+              onContextMenuAction={onPinnedContextMenuAction}
+            />
+          </SidebarGroup>
+        )}
+
         <SidebarGroup className="mt-5">
           <SidebarGroupLabel>Focuses</SidebarGroupLabel>
           <SidebarNavigation
@@ -318,16 +343,40 @@ export function App(): React.JSX.Element {
     useState<TagsWorkspaceDestination | null>(null)
   const focusDestinationRequest = useRef(0)
   const tagsDestinationRequest = useRef(0)
+  const [activeFocusThreadId, setActiveFocusThreadId] = useState<number | null>(null)
   const selectedFocus = application.selectedFocus
   const reportMcpUiContext = application.reportMcpUiContext
   const selectedSubjectId = selectedFocus
     ? (focusSubjectSelections[selectedFocus.id] ?? null)
     : null
   const focusItems = focusPrimaryNavigationItems(
-    application.navigableFocuses,
+    application.navigableFocuses.filter((focus) =>
+      !application.pinnedFocusIds.has(focus.id)),
     application.focusStatusSummaries,
+    application.sensitiveContentHidden,
+    application.pinnedFocusIds
+  )
+  const pinnedItems = pinnedPrimaryNavigationItems(
+    application.navigableNavigationPins,
+    application.focusStatusSummaries,
+    application.pinnedThreadStatusSummaries,
     application.sensitiveContentHidden
   )
+  const selectedPinnedThread = selectedFocus && activeFocusThreadId !== null
+    ? application.navigableNavigationPins.find((pin) =>
+        pin.target.type === 'thread' &&
+        pin.target.focusId === selectedFocus.id &&
+        pin.target.id === activeFocusThreadId)
+    : undefined
+  const selectedPinnedFocus = selectedFocus
+    ? application.navigableNavigationPins.find((pin) =>
+        pin.target.type === 'focus' && pin.target.id === selectedFocus.id)
+    : undefined
+  const selectedPinnedItemId = selectedPinnedThread
+    ? `pin:thread:${selectedPinnedThread.target.id}`
+    : selectedPinnedFocus
+      ? `pin:focus:${selectedPinnedFocus.target.id}`
+      : null
   const toolbarTitle = application.selectedView === 'settings'
     ? 'Settings'
     : application.selectedView === 'archive'
@@ -421,7 +470,10 @@ export function App(): React.JSX.Element {
   ): Promise<void> {
     await Promise.all([
       application.refreshFocusStatusSummary(fromFocusId),
-      application.refreshFocusStatusSummary(thread.focusId)
+      application.refreshFocusStatusSummary(thread.focusId),
+      application.pinnedThreadIds.has(thread.id)
+        ? application.refreshNavigationPins()
+        : Promise.resolve()
     ])
     if (!application.selectFocus(thread.focusId)) {
       application.goTodos()
@@ -463,9 +515,13 @@ export function App(): React.JSX.Element {
         }
         primarySidebar={
           <AppSidebar
+            pinnedItems={pinnedItems}
             focusItems={focusItems}
             navigationBadges={application.navigationBadges}
-            selectedFocusId={selectedFocus ? String(selectedFocus.id) : null}
+            selectedFocusId={selectedFocus && !selectedPinnedItemId
+              ? String(selectedFocus.id)
+              : null}
+            selectedPinnedItemId={selectedPinnedItemId}
             selectedView={application.selectedView}
             enabled={application.enabled}
             width={sidebarWidth}
@@ -500,6 +556,37 @@ export function App(): React.JSX.Element {
               application.goArchive()
             }}
             onSettings={application.goSettings}
+            onSelectPinned={(itemId) => {
+              const pin = application.navigableNavigationPins.find((candidate) =>
+                `pin:${candidate.target.type}:${candidate.target.id}` === itemId)
+              if (!pin) return
+              setTagsDestination(null)
+              if (pin.target.type === 'focus') {
+                setFocusDestination(null)
+                application.selectFocus(pin.target.id)
+                return
+              }
+              openWorkContext({
+                focusId: pin.target.focusId,
+                threadId: pin.target.id,
+                commitmentId: null,
+                subjectId: null,
+                contextualMode: 'children'
+              })
+            }}
+            onPinnedContextMenuAction={(itemId, actionId, checked) => {
+              if (typeof checked !== 'boolean') return
+              const pin = application.navigationPins.find((candidate) =>
+                `pin:${candidate.target.type}:${candidate.target.id}` === itemId)
+              if (!pin) return
+              if (actionId === 'pin') {
+                void application.setNavigationPin(pin.target, checked)
+              } else if (pin.target.type === 'focus' && actionId === 'needs-review') {
+                void application.updateFocus(pin.target.id, { needsReview: checked })
+              } else if (pin.target.type === 'focus' && actionId === 'sensitive') {
+                void application.updateFocus(pin.target.id, { sensitive: checked })
+              }
+            }}
             onSelectFocus={(focusId) => {
               setFocusDestination(null)
               application.selectFocus(Number(focusId))
@@ -510,6 +597,8 @@ export function App(): React.JSX.Element {
                 void application.updateFocus(Number(focusId), { needsReview: checked })
               } else if (actionId === 'sensitive') {
                 void application.updateFocus(Number(focusId), { sensitive: checked })
+              } else if (actionId === 'pin') {
+                void application.setNavigationPin({ type: 'focus', id: Number(focusId) }, checked)
               }
             }}
             onNewFocus={() => setNewFocusOpen(true)}
@@ -600,6 +689,11 @@ export function App(): React.JSX.Element {
                 title
               }))}
               onThreadMoved={finishThreadMove}
+              pinnedThreadIds={application.pinnedThreadIds}
+              onThreadPinChange={(threadId, pinned) =>
+                application.setNavigationPin({ type: 'thread', id: threadId }, pinned)}
+              onThreadChanged={() => application.refreshNavigationPins()}
+              onActiveThreadChange={setActiveFocusThreadId}
             />
           ) : (
             <TodoWorkspace

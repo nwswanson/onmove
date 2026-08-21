@@ -3696,6 +3696,31 @@ const migrations: readonly Migration[] = [
         UPDATE search_index_state SET dirty = 1 WHERE singleton = 1;
       `)
     }
+  },
+  {
+    version: 41,
+    name: 'sidebar_navigation_pins',
+    up(database) {
+      database.exec(`
+        CREATE TABLE sidebar_navigation_pins (
+          id INTEGER PRIMARY KEY,
+          focus_id INTEGER REFERENCES focuses(id) ON DELETE CASCADE,
+          thread_id INTEGER REFERENCES threads(id) ON DELETE CASCADE,
+          created_at TEXT NOT NULL,
+          CHECK (
+            (focus_id IS NOT NULL AND thread_id IS NULL) OR
+            (focus_id IS NULL AND thread_id IS NOT NULL)
+          )
+        ) STRICT;
+
+        CREATE UNIQUE INDEX sidebar_navigation_pins_focus_index
+          ON sidebar_navigation_pins(focus_id)
+          WHERE focus_id IS NOT NULL;
+        CREATE UNIQUE INDEX sidebar_navigation_pins_thread_index
+          ON sidebar_navigation_pins(thread_id)
+          WHERE thread_id IS NOT NULL;
+      `)
+    }
   }
 ]
 

@@ -11,6 +11,7 @@ import { OnMoveMcpRuntime } from '../mcp/live-server'
 import {
   IPC_EVENTS,
   type McpSettingsSnapshot,
+  type NavigationPinSnapshot,
   type RichTextDocumentChange,
   type RichTextDocumentReference
 } from '../shared/contracts'
@@ -178,6 +179,14 @@ function broadcastMcpSettingsChanged(settings: McpSettingsSnapshot): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
       window.webContents.send(IPC_EVENTS.mcpSettingsChanged, settings)
+    }
+  }
+}
+
+function broadcastNavigationPinsChanged(pins: NavigationPinSnapshot[]): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(IPC_EVENTS.navigationPinsChanged, pins)
     }
   }
 }
@@ -354,7 +363,8 @@ app.whenReady().then(async () => {
     },
     invalidateNavigationBadges,
     broadcastRoutinesChanged,
-    broadcastMcpSettingsChanged
+    broadcastMcpSettingsChanged,
+    broadcastNavigationPinsChanged
   )
 
   Menu.setApplicationMenu(

@@ -6,6 +6,7 @@ import type {
   FocusOverviewTimelineSnapshot,
   FocusStatus,
   HealthState,
+  NavigationPinSnapshot,
   RoutineSnapshot,
   ThreadSnapshot,
   ThreadScopeSnapshot,
@@ -261,7 +262,8 @@ export function statusSunflowerModel(
 export function focusPrimaryNavigationItems(
   focuses: readonly FocusSnapshot[],
   summaries: StatusSummariesById = {},
-  hideSensitiveContent = false
+  hideSensitiveContent = false,
+  pinnedFocusIds?: ReadonlySet<number>
 ): SidebarNavigationItemModel[] {
   return focuses.map((focus) => {
     const paused = focus.status === 'paused'
@@ -280,7 +282,11 @@ export function focusPrimaryNavigationItems(
       ...sidebarIndicatorProps(focus.sensitive, focus.needsReview),
       contextMenu: {
         ariaLabel: `${label} actions`,
-        items: overviewContextMenuItems(focus.sensitive, focus.needsReview)
+        items: overviewContextMenuItems(
+          focus.sensitive,
+          focus.needsReview,
+          pinnedFocusIds?.has(focus.id)
+        )
       },
       dropTarget: { type: 'focus', id: String(focus.id) }
     }
@@ -327,7 +333,8 @@ export type RoutinesByContextItemId = Readonly<
 function workContextMenuItems(
   sensitive: boolean,
   needsReview: boolean,
-  includeDelete: boolean
+  includeDelete: boolean,
+  pinned?: boolean
 ): SidebarContextMenuItemModel[] {
   return [
     {
@@ -357,6 +364,13 @@ function workContextMenuItems(
       icon: 'sensitive',
       checked: sensitive
     },
+    ...(pinned === undefined ? [] : [{
+      kind: 'checkbox' as const,
+      id: 'pin',
+      label: 'Pinned to main sidebar',
+      icon: 'pin' as const,
+      checked: pinned
+    }]),
     ...(includeDelete ? [{
       kind: 'action' as const,
       id: 'delete',
@@ -370,7 +384,8 @@ function workContextMenuItems(
 
 function overviewContextMenuItems(
   sensitive: boolean,
-  needsReview: boolean
+  needsReview: boolean,
+  pinned?: boolean
 ): SidebarContextMenuItemModel[] {
   return [
     {
@@ -386,8 +401,69 @@ function overviewContextMenuItems(
       label: 'Sensitive',
       icon: 'sensitive',
       checked: sensitive
-    }
+    },
+    ...(pinned === undefined ? [] : [{
+      kind: 'checkbox' as const,
+      id: 'pin',
+      label: 'Pinned to main sidebar',
+      icon: 'pin' as const,
+      checked: pinned
+    }])
   ]
+}
+
+/**
+ * Projects durable navigation references without turning pin metadata into
+ * Focus or Thread fields. A Thread pin intentionally exposes only shell-owned
+ * pinning here; its complete work menu remains on the contextual Thread row.
+ */
+export function pinnedPrimaryNavigationItems(
+  pins: readonly NavigationPinSnapshot[],
+  focusSummaries: StatusSummariesById = {},
+  threadSummaries: StatusSummariesById = {},
+  hideSensitiveContent = false
+): SidebarNavigationItemModel[] {
+  return pins.map((pin) => {
+    const paused = pin.status === 'paused'
+    const target = pin.target
+    const key = `${target.type}:${target.id}`
+    const summary = target.type === 'focus'
+      ? focusSummaries[target.id]
+      : threadSummaries[target.id]
+    const sunflower = statusSunflowerModel(
+      summary ?? EMPTY_STATUS_SUMMARY,
+      hideSensitiveContent
+    )
+    return {
+      id: `pin:${key}`,
+      label: pin.title,
+      ariaLabel: `${pin.title}, pinned ${target.type === 'focus' ? 'Focus' : 'Thread'}${
+        paused ? ', paused' : ''
+      }`,
+      icon: paused ? 'paused' : 'sunflower',
+      ...(paused ? {} : { sunflower }),
+      tone: paused ? 'muted' : 'default',
+      ...sidebarIndicatorProps(pin.sensitive, pin.needsReview),
+      ...(target.type === 'focus'
+        ? { dropTarget: { type: 'focus', id: String(target.id) } }
+        : {}),
+      contextMenu: target.type === 'focus'
+        ? {
+            ariaLabel: `${pin.title} actions`,
+            items: overviewContextMenuItems(pin.sensitive, pin.needsReview, true)
+          }
+        : {
+            ariaLabel: `${pin.title} actions`,
+            items: [{
+              kind: 'checkbox',
+              id: 'pin',
+              label: 'Pinned to main sidebar',
+              icon: 'pin',
+              checked: true
+            }]
+          }
+    }
+  })
 }
 
 function childWorkContextMenu(
@@ -479,7 +555,8 @@ export function focusContextSidebarItems(
   commitmentsByItemId?: CommitmentsByContextItemId,
   routinesByItemId?: RoutinesByContextItemId,
   focusSensitive = false,
-  focusNeedsReview = true
+  focusNeedsReview = true,
+  pinnedThreadIds?: ReadonlySet<number>
 ): ContextualSidebarItemModel[] {
   return [
     {
@@ -523,7 +600,12 @@ export function focusContextSidebarItems(
         movable: true,
         contextMenu: {
           ariaLabel: `${label} actions`,
-          items: workContextMenuItems(thread.sensitive, thread.needsReview, true)
+          items: workContextMenuItems(
+            thread.sensitive,
+            thread.needsReview,
+            true,
+            pinnedThreadIds?.has(thread.id)
+          )
         },
         group: { id: 'threads', label: 'Threads' }
       }

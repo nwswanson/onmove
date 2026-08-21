@@ -1,12 +1,12 @@
 import * as React from 'react'
 import * as ContextMenuPrimitive from '@radix-ui/react-context-menu'
-import { Check, ClipboardCheck, ListChecks, Plus, Shield, Trash2 } from 'lucide-react'
+import { Check, ClipboardCheck, ListChecks, Pin, Plus, Shield, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface SidebarContextMenuItemBase {
   id: string
   label: string
-  icon?: 'add' | 'checklist' | 'review' | 'sensitive' | 'delete'
+  icon?: 'add' | 'checklist' | 'review' | 'sensitive' | 'pin' | 'delete'
   tone?: 'default' | 'destructive'
   separatorBefore?: boolean
   disabled?: boolean
@@ -53,6 +53,7 @@ function MenuIcon({ icon }: { icon: SidebarContextMenuItemModel['icon'] }): Reac
   if (icon === 'checklist') return <ListChecks aria-hidden="true" className={className} />
   if (icon === 'review') return <ClipboardCheck aria-hidden="true" className={className} />
   if (icon === 'sensitive') return <Shield aria-hidden="true" className={className} />
+  if (icon === 'pin') return <Pin aria-hidden="true" className={className} />
   if (icon === 'delete') return <Trash2 aria-hidden="true" className={className} />
   return <span aria-hidden="true" className={className} />
 }

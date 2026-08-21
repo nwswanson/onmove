@@ -19,6 +19,8 @@ import {
   type MoveThreadInput,
   type McpSettingsSnapshot,
   type McpUiContextSnapshot,
+  type NavigationPinSnapshot,
+  type NavigationPinTarget,
   type FocusStatus,
   type SetItemStatusInput,
   type TodoListOptions,
@@ -68,7 +70,8 @@ export function registerAppIpc(
   richTextWindows: RichTextWindowCoordinator = emptyRichTextWindows,
   invalidateNavigationBadges: () => void = () => undefined,
   notifyRoutinesChanged: () => void = () => undefined,
-  notifyMcpSettingsChanged: (settings: McpSettingsSnapshot) => void = () => undefined
+  notifyMcpSettingsChanged: (settings: McpSettingsSnapshot) => void = () => undefined,
+  notifyNavigationPinsChanged: (pins: NavigationPinSnapshot[]) => void = () => undefined
 ): () => void {
   function mutation<T>(operation: () => T): T {
     const result = operation()
@@ -84,6 +87,15 @@ export function registerAppIpc(
 
   ipcMain.handle(IPC_CHANNELS.getAppState, () => database.getState())
   ipcMain.handle(IPC_CHANNELS.getSensitiveContentHidden, getSensitiveContentHidden)
+  ipcMain.handle(IPC_CHANNELS.getNavigationPins, () => database.navigationPins.list())
+  ipcMain.handle(
+    IPC_CHANNELS.setNavigationPin,
+    (_event, target: NavigationPinTarget, pinned: boolean) => {
+      const pins = database.navigationPins.set(target, pinned)
+      notifyNavigationPinsChanged(pins)
+      return pins
+    }
+  )
   ipcMain.handle(IPC_CHANNELS.getMcpSettings, () => mcpRuntime.snapshot())
   ipcMain.handle(
     IPC_CHANNELS.updateMcpSettings,

@@ -32,6 +32,19 @@ const api: OnMoveApi = {
   },
   recordGreeting: () => ipcRenderer.invoke(IPC_CHANNELS.recordGreeting),
   showDataFolder: () => ipcRenderer.invoke(IPC_CHANNELS.showDataFolder),
+  navigationPins: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.getNavigationPins),
+    set: (target, pinned) =>
+      ipcRenderer.invoke(IPC_CHANNELS.setNavigationPin, target, pinned),
+    onChanged: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        pins: Parameters<typeof listener>[0]
+      ): void => listener(pins)
+      ipcRenderer.on(IPC_EVENTS.navigationPinsChanged, handler)
+      return () => ipcRenderer.removeListener(IPC_EVENTS.navigationPinsChanged, handler)
+    }
+  },
   backups: {
     getState: () => ipcRenderer.invoke(IPC_CHANNELS.getBackupState),
     createNow: () => ipcRenderer.invoke(IPC_CHANNELS.createBackup),

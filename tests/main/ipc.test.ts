@@ -59,6 +59,25 @@ describe('registerAppIpc', () => {
         create: vi.fn(() => ({ retentionLimit: 10, backups: [{ fileName: 'new.sqlite3' }] })),
         ensureDirectory: vi.fn(() => '/tmp/Backups')
       },
+      navigationPins: {
+        list: vi.fn(() => [{
+          target: { type: 'focus' as const, id: 12 },
+          title: 'Launch',
+          status: 'active' as const,
+          sensitive: false,
+          needsReview: true,
+          createdAt: '2026-08-10T12:00:00.000Z'
+        }]),
+        set: vi.fn(() => [{
+          target: { type: 'thread' as const, id: 21, focusId: 12 },
+          title: 'Sprint execution',
+          status: 'active' as const,
+          sensitive: false,
+          needsReview: true,
+          ancestorSensitive: false,
+          createdAt: '2026-08-10T12:00:00.000Z'
+        }])
+      },
       domain: {
         relations: {
           create: vi.fn(() => ({ toSnapshot: () => ({ id: 4, name: 'blocks' }) })),
@@ -423,6 +442,7 @@ describe('registerAppIpc', () => {
     const invalidateNavigationBadges = vi.fn()
     const notifyRoutinesChanged = vi.fn()
     const notifyMcpSettingsChanged = vi.fn()
+    const notifyNavigationPinsChanged = vi.fn()
     const richTextWindows = {
       open: vi.fn(),
       targetFor: vi.fn(() => null),
@@ -487,12 +507,27 @@ describe('registerAppIpc', () => {
       richTextWindows,
       invalidateNavigationBadges,
       notifyRoutinesChanged,
-      notifyMcpSettingsChanged
+      notifyMcpSettingsChanged,
+      notifyNavigationPinsChanged
     )
 
     expect(ipcMain.handle).toHaveBeenCalledTimes(Object.keys(IPC_CHANNELS).length)
     expect(await handlers.get(IPC_CHANNELS.getAppState)?.()).toEqual(state)
     expect(await handlers.get(IPC_CHANNELS.getSensitiveContentHidden)?.()).toBe(true)
+    expect(await handlers.get(IPC_CHANNELS.getNavigationPins)?.()).toEqual([
+      expect.objectContaining({ target: { type: 'focus', id: 12 } })
+    ])
+    expect(await handlers.get(IPC_CHANNELS.setNavigationPin)?.(
+      undefined,
+      { type: 'thread', id: 21 },
+      true
+    )).toEqual([
+      expect.objectContaining({ target: { type: 'thread', id: 21, focusId: 12 } })
+    ])
+    expect(database.navigationPins.set).toHaveBeenCalledWith({ type: 'thread', id: 21 }, true)
+    expect(notifyNavigationPinsChanged).toHaveBeenCalledWith([
+      expect.objectContaining({ target: { type: 'thread', id: 21, focusId: 12 } })
+    ])
     expect(await handlers.get(IPC_CHANNELS.getMcpSettings)?.()).toMatchObject({
       allowSensitive: false,
       allowMutations: false

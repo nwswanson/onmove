@@ -9,6 +9,12 @@ export interface FocusWorkspaceDestination {
   threadId: number | null
   commitmentId: number | null
   subjectId: number | null
+  /**
+   * `children` currently enters the receiver-owned Commitment level. It is a
+   * deliberately generic destination: Routines and future child kinds can
+   * join that level without changing saved navigation pins or their callers.
+   */
+  contextualMode?: 'default' | 'children'
 }
 
 export type FocusWorkspaceDestinationTarget = Omit<FocusWorkspaceDestination, 'requestId'>

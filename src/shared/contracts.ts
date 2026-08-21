@@ -1,6 +1,8 @@
 export const IPC_CHANNELS = {
   getAppState: 'app:get-state',
   getSensitiveContentHidden: 'app:get-sensitive-content-hidden',
+  getNavigationPins: 'app:get-navigation-pins',
+  setNavigationPin: 'app:set-navigation-pin',
   getMcpSettings: 'app:get-mcp-settings',
   updateMcpSettings: 'app:update-mcp-settings',
   setMcpUiContext: 'app:set-mcp-ui-context',
@@ -95,6 +97,7 @@ export const IPC_EVENTS = {
   navigationBadgesInvalidated: 'app:navigation-badges-invalidated',
   routinesChanged: 'app:routines-changed',
   domainChanged: 'app:domain-changed',
+  navigationPinsChanged: 'app:navigation-pins-changed',
   mcpSettingsChanged: 'app:mcp-settings-changed',
   richTextDocumentChanged: 'rich-text:document-changed'
 } as const
@@ -1351,6 +1354,35 @@ export interface AppState {
   databasePath: string
 }
 
+export type NavigationPinTarget =
+  | { type: 'focus'; id: number }
+  | { type: 'thread'; id: number }
+
+export type NavigationPinSnapshot =
+  | {
+      target: { type: 'focus'; id: number }
+      title: string
+      status: FocusStatus
+      sensitive: boolean
+      needsReview: boolean
+      createdAt: string
+    }
+  | {
+      target: { type: 'thread'; id: number; focusId: number }
+      title: string
+      status: ThreadStatus
+      sensitive: boolean
+      needsReview: boolean
+      ancestorSensitive: boolean
+      createdAt: string
+    }
+
+export interface NavigationPinApi {
+  list: () => Promise<NavigationPinSnapshot[]>
+  set: (target: NavigationPinTarget, pinned: boolean) => Promise<NavigationPinSnapshot[]>
+  onChanged: (listener: (pins: NavigationPinSnapshot[]) => void) => () => void
+}
+
 export interface BackupSnapshot {
   fileName: string
   createdAt: string
@@ -1464,6 +1496,7 @@ export interface OnMoveApi {
   onDomainChanged: (listener: () => void) => () => void
   recordGreeting: () => Promise<AppState>
   showDataFolder: () => Promise<void>
+  navigationPins: NavigationPinApi
   backups: BackupApi
   mcp: McpSettingsApi
   domain: DomainApi

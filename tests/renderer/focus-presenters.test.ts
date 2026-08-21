@@ -4,6 +4,7 @@ import type {
   FocusOverviewTimelineSnapshot,
   FocusScopeSnapshot,
   FocusSnapshot,
+  NavigationPinSnapshot,
   RoutineSnapshot,
   SubjectSnapshot,
   ThreadScopeSnapshot,
@@ -20,6 +21,7 @@ import {
   focusDrawerAdapter,
   focusPrimaryNavigationItems,
   focusOverviewTimelineModel,
+  pinnedPrimaryNavigationItems,
   focusScopeEditorModel,
   statusSunflowerModel,
   threadDrawerAdapter,
@@ -417,6 +419,74 @@ describe('Focus presentation adapters', () => {
         { id: 'commitment:21', label: 'Unassessed work: None', tone: 'neutral' }
       ]
     })
+  })
+
+  it('projects checked shell-owned pins without adding pin fields to domain records', () => {
+    const pins: NavigationPinSnapshot[] = [
+      {
+        target: { type: 'focus', id: focus.id },
+        title: focus.title,
+        status: focus.status,
+        sensitive: focus.sensitive,
+        needsReview: focus.needsReview,
+        createdAt: focus.createdAt
+      },
+      {
+        target: { type: 'thread', id: thread.id, focusId: focus.id },
+        title: thread.title,
+        status: 'active',
+        sensitive: true,
+        needsReview: false,
+        ancestorSensitive: false,
+        createdAt: thread.createdAt
+      }
+    ]
+
+    expect(pinnedPrimaryNavigationItems(pins)).toEqual([
+      expect.objectContaining({
+        id: 'pin:focus:1',
+        label: 'Project Atlas',
+        dropTarget: { type: 'focus', id: '1' },
+        contextMenu: expect.objectContaining({
+          items: expect.arrayContaining([
+            expect.objectContaining({ id: 'pin', kind: 'checkbox', checked: true })
+          ])
+        })
+      }),
+      expect.objectContaining({
+        id: 'pin:thread:10',
+        label: 'Sprint execution',
+        indicators: ['sensitive', 'review-excluded'],
+        contextMenu: {
+          ariaLabel: 'Sprint execution actions',
+          items: [{
+            kind: 'checkbox',
+            id: 'pin',
+            label: 'Pinned to main sidebar',
+            icon: 'pin',
+            checked: true
+          }]
+        }
+      })
+    ])
+
+    expect(focusPrimaryNavigationItems([focus], {}, false, new Set([focus.id]))[0]
+      ?.contextMenu?.items.at(-1)).toEqual(expect.objectContaining({
+        id: 'pin',
+        checked: true
+      }))
+    expect(focusContextSidebarItems(
+      [{ ...thread, status: 'active' }],
+      {},
+      false,
+      undefined,
+      undefined,
+      false,
+      true,
+      new Set([thread.id])
+    )[1]?.contextMenu?.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'pin', checked: true })
+    ]))
   })
 
   it('keeps Thread drop targets alphabetically ordered without sorting Commitments', () => {

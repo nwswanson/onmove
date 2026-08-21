@@ -153,6 +153,31 @@ describe('database migrations', () => {
     raw.close()
   })
 
+  it('adds cascading shell-owned Focus and Thread navigation references', () => {
+    const database = new AppDatabase(databasePath)
+    const focus = database.domain.focuses.create({ title: 'Pinned migration Focus' })
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Pinned migration Thread',
+      reviewFrequencyDays: 7
+    })
+    database.navigationPins.set({ type: 'focus', id: focus.id }, true)
+    database.navigationPins.set({ type: 'thread', id: thread.id }, true)
+    database.close()
+
+    const raw = new DatabaseSync(databasePath)
+    expect(raw.prepare(
+      'SELECT focus_id, thread_id FROM sidebar_navigation_pins ORDER BY id'
+    ).all()).toEqual([
+      { focus_id: focus.id, thread_id: null },
+      { focus_id: null, thread_id: thread.id }
+    ])
+    expect(raw.prepare(
+      'SELECT version FROM schema_migrations WHERE version = 41'
+    ).get()).toEqual({ version: 41 })
+    raw.close()
+  })
+
   it('thins legacy per-edit rich-text history to the newest 30 recovery documents', () => {
     const current = new AppDatabase(databasePath)
     const focus = current.domain.focuses.create({ title: 'Legacy writing' })

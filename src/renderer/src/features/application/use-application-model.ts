@@ -4,12 +4,15 @@ import type {
   CreateFocusInput,
   FocusSnapshot,
   McpUiContextSnapshot,
+  NavigationPinSnapshot,
+  NavigationPinTarget,
   UpdateFocusInput
 } from '../../../../shared/contracts'
 import { isVisibleFocus } from '@/features/focus/focus-utils'
 import { sensitiveRecordIsVisible } from '@/features/shared/sensitivity'
 import {
   loadFocusStatusSummary,
+  loadThreadStatusSummary,
   type StatusSummary
 } from '@/features/shared/status-summary'
 import { useNavigationBadges } from '@/features/application/use-navigation-badges'
@@ -20,6 +23,11 @@ export interface ApplicationModel {
   error: string | null
   focuses: FocusSnapshot[]
   navigableFocuses: FocusSnapshot[]
+  navigationPins: NavigationPinSnapshot[]
+  navigableNavigationPins: NavigationPinSnapshot[]
+  pinnedFocusIds: ReadonlySet<number>
+  pinnedThreadIds: ReadonlySet<number>
+  pinnedThreadStatusSummaries: Readonly<Record<number, StatusSummary | undefined>>
   focusStatusSummaries: Readonly<Record<number, StatusSummary | undefined>>
   navigationBadges: NavigationBadgeCounts | null
   selectedFocus: FocusSnapshot | null
@@ -41,6 +49,8 @@ export interface ApplicationModel {
   refreshFocus: (focusId: number) => Promise<FocusSnapshot>
   refreshFocusStatusSummary: (focusId: number) => Promise<void>
   deleteFocus: (focusId: number) => Promise<void>
+  setNavigationPin: (target: NavigationPinTarget, pinned: boolean) => Promise<void>
+  refreshNavigationPins: () => Promise<void>
   showDataFolder: () => Promise<void>
 }
 
@@ -56,6 +66,11 @@ export function useApplicationModel(): ApplicationModel {
   const [focusStatusSummaries, setFocusStatusSummaries] = useState<
     Record<number, StatusSummary | undefined>
   >({})
+  const [navigationPins, setNavigationPins] = useState<NavigationPinSnapshot[]>([])
+  const [pinnedThreadStatusSummaries, setPinnedThreadStatusSummaries] = useState<
+    Record<number, StatusSummary | undefined>
+  >({})
+  const navigationPinSummaryRequest = useRef(0)
   const [selectedFocusId, setSelectedFocusId] = useState<number | null>(null)
   const [closedFocusSelectionId, setClosedFocusSelectionId] = useState<number | null>(null)
   const [selectedView, setSelectedView] = useState<
@@ -63,6 +78,24 @@ export function useApplicationModel(): ApplicationModel {
   >('todos')
   const [sensitiveContentHidden, setSensitiveContentHidden] = useState(false)
   const navigationBadges = useNavigationBadges(sensitiveContentHidden)
+
+  function applyNavigationPins(nextPins: NavigationPinSnapshot[]): void {
+    setNavigationPins(nextPins)
+    const requestId = ++navigationPinSummaryRequest.current
+    const pinnedThreadIds = nextPins.flatMap((pin) =>
+      pin.target.type === 'thread' ? [pin.target.id] : [])
+    void Promise.all(pinnedThreadIds.map(async (threadId) => {
+      try {
+        return [threadId, await loadThreadStatusSummary(window.onmove.domain, threadId)] as const
+      } catch {
+        return [threadId, undefined] as const
+      }
+    })).then((entries) => {
+      if (requestId === navigationPinSummaryRequest.current) {
+        setPinnedThreadStatusSummaries(Object.fromEntries(entries))
+      }
+    })
+  }
 
   useEffect(() => {
     let active = true
@@ -100,27 +133,36 @@ export function useApplicationModel(): ApplicationModel {
       })
     })
     const unsubscribeDomain = window.onmove.onDomainChanged(() => {
-      void window.onmove.domain.listFocuses().then((nextFocuses) => {
+      void Promise.all([
+        window.onmove.domain.listFocuses(),
+        window.onmove.navigationPins.list()
+      ]).then(([nextFocuses, nextPins]) => {
         focusesRef.current = nextFocuses
         setFocuses(nextFocuses)
+        applyNavigationPins(nextPins)
         void Promise.all(nextFocuses.map(async (focus) => [
           focus.id,
           await loadFocusStatusSummary(window.onmove.domain, focus.id)
         ] as const)).then((entries) => setFocusStatusSummaries(Object.fromEntries(entries)))
       }).catch(() => undefined)
     })
+    const unsubscribeNavigationPins = window.onmove.navigationPins.onChanged((nextPins) => {
+      if (active) applyNavigationPins(nextPins)
+    })
 
     Promise.all([
       window.onmove.getAppState(),
       window.onmove.domain.listFocuses(),
-      window.onmove.getSensitiveContentHidden()
+      window.onmove.getSensitiveContentHidden(),
+      window.onmove.navigationPins.list()
     ]).then(
-      ([nextState, nextFocuses, nextSensitiveContentHidden]) => {
+      ([nextState, nextFocuses, nextSensitiveContentHidden, nextPins]) => {
         if (!active) return
         focusesRef.current = nextFocuses
         applySensitiveContentVisibility(nextSensitiveContentHidden)
         setState(nextState)
         setFocuses(nextFocuses)
+        applyNavigationPins(nextPins)
         void Promise.all(
           nextFocuses.map(async (focus) => {
             try {
@@ -147,6 +189,7 @@ export function useApplicationModel(): ApplicationModel {
       unsubscribe()
       unsubscribeRichText()
       unsubscribeDomain()
+      unsubscribeNavigationPins()
     }
   }, [])
 
@@ -263,6 +306,10 @@ export function useApplicationModel(): ApplicationModel {
       setClosedFocusSelectionId(null)
       setSelectedView('todos')
     }
+    if (navigationPins.some((pin) =>
+      pin.target.type === 'focus' && pin.target.id === focusId)) {
+      await refreshNavigationPins()
+    }
   }
 
   async function refreshFocus(focusId: number): Promise<FocusSnapshot> {
@@ -302,7 +349,33 @@ export function useApplicationModel(): ApplicationModel {
     setSelectedFocusId(null)
     setClosedFocusSelectionId(null)
     setSelectedView('todos')
+    await refreshNavigationPins()
   }
+
+  async function setNavigationPin(
+    target: NavigationPinTarget,
+    pinned: boolean
+  ): Promise<void> {
+    applyNavigationPins(await window.onmove.navigationPins.set(target, pinned))
+  }
+
+  async function refreshNavigationPins(): Promise<void> {
+    applyNavigationPins(await window.onmove.navigationPins.list())
+  }
+
+  const pinnedFocusIds = new Set(
+    navigationPins.flatMap((pin) => pin.target.type === 'focus' ? [pin.target.id] : [])
+  )
+  const pinnedThreadIds = new Set(
+    navigationPins.flatMap((pin) => pin.target.type === 'thread' ? [pin.target.id] : [])
+  )
+  const navigableNavigationPins = navigationPins.filter((pin) =>
+    (pin.status === 'active' || pin.status === 'paused') &&
+    (!sensitiveContentHidden || (
+      !pin.sensitive &&
+      (!('ancestorSensitive' in pin) || !pin.ancestorSensitive)
+    ))
+  )
 
   return {
     state,
@@ -313,6 +386,11 @@ export function useApplicationModel(): ApplicationModel {
         isVisibleFocus(focus) &&
         sensitiveRecordIsVisible(focus, sensitiveContentHidden)
     ),
+    navigationPins,
+    navigableNavigationPins,
+    pinnedFocusIds,
+    pinnedThreadIds,
+    pinnedThreadStatusSummaries,
     focusStatusSummaries,
     navigationBadges,
     selectedFocus,
@@ -334,6 +412,8 @@ export function useApplicationModel(): ApplicationModel {
     refreshFocus,
     refreshFocusStatusSummary,
     deleteFocus,
+    setNavigationPin,
+    refreshNavigationPins,
     showDataFolder: () => window.onmove.showDataFolder()
   }
 }

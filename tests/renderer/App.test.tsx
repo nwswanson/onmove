@@ -11,6 +11,7 @@ import type {
   McpPermissionOverrideSnapshot,
   McpPermissionResource,
   McpSettingsSnapshot,
+  NavigationPinSnapshot,
   NoteSnapshot,
   OnMoveApi,
   ReviewQueueItemSnapshot,
@@ -477,6 +478,11 @@ function installApi(
     onDomainChanged: vi.fn(() => () => undefined),
     recordGreeting: vi.fn().mockResolvedValue(initialState),
     showDataFolder: vi.fn().mockResolvedValue(undefined),
+    navigationPins: {
+      list: vi.fn().mockResolvedValue([]),
+      set: vi.fn().mockResolvedValue([]),
+      onChanged: vi.fn(() => () => undefined)
+    },
     backups: {
       getState: vi.fn().mockResolvedValue({
         automatic: true,
@@ -656,6 +662,146 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'New focus' })).toBeEnabled()
     expect(screen.queryByText('Placeholder')).not.toBeInTheDocument()
     expect(screen.queryByText('Overview')).not.toBeInTheDocument()
+  })
+
+  it('pins and unpins a Focus through checked primary-sidebar context menus', async () => {
+    const currentFocus = focus({ id: 41, title: 'Project Atlas' })
+    let pins: NavigationPinSnapshot[] = []
+    const setPin = vi.fn(async (target: { type: 'focus' | 'thread'; id: number }, pinned: boolean) => {
+      pins = pinned ? [{
+        target: { type: 'focus', id: target.id },
+        title: currentFocus.title,
+        status: currentFocus.status,
+        sensitive: currentFocus.sensitive,
+        needsReview: currentFocus.needsReview,
+        createdAt: '2026-08-21T12:00:00.000Z'
+      }] : []
+      return pins
+    })
+    installApi(
+      { listFocuses: vi.fn().mockResolvedValue([currentFocus]) },
+      {
+        navigationPins: {
+          list: vi.fn(async () => pins),
+          set: setPin,
+          onChanged: vi.fn(() => () => undefined)
+        }
+      }
+    )
+    const user = userEvent.setup()
+    render(<App />)
+
+    const focusButton = await screen.findByRole('button', { name: 'Project Atlas' })
+    fireEvent.contextMenu(focusButton)
+    const pinItem = within(screen.getByRole('menu', { name: 'Project Atlas actions' }))
+      .getByRole('menuitemcheckbox', { name: 'Pinned to main sidebar' })
+    expect(pinItem).toHaveAttribute('data-state', 'unchecked')
+    await user.click(pinItem)
+
+    expect(setPin).toHaveBeenCalledWith({ type: 'focus', id: currentFocus.id }, true)
+    expect(await screen.findByText('Pinned')).toBeVisible()
+    const pinnedButton = screen.getByRole('button', {
+      name: 'Project Atlas, pinned Focus'
+    })
+    expect(screen.queryByRole('button', { name: 'Project Atlas' })).not.toBeInTheDocument()
+
+    fireEvent.contextMenu(pinnedButton)
+    const unpinItem = within(screen.getByRole('menu', { name: 'Project Atlas actions' }))
+      .getByRole('menuitemcheckbox', { name: 'Pinned to main sidebar' })
+    expect(unpinItem).toHaveAttribute('data-state', 'checked')
+    await user.click(unpinItem)
+    await waitFor(() => expect(setPin).toHaveBeenLastCalledWith(
+      { type: 'focus', id: currentFocus.id },
+      false
+    ))
+    expect(await screen.findByRole('button', { name: 'Project Atlas' })).toBeVisible()
+    expect(screen.queryByText('Pinned')).not.toBeInTheDocument()
+  })
+
+  it('opens a pinned Thread directly in its generic child drilldown', async () => {
+    const currentFocus = focus({ id: 1, title: 'Project Atlas' })
+    const currentThread = thread({ id: 21, focusId: 1, title: 'Sprint execution' })
+    const pins: NavigationPinSnapshot[] = [{
+      target: { type: 'thread', id: currentThread.id, focusId: currentFocus.id },
+      title: currentThread.title,
+      status: currentThread.status,
+      sensitive: currentThread.sensitive,
+      needsReview: currentThread.needsReview,
+      ancestorSensitive: false,
+      createdAt: '2026-08-21T12:00:00.000Z'
+    }]
+    installApi(
+      {
+        listFocuses: vi.fn().mockResolvedValue([currentFocus]),
+        listThreads: vi.fn().mockResolvedValue([currentThread])
+      },
+      {
+        navigationPins: {
+          list: vi.fn().mockResolvedValue(pins),
+          set: vi.fn().mockResolvedValue(pins),
+          onChanged: vi.fn(() => () => undefined)
+        }
+      }
+    )
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', {
+      name: 'Sprint execution, pinned Thread'
+    }))
+    expect(await screen.findByRole('navigation', { name: 'Thread commitments' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Back to Focus sections' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Commitments' })).toBeVisible()
+  })
+
+  it('pins a Thread from its contextual row and reflects checked state', async () => {
+    const currentFocus = focus({ id: 1, title: 'Project Atlas' })
+    const currentThread = thread({ id: 21, focusId: 1, title: 'Sprint execution' })
+    let pins: NavigationPinSnapshot[] = []
+    const setPin = vi.fn(async (_target, pinned: boolean) => {
+      pins = pinned ? [{
+        target: { type: 'thread', id: currentThread.id, focusId: currentFocus.id },
+        title: currentThread.title,
+        status: currentThread.status,
+        sensitive: currentThread.sensitive,
+        needsReview: currentThread.needsReview,
+        ancestorSensitive: false,
+        createdAt: '2026-08-21T12:00:00.000Z'
+      }] : []
+      return pins
+    })
+    installApi(
+      {
+        listFocuses: vi.fn().mockResolvedValue([currentFocus]),
+        listThreads: vi.fn().mockResolvedValue([currentThread])
+      },
+      {
+        navigationPins: {
+          list: vi.fn(async () => pins),
+          set: setPin,
+          onChanged: vi.fn(() => () => undefined)
+        }
+      }
+    )
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    const contextual = screen.getByLabelText('Contextual sidebar')
+    const threadButton = await within(contextual).findByRole('button', {
+      name: 'Sprint execution'
+    })
+    fireEvent.contextMenu(threadButton)
+    const pinItem = within(screen.getByRole('menu', { name: 'Sprint execution actions' }))
+      .getByRole('menuitemcheckbox', { name: 'Pinned to main sidebar' })
+    expect(pinItem).toHaveAttribute('data-state', 'unchecked')
+    await user.click(pinItem)
+    expect(setPin).toHaveBeenCalledWith({ type: 'thread', id: currentThread.id }, true)
+
+    fireEvent.contextMenu(threadButton)
+    expect(within(screen.getByRole('menu', { name: 'Sprint execution actions' }))
+      .getByRole('menuitemcheckbox', { name: 'Pinned to main sidebar' }))
+      .toHaveAttribute('data-state', 'checked')
   })
 
   it('reports UI Focus context to MCP without making it an implicit search default', async () => {

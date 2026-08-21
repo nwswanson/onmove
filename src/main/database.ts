@@ -7,6 +7,7 @@ import { runMigrations } from './data/migrations'
 import { SqliteAdapter } from './data/sqlite-adapter'
 import { RollingBackupRepository } from './data/rolling-backup'
 import { WindowPreferenceRepository } from './data/window-preferences'
+import { NavigationPinRepository } from './data/navigation-pins'
 import {
   EffectiveSensitivityRepository,
   McpSettingsRepository
@@ -31,6 +32,7 @@ export class AppDatabase {
   readonly dataArchive: DataArchiveRepository
   readonly backups: RollingBackupRepository
   readonly windowPreferences: WindowPreferenceRepository
+  readonly navigationPins: NavigationPinRepository
   readonly mcpSettings: McpSettingsRepository
   readonly queries: OnMoveQueryService
   readonly commands: OnMoveCommandService
@@ -44,6 +46,7 @@ export class AppDatabase {
       this.dataArchive = new DataArchiveRepository(this.database)
       this.backups = new RollingBackupRepository(this.database, databasePath)
       this.windowPreferences = new WindowPreferenceRepository(this.database)
+      this.navigationPins = new NavigationPinRepository(this.database)
       this.mcpSettings = new McpSettingsRepository(this.database)
       const sensitivity = new EffectiveSensitivityRepository(this.database)
       this.queries = new OnMoveQueryService(this.domain, sensitivity, this.database)

@@ -9,6 +9,15 @@
   aggregate workspace; `Tags`, `Review`, and `Due` are its peer destinations immediately below it;
   `Focuses` is a section label with focus records and the `New focus` action exposed directly
   beneath it.
+- Treat primary-sidebar pins as shell-owned references, never fields on Focus, Thread, or other
+  domain snapshots. Render the Pinned group between aggregate Items and Focuses only while it has
+  visible entries. A pinned Focus moves out of the ordinary Focuses group and otherwise keeps its
+  normal navigation, drop-target, status, and context-menu behavior. A pinned Thread remains owned
+  by its Focus and opens that Focus directly at the generic contextual child level, whose current
+  adapter contains Commitments and may later include Routines or other child kinds without changing
+  the persisted pin contract. Focus and Thread context menus declare a receiver-owned checked Pin
+  item; deleted targets cascade their references, while closed or sensitivity-hidden targets retain
+  the preference but remain absent from navigation until visible again.
 - Focus records with `active` or `paused` status appear in the selector. Paused focuses remain
   selectable but visually muted; `cancelled` and `done` focuses remain in SQLite but are filtered
   from navigation.

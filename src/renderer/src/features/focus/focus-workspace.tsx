@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   CommitmentParent,
   CommitmentMovePlanSnapshot,
@@ -216,6 +216,10 @@ interface FocusWorkspaceProps {
   hideSensitiveContent?: boolean
   threadMoveTargets: readonly { id: number; title: string }[]
   onThreadMoved: (thread: ThreadSnapshot, fromFocusId: number) => void | Promise<void>
+  pinnedThreadIds: ReadonlySet<number>
+  onThreadPinChange: (threadId: number, pinned: boolean) => void | Promise<void>
+  onThreadChanged: () => void | Promise<void>
+  onActiveThreadChange: (threadId: number | null) => void
 }
 
 export function FocusWorkspace({
@@ -230,7 +234,11 @@ export function FocusWorkspace({
   onDestinationApplied,
   hideSensitiveContent = false,
   threadMoveTargets,
-  onThreadMoved
+  onThreadMoved,
+  pinnedThreadIds,
+  onThreadPinChange,
+  onThreadChanged,
+  onActiveThreadChange
 }: FocusWorkspaceProps): React.JSX.Element {
   const model = useFocusWorkspaceModel({ focus })
   const [newThreadOpen, setNewThreadOpen] = useState(false)
@@ -330,7 +338,8 @@ export function FocusWorkspace({
           { overall: [] },
           { overall: [] },
           focus.sensitive,
-          focus.needsReview
+          focus.needsReview,
+          pinnedThreadIds
         ),
         onSelect: () => {
           setStandaloneCommitmentRoute(null)
@@ -592,6 +601,8 @@ export function FocusWorkspace({
       } else {
         void updateThreadDetails(parent.id, { needsReview: checked })
       }
+    } else if (actionId === 'pin' && parent.type === 'thread' && typeof checked === 'boolean') {
+      void onThreadPinChange(parent.id, checked)
     } else if (actionId === 'delete' && parent.type === 'thread') {
       const thread = model.threads.find((candidate) => candidate.id === parent.id)
       if (!thread) return
@@ -701,7 +712,8 @@ export function FocusWorkspace({
       nextByContext,
       routinesByContextItemId,
       focus.sensitive,
-      focus.needsReview
+      focus.needsReview,
+      pinnedThreadIds
     ))
     navigation.refresh()
     navigation.selectChild(targetItemId, 'commitments', String(moved.id))
@@ -723,7 +735,8 @@ export function FocusWorkspace({
       commitmentsByContextItemId,
       nextByContext,
       focus.sensitive,
-      focus.needsReview
+      focus.needsReview,
+      pinnedThreadIds
     ))
     navigation.refresh()
     navigation.selectChild(targetItemId, 'commitments', `routine:${moved.id}`)
@@ -766,7 +779,9 @@ export function FocusWorkspace({
     childContextMenuRequest.current = requestChildContextMenuAction
   })
 
-  function commitmentsLevelFor(parent: CommitmentParent): ContextualSidebarLevel {
+  const commitmentsLevelFor = useCallback((
+    parent: CommitmentParent
+  ): ContextualSidebarLevel => {
     if (parent.type === 'focus') return focusCommitmentsLevel
 
     const existing = threadCommitmentLevels.get(parent.id)
@@ -778,7 +793,7 @@ export function FocusWorkspace({
       ariaLabel: 'Thread commitments',
       parent: focusLevel,
       parentItemId: threadSidebarItemId(parent.id),
-      items: commitmentContextSidebarItems(visibleCommitmentsFor(parent)),
+      items: commitmentContextSidebarItems(visibleThreadCommitments[parent.id] ?? []),
       onSelect: () => {
         setStandaloneCommitmentRoute(null)
         setStandaloneThreadRoute(null)
@@ -792,7 +807,12 @@ export function FocusWorkspace({
     })
     threadCommitmentLevels.set(parent.id, created)
     return created
-  }
+  }, [
+    focusCommitmentsLevel,
+    focusLevel,
+    threadCommitmentLevels,
+    visibleThreadCommitments
+  ])
 
   function commitmentParentForLevel(
     level: ContextualSidebarLevel
@@ -813,7 +833,8 @@ export function FocusWorkspace({
         commitmentsByContextItemId,
         routinesByContextItemId,
         focus.sensitive,
-        focus.needsReview
+        focus.needsReview,
+        pinnedThreadIds
       )
     )
     focusCommitmentsLevel.setItems(
@@ -845,6 +866,7 @@ export function FocusWorkspace({
     visibleThreadRecords,
     hideSensitiveContent,
     navigation,
+    pinnedThreadIds,
     threadCommitmentLevels
   ])
 
@@ -900,6 +922,19 @@ export function FocusWorkspace({
     }
     queueMicrotask(() => setStandaloneThreadRoute(null))
     const parentItemId = contextItemIdForCommitmentParent(parent)
+    if (
+      thread &&
+      destination.commitmentId === null &&
+      destination.contextualMode === 'children'
+    ) {
+      // This route intentionally targets the generic child level. Its current
+      // adapter exposes Commitments; Routines can join without changing pins.
+      navigation.navigateToPath(commitmentsLevelFor(parent))
+      onSelectedSubjectChange(destination.subjectId)
+      appliedDestinationRequest.current = destination.requestId
+      onDestinationApplied?.(destination.requestId)
+      return
+    }
     if (destination.commitmentId === null) {
       navigation.select(parentItemId)
     } else {
@@ -930,6 +965,7 @@ export function FocusWorkspace({
     onDestinationApplied?.(destination.requestId)
   }, [
     destination,
+    commitmentsLevelFor,
     focus.id,
     focus.sensitive,
     hideSensitiveContent,
@@ -1024,6 +1060,15 @@ export function FocusWorkspace({
       ? activeParentThread
       : undefined
   )
+  const activeNavigationThreadId = selectedRoutine?.parent.type === 'thread'
+    ? selectedRoutine.parent.id
+    : activeCommitmentParent?.type === 'thread'
+      ? activeCommitmentParent.id
+      : displayedThread?.id ?? null
+  useEffect(() => {
+    onActiveThreadChange(activeNavigationThreadId)
+    return () => onActiveThreadChange(null)
+  }, [activeNavigationThreadId, onActiveThreadChange])
   const focusTitle = focus.title
   function editorParentFor(parent: CommitmentParent): RoutineEditorParent | null {
     return parent.type === 'focus'
@@ -1289,6 +1334,7 @@ export function FocusWorkspace({
     input: UpdateThreadInput
   ): Promise<void> {
     const updated = await model.updateThread(threadId, input)
+    if (pinnedThreadIds.has(threadId)) await onThreadChanged()
     if (contextDrawer.pinnedAdapter?.id === `thread:${threadId}`) {
       contextDrawer.onPin(adapterForThread(updated))
     }
@@ -1320,6 +1366,7 @@ export function FocusWorkspace({
     const routeUsesThread = currentRouteUsesThread(threadId)
     const deleted = await model.deleteThread(threadId)
     if (!deleted) throw new Error('Thread deletion did not remove a record.')
+    if (pinnedThreadIds.has(threadId)) await onThreadChanged()
 
     contextDrawer.onInvalidate([`thread:${threadId}`])
     if (routeUsesThread) {
@@ -1507,7 +1554,8 @@ export function FocusWorkspace({
         },
         routinesByContextItemId,
         focus.sensitive,
-        focus.needsReview
+        focus.needsReview,
+        pinnedThreadIds
       )
     )
     if (navigation.getSnapshot().level === level) {
@@ -1549,6 +1597,7 @@ export function FocusWorkspace({
     setWorkspaceStatusError(null)
     try {
       const updated = await model.updateThread(threadId, input)
+      if (pinnedThreadIds.has(threadId)) await onThreadChanged()
       if (contextDrawer.pinnedAdapter?.id === key) {
         contextDrawer.onPin(adapterForThread(updated))
       }
