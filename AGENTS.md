@@ -769,6 +769,16 @@ foreground colors and do not rely on color alone to communicate selection or sta
   and queryless lists, and `resolve_work_target` for semantic scoped-write
   planning; neither replaces the explicit single-kind contracts. Do not retain ambiguous legacy
   names such as `get_note`, `get_thread`, or `resolve_note` as aliases.
+- Keep queryless entity inventory separate from both full entity reads and FTS discovery. Expose
+  `list_focuses`, `list_threads`, `list_commitments`, and `list_routines` as compact paginated
+  projections with stable durable `reference` ids, full owning hierarchy, readable `displayPath`,
+  and unique `projectionKey` rows. List a Focus once; list a scoped Thread, Commitment, or Routine
+  once per currently applicable canonical Subject and mark it explicitly with
+  `projection.projectedScope=true`. Represent unscoped, empty-scope, and access-hidden Scope states
+  without silently dropping the entity. These list tools must never return child Updates, Todos,
+  Notes, Routine checklist text, Run history, or rich-text documents. A Focus may expose only an
+  optional plain-text description breadcrumb capped at 200 characters. Apply effective sensitivity
+  at both the entity and exact Subject context, and count projected rows for pagination.
 - General discovery must work when a name or literal string may occur anywhere: titles,
   descriptions, rich-text Updates and Notes, Todos, Routine templates, Subjects, or Tags. Back it
   with the maintained FTS5 projection and readable rich-text extraction, not a collection of

@@ -174,6 +174,9 @@ method.
 ### Read tools
 
 - `onmove.list_focuses`
+- `onmove.list_threads`
+- `onmove.list_commitments`
+- `onmove.list_routines`
 - `onmove.get_focus_by_id`
 - `onmove.get_focus_by_path`
 - `onmove.search_focuses`
@@ -194,7 +197,6 @@ method.
 - `onmove.search_notes`
 - `onmove.search_todos`
 - `onmove.search_subjects`
-- `onmove.list_routines`
 - `onmove.get_reviews`
 - `onmove.get_due`
 - `onmove.get_todos`

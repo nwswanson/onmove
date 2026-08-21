@@ -1701,7 +1701,7 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Choose reads by intent. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Do not request richText for discovery, review, summarization, or semantic text patches. Request includeRichText=true on one known entity only immediately before a full structural replacement. Search richText is an exceptional fallback and requires projection.richTextPurpose=structural-replacement. Use onmove.search only for cross-kind discovery, queryless structured listing, or Subject hierarchy projection. INITIAL SEARCH: send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility and omit continuationToken. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Use projection={hierarchy,subjects,scopes}; omitted projection fields are false. Never invent or alter a continuationToken. A next-page request sends only the exact non-null signed token, which preserves the complete query and cursor. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop discovery and fetch returned IDs directly. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and View/Edit grants by resource, Focus, and Thread.'
+        'Choose reads by intent. For a compact queryless inventory use list_focuses, list_threads, list_commitments, or list_routines; these return hierarchy and one explicit projection row per applicable Subject without child Updates, Notes, or rich-text documents. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Do not request richText for discovery, review, summarization, or semantic text patches. Request includeRichText=true on one known entity only immediately before a full structural replacement. Search richText is an exceptional fallback and requires projection.richTextPurpose=structural-replacement. Use onmove.search only for cross-kind discovery, queryless structured listing, or Subject hierarchy projection. INITIAL SEARCH: send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility and omit continuationToken. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Use projection={hierarchy,subjects,scopes}; omitted projection fields are false. Never invent or alter a continuationToken. A next-page request sends only the exact non-null signed token, which preserves the complete query and cursor. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop discovery and fetch returned IDs directly. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and View/Edit grants by resource, Focus, and Thread.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -1757,14 +1757,60 @@ export function createOnMoveMcpServer(
     'onmove.list_focuses',
     {
       title: 'List OnMove focuses',
-      description: 'List visible Focus records with bounded lifecycle filtering.',
-      inputSchema: z.object({
-        statuses: z.array(z.enum(['active', 'paused', 'done', 'cancelled'])).optional(),
+      description: 'Compact queryless inventory of visible Focus records. Returns hierarchy, lifecycle metadata, and at most a 200-character plain-text description breadcrumb; never returns Threads, Updates, Notes, or rich-text documents.',
+      inputSchema: z.strictObject({
+        statuses: z.array(z.enum(['active', 'paused', 'done', 'cancelled'])).optional().describe(
+          'Optional Focus lifecycle filter. Omit to include every visible lifecycle state.'
+        ),
+        includeBreadcrumb: z.boolean().optional().describe(
+          'Defaults true. When false, omit the bounded plain-text Focus description breadcrumb.'
+        ),
         ...pageSchema
       }),
       annotations: { readOnlyHint: true }
     },
     async (input) => result(database.queries.listFocuses(input, policy()))
+  )
+
+  server.registerTool(
+    'onmove.list_threads',
+    {
+      title: 'List OnMove threads',
+      description: 'Compact queryless inventory of visible Threads. Returns full Focus → Thread hierarchy and one clearly marked row per current Subject projection. Unscoped and empty-scope Threads remain explicit. Never returns child Commitments, Routines, Updates, Todos, Notes, or rich-text documents.',
+      inputSchema: z.strictObject({
+        focusId: idSchema.optional().describe(
+          'Optional owning Focus ID. Omit to list Threads across every visible Focus.'
+        ),
+        statuses: z.array(z.enum(['active', 'paused', 'done', 'cancelled'])).optional().describe(
+          'Optional Thread lifecycle filter. Omit to include every visible lifecycle state.'
+        ),
+        ...pageSchema
+      }),
+      annotations: { readOnlyHint: true }
+    },
+    async (input) => result(database.queries.listThreads(input, policy()))
+  )
+
+  server.registerTool(
+    'onmove.list_commitments',
+    {
+      title: 'List OnMove commitments',
+      description: 'Compact queryless inventory of visible tracking Commitments. Returns Focus → Thread → Commitment hierarchy and one clearly marked row per current Subject projection. Never returns Updates, Todos, Notes, or rich-text documents.',
+      inputSchema: z.strictObject({
+        focusId: idSchema.optional().describe(
+          'Optional owning Focus ID. Omit to list Commitments across every visible Focus.'
+        ),
+        threadId: idSchema.optional().describe(
+          'Optional owning Thread ID. Omit to list Commitments across every visible Thread.'
+        ),
+        statuses: z.array(z.enum(['active', 'paused', 'done', 'cancelled'])).optional().describe(
+          'Optional Commitment lifecycle filter. Omit to include every visible lifecycle state.'
+        ),
+        ...pageSchema
+      }),
+      annotations: { readOnlyHint: true }
+    },
+    async (input) => result(database.queries.listCommitments(input, policy()))
   )
 
   server.registerTool(
@@ -2067,11 +2113,22 @@ export function createOnMoveMcpServer(
     'onmove.list_routines',
     {
       title: 'List OnMove routines',
-      description: 'List visible recurring attestation Routines and their current immutable Runs.',
-      inputSchema: z.object(pageSchema),
+      description: 'Compact queryless inventory of visible recurring attestation Routines. Returns Focus → Thread → Routine hierarchy, one clearly marked row per current Subject projection, derived status, schedule, and bounded progress metadata. Never returns checklist text, Run history, evidence, Updates, Notes, or rich-text documents.',
+      inputSchema: z.strictObject({
+        focusId: idSchema.optional().describe(
+          'Optional owning Focus ID. Omit to list Routines across every visible Focus.'
+        ),
+        threadId: idSchema.optional().describe(
+          'Optional owning Thread ID. Omit to list Routines across every visible Thread.'
+        ),
+        statuses: z.array(z.enum(['green', 'yellow', 'red'])).optional().describe(
+          'Optional derived Routine status filter: green=current, yellow=overdue, red=lapsed.'
+        ),
+        ...pageSchema
+      }),
       annotations: { readOnlyHint: true }
     },
-    async ({ limit, offset }) => result(database.queries.listRoutines(policy(), limit, offset))
+    async (input) => result(database.queries.listRoutines(input, policy()))
   )
 
   for (const [name, title, getter] of [

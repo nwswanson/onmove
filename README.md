@@ -86,6 +86,9 @@ records. If the default port is occupied, change **Local port** and update the c
 
 Use the tool whose name matches what you know:
 
+- Queryless inventory: `list_focuses`, `list_threads`, `list_commitments`, or `list_routines`.
+  These return compact hierarchy rows and expand scoped work once per Subject without returning
+  Updates, Notes, checklists, or rich-text documents.
 - Known ID: `get_focus_by_id`, `get_thread_by_id`, `get_commitment_by_id`,
   `get_routine_by_id`, `get_update_by_id`, or `get_note_by_id`.
 - Exact title hierarchy: `get_focus_by_path`, `get_thread_by_path`,
@@ -97,6 +100,12 @@ Path tools accept titles only and return `ambiguous` instead of guessing duplica
 do not have a by-path getter because several Updates may occupy the same hierarchy and Subject;
 use `search_updates` and then `get_update_by_id` or `get_updates_by_ids`. Use `onmove.search` only
 when discovery genuinely spans multiple kinds or needs queryless structured listing.
+
+The list tools keep the durable entity ID under `reference` and give every output row a separate
+`projectionKey`. A scoped Thread, Commitment, or Routine appears once per applicable Subject with
+`projection.projectedScope: true`; its readable `displayPath` ends in `[Subject name]`. Unscoped,
+empty-scope, and access-hidden Scope states remain explicit rather than making the entity vanish.
+Focus descriptions may contribute only a bounded 200-character plain-text breadcrumb.
 
 For hierarchy-shaped requests such as “Add an Update for Michael's 1:1,” use `onmove.search` with
 `projection: { "hierarchy": true, "subjects": true, "scopes": true }`. A Subject

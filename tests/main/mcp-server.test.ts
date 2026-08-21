@@ -51,6 +51,9 @@ describe('OnMove MCP protocol adapter', () => {
     const listed = await client.listTools()
     expect(listed.tools.map(({ name }) => name)).toEqual(expect.arrayContaining([
       'onmove.list_focuses',
+      'onmove.list_threads',
+      'onmove.list_commitments',
+      'onmove.list_routines',
       'onmove.get_thread_by_id',
       'onmove.get_thread_by_path',
       'onmove.get_focus_by_id',
@@ -91,7 +94,7 @@ describe('OnMove MCP protocol adapter', () => {
       'onmove.update_note',
       'onmove.poke_review'
     ]))
-    expect(listed.tools).toHaveLength(49)
+    expect(listed.tools).toHaveLength(51)
     expect(listed.tools.map(({ name }) => name)).not.toEqual(expect.arrayContaining([
       'onmove.get_focus',
       'onmove.get_thread',
@@ -141,6 +144,131 @@ describe('OnMove MCP protocol adapter', () => {
       reference: { type: 'focus', id: 1 },
       diagnostics: { appliedScope: { mode: 'all', focusId: null, subjectId: null } }
     })
+  })
+
+  it('lists compact hierarchy rows and expands scoped work once per Subject', async () => {
+    const focus = database.domain.focuses.requireModel(1)
+    focus.update({
+      description: onMoveRichTextDocumentToStored(
+        richText(`Portfolio breadcrumb ${'x'.repeat(240)}`)
+      )
+    })
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Customer operations',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const commitment = database.domain.commitments.create({
+      type: 'tracking',
+      parent: { type: 'thread', id: thread.id },
+      title: 'Confirm account health'
+    }).snapshot()
+    database.domain.focusScopes.addSubject(focus.id, { name: 'North' })
+    const focusScope = database.domain.focusScopes.addSubject(focus.id, { name: 'South' })
+    database.domain.threadScopes.followFocus(thread.id)
+    const routine = database.domain.routines.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Weekly account inspection',
+      scheduleWeekdays: ['friday'],
+      scopeId: focusScope.scopeId,
+      checklist: [{ inspection: 'secret-checklist-contents must remain omitted' }]
+    }).snapshot()
+    database.domain.updates.create({
+      parent: { type: 'commitment', id: commitment.id },
+      scope: {
+        scopeId: focusScope.scopeId as number,
+        subjectId: focusScope.subjects[0].id
+      },
+      observation: 'secret-update-contents must remain omitted'
+    })
+    database.domain.richTextDocuments.save({
+      type: 'note',
+      id: database.domain.notes.list({ type: 'thread', id: thread.id })[0].id,
+      field: 'content'
+    }, 'secret-note-contents must remain omitted')
+
+    const focuses = await client.callTool({
+      name: 'onmove.list_focuses', arguments: {}
+    })
+    const focusItem = (focuses.structuredContent as {
+      items: Array<{ breadcrumb?: { text: string; truncated: boolean } }>
+    }).items[0]
+    expect(focusItem.breadcrumb?.text).toHaveLength(200)
+    expect(focusItem.breadcrumb).toMatchObject({ truncated: true })
+
+    const threads = await client.callTool({
+      name: 'onmove.list_threads', arguments: { focusId: focus.id }
+    })
+    const threadRows = (threads.structuredContent as {
+      items: Array<Record<string, unknown>>
+      total: number
+      contentPolicy: Record<string, unknown>
+    })
+    expect(threadRows.total).toBe(2)
+    expect(threadRows.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        projectionKey: `thread:${thread.id}:subject:${focusScope.subjects[0].id}`,
+        reference: { type: 'thread', id: thread.id },
+        displayPath: expect.stringContaining('Customer operations['),
+        hierarchy: expect.objectContaining({
+          focus: { id: focus.id, title: 'Launch readiness' },
+          thread: { id: thread.id, title: 'Customer operations' }
+        }),
+        projection: expect.objectContaining({
+          mode: 'subject', projectedScope: true,
+          subject: { id: focusScope.subjects[0].id, name: focusScope.subjects[0].name }
+        })
+      })
+    ]))
+    expect(threadRows.contentPolicy).toMatchObject({
+      childCollectionsIncluded: false,
+      richTextIncluded: false,
+      breadcrumbMaximumCharacters: 200
+    })
+
+    const commitments = await client.callTool({
+      name: 'onmove.list_commitments', arguments: { threadId: thread.id }
+    })
+    const commitmentRows = commitments.structuredContent as {
+      items: Array<Record<string, unknown>>
+      total: number
+    }
+    expect(commitmentRows.total).toBe(2)
+    expect(commitmentRows.items[0]).toMatchObject({
+      reference: { type: 'commitment', id: commitment.id },
+      hierarchy: {
+        focus: { id: focus.id, title: 'Launch readiness' },
+        thread: { id: thread.id, title: 'Customer operations' },
+        commitment: { id: commitment.id, title: 'Confirm account health' },
+        routine: null
+      },
+      projection: { mode: 'subject', projectedScope: true }
+    })
+
+    const routines = await client.callTool({
+      name: 'onmove.list_routines', arguments: { threadId: thread.id }
+    })
+    const routineRows = routines.structuredContent as {
+      items: Array<Record<string, unknown>>
+      total: number
+    }
+    expect(routineRows.total).toBe(2)
+    expect(routineRows.items[0]).toMatchObject({
+      reference: { type: 'routine', id: routine.id },
+      projection: { mode: 'subject', projectedScope: true },
+      summary: expect.objectContaining({ scheduleWeekdays: ['friday'] })
+    })
+
+    const compactPayloads = JSON.stringify([
+      threads.structuredContent,
+      commitments.structuredContent,
+      routines.structuredContent
+    ])
+    expect(compactPayloads).not.toContain('secret-checklist-contents')
+    expect(compactPayloads).not.toContain('secret-update-contents')
+    expect(compactPayloads).not.toContain('secret-note-contents')
+    expect(compactPayloads).not.toContain('previousRuns')
+    expect(compactPayloads).not.toContain('"richText":')
   })
 
   it('advertises named scope semantics and self-describing entity IDs in tool schemas', async () => {
@@ -2606,7 +2734,11 @@ describe('OnMove MCP protocol adapter', () => {
       parent: { type: 'thread', id: thread.id },
       title: '1:1s'
     }).snapshot()
-    const scope = database.domain.threadScopes.addSubject(thread.id, { name: 'Michael' })
+    const scope = database.domain.threadScopes.addSubject(
+      thread.id,
+      { name: 'Michael' },
+      new Date('2026-08-20T09:00:00.000Z')
+    )
     const michael = scope.subjects[0]
     const directUpdate = database.domain.updates.create({
       parent: { type: 'thread', id: thread.id },

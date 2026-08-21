@@ -292,6 +292,7 @@ The read contract deliberately separates three intents:
 
 | Intent | Tools |
 | --- | --- |
+| Queryless compact inventory | `list_focuses`, `list_threads`, `list_commitments`, `list_routines` |
 | Known durable ID | `get_focus_by_id`, `get_thread_by_id`, `get_commitment_by_id`, `get_routine_by_id`, `get_update_by_id`, `get_note_by_id` |
 | Exact title hierarchy | `get_focus_by_path`, `get_thread_by_path`, `get_commitment_by_path`, `get_routine_by_path`, `get_note_by_path` |
 | Text discovery in one kind | `search_focuses`, `search_threads`, `search_commitments`, `search_routines`, `search_updates`, `search_notes`, `search_todos`, `search_subjects` |
@@ -302,6 +303,17 @@ have no by-path getter because a parent/Subject/date path is not a unique Update
 `get_updates_by_ids` for bounded bulk hydration. Specialized searches share stable signed cursors,
 explicit `hasMore`, structured date filters, projections, and byte budgets with global search, but
 they cannot return another entity kind.
+
+The four dedicated list tools are intentionally narrower than either search or detailed getters.
+They return compact summary metadata and the complete owning hierarchy, but no child collections:
+no Updates, Todos, Notes, Routine checklist text, Run history, or lossless rich-text documents.
+Focuses are listed once. A scoped Thread, Commitment, or Routine is listed once per currently
+applicable Subject. Each row retains the durable entity `reference`, adds a unique `projectionKey`,
+sets `projection.projectedScope: true`, and renders the Subject at the end of `displayPath` in
+brackets. An unscoped entity is a single `unscoped` row; a bounded Scope with no current Subjects
+is an `empty-scope` row; a Scope hidden by MCP permissions is a non-disclosing `scope-hidden` row.
+Pagination counts projected rows. The only document-derived value is an optional Focus description
+`breadcrumb`, converted to plain text and capped at 200 characters.
 
 `onmove.search` is backed by a durable SQLite FTS5 index, not by raw `LIKE` queries or arbitrary
 SQL. It indexes readable plain-text projections of:
@@ -410,7 +422,7 @@ the Update's `reference.id`. This distinction is also described directly in the 
 
 ## Tools and resources
 
-Read tools cover explicit by-ID and by-path Focuses, Threads, Commitments, Routines and Notes;
+Read tools cover compact projected lists; explicit by-ID and by-path Focuses, Threads, Commitments, Routines and Notes;
 by-ID and bulk Updates; kind-specific and cross-kind search; Reviews, Due work, Todos, Tags, and
 hierarchy-aware work-target resolution. Write tools
 cover the safe mutations and semantic rich-text editing described above.

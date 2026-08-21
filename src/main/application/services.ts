@@ -12,6 +12,8 @@ import type {
   RichTextDocumentReference,
   RichTextDocumentSnapshot,
   ReviewOverviewSnapshot,
+  ScopeSnapshot,
+  SubjectSnapshot,
   TagSummarySnapshot,
   TagUseSnapshot,
   TodoOverviewSnapshot,
@@ -56,8 +58,71 @@ export type ApplicationEntityReference =
 
 export interface ListFocusesQuery {
   statuses?: readonly string[]
+  includeBreadcrumb?: boolean
   limit?: number
   offset?: number
+}
+
+export interface ListHierarchyEntitiesQuery {
+  /** Optional owning Focus filter. Omitted means every visible Focus. */
+  focusId?: number
+  /** Optional owning Thread filter. Valid for Commitments and Routines. */
+  threadId?: number
+  /** Lifecycle or derived-status filter appropriate to the listed kind. */
+  statuses?: readonly string[]
+  limit?: number
+  offset?: number
+}
+
+export type ApplicationListProjection =
+  | {
+      mode: 'entity' | 'unscoped'
+      projectedScope: false
+      scope: null
+      subject: null
+    }
+  | {
+      mode: 'subject'
+      projectedScope: true
+      scope: { id: number; name: string; dimension: string; source: string }
+      subject: { id: number; name: string }
+    }
+  | {
+      mode: 'empty-scope' | 'scope-hidden'
+      projectedScope: true
+      scope: { id: number; name: string; dimension: string; source: string } | null
+      subject: null
+    }
+
+export interface ApplicationCompactListItem {
+  /** Unique row identity. Scoped rows repeat the durable entity ID once per Subject. */
+  projectionKey: string
+  reference: ApplicationEntityReference
+  uri: string
+  title: string
+  displayPath: string
+  hierarchy: {
+    focus: { id: number; title: string }
+    thread: { id: number; title: string } | null
+    commitment: { id: number; title: string } | null
+    routine: { id: number; title: string } | null
+  }
+  projection: ApplicationListProjection
+  summary: Record<string, unknown>
+  breadcrumb?: { text: string; source: 'description'; truncated: boolean }
+}
+
+export interface ApplicationCompactListPage {
+  items: ApplicationCompactListItem[]
+  total: number
+  limit: number
+  offset: number
+  hasMore: boolean
+  contentPolicy: {
+    childCollectionsIncluded: false
+    richTextIncluded: false
+    breadcrumbMaximumCharacters: 200
+  }
 }
 
 export interface ApplicationEntityReadOptions {
@@ -564,6 +629,47 @@ function compactPlainText(value: string, maximum = 280): string {
   return plain.length <= maximum ? plain : `${plain.slice(0, maximum - 1).trimEnd()}…`
 }
 
+function compactListPage(
+  items: ApplicationCompactListItem[],
+  query: Pick<ListHierarchyEntitiesQuery, 'limit' | 'offset'>
+): ApplicationCompactListPage {
+  const { limit, offset } = boundedPage(query.limit, query.offset)
+  return {
+    items: items.slice(offset, offset + limit),
+    total: items.length,
+    limit,
+    offset,
+    hasMore: offset + limit < items.length,
+    contentPolicy: {
+      childCollectionsIncluded: false,
+      richTextIncluded: false,
+      breadcrumbMaximumCharacters: 200
+    }
+  }
+}
+
+function descriptionBreadcrumb(
+  value: string | null,
+  enabled: boolean
+): ApplicationCompactListItem['breadcrumb'] | undefined {
+  if (!enabled || !value) return undefined
+  const complete = richTextPlainText(value).replace(/\s+/gu, ' ').trim()
+  if (!complete) return undefined
+  return {
+    text: compactPlainText(value, 200),
+    source: 'description',
+    truncated: complete.length > 200
+  }
+}
+
+function compactListSort(
+  left: ApplicationCompactListItem,
+  right: ApplicationCompactListItem
+): number {
+  return left.displayPath.localeCompare(right.displayPath, undefined, { sensitivity: 'base' }) ||
+    left.projectionKey.localeCompare(right.projectionKey)
+}
+
 function uri(reference: ApplicationEntityReference): string {
   return `onmove://${reference.type}/${reference.id}`
 }
@@ -739,14 +845,202 @@ export class OnMoveQueryService {
     return this.domain.tags.uses(name)
   }
 
-  listFocuses(query: ListFocusesQuery, access: OnMoveAccessPolicy): unknown[] {
-    const { limit, offset } = boundedPage(query.limit, query.offset)
+  listFocuses(query: ListFocusesQuery, access: OnMoveAccessPolicy): ApplicationCompactListPage {
     const statuses = query.statuses ?? []
-    return this.domain.focuses.list()
+    const items = this.domain.focuses.list()
       .filter((focus) => statuses.length === 0 || statuses.includes(focus.status))
       .filter((focus) => this.sensitivity.canRead('focus', focus.id, access))
-      .slice(offset, offset + limit)
-      .map((focus) => plainProjection(focus))
+      .map((focus): ApplicationCompactListItem => {
+        const reference = { type: 'focus' as const, id: focus.id }
+        const breadcrumb = descriptionBreadcrumb(
+          focus.description,
+          query.includeBreadcrumb !== false
+        )
+        return {
+          projectionKey: `focus:${focus.id}`,
+          reference,
+          uri: uri(reference),
+          title: focus.title,
+          displayPath: focus.title,
+          hierarchy: {
+            focus: { id: focus.id, title: focus.title },
+            thread: null,
+            commitment: null,
+            routine: null
+          },
+          projection: {
+            mode: 'entity', projectedScope: false, scope: null, subject: null
+          },
+          summary: {
+            kind: focus.kind,
+            status: focus.status,
+            dueDate: focus.dueDate,
+            lastReviewDate: focus.lastReviewDate,
+            needsReview: focus.needsReview,
+            sensitive: focus.sensitive,
+            createdAt: focus.createdAt,
+            updatedAt: focus.updatedAt
+          },
+          ...(breadcrumb ? { breadcrumb } : {})
+        }
+      })
+      .sort(compactListSort)
+    return compactListPage(items, query)
+  }
+
+  listThreads(
+    query: ListHierarchyEntitiesQuery,
+    access: OnMoveAccessPolicy
+  ): ApplicationCompactListPage {
+    if (query.focusId !== undefined) assertPositiveId(query.focusId, 'focus id')
+    const statuses = query.statuses ?? []
+    const items = this.domain.focuses.list().flatMap((focus) => {
+      if (query.focusId !== undefined && focus.id !== query.focusId) return []
+      if (!this.sensitivity.canRead('focus', focus.id, access)) return []
+      return this.domain.threads.listForFocus(focus.id).flatMap((thread) => {
+        if (statuses.length > 0 && !statuses.includes(thread.status)) return []
+        if (!this.sensitivity.canRead('thread', thread.id, access)) return []
+        const scope = this.domain.threadScopes.get(thread.id)
+        const scopeRecord = scope.scopeId === null ? null : this.domain.scopes.find(scope.scopeId)
+        const visibleScope = this.canListScope(scopeRecord, access, focus.id, thread.id)
+        const visibleSubjects = visibleScope
+          ? scope.subjects.filter((subject) => this.sensitivity.canReadInContext(
+              'subject', subject.id, access, { focusId: focus.id, threadId: thread.id }
+            ))
+          : []
+        const visibleCells = visibleScope
+          ? this.domain.threads.scopeMatrix(thread.id).filter((cell) =>
+              visibleSubjects.some(({ id }) => id === cell.subjectId))
+          : []
+        const projections = this.listProjections({
+          entityType: 'thread', entityId: thread.id, scopeId: scope.scopeId,
+          scopeRecord: visibleScope ? scopeRecord : null,
+          source: `thread-effective:${scope.mode}`,
+          subjects: visibleSubjects,
+          hasHiddenSubjects: scope.subjects.length > visibleSubjects.length,
+          scopeHidden: !visibleScope
+        })
+        return projections.map((projection): ApplicationCompactListItem => {
+          const reference = { type: 'thread' as const, id: thread.id }
+          const cell = projection.subject === null
+            ? null
+            : visibleCells.find(({ subjectId }) => subjectId === projection.subject?.id) ?? null
+          return {
+            projectionKey: this.projectionKey(reference, projection),
+            reference,
+            uri: uri(reference),
+            title: thread.title,
+            displayPath: this.projectedDisplayPath(
+              [focus.title, thread.title], projection.subject
+            ),
+            hierarchy: {
+              focus: { id: focus.id, title: focus.title },
+              thread: { id: thread.id, title: thread.title },
+              commitment: null,
+              routine: null
+            },
+            projection,
+            summary: {
+              status: thread.status,
+              state: cell?.state ?? thread.health,
+              dueDate: thread.dueDate,
+              reviewFrequencyDays: thread.reviewFrequencyDays,
+              lastReviewDate: cell?.lastReviewDate ?? thread.lastReviewDate,
+              nextReviewDate: cell?.nextReviewDate ?? thread.nextReviewDate,
+              needsReview: thread.needsReview,
+              reviewDue: cell?.reviewDue ?? thread.reviewDue,
+              sensitive: thread.sensitive,
+              createdAt: thread.createdAt,
+              updatedAt: thread.updatedAt
+            }
+          }
+        })
+      })
+    }).sort(compactListSort)
+    return compactListPage(items, query)
+  }
+
+  listCommitments(
+    query: ListHierarchyEntitiesQuery,
+    access: OnMoveAccessPolicy
+  ): ApplicationCompactListPage {
+    if (query.focusId !== undefined) assertPositiveId(query.focusId, 'focus id')
+    if (query.threadId !== undefined) assertPositiveId(query.threadId, 'thread id')
+    const statuses = query.statuses ?? []
+    const items = this.domain.focuses.list().flatMap((focus) => {
+      if (query.focusId !== undefined && focus.id !== query.focusId) return []
+      if (!this.sensitivity.canRead('focus', focus.id, access)) return []
+      return this.domain.threads.listForFocus(focus.id).flatMap((thread) => {
+        if (query.threadId !== undefined && thread.id !== query.threadId) return []
+        if (!this.sensitivity.canRead('thread', thread.id, access)) return []
+        return this.domain.commitments.listForThread(thread.id)
+          .filter(trackingCommitment)
+          .flatMap((commitment) => {
+            if (statuses.length > 0 && !statuses.includes(commitment.status)) return []
+            if (!this.sensitivity.canRead('commitment', commitment.id, access)) return []
+            const application = this.domain.scopeApplications.get({
+              type: 'commitment', id: commitment.id
+            })
+            const scopeRecord = application.effectiveScopeId === null
+              ? null
+              : this.domain.scopes.find(application.effectiveScopeId)
+            const visibleScope = this.canListScope(scopeRecord, access, focus.id, thread.id)
+            const cells = visibleScope ? this.domain.commitments.scopeMatrix(commitment.id) : []
+            const visibleCells = cells.filter((cell) => this.sensitivity.canReadInContext(
+              'subject', cell.subjectId, access, { focusId: focus.id, threadId: thread.id }
+            ))
+            const projections = this.listProjections({
+              entityType: 'commitment', entityId: commitment.id,
+              scopeId: application.effectiveScopeId,
+              scopeRecord: visibleScope ? scopeRecord : null,
+              source: `commitment-effective:${application.mode}`,
+              subjects: visibleCells.map(({ subject }) => subject),
+              hasHiddenSubjects: cells.length > visibleCells.length,
+              scopeHidden: !visibleScope
+            })
+            return projections.map((projection): ApplicationCompactListItem => {
+              const reference = { type: 'commitment' as const, id: commitment.id }
+              const cell = projection.subject === null
+                ? null
+                : visibleCells.find(({ subjectId }) => subjectId === projection.subject?.id) ?? null
+              return {
+                projectionKey: this.projectionKey(reference, projection),
+                reference,
+                uri: uri(reference),
+                title: commitment.title,
+                displayPath: this.projectedDisplayPath(
+                  [focus.title, thread.title, commitment.title], projection.subject
+                ),
+                hierarchy: {
+                  focus: { id: focus.id, title: focus.title },
+                  thread: { id: thread.id, title: thread.title },
+                  commitment: { id: commitment.id, title: commitment.title },
+                  routine: null
+                },
+                projection,
+                summary: {
+                  status: commitment.status,
+                  state: cell?.state ?? commitment.state,
+                  dueDate: commitment.dueDate,
+                  cadenceDays: commitment.cadenceDays,
+                  reviewFrequencyDays: commitment.reviewFrequencyDays,
+                  lastReviewDate: cell?.lastReviewDate ?? commitment.lastReviewDate,
+                  nextReviewDate: cell?.nextReviewDate ?? commitment.nextReviewDate,
+                  reviewDue: cell?.reviewDue ?? commitment.reviewDue,
+                  lastUpdateDate: cell?.lastUpdateDate ?? commitment.lastUpdateDate,
+                  nextUpdateDate: cell?.nextUpdateDate ?? commitment.nextUpdateDate,
+                  needsUpdate: cell?.needsUpdate ?? commitment.needsUpdate,
+                  needsReview: commitment.needsReview,
+                  sensitive: commitment.sensitive,
+                  createdAt: commitment.createdAt,
+                  updatedAt: commitment.updatedAt
+                }
+              }
+            })
+          })
+      })
+    }).sort(compactListSort)
+    return compactListPage(items, query)
   }
 
   getFocus(
@@ -1161,13 +1455,172 @@ export class OnMoveQueryService {
     }
   }
 
-  listRoutines(access: OnMoveAccessPolicy, limit = 50, offset = 0): unknown[] {
-    const page = boundedPage(limit, offset)
-    return this.domain.routines.list()
-      .filter((routine) => this.sensitivity.canRead('routine', routine.id, access))
-      .slice(page.offset, page.offset + page.limit)
-      .map((routine) => this.getRoutine(routine.id, access))
-      .filter((routine) => routine !== null)
+  listRoutines(
+    query: ListHierarchyEntitiesQuery,
+    access: OnMoveAccessPolicy
+  ): ApplicationCompactListPage {
+    if (query.focusId !== undefined) assertPositiveId(query.focusId, 'focus id')
+    if (query.threadId !== undefined) assertPositiveId(query.threadId, 'thread id')
+    const statuses = query.statuses ?? []
+    const items = this.domain.routines.list().flatMap((routine) => {
+      if (statuses.length > 0 && !statuses.includes(routine.status)) return []
+      if (!this.sensitivity.canRead('routine', routine.id, access)) return []
+      const thread = routine.parent.type === 'thread'
+        ? this.domain.threads.find(routine.parent.id)
+        : null
+      const focus = thread
+        ? this.domain.focuses.find(thread.focusId)
+        : routine.parent.type === 'focus'
+          ? this.domain.focuses.find(routine.parent.id)
+          : null
+      if (!focus) return []
+      if (query.focusId !== undefined && focus.id !== query.focusId) return []
+      if (query.threadId !== undefined && thread?.id !== query.threadId) return []
+      if (thread && !this.sensitivity.canRead('thread', thread.id, access)) return []
+      const scopeRecord = routine.scope === null
+        ? null
+        : this.domain.scopes.find(routine.scope.id)
+      const visibleScope = this.canListScope(scopeRecord, access, focus.id, thread?.id ?? null)
+      const visibleSubjects = visibleScope && routine.scope
+        ? routine.scope.subjects.filter((subject) => this.sensitivity.canReadInContext(
+            'subject', subject.id, access, { focusId: focus.id, threadId: thread?.id ?? null }
+          ))
+        : []
+      const projections = this.listProjections({
+        entityType: 'routine', entityId: routine.id,
+        scopeId: routine.scope?.id ?? null,
+        scopeRecord: visibleScope ? scopeRecord : null,
+        source: 'routine-definition',
+        subjects: visibleSubjects,
+        hasHiddenSubjects: (routine.scope?.subjects.length ?? 0) > visibleSubjects.length,
+        scopeHidden: !visibleScope
+      })
+      return projections.map((projection): ApplicationCompactListItem => {
+        const reference = { type: 'routine' as const, id: routine.id }
+        const cell = projection.subject === null
+          ? null
+          : routine.currentRun?.cells.find(
+              (candidate) => candidate.subject?.id === projection.subject?.id
+            ) ?? null
+        const requiredTemplateItems = routine.template.items.filter(({ required }) => required).length
+        const parentLabels = [focus.title, thread?.title, routine.name]
+          .filter((label): label is string => label !== undefined)
+        return {
+          projectionKey: this.projectionKey(reference, projection),
+          reference,
+          uri: uri(reference),
+          title: routine.name,
+          displayPath: this.projectedDisplayPath(parentLabels, projection.subject),
+          hierarchy: {
+            focus: { id: focus.id, title: focus.title },
+            thread: thread ? { id: thread.id, title: thread.title } : null,
+            commitment: null,
+            routine: { id: routine.id, title: routine.name }
+          },
+          projection,
+          summary: {
+            status: routine.status,
+            needsAttestation: routine.needsAttestation,
+            scheduleWeekdays: routine.scheduleWeekdays,
+            nextReviewDate: routine.nextReviewDate,
+            nextScheduledDate: routine.nextScheduledDate,
+            overdueDays: routine.overdueDays,
+            currentRun: routine.currentRun
+              ? {
+                  id: routine.currentRun.id,
+                  scheduledDate: routine.currentRun.scheduledDate,
+                  completionDate: cell?.completionDate ?? routine.currentRun.completionDate,
+                  progress: cell?.progress ?? (
+                    projection.mode === 'unscoped'
+                      ? routine.currentRun.progress
+                      : { complete: 0, required: requiredTemplateItems }
+                  )
+                }
+              : null,
+            sensitive: routine.sensitive,
+            createdAt: routine.createdAt,
+            updatedAt: routine.updatedAt
+          }
+        }
+      })
+    }).sort(compactListSort)
+    return compactListPage(items, query)
+  }
+
+  private canListScope(
+    scope: ScopeSnapshot | null,
+    access: OnMoveAccessPolicy,
+    focusId: number,
+    threadId: number | null
+  ): boolean {
+    if (scope === null) return true
+    return (access.sensitiveContent === 'allow' || !scope.sensitive) &&
+      this.sensitivity.canViewResource('subject', access, { focusId, threadId })
+  }
+
+  private listProjections(input: {
+    entityType: 'thread' | 'commitment' | 'routine'
+    entityId: number
+    scopeId: number | null
+    scopeRecord: ScopeSnapshot | null
+    source: string
+    subjects: Array<Pick<SubjectSnapshot, 'id' | 'name'>>
+    hasHiddenSubjects: boolean
+    scopeHidden: boolean
+  }): ApplicationListProjection[] {
+    if (input.scopeId === null) {
+      return [{ mode: 'unscoped', projectedScope: false, scope: null, subject: null }]
+    }
+    if (input.scopeHidden) {
+      return [{ mode: 'scope-hidden', projectedScope: true, scope: null, subject: null }]
+    }
+    const scope = input.scopeRecord
+      ? {
+          id: input.scopeRecord.id,
+          name: input.scopeRecord.name,
+          dimension: input.scopeRecord.dimension,
+          source: input.source
+        }
+      : null
+    if (input.subjects.length === 0) {
+      return [{
+        mode: input.hasHiddenSubjects ? 'scope-hidden' : 'empty-scope',
+        projectedScope: true,
+        scope,
+        subject: null
+      }]
+    }
+    return input.subjects.map((subject) => ({
+      mode: 'subject' as const,
+      projectedScope: true as const,
+      scope: scope ?? {
+        id: input.scopeId as number,
+        name: 'Effective scope',
+        dimension: 'subject',
+        source: input.source
+      },
+      subject: { id: subject.id, name: subject.name }
+    }))
+  }
+
+  private projectionKey(
+    reference: ApplicationEntityReference,
+    projection: ApplicationListProjection
+  ): string {
+    return projection.mode === 'subject'
+      ? `${reference.type}:${reference.id}:subject:${projection.subject.id}`
+      : `${reference.type}:${reference.id}:${projection.mode}`
+  }
+
+  private projectedDisplayPath(
+    labels: string[],
+    subject: { id: number; name: string } | null
+  ): string {
+    const projected = [...labels]
+    if (subject && projected.length > 0) {
+      projected[projected.length - 1] = `${projected.at(-1)}[${subject.name}]`
+    }
+    return projected.join(' > ')
   }
 
   getReviews(access: OnMoveAccessPolicy, asOf?: string): unknown {

@@ -133,6 +133,77 @@ describe('OnMove MCP application services', () => {
     expect(database.queries.getThread(threadId, sensitiveWritable)).not.toBeNull()
   })
 
+  it('keeps unscoped, empty, and access-hidden Scope projections explicit in compact lists', () => {
+    const focus = database.domain.focuses.create({ title: 'Projection boundaries' }).toSnapshot()
+    const open = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Open work',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const bounded = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Bounded work',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const scope = database.domain.scopes.create({
+      focusId: focus.id,
+      name: 'Account owners',
+      dimension: 'owner'
+    }).toSnapshot()
+    database.domain.threads.setScope(bounded.id, { mode: 'explicit', scopeId: scope.id })
+
+    expect(database.queries.listThreads({ focusId: focus.id }, denied)).toMatchObject({
+      total: 2,
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          projectionKey: `thread:${open.id}:unscoped`,
+          projection: { mode: 'unscoped', projectedScope: false, scope: null, subject: null }
+        }),
+        expect.objectContaining({
+          projectionKey: `thread:${bounded.id}:empty-scope`,
+          projection: expect.objectContaining({
+            mode: 'empty-scope',
+            projectedScope: true,
+            scope: expect.objectContaining({ id: scope.id, name: 'Account owners' })
+          })
+        })
+      ])
+    })
+
+    const hidden = database.domain.subjects.create({
+      name: 'Private owner', sensitive: true
+    }).toSnapshot()
+    database.domain.scopeMemberships.create({ scopeId: scope.id, subjectId: hidden.id })
+    expect(database.queries.listThreads({ focusId: focus.id }, denied).items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          projectionKey: `thread:${bounded.id}:scope-hidden`,
+          projection: expect.objectContaining({
+            mode: 'scope-hidden', projectedScope: true, subject: null
+          })
+        })
+      ])
+    )
+
+    const visible = database.queries.listThreads({
+      focusId: focus.id, limit: 1, offset: 1
+    }, sensitiveWritable)
+    expect(visible).toMatchObject({ total: 2, limit: 1, offset: 1, hasMore: false })
+    expect(visible.items[0]).toMatchObject({
+      projectionKey: `thread:${open.id}:unscoped`
+    })
+    const full = database.queries.listThreads({ focusId: focus.id }, sensitiveWritable)
+    expect(full.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        projectionKey: `thread:${bounded.id}:subject:${hidden.id}`,
+        projection: expect.objectContaining({
+          mode: 'subject', projectedScope: true,
+          subject: { id: hidden.id, name: 'Private owner' }
+        })
+      })
+    ]))
+  })
+
   it('resolves scoped writes, rejects stale or omitted cells, and audits no payload text', () => {
     const { focusId, threadId, commitmentId } = hierarchy()
     const first = database.domain.focusScopes.addSubject(focusId, { name: 'Platform' })
