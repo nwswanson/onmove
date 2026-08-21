@@ -174,11 +174,26 @@ method.
 ### Read tools
 
 - `onmove.list_focuses`
-- `onmove.get_focus`
-- `onmove.get_thread`
-- `onmove.get_commitment`
-- `onmove.get_update`
-- `onmove.get_updates`
+- `onmove.get_focus_by_id`
+- `onmove.get_focus_by_path`
+- `onmove.search_focuses`
+- `onmove.get_thread_by_id`
+- `onmove.get_thread_by_path`
+- `onmove.search_threads`
+- `onmove.get_commitment_by_id`
+- `onmove.get_commitment_by_path`
+- `onmove.search_commitments`
+- `onmove.get_routine_by_id`
+- `onmove.get_routine_by_path`
+- `onmove.search_routines`
+- `onmove.get_update_by_id`
+- `onmove.get_updates_by_ids`
+- `onmove.search_updates`
+- `onmove.get_note_by_id`
+- `onmove.get_note_by_path`
+- `onmove.search_notes`
+- `onmove.search_todos`
+- `onmove.search_subjects`
 - `onmove.list_routines`
 - `onmove.get_reviews`
 - `onmove.get_due`

@@ -757,10 +757,22 @@ foreground colors and do not rely on color alone to communicate selection or sta
   hierarchy ids. A search hit's `reference.id` identifies the matched record; its
   `hierarchy.thread.id` or `hierarchy.commitment.id` identifies a containing record. Never require
   the caller to infer or interchange those meanings.
+- Keep identity, hierarchy resolution, and discovery as separate MCP operations. A known durable
+  ID uses `get_<entity>_by_id`; an exact title hierarchy uses `get_<entity>_by_path`; unknown text
+  uses `search_<entities>`. Path tools accept title fields only and must reject ID fields, return
+  exact case-insensitive ambiguity rather than guessing, and never silently become fuzzy search.
+  Provide this triplet for Focus, Thread, Commitment, Routine, and Note. Updates expose
+  `get_update_by_id`, bounded `get_updates_by_ids`, and `search_updates`, but no get-by-path because
+  several Updates may legitimately share one hierarchy/Subject/date path. Todos expose
+  `search_todos` plus their existing aggregate and mutation boundaries. Subjects expose
+  `search_subjects` for canonical name discovery. Retain `onmove.search` for cross-kind discovery
+  and queryless lists, and `resolve_work_target` for semantic scoped-write
+  planning; neither replaces the explicit single-kind contracts. Do not retain ambiguous legacy
+  names such as `get_note`, `get_thread`, or `resolve_note` as aliases.
 - General discovery must work when a name or literal string may occur anywhere: titles,
   descriptions, rich-text Updates and Notes, Todos, Routine templates, Subjects, or Tags. Back it
   with the maintained FTS5 projection and readable rich-text extraction, not a collection of
-  entity-specific `LIKE` queries. `get_thread` and other direct getters retrieve known entity ids;
+  entity-specific `LIKE` queries. `get_thread_by_id` and other direct getters retrieve known entity ids;
   they are not substitutes for global search.
 - Treat structured listing and hierarchy discovery as first-class parts of `onmove.search`, not as
   text matching alone. A null or omitted `text` performs a queryless record list selected by
@@ -825,7 +837,7 @@ foreground colors and do not rely on color alone to communicate selection or sta
   reject signed-token tampering, and test queryless exact-date lists, created-vs-updated filtering,
   compact byte ceilings, malformed-rich-text fallback, global completion stopping signals, and
   bounded hierarchy projection.
-- Use `onmove.resolve_target` for relational language such as “do X for Person Y's 1:1 in Team.”
+- Use `onmove.resolve_work_target` for relational language such as “do X for Person Y's 1:1 in Team.”
   Resolve in hierarchy order—optional Focus, Thread, optional child Commitment, then optional
   Subject in the target's effective Scope—and return a directly usable recommended write request.
   Match names exactly and case-insensitively so punctuation-bearing names such as `1:1` are not
@@ -844,7 +856,7 @@ foreground colors and do not rely on color alone to communicate selection or sta
   ordered by `updatedAt`, open exact/shared Todos, and currently applicable open Commitments with
   Subject-cell state. A resolved review is sufficient and `doNotBroaden`; return a continuation token
   for the same Subject × Thread intersection instead of requiring follow-up discovery calls.
-- Keep direct entity reads resilient to rich-text evolution. `get_thread` and `get_commitment`
+- Keep direct entity reads resilient to rich-text evolution. `get_thread_by_id` and `get_commitment_by_id`
   default to compact readable projections with `includeRichText=false`; lossless rich text is
   opt-in. If one requested document contains an unsupported newer structure, omit only that
   document, preserve the readable entity and siblings, and return a diagnostic warning rather
@@ -894,20 +906,20 @@ foreground colors and do not rely on color alone to communicate selection or sta
   discriminated object (`focus-description` with `focusId`, or `update-observation` with
   `updateId`) so IDs cannot be silently reinterpreted. Notes retain their Note-specific tools;
   never add overlapping aliases for the same field.
-- Return edit-ready state at the first useful read boundary. `get_focus(includeRichText=true)` must
+- Return edit-ready state at the first useful read boundary. `get_focus_by_id(includeRichText=true)` must
   include the Focus description document, revision, and write guide as well as expanded Notes;
-  `get_update` must return an Update's hierarchy, full observation document, revision, and guide.
+  `get_update_by_id` must return an Update's hierarchy, full observation document, revision, and guide.
   Thread/Commitment Update arrays and `create_update` results must also carry the observation
   revision and guide so a known Update can be patched without another exploratory call.
 - Protect Focus descriptions and Update observations with the same optimistic concurrency,
   formatting preservation, accidental-empty guard, metadata-only audit, sensitivity policy, and
   live rich-text broadcast as Notes. Map semantic patch failures to field-neutral
-  `RICH_TEXT_*` recovery codes and return the exact `get_focus(includeRichText=true)` or
-  `get_update` request needed to recover. Routine Run-item notes remain governed by attestation
+  `RICH_TEXT_*` recovery codes and return the exact `get_focus_by_id(includeRichText=true)` or
+  `get_update_by_id` request needed to recover. Routine Run-item notes remain governed by attestation
   finalization and are not generic MCP rich-text mutation targets.
-- Let callers avoid discovery call explosions. `onmove.get_focus` must optionally return directly
+- Let callers avoid discovery call explosions. `onmove.get_focus_by_id` must optionally return directly
   owned Notes with complete rich text and write guides through `includeRichText=true`.
-  `onmove.resolve_note` must resolve exact Focus → optional Thread → optional Commitment → Note
+  `onmove.get_note_by_path` must resolve exact Focus → optional Thread → optional Commitment → Note
   selectors and return hierarchy, Note id, revision, optional full rich text, and write guides in
   one response. The deepest supplied hierarchy selector is the direct owner; never search
   descendants implicitly or guess duplicate matches.
@@ -933,7 +945,7 @@ foreground colors and do not rely on color alone to communicate selection or sta
   rich-text field: Focus descriptions, Update observations, and Note content. Each matching hit
   must include its full lossless document, revision, self-describing target, and write guides so a
   common text mutation is one search plus one guarded semantic patch.
-- Keep Update hydration free of agent-visible N+1 calls. `onmove.get_updates` accepts up to 50
+- Keep Update hydration free of agent-visible N+1 calls. `onmove.get_updates_by_ids` accepts up to 50
   Update IDs, performs one bounded repository read, preserves first-seen input order, and returns
   hidden and missing IDs together as `unavailableIds`. Unsupported or malformed rich text must
   retain the readable plain observation and add a warning rather than aborting either the single or

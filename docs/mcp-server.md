@@ -86,7 +86,7 @@ Responses and parent contexts expose `observation` as a readable plain-text proj
 
 ### Resolving a hierarchy and creating Todos
 
-Use `onmove.resolve_target` when a request names related records, rather than searching each name
+Use `onmove.resolve_work_target` when a request names related records, rather than searching each name
 as an unrelated global term. For example, “Do X for Person Y's 1:1 in Leadership Team” resolves
 with:
 
@@ -105,7 +105,7 @@ splitting. Every selector also accepts its entity's own ID. Duplicate matches re
 `status: "ambiguous"` with candidates and a warning; the resolver never guesses. A resolved target
 includes `recommendedTodoRequest`, which is directly executable after adding the Todo `name`.
 
-`onmove.get_thread`, `onmove.get_commitment`, and resolved candidates expose
+`onmove.get_thread_by_id`, `onmove.get_commitment_by_id`, and resolved candidates expose
 `writeGuide.createTodo`:
 
 - Open parents allow only `attribution: { "mode": "unscoped" }`.
@@ -120,24 +120,24 @@ inspection call, allowed choices, and unambiguous retry behavior as Update creat
 
 ### Updating Notes
 
-Search results and parent contexts expose each Note's own ID. Use `onmove.get_note` with that ID to
+Search results and parent contexts expose each Note's own ID. Use `onmove.get_note_by_id` with that ID to
 read its hierarchy, current revision, and both Note write guides. For a title-based request,
-`onmove.resolve_note` combines exact hierarchy resolution and the Note read into one call. For
+`onmove.get_note_by_path` combines exact hierarchy resolution and the Note read into one call. For
 example, a directly owned Focus Note can be read with:
 
 ```json
 {
-  "focus": { "title": "Project Atlas" },
-  "note": { "title": "Default" },
+  "focusTitle": "Project Atlas",
+  "noteTitle": "Default",
   "includeRichText": true
 }
 ```
 
-Add `thread` and then `commitment` selectors when the Note is owned at those levels. The deepest
+Add `threadTitle` and then `commitmentTitle` when the Note is owned at those levels. The deepest
 selector is the direct owner; the tool never silently searches descendant Notes. Duplicate exact
 matches return candidates instead of being guessed.
 
-`onmove.get_focus` also accepts `includeRichText: true`. Its `entity` then contains the complete
+`onmove.get_focus_by_id` also accepts `includeRichText: true`. Its `entity` then contains the complete
 Focus description, revision, and `descriptionWriteGuide`; directly owned `notes` contain their
 complete rich-text documents and current write guides rather than compact summaries. This is useful
 when the Focus is already known and avoids separate reads.
@@ -272,9 +272,9 @@ Call `onmove.patch_rich_text` for a localized text or formatting change. Call
 document structure. Notes keep their Note-specific tools so callers cannot confuse a Note ID with
 another entity ID.
 
-Read a Focus with `onmove.get_focus({ id, includeRichText: true })`. The response includes
+Read a Focus with `onmove.get_focus_by_id({ id, includeRichText: true })`. The response includes
 `entity.description`, `entity.descriptionRichText`, `entity.descriptionRevision`, and
-`entity.descriptionWriteGuide`. Read a known Update with `onmove.get_update({ id })`; parent Thread
+`entity.descriptionWriteGuide`. Read a known Update with `onmove.get_update_by_id({ id })`; parent Thread
 and Commitment reads also embed full Update observations, revisions, and write guides. A successful
 `onmove.create_update` response includes the same observation guide, so a newly created blank Update
 can be edited immediately without another discovery call.
@@ -286,6 +286,21 @@ metadata. Successful edits are committed through the shared application service 
 all open main and rich-text windows.
 
 ## Search
+
+The read contract deliberately separates three intents:
+
+| Intent | Tools |
+| --- | --- |
+| Known durable ID | `get_focus_by_id`, `get_thread_by_id`, `get_commitment_by_id`, `get_routine_by_id`, `get_update_by_id`, `get_note_by_id` |
+| Exact title hierarchy | `get_focus_by_path`, `get_thread_by_path`, `get_commitment_by_path`, `get_routine_by_path`, `get_note_by_path` |
+| Text discovery in one kind | `search_focuses`, `search_threads`, `search_commitments`, `search_routines`, `search_updates`, `search_notes`, `search_todos`, `search_subjects` |
+
+Path schemas contain title fields only. Matching is exact and case-insensitive; duplicate exact
+paths return `ambiguous` with candidates. They never accept IDs or perform fuzzy search. Updates
+have no by-path getter because a parent/Subject/date path is not a unique Update identity. Use
+`get_updates_by_ids` for bounded bulk hydration. Specialized searches share stable signed cursors,
+explicit `hasMore`, structured date filters, projections, and byte budgets with global search, but
+they cannot return another entity kind.
 
 `onmove.search` is backed by a durable SQLite FTS5 index, not by raw `LIKE` queries or arbitrary
 SQL. It indexes readable plain-text projections of:
@@ -353,11 +368,11 @@ for the same Subject × Thread boundary.
 Hierarchy selectors take exactly one key: `{ "id": 19 }` or `{ "title": "1:1s" }` for entities,
 and `{ "id": 34 }` or `{ "name": "Michael" }` for a Subject. Sending both is a selector conflict,
 not an instruction to prefer the ID. Resolution remains exact and case-insensitive. If a shorthand
-such as `my Xs` does not exactly equal a title such as `Foobar / Xs!`, `resolve_target` and
+such as `my Xs` does not exactly equal a title such as `Foobar / Xs!`, `resolve_work_target` and
 `review_subject` stay `not_found` but return bounded `threadCandidates` with exact IDs and a ready
 retry instead of silently guessing.
 
-`onmove.get_thread` and `onmove.get_commitment` default to `includeRichText: false`, which is the
+`onmove.get_thread_by_id` and `onmove.get_commitment_by_id` default to `includeRichText: false`, which is the
 compact and most forward-compatible read. Set it to `true` only when lossless Update/Note documents
 are required. If one stored document uses an unsupported newer structure, the response retains the
 entity and readable plain-text projection, omits only that lossless document, and explains the
@@ -376,19 +391,20 @@ means an Update's recorded local date or a dated entity's due date. Creation and
 instants use inclusive local-calendar ranges interpreted through the request's IANA `timeZone`.
 All search records expose `date`, `createdAt`, and `updatedAt`.
 
-Use `onmove.get_updates({ ids: [...] })` to hydrate up to 50 known Update IDs in one bounded read.
+Use `onmove.get_updates_by_ids({ ids: [...] })` to hydrate up to 50 known Update IDs in one bounded read.
 It preserves first-seen order and reports hidden or missing records as `unavailableIds`. A malformed
 or newer rich-text observation degrades to readable plain text with a diagnostic warning rather
 than failing the search, single getter, bulk getter, or containing entity read.
 
 Each search hit identifies the matched record under `reference` and its owners under `hierarchy`.
-For example, when an Update matches, pass `hierarchy.thread.id` to `onmove.get_thread`; do not pass
+For example, when an Update matches, pass `hierarchy.thread.id` to `onmove.get_thread_by_id`; do not pass
 the Update's `reference.id`. This distinction is also described directly in the tool schemas.
 
 ## Tools and resources
 
-Read tools cover Focuses, Threads, Commitments, Updates, Routines, Reviews, Due work, Todos, Tags,
-search, Subject review, Notes, combined Note resolution, and hierarchy-aware work-target resolution. Write tools
+Read tools cover explicit by-ID and by-path Focuses, Threads, Commitments, Routines and Notes;
+by-ID and bulk Updates; kind-specific and cross-kind search; Reviews, Due work, Todos, Tags, and
+hierarchy-aware work-target resolution. Write tools
 cover the safe mutations and semantic rich-text editing described above.
 Stable resource templates use:
 

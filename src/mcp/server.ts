@@ -10,6 +10,7 @@ import {
   RichTextRevisionConflictError,
   SemanticTargetValidationError,
   ScopeTargetValidationError,
+  type ApplicationEntityPathResolution,
   type ApplicationHierarchyPath,
   type ApplicationRichTextReference,
   type ApplicationResolvedTargetCandidate,
@@ -42,7 +43,7 @@ export interface OnMoveMcpServerOptions {
   /** Called with committed rich-text state so open editors can apply an external revision. */
   onRichTextMutation?: (document: RichTextDocumentSnapshot) => void
   /** Read only for an explicit scope.mode=current search; never an implicit default filter. */
-      getCurrentUiContext?: () => McpUiContextSnapshot
+  getCurrentUiContext?: () => McpUiContextSnapshot
   /** Shared by protocol instances belonging to one running endpoint. */
   rejectedCallTracker?: RejectedCallTracker
 }
@@ -256,7 +257,7 @@ function normalizedRichTextToolInput(
       tool,
       'missing_rich_text',
       tool === 'onmove.update_note'
-        ? `${tool} requires richText. Copy note.richText from onmove.get_note and submit it as richText.`
+        ? `${tool} requires richText. Copy note.richText from onmove.get_note_by_id and submit it as richText.`
         : `${tool} requires richText. Copy the field's returned richText document and submit it as richText.`
     )
   }
@@ -1101,7 +1102,7 @@ function semanticTargetErrorResult(
   const structuredContent = {
     error: { ...error.issue, message: error.message },
     recovery: {
-      inspect: { tool: 'onmove.resolve_target', arguments: resolutionArguments },
+      inspect: { tool: 'onmove.resolve_work_target', arguments: resolutionArguments },
       retry: { tool, arguments: corrected },
       instruction:
         'Resolve the semantic path if it may be stale, then preserve its exact parent and ' +
@@ -1213,7 +1214,7 @@ function scopeTargetErrorResult(
       : null
   const recovery = {
     inspect: {
-      tool: `onmove.get_${error.issue.parent.type}`,
+      tool: `onmove.get_${error.issue.parent.type}_by_id`,
       arguments: { id: error.issue.parent.id },
       path: 'writeGuide.createUpdate'
     },
@@ -1266,7 +1267,7 @@ function todoScopeTargetErrorResult(
       : null
   const recovery = {
     inspect: {
-      tool: `onmove.get_${error.issue.parent.type}`,
+      tool: `onmove.get_${error.issue.parent.type}_by_id`,
       arguments: { id: error.issue.parent.id },
       path: 'writeGuide.createTodo'
     },
@@ -1324,7 +1325,7 @@ function reparentScopeTargetErrorResult(
     error: { code: error.issue.code, message: error.message, target: error.issue },
     recovery: {
       inspect: {
-        tool: `onmove.get_${error.issue.parent.type}`,
+        tool: `onmove.get_${error.issue.parent.type}_by_id`,
         arguments: { id: error.issue.parent.id },
         path: 'writeGuide.createUpdate'
       },
@@ -1360,7 +1361,7 @@ function noteRevisionConflictResult(error: NoteRevisionConflictError): {
       message: error.message
     },
     recovery: {
-      inspect: { tool: 'onmove.get_note', arguments: { id: error.issue.noteId } },
+      inspect: { tool: 'onmove.get_note_by_id', arguments: { id: error.issue.noteId } },
       retry: null
     },
     diagnostics: diagnosticsScope()
@@ -1392,7 +1393,7 @@ function noteTextDisappearedResult(
       message: error.message
     },
     recovery: {
-      inspect: { tool: 'onmove.get_note', arguments: { id: error.issue.noteId } },
+      inspect: { tool: 'onmove.get_note_by_id', arguments: { id: error.issue.noteId } },
       instruction:
         'The existing Note contains readable text. Confirm that clearing it is intentional, then retry the same request with clear=true.',
       retry
@@ -1433,7 +1434,7 @@ function noteTextPatchErrorResult(
       message: error.message
     },
     recovery: {
-      inspect: { tool: 'onmove.get_note', arguments: { id: input.id } },
+      inspect: { tool: 'onmove.get_note_by_id', arguments: { id: input.id } },
       instruction
     },
     diagnostics: diagnosticsScope()
@@ -1446,12 +1447,12 @@ function noteTextPatchErrorResult(
 }
 
 function richTextInspectRequest(target: RichTextFieldTarget): {
-  tool: 'onmove.get_focus' | 'onmove.get_update'
+  tool: 'onmove.get_focus_by_id' | 'onmove.get_update_by_id'
   arguments: Record<string, unknown>
 } {
   return target.type === 'focus-description'
-    ? { tool: 'onmove.get_focus', arguments: { id: target.focusId, includeRichText: true } }
-    : { tool: 'onmove.get_update', arguments: { id: target.updateId } }
+    ? { tool: 'onmove.get_focus_by_id', arguments: { id: target.focusId, includeRichText: true } }
+    : { tool: 'onmove.get_update_by_id', arguments: { id: target.updateId } }
 }
 
 function richTextRevisionConflictResult(
@@ -1676,7 +1677,7 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Use onmove.search for discovery, structured listing, and optional hierarchy projection. INITIAL SEARCH: send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility and omit continuationToken. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Use projection={hierarchy,subjects,scopes,richText}; omitted projection fields are false. Never invent or alter a continuationToken. A next-page request sends only the exact non-null signed token, which preserves the complete query and cursor. When a request names an entity or Subject, preserve it as the primary filter: search that specific name first, inspect namedSubjectDiscovery and subjectUses, and treat Subject-attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop discovery and fetch returned IDs directly. Use onmove.get_updates for multiple Update IDs and onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_target for exact hierarchy names. Selectors use either an ID or a name/title, never both. For text mutation request rich text through projection.richText or the entity getter; use onmove.resolve_note and semantic patch tools for localized edits. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and View/Edit grants by resource, Focus, and Thread.'
+        'Choose reads by intent. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Use onmove.search only for cross-kind discovery, queryless structured listing, or Subject hierarchy projection. INITIAL SEARCH: send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility and omit continuationToken. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Use projection={hierarchy,subjects,scopes,richText}; omitted projection fields are false. Never invent or alter a continuationToken. A next-page request sends only the exact non-null signed token, which preserves the complete query and cursor. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop discovery and fetch returned IDs directly. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. For text mutation request rich text through projection.richText or the entity getter. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and View/Edit grants by resource, Focus, and Thread.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -1691,6 +1692,38 @@ export function createOnMoveMcpServer(
     const value = operation()
     options.onMutation?.()
     return result(value)
+  }
+  const entityPathResult = (
+    resolution: ApplicationEntityPathResolution,
+    includeRichText: boolean
+  ): ReturnType<typeof result> => {
+    const candidates = resolution.candidates.map((candidate) => {
+      const decorated = withWriteGuide(candidate)
+      return candidate.reference.type === 'focus' && includeRichText
+        ? withFocusDescriptionWriteGuide(withEmbeddedNoteWriteGuides(decorated))
+        : decorated
+    })
+    const warnings = resolution.status === 'ambiguous'
+      ? ['Multiple exact hierarchy paths matched. Add the optional Focus title; do not guess.']
+      : resolution.status === 'not_found'
+        ? ['No visible entity matched this exact hierarchy path. Use the matching search tool for discovery.']
+        : candidates.flatMap((candidate) => {
+            const context = record(candidate)
+            return Array.isArray(context?.warnings)
+              ? context.warnings.filter((warning): warning is string => typeof warning === 'string')
+              : []
+          })
+    return result({
+      status: resolution.status,
+      requested: resolution.requested,
+      target: resolution.status === 'resolved' ? candidates[0] : null,
+      candidates
+    }, {
+      ...diagnosticsScope(),
+      warnings,
+      resolutionStatus: resolution.status,
+      candidateCount: candidates.length
+    })
   }
 
   server.registerTool(
@@ -1708,9 +1741,9 @@ export function createOnMoveMcpServer(
   )
 
   server.registerTool(
-    'onmove.get_focus',
+    'onmove.get_focus_by_id',
     {
-      title: 'Get an OnMove focus',
+      title: 'Get an OnMove focus by ID',
       description: 'Read one visible Focus, a top-level area containing Threads. Set includeRichText=true to return the lossless Focus description, its semantic write guide, and each directly owned Note with its lossless rich text and write guides in this same response.',
       inputSchema: z.strictObject({
         id: idSchema.describe(
@@ -1736,7 +1769,7 @@ export function createOnMoveMcpServer(
 
   for (const [name, title, entityDescription, idDescription, getter] of [
     [
-      'onmove.get_thread', 'Get an OnMove thread',
+      'onmove.get_thread_by_id', 'Get an OnMove thread by ID',
       'Thread, a workstream inside one Focus containing Commitments, Updates, Todos, Routines, and a Note',
       'The Thread\'s own positive ID. When search matched an Update, Note, Todo, or Commitment, use searchResult.hierarchy.thread.id—not searchResult.reference.id.',
       (id: number, includeRichText: boolean) => database.queries.getThread(
@@ -1744,7 +1777,7 @@ export function createOnMoveMcpServer(
       )
     ],
     [
-      'onmove.get_commitment', 'Get an OnMove commitment',
+      'onmove.get_commitment_by_id', 'Get an OnMove commitment by ID',
       'Commitment, a tracked obligation inside one Thread',
       'The Commitment\'s own positive ID, available as searchResult.hierarchy.commitment.id when the match belongs to one.',
       (id: number, includeRichText: boolean) => database.queries.getCommitment(
@@ -1773,9 +1806,9 @@ export function createOnMoveMcpServer(
   }
 
   server.registerTool(
-    'onmove.get_note',
+    'onmove.get_note_by_id',
     {
-      title: 'Get an OnMove note',
+      title: 'Get an OnMove note by ID',
       description: 'Read one visible Note by its own ID, including hierarchy context, a read-only plain-text content projection, the lossless editor-neutral note.richText document, current revision, and the safe update contract. Use a note searchResult.reference.id or an ID from a parent context\'s notes array.',
       inputSchema: z.object({
         id: idSchema.describe(
@@ -1788,9 +1821,9 @@ export function createOnMoveMcpServer(
   )
 
   server.registerTool(
-    'onmove.get_update',
+    'onmove.get_update_by_id',
     {
-      title: 'Get an OnMove update',
+      title: 'Get an OnMove update by ID',
       description: 'Read one visible Update by its own ID, including hierarchy context, exact Scope/Subject attribution, the plain-text observation, its lossless rich-text document, current revision, and semantic write guide.',
       inputSchema: z.strictObject({
         id: idSchema.describe(
@@ -1806,10 +1839,10 @@ export function createOnMoveMcpServer(
   )
 
   server.registerTool(
-    'onmove.get_updates',
+    'onmove.get_updates_by_ids',
     {
       title: 'Get multiple OnMove updates',
-      description: 'Read up to 50 Updates by their own IDs in one database-backed call. This avoids one get_update call per search result and preserves input order. Missing and non-visible IDs are reported together as unavailableIds.',
+      description: 'Read up to 50 Updates by their own IDs in one database-backed call. This avoids one get_update_by_id call per search result and preserves input order. Missing and non-visible IDs are reported together as unavailableIds.',
       inputSchema: z.strictObject({
         ids: z.array(idSchema).min(1).max(50).describe(
           'One to 50 Update IDs from searchResult.reference.id, subjectUses, review_subject, or parent update arrays.'
@@ -1825,6 +1858,114 @@ export function createOnMoveMcpServer(
         unavailableIds: contexts.unavailableIds
       }, { ...diagnosticsScope(), warnings, resultCount: contexts.items.length })
     }
+  )
+
+  server.registerTool(
+    'onmove.get_routine_by_id',
+    {
+      title: 'Get an OnMove routine by ID',
+      description: 'Read one visible Routine by its durable ID. Use search_routines or get_routine_by_path when the ID is unknown.',
+      inputSchema: z.strictObject({
+        id: idSchema.describe('The Routine\'s own positive ID from a Routine search or parent context.')
+      }),
+      annotations: { readOnlyHint: true }
+    },
+    async ({ id }) => result(withWriteGuide(found(database.queries.getRoutine(id, policy()))))
+  )
+
+  const exactPathTitleSchema = (label: string, example: string) => z.string().min(1).describe(
+    `Exact case-insensitive ${label} title. Example: ${example}. Paths use titles only; use the corresponding get-by-ID tool for an ID.`
+  )
+  const includePathRichTextSchema = z.boolean().optional().describe(
+    'Defaults to false. True includes lossless rich-text documents and their revisions.'
+  )
+
+  server.registerTool(
+    'onmove.get_focus_by_path',
+    {
+      title: 'Get an OnMove focus by path',
+      description: 'Read a Focus from its exact title path. Duplicate exact titles return ambiguity rather than being guessed.',
+      inputSchema: z.strictObject({
+        focusTitle: exactPathTitleSchema('Focus', 'Project Atlas'),
+        includeRichText: includePathRichTextSchema
+      }),
+      annotations: { readOnlyHint: true }
+    },
+    async ({ focusTitle, includeRichText }) => entityPathResult(
+      database.queries.getEntityByPath({ type: 'focus', focusTitle }, policy(), {
+        includeRichText: includeRichText === true
+      }),
+      includeRichText === true
+    )
+  )
+
+  server.registerTool(
+    'onmove.get_thread_by_path',
+    {
+      title: 'Get an OnMove thread by path',
+      description: 'Read a Thread from an exact optional Focus title and required Thread title. Omit focusTitle only when the Thread title is globally unique.',
+      inputSchema: z.strictObject({
+        focusTitle: exactPathTitleSchema('Focus', 'Project Atlas').optional(),
+        threadTitle: exactPathTitleSchema('Thread', 'Sprint execution'),
+        includeRichText: includePathRichTextSchema
+      }),
+      annotations: { readOnlyHint: true }
+    },
+    async ({ focusTitle, threadTitle, includeRichText }) => entityPathResult(
+      database.queries.getEntityByPath({
+        type: 'thread',
+        ...(focusTitle === undefined ? {} : { focusTitle }),
+        threadTitle
+      }, policy(), { includeRichText: includeRichText === true }),
+      includeRichText === true
+    )
+  )
+
+  server.registerTool(
+    'onmove.get_commitment_by_path',
+    {
+      title: 'Get an OnMove commitment by path',
+      description: 'Read a tracking Commitment from its exact Focus → Thread → Commitment path. Omit focusTitle only when the remaining path is unique.',
+      inputSchema: z.strictObject({
+        focusTitle: exactPathTitleSchema('Focus', 'Project Atlas').optional(),
+        threadTitle: exactPathTitleSchema('Thread', 'Sprint execution'),
+        commitmentTitle: exactPathTitleSchema('Commitment', 'Improve ticket quality'),
+        includeRichText: includePathRichTextSchema
+      }),
+      annotations: { readOnlyHint: true }
+    },
+    async ({ focusTitle, threadTitle, commitmentTitle, includeRichText }) => entityPathResult(
+      database.queries.getEntityByPath({
+        type: 'commitment',
+        ...(focusTitle === undefined ? {} : { focusTitle }),
+        threadTitle,
+        commitmentTitle
+      }, policy(), { includeRichText: includeRichText === true }),
+      includeRichText === true
+    )
+  )
+
+  server.registerTool(
+    'onmove.get_routine_by_path',
+    {
+      title: 'Get an OnMove routine by path',
+      description: 'Read a Routine from its exact Focus → Thread → Routine path. Omit focusTitle only when the remaining path is unique.',
+      inputSchema: z.strictObject({
+        focusTitle: exactPathTitleSchema('Focus', 'Project Atlas').optional(),
+        threadTitle: exactPathTitleSchema('Thread', 'Sprint execution'),
+        routineTitle: exactPathTitleSchema('Routine', 'Weekly risk inspection')
+      }),
+      annotations: { readOnlyHint: true }
+    },
+    async ({ focusTitle, threadTitle, routineTitle }) => entityPathResult(
+      database.queries.getEntityByPath({
+        type: 'routine',
+        ...(focusTitle === undefined ? {} : { focusTitle }),
+        threadTitle,
+        routineTitle
+      }, policy()),
+      false
+    )
   )
 
   server.registerTool(
@@ -1921,6 +2062,256 @@ export function createOnMoveMcpServer(
       'Hard structured-response UTF-8 byte budget. Defaults to 32768. Oversized auxiliary projections are removed before records.'
     )
   }).optional()
+
+  const entitySearchProjectionSchema = z.strictObject({
+    hierarchy: z.boolean().optional().describe(
+      'Include containing Focus, Thread, and Commitment IDs and titles on each matching record.'
+    ),
+    subjects: z.boolean().optional().describe(
+      'Include direct canonical Subject attribution on matching records when present.'
+    ),
+    richText: z.boolean().optional().describe(
+      'Include lossless editable rich text for matching Focuses, Updates, or Notes when supported.'
+    )
+  }).optional().describe('Optional fields to add to each record. Omitted fields default false.')
+  const entitySearchSchema = z.strictObject({
+    text: z.string().min(1).optional().describe(
+      'Required on an initial call: the literal text to discover within this entity kind. Omit only when sending a returned continuationToken.'
+    ),
+    scope: searchScopeSchema,
+    date: localDateRangeSchema.optional(),
+    createdAt: localDateRangeSchema.optional(),
+    updatedAt: localDateRangeSchema.optional(),
+    timeZone: z.string().min(1).optional().describe(
+      'IANA timezone for createdAt and updatedAt local-calendar boundaries.'
+    ),
+    sort: z.strictObject({
+      field: z.enum(['relevance', 'date', 'createdAt', 'updatedAt']),
+      direction: z.enum(['asc', 'desc'])
+    }).optional(),
+    projection: entitySearchProjectionSchema,
+    page: searchPageSchema,
+    continuationToken: z.string().min(1).nullable().optional().describe(
+      'Initial call: omit or null. Next page: send only this exact signed token and omit every other field.'
+    )
+  })
+  type EntitySearchInput = z.infer<typeof entitySearchSchema>
+  const runEntitySearch = (
+    kind: SearchEntityType,
+    input: EntitySearchInput
+  ): ReturnType<typeof result> => {
+    const continuation = input.continuationToken === undefined || input.continuationToken === null
+      ? null
+      : decodeSearchContinuation(input.continuationToken)
+    if (continuation) {
+      const conflicts = Object.entries(input).filter(([key, value]) =>
+        key !== 'continuationToken' && value !== undefined)
+      if (conflicts.length > 0) {
+        throw new TypeError(
+          `A continuation request must contain only continuationToken; remove ${conflicts
+            .map(([key]) => key).join(', ')}.`
+        )
+      }
+      if (continuation.kinds?.length !== 1 || continuation.kinds[0] !== kind) {
+        throw new TypeError(`continuationToken belongs to a different entity search, not ${kind}`)
+      }
+    }
+    const resolved = continuation
+      ? {
+          query: continuation.query,
+          diagnostics: {
+            appliedScope: continuation.appliedScope,
+            warnings: ['The complete entity search and stable cursor were verified from continuationToken.']
+          }
+        }
+      : resolveSearchScope(input.scope, options.getCurrentUiContext?.() ?? EMPTY_UI_CONTEXT)
+    const text = continuation?.text ?? input.text
+    if (typeof text !== 'string' || text.trim().length === 0) {
+      throw new TypeError('text is required for the initial entity search')
+    }
+    const date = continuation?.date ?? input.date
+    const createdAt = continuation?.createdAt ?? input.createdAt
+    const updatedAt = continuation?.updatedAt ?? input.updatedAt
+    const timeZone = continuation?.timeZone ?? input.timeZone ??
+      Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC'
+    const sort = continuation?.sort ?? input.sort ?? {
+      field: 'relevance' as const,
+      direction: 'asc' as const
+    }
+    const projection: SearchProjectionInput = continuation?.projection ?? {
+      hierarchy: input.projection?.hierarchy ?? false,
+      subjects: input.projection?.subjects ?? false,
+      scopes: false,
+      richText: input.projection?.richText ?? false
+    }
+    const pageSize = continuation?.pageSize ?? input.page?.size ?? 10
+    const maxBytes = continuation?.maxBytes ?? input.page?.maxBytes ?? 32_768
+    const access = policy()
+    const searched = database.queries.searchPage({
+      text,
+      kinds: [kind],
+      date,
+      createdAt,
+      updatedAt,
+      timeZone,
+      sort,
+      cursor: continuation?.cursor,
+      limit: pageSize,
+      ...resolved.query
+    }, access)
+    const warnings = [...resolved.diagnostics.warnings]
+    const cursors = [...searched.itemCursors]
+    let records = searched.items.map((match) => {
+      let editableRichText: Record<string, unknown> | null = null
+      if (projection.richText) {
+        try {
+          editableRichText = searchableRichText(database, match, access)
+        } catch (error) {
+          warnings.push(
+            `${kind} ${match.reference.id} rich text could not be expanded; plain text was retained. ` +
+            `${error instanceof Error ? error.message : String(error)}`
+          )
+        }
+      }
+      const record: Record<string, unknown> = {
+        ...match,
+        ...(editableRichText ? { editableRichText } : {})
+      }
+      if (!projection.hierarchy) {
+        delete record.hierarchy
+        delete record.contextPath
+      }
+      if (!projection.subjects) delete record.subject
+      return record
+    })
+    let recordsTruncated = false
+    let projectionTruncated = false
+    const continuationFor = (cursor: SearchPageCursor | null): string | null => cursor
+      ? encodeSearchContinuation({
+          version: 2,
+          text,
+          query: resolved.query,
+          appliedScope: resolved.diagnostics.appliedScope,
+          kinds: [kind],
+          ...(date ? { date } : {}),
+          ...(createdAt ? { createdAt } : {}),
+          ...(updatedAt ? { updatedAt } : {}),
+          timeZone,
+          sort,
+          projection,
+          pageSize,
+          maxBytes,
+          cursor
+        })
+      : null
+    const response = (): Record<string, unknown> => {
+      const hasMore = searched.hasMore || recordsTruncated
+      return {
+        records,
+        hasMore,
+        continuationToken: hasMore ? continuationFor(cursors.at(-1) ?? null) : null,
+        searchStatus: {
+          sufficient: !hasMore,
+          doNotBroaden: !hasMore,
+          reason: hasMore
+            ? 'Another stable page remains for this entity-specific search.'
+            : `The complete visible ${kind} search was returned.`,
+          nextAction: hasMore
+            ? 'Call this same search tool again with only continuationToken.'
+            : 'Stop discovery and use the returned record IDs.'
+        },
+        appliedQuery: {
+          text,
+          kind,
+          date: date ?? null,
+          createdAt: createdAt ?? null,
+          updatedAt: updatedAt ?? null,
+          timeZone,
+          sort,
+          projection: {
+            hierarchy: projection.hierarchy,
+            subjects: projection.subjects,
+            richText: projection.richText
+          }
+        },
+        budget: {
+          maxBytes,
+          responseBytes: 0,
+          recordsTruncated,
+          projectionTruncated
+        }
+      }
+    }
+    const diagnostics = (): McpDiagnostics => ({
+      ...resolved.diagnostics,
+      warnings,
+      appliedKinds: [kind],
+      resultCount: searched.items.length
+    })
+    const bytes = (): number => Buffer.byteLength(JSON.stringify({
+      ...response(), diagnostics: diagnostics()
+    }), 'utf8')
+    const exceeds = (): boolean => bytes() + 512 > maxBytes
+    if (exceeds()) {
+      records = records.map((record) => {
+        const compact = { ...record }
+        delete compact.editableRichText
+        delete compact.hierarchy
+        delete compact.contextPath
+        delete compact.subject
+        return compact
+      })
+      projectionTruncated = true
+    }
+    while (exceeds() && records.length > 1) {
+      records.pop()
+      cursors.pop()
+      recordsTruncated = true
+    }
+    if (exceeds()) {
+      records = records.map((record) => ({
+        ...record,
+        ...(typeof record.snippet === 'string' && record.snippet.length > 80
+          ? { snippet: `${record.snippet.slice(0, 79)}…` }
+          : {})
+      }))
+    }
+    if (projectionTruncated) warnings.push('Optional record projections were reduced to honor page.maxBytes.')
+    if (recordsTruncated) warnings.push('The record page was shortened to honor page.maxBytes.')
+    const finalResponse = response()
+    const budget = finalResponse.budget as Record<string, unknown>
+    for (let pass = 0; pass < 3; pass += 1) {
+      budget.responseBytes = Buffer.byteLength(JSON.stringify({
+        ...finalResponse, diagnostics: diagnostics()
+      }), 'utf8')
+    }
+    if (Number(budget.responseBytes) > maxBytes) {
+      throw new TypeError(`The safe entity search response exceeded page.maxBytes=${maxBytes}`)
+    }
+    return result(finalResponse, diagnostics())
+  }
+
+  for (const [toolName, title, kind] of [
+    ['onmove.search_focuses', 'Search OnMove focuses', 'focus'],
+    ['onmove.search_threads', 'Search OnMove threads', 'thread'],
+    ['onmove.search_commitments', 'Search OnMove commitments', 'commitment'],
+    ['onmove.search_routines', 'Search OnMove routines', 'routine'],
+    ['onmove.search_updates', 'Search OnMove updates', 'update'],
+    ['onmove.search_notes', 'Search OnMove notes', 'note'],
+    ['onmove.search_todos', 'Search OnMove todos', 'todo'],
+    ['onmove.search_subjects', 'Search OnMove subjects', 'subject']
+  ] as const) {
+    server.registerTool(
+      toolName,
+      {
+        title,
+        description: `Search only visible ${kind} records by text. ${kind === 'todo' ? 'Use returned Todo IDs with Todo mutation tools.' : kind === 'subject' ? 'Use the canonical Subject ID with Subject-scoped search, review_subject, or resolve_work_target.' : `Use get_${kind}_by_id when an ID is known${['focus', 'thread', 'commitment', 'routine', 'note'].includes(kind) ? ` and get_${kind}_by_path for an exact hierarchy path` : ''}.`} This does not search other entity kinds.`,
+        inputSchema: entitySearchSchema,
+        annotations: { readOnlyHint: true }
+      },
+      async (input) => runEntitySearch(kind, input)
+    )
+  }
 
   server.registerTool(
     'onmove.search',
@@ -2309,7 +2700,7 @@ export function createOnMoveMcpServer(
     'Choose exactly one canonical Subject selector form: {id: positiveInteger} OR {name: exactName}.'
   )
   server.registerTool(
-    'onmove.resolve_target',
+    'onmove.resolve_work_target',
     {
       title: 'Resolve an OnMove hierarchy target',
       description: 'Resolve a Thread → Commitment → Subject path in hierarchy order before creating an Update or Todo. Exact punctuation-bearing titles such as 1:1 are preserved, duplicate names are returned as ambiguity rather than guessed, and Subjects are limited to the target\'s current effective Scope.',
@@ -2495,49 +2886,58 @@ export function createOnMoveMcpServer(
     }
   )
 
-  const resolveNoteSchema = z.strictObject({
-    focus: entitySelectorSchema('Focus', 'Project Atlas').describe(
-      'Required Focus anchor. When only Focus and Note are supplied, only Notes directly owned by that Focus are considered.'
-    ),
-    thread: entitySelectorSchema('Thread', 'Sprint execution').optional().describe(
-      'Optional direct Thread parent inside the Focus. When present, only Notes directly owned by that Thread are considered.'
-    ),
-    commitment: entitySelectorSchema('Commitment', 'Ticket quality').optional().describe(
-      'Optional direct Commitment parent inside the selected Thread. A Thread selector is required when this is present.'
-    ),
-    note: entitySelectorSchema('Note', 'Default').describe(
-      'The directly owned Note to resolve by its own ID or exact case-insensitive title.'
-    ),
+  const notePathSchema = z.strictObject({
+    focusTitle: exactPathTitleSchema('Focus', 'Project Atlas'),
+    threadTitle: exactPathTitleSchema('Thread', 'Sprint execution').optional(),
+    commitmentTitle: exactPathTitleSchema('Commitment', 'Ticket quality').optional(),
+    noteTitle: exactPathTitleSchema('Note', 'Default'),
     includeRichText: z.boolean().optional().describe(
       'Include the complete lossless note.richText document. Defaults to true so the resolved Note can be edited immediately.'
     )
-  }).refine(({ thread, commitment }) => commitment === undefined || thread !== undefined, {
-    message: 'A Commitment Note selector requires its parent Thread selector.',
-    path: ['thread']
-  })
+  }).refine(
+    ({ threadTitle, commitmentTitle }) => commitmentTitle === undefined || threadTitle !== undefined,
+    {
+      message: 'A Commitment Note path requires threadTitle.',
+      path: ['threadTitle']
+    }
+  )
 
   server.registerTool(
-    'onmove.resolve_note',
+    'onmove.get_note_by_path',
     {
-      title: 'Resolve and read an OnMove note',
-      description: 'Resolve one directly owned Note from exact Focus → optional Thread → optional Commitment → Note selectors and return its own ID, hierarchy, revision, full rich text, and patch/full-write guides in one call. This avoids separate search, parent, and Note reads for title-based requests.',
-      inputSchema: resolveNoteSchema,
+      title: 'Get an OnMove note by path',
+      description: 'Read one directly owned Note from an exact Focus → optional Thread → optional Commitment → Note title path. This tool accepts titles only; use get_note_by_id for a known ID and search_notes for discovery.',
+      inputSchema: notePathSchema,
       annotations: { readOnlyHint: true }
     },
-    async ({ includeRichText, ...query }) => {
+    async ({ focusTitle, threadTitle, commitmentTitle, noteTitle, includeRichText }) => {
+      const query = {
+        focus: { title: focusTitle },
+        ...(threadTitle === undefined ? {} : { thread: { title: threadTitle } }),
+        ...(commitmentTitle === undefined
+          ? {}
+          : { commitment: { title: commitmentTitle } }),
+        note: { title: noteTitle }
+      }
       const resolution = database.queries.resolveNote(query, policy())
       const include = includeRichText !== false
       const candidates = resolution.candidates.map((candidate) => withNoteWriteGuide(
         include ? candidate : withoutNoteRichText(candidate)
       ))
       const warnings = resolution.status === 'ambiguous'
-        ? ['Multiple Notes matched this hierarchy. Add an ID at the ambiguous level; do not guess.']
+        ? ['Multiple Notes matched this exact hierarchy. Use search_notes to inspect candidates, then get_note_by_id; do not guess.']
         : resolution.status === 'not_found'
-          ? ['No directly owned visible Note matched. Check each exact title or ID; this tool never searches descendant Notes implicitly.']
+          ? ['No directly owned visible Note matched. Check each exact title or use search_notes; this tool never searches descendant Notes implicitly.']
           : []
       return result({
         status: resolution.status,
-        requested: { ...resolution.requested, includeRichText: include },
+        requested: {
+          focusTitle,
+          threadTitle: threadTitle ?? null,
+          commitmentTitle: commitmentTitle ?? null,
+          noteTitle,
+          includeRichText: include
+        },
         target: resolution.status === 'resolved' ? candidates[0] : null,
         candidates
       }, {
@@ -2555,7 +2955,7 @@ export function createOnMoveMcpServer(
   )
   const threadParentSchema = z.strictObject({
     type: z.literal('thread'),
-    id: idSchema.describe('The owning Thread ID from onmove.get_thread or hierarchy.thread.id.')
+    id: idSchema.describe('The owning Thread ID from onmove.get_thread_by_id or hierarchy.thread.id.')
   })
   const routineChecklistSchema = z.array(z.strictObject({
     inspection: z.string().min(1).describe('An inspection phrased as a verification or confirmation.'),
@@ -2808,7 +3208,7 @@ export function createOnMoveMcpServer(
       name: z.string().min(1).describe('The Subject name shown in bracket notation.')
     }).optional()
   }).describe(
-    'The explicit hierarchy path copied from search or resolve_target. Example: ' +
+    'The explicit hierarchy path copied from search or resolve_work_target. Example: ' +
     '{thread:{id:2,title:"Team management"},commitment:{id:7,title:"1:1s"},' +
     'subject:{id:28,name:"Michael"}} means Team management > 1:1s[Michael]. ' +
     'Required whenever the user names a Subject; the server rejects flattening it to an unscoped or different parent.'
@@ -2824,7 +3224,7 @@ export function createOnMoveMcpServer(
         'Attribute the Update to exactly one currently applicable Subject cell.'
       ),
       subjectId: idSchema.describe(
-        'A Subject ID from writeGuide.createUpdate.allowedSubjects on onmove.get_thread or onmove.get_commitment.'
+        'A Subject ID from writeGuide.createUpdate.allowedSubjects on onmove.get_thread_by_id or onmove.get_commitment_by_id.'
       )
     })
   ]).nullable().optional().describe(
@@ -2841,7 +3241,7 @@ export function createOnMoveMcpServer(
         'Create one Todo for exactly one currently applicable Subject.'
       ),
       subjectId: idSchema.describe(
-        'A Subject ID from writeGuide.createTodo.allowedSubjects or resolve_target.'
+        'A Subject ID from writeGuide.createTodo.allowedSubjects or resolve_work_target.'
       )
     }),
     z.object({
@@ -2856,12 +3256,12 @@ export function createOnMoveMcpServer(
     'onmove.create_update',
     {
       title: 'Create OnMove update',
-      description: 'Create an Update (direct evidence) with an optional editor-neutral rich-text document, not edit a Thread record. The parent object identifies the owning Thread or Commitment. Open parents require unscoped attribution and reject Subject IDs; scoped parents require exactly one Subject from the parent\'s writeGuide.createUpdate.allowedSubjects. When the user names a Subject path such as 1:1s[Michael], semanticPath is required and an unscoped or different-parent write is rejected. Call search, resolve_target, get_thread, or get_commitment first when attribution is uncertain.',
+      description: 'Create an Update (direct evidence) with an optional editor-neutral rich-text document, not edit a Thread record. The parent object identifies the owning Thread or Commitment. Open parents require unscoped attribution and reject Subject IDs; scoped parents require exactly one Subject from the parent\'s writeGuide.createUpdate.allowedSubjects. When the user names a Subject path such as 1:1s[Michael], semanticPath is required and an unscoped or different-parent write is rejected. Call search, resolve_work_target, get_thread_by_id, or get_commitment_by_id first when attribution is uncertain.',
       inputSchema: z.strictObject({
         parent: parentSchema,
         attribution: updateAttributionSchema,
         semanticPath: semanticPathSchema.optional().describe(
-          'Copy this from hierarchyPaths[].semanticPath, resolve_target.target.semanticPath, or a write guide. Example names {thread:"Team management",commitment:"1:1s",subject:"Michael"} mean Team management > 1:1s[Michael]. It is required when the user request names a scoped Subject destination.'
+          'Copy this from hierarchyPaths[].semanticPath, resolve_work_target.target.semanticPath, or a write guide. Example names {thread:"Team management",commitment:"1:1s",subject:"Michael"} mean Team management > 1:1s[Michael]. It is required when the user request names a scoped Subject destination.'
         ),
         subjectId: idSchema.nullable().optional().describe(
           'Backward-compatible shorthand for attribution.mode="subject". Prefer attribution. Null or omitted means unscoped and is required for an Open parent.'
@@ -2935,12 +3335,12 @@ export function createOnMoveMcpServer(
       title: 'Move an OnMove update to the correct hierarchy path',
       description: 'Repair an Update created on the wrong Thread, Commitment, or Subject cell without recreating it. The Update keeps its ID, date, state, sensitivity, rich-text observation, revision, and history. The destination follows the same scoped-attribution and semanticPath safeguards as create_update.',
       inputSchema: z.strictObject({
-        id: idSchema.describe('The existing Update ID returned by search or get_update.'),
+        id: idSchema.describe('The existing Update ID returned by search or get_update_by_id.'),
         destination: z.strictObject({
           parent: parentSchema,
           attribution: updateAttributionSchema,
           semanticPath: semanticPathSchema.optional().describe(
-            'The intended destination path from search or resolve_target. Include it whenever the correction names a Subject.'
+            'The intended destination path from search or resolve_work_target. Include it whenever the correction names a Subject.'
           )
         })
       }),
@@ -3000,7 +3400,7 @@ export function createOnMoveMcpServer(
     'onmove.create_todo',
     {
       title: 'Create OnMove todo',
-      description: 'Create an actionable Todo on a Thread or Commitment. Inspect writeGuide.createTodo from get_thread, get_commitment, or resolve_target: Open parents use unscoped attribution; scoped parents use one allowed Subject or all-subjects for independently completable Subject cells.',
+      description: 'Create an actionable Todo on a Thread or Commitment. Inspect writeGuide.createTodo from get_thread_by_id, get_commitment_by_id, or resolve_work_target: Open parents use unscoped attribution; scoped parents use one allowed Subject or all-subjects for independently completable Subject cells.',
       inputSchema: z.object({
         parent: parentSchema,
         attribution: todoAttributionSchema,
@@ -3068,7 +3468,7 @@ export function createOnMoveMcpServer(
         'Selects the rich-text description belonging to one top-level Focus.'
       ),
       focusId: idSchema.describe(
-        'The Focus\'s own positive ID from get_focus, resolve_note context, or search hierarchy.focus.id.'
+        'The Focus\'s own positive ID from get_focus_by_id, get_note_by_path context, or search hierarchy.focus.id.'
       )
     }),
     z.strictObject({
@@ -3076,7 +3476,7 @@ export function createOnMoveMcpServer(
         'Selects the rich-text observation belonging to one Update evidence record.'
       ),
       updateId: idSchema.describe(
-        'The Update\'s own positive ID from get_update, a parent updates array, or an Update searchResult.reference.id.'
+        'The Update\'s own positive ID from get_update_by_id, a parent updates array, or an Update searchResult.reference.id.'
       )
     })
   ]).describe(
@@ -3230,7 +3630,7 @@ export function createOnMoveMcpServer(
       description: 'Safely replace one exact text occurrence or change its marks without resending the rich-text document. Surrounding structure, links, colors, and unspecified marks are preserved. A unique match needs no occurrence; duplicate matches return a count and require a one-based occurrence.',
       inputSchema: z.strictObject({
         id: idSchema.describe(
-          'The Note\'s own positive ID from resolve_note, get_note, or a Note search result.'
+          'The Note\'s own positive ID from get_note_by_path, get_note_by_id, or a Note search result.'
         ),
         expectedRevision: z.number().int().nonnegative().describe(
           'The exact current Note revision. Stale writes are rejected without changing content.'
@@ -3294,16 +3694,16 @@ export function createOnMoveMcpServer(
     'onmove.update_note',
     {
       title: 'Update an OnMove note',
-      description: 'Replace one visible Note with a complete editor-neutral rich-text document using optimistic concurrency. Prefer onmove.search(projection={richText:true}) followed by onmove.patch_note_text for localized changes; use get_note when its ID is already known. The plain note.content projection is intentionally not writable, so formatting cannot be flattened accidentally.',
+      description: 'Replace one visible Note with a complete editor-neutral rich-text document using optimistic concurrency. Prefer onmove.search(projection={richText:true}) followed by onmove.patch_note_text for localized changes; use get_note_by_id when its ID is already known. The plain note.content projection is intentionally not writable, so formatting cannot be flattened accidentally.',
       inputSchema: z.strictObject({
         id: idSchema.describe(
-          'The Note\'s own positive ID from onmove.get_note, a Note search hit, or a parent context.'
+          'The Note\'s own positive ID from onmove.get_note_by_id, a Note search hit, or a parent context.'
         ),
         expectedRevision: z.number().int().nonnegative().describe(
-          'The exact Note revision returned by onmove.get_note. Stale revisions are rejected without changing content.'
+          'The exact Note revision returned by onmove.get_note_by_id. Stale revisions are rejected without changing content.'
         ),
         richText: richTextDocumentSchema.optional().describe(
-          'The only complete replacement field. Copy note.richText from onmove.get_note, change only the intended nodes, and submit it here.'
+          'The only complete replacement field. Copy note.richText from onmove.get_note_by_id, change only the intended nodes, and submit it here.'
         ),
         clear: z.boolean().optional().describe(
           'Set true only to confirm an intentional change from a populated Note to no readable text. Otherwise NOTE_TEXT_DISAPPEARED is returned.'

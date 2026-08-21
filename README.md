@@ -84,6 +84,20 @@ sparse hierarchy supports either a whitelist (deny by default, allow selected wo
 sensitive content** only when the connected client should be able to access effectively sensitive
 records. If the default port is occupied, change **Local port** and update the client URL.
 
+Use the tool whose name matches what you know:
+
+- Known ID: `get_focus_by_id`, `get_thread_by_id`, `get_commitment_by_id`,
+  `get_routine_by_id`, `get_update_by_id`, or `get_note_by_id`.
+- Exact title hierarchy: `get_focus_by_path`, `get_thread_by_path`,
+  `get_commitment_by_path`, `get_routine_by_path`, or `get_note_by_path`.
+- Unknown text: `search_focuses`, `search_threads`, `search_commitments`, `search_routines`,
+  `search_updates`, `search_notes`, `search_todos`, or `search_subjects`.
+
+Path tools accept titles only and return `ambiguous` instead of guessing duplicate names. Updates
+do not have a by-path getter because several Updates may occupy the same hierarchy and Subject;
+use `search_updates` and then `get_update_by_id` or `get_updates_by_ids`. Use `onmove.search` only
+when discovery genuinely spans multiple kinds or needs queryless structured listing.
+
 For hierarchy-shaped requests such as “Add an Update for Michael's 1:1,” use `onmove.search` with
 `projection: { "hierarchy": true, "subjects": true, "scopes": true }`. A Subject
 match returns `subjectUses` plus every applicable path even when the child title or evidence does
@@ -91,7 +105,7 @@ not contain the search text. The
 API defines those paths both as readable notation—`Team management > 1:1s[Michael]`—and as an
 explicit object such as `{ thread: "Team management", commitment: "1:1s", subject: "Michael" }`.
 Use the path's `recommendedUpdateRequest`; it includes the exact parent, Subject attribution, and
-semantic safety path. `onmove.resolve_target` remains useful for exact hierarchy names and duplicate
+semantic safety path. `onmove.resolve_work_target` remains useful for exact hierarchy names and duplicate
 disambiguation.
 
 Treat a named Subject as the primary discovery filter. Search the Subject's name first, inspect
@@ -123,8 +137,8 @@ Commitments. It also returns a preconfigured continuation token for further boun
 replaces separate Subject,
 Thread, Update, Todo, and Commitment searches.
 If an informal Thread phrase does not exactly match, the resolver returns `threadCandidates` with
-exact titles and IDs for an explicit retry; it does not guess. Direct `get_thread` and
-`get_commitment` calls are compact by default. Pass `includeRichText: true` only when lossless
+exact titles and IDs for an explicit retry; it does not guess. Direct `get_thread_by_id` and
+`get_commitment_by_id` calls are compact by default. Pass `includeRichText: true` only when lossless
 documents are needed; unsupported newer rich-text structures become per-document warnings rather
 than aborting the entity read.
 
@@ -136,10 +150,11 @@ accept the same inclusive local-date range along with an IANA `timeZone`. If an 
 created in the wrong place, `onmove.reparent_update` moves that existing record without replacing
 its rich text, revision, date, state, or sensitivity. Its response also supplies an undo request.
 Search pages default to ten records, return explicit `hasMore`, honor `page.maxBytes`, and provide a
-signed continuation token only when another page exists. Use `onmove.get_updates` to hydrate several
+signed continuation token only when another page exists. Use `onmove.get_updates_by_ids` to hydrate several
 returned Update IDs in one call.
 
-For a localized Note edit, resolve and read it with `onmove.resolve_note` (or `onmove.get_note` when
+For a localized Note edit, resolve and read it with `onmove.get_note_by_path` (or
+`onmove.get_note_by_id` when
 its ID is known), then call `onmove.patch_note_text` with its revision, exact `findText`, and
 `replaceText`. The server preserves surrounding formatting. Use `onmove.update_note` with the
 returned editor-neutral `note.richText` only for structural document edits. The plain
@@ -147,7 +162,7 @@ returned editor-neutral `note.richText` only for structural document edits. The 
 text-erasing changes are rejected, and successful edits synchronize into open OnMove windows.
 `onmove.create_update` uses the same document shape for its optional rich-text observation. Both
 Focus descriptions and existing Update observations expose the same safety model: read a Focus with
-`includeRichText: true` or an Update with `onmove.get_update`, then follow the returned
+`includeRichText: true` or an Update with `onmove.get_update_by_id`, then follow the returned
 `descriptionWriteGuide` or `observationWriteGuide`. Use `onmove.patch_rich_text` for exact localized
 changes and `onmove.update_rich_text` only for structural replacement. Full-document tools accept
 the document only through the root-level `richText` field; there is no `document` compatibility

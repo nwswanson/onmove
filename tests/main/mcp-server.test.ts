@@ -48,12 +48,27 @@ describe('OnMove MCP protocol adapter', () => {
     const listed = await client.listTools()
     expect(listed.tools.map(({ name }) => name)).toEqual(expect.arrayContaining([
       'onmove.list_focuses',
-      'onmove.get_thread',
-      'onmove.get_update',
-      'onmove.get_updates',
-      'onmove.get_note',
-      'onmove.resolve_note',
-      'onmove.resolve_target',
+      'onmove.get_thread_by_id',
+      'onmove.get_thread_by_path',
+      'onmove.get_focus_by_id',
+      'onmove.get_focus_by_path',
+      'onmove.get_commitment_by_id',
+      'onmove.get_commitment_by_path',
+      'onmove.get_routine_by_id',
+      'onmove.get_routine_by_path',
+      'onmove.get_update_by_id',
+      'onmove.get_updates_by_ids',
+      'onmove.get_note_by_id',
+      'onmove.get_note_by_path',
+      'onmove.search_focuses',
+      'onmove.search_threads',
+      'onmove.search_commitments',
+      'onmove.search_routines',
+      'onmove.search_updates',
+      'onmove.search_notes',
+      'onmove.search_todos',
+      'onmove.search_subjects',
+      'onmove.resolve_work_target',
       'onmove.review_subject',
       'onmove.search',
       'onmove.create_focus',
@@ -73,7 +88,16 @@ describe('OnMove MCP protocol adapter', () => {
       'onmove.update_note',
       'onmove.poke_review'
     ]))
-    expect(listed.tools).toHaveLength(36)
+    expect(listed.tools).toHaveLength(49)
+    expect(listed.tools.map(({ name }) => name)).not.toEqual(expect.arrayContaining([
+      'onmove.get_focus',
+      'onmove.get_thread',
+      'onmove.get_commitment',
+      'onmove.get_update',
+      'onmove.get_updates',
+      'onmove.get_note',
+      'onmove.resolve_note'
+    ]))
 
     const templates = await client.listResourceTemplates()
     expect(templates.resourceTemplates.map(({ uriTemplate }) => uriTemplate)).toEqual(
@@ -119,8 +143,8 @@ describe('OnMove MCP protocol adapter', () => {
   it('advertises named scope semantics and self-describing entity IDs in tool schemas', async () => {
     const tools = (await client.listTools()).tools
     const search = tools.find(({ name }) => name === 'onmove.search')!
-    const getThread = tools.find(({ name }) => name === 'onmove.get_thread')!
-    const resolveTarget = tools.find(({ name }) => name === 'onmove.resolve_target')!
+    const getThread = tools.find(({ name }) => name === 'onmove.get_thread_by_id')!
+    const resolveTarget = tools.find(({ name }) => name === 'onmove.resolve_work_target')!
     const createUpdate = tools.find(({ name }) => name === 'onmove.create_update')!
     const createTodo = tools.find(({ name }) => name === 'onmove.create_todo')!
     const patchRichText = tools.find(({ name }) => name === 'onmove.patch_rich_text')!
@@ -224,6 +248,212 @@ describe('OnMove MCP protocol adapter', () => {
     expect(noteSchema).toContain('"type":"null"')
   })
 
+  it('separates exact hierarchy paths from durable ID reads for every addressable entity', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Path Contract Thread',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const commitment = database.domain.commitments.create({
+      type: 'tracking',
+      parent: { type: 'thread', id: thread.id },
+      title: 'Path Contract Commitment'
+    }).snapshot()
+    const routine = database.domain.routines.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Path Contract Routine',
+      scheduleWeekdays: ['monday'],
+      checklist: [{ inspection: 'Verify the path contract.' }]
+    })
+    const note = database.domain.notes.list({ type: 'commitment', id: commitment.id })[0]
+
+    for (const [tool, argumentsValue, reference] of [
+      [
+        'onmove.get_focus_by_path',
+        { focusTitle: 'launch readiness' },
+        { type: 'focus', id: focus.id }
+      ],
+      [
+        'onmove.get_thread_by_path',
+        { focusTitle: focus.title, threadTitle: 'path contract thread' },
+        { type: 'thread', id: thread.id }
+      ],
+      [
+        'onmove.get_commitment_by_path',
+        {
+          focusTitle: focus.title,
+          threadTitle: thread.title,
+          commitmentTitle: 'path contract commitment'
+        },
+        { type: 'commitment', id: commitment.id }
+      ],
+      [
+        'onmove.get_routine_by_path',
+        {
+          focusTitle: focus.title,
+          threadTitle: thread.title,
+          routineTitle: 'path contract routine'
+        },
+        { type: 'routine', id: routine.id }
+      ],
+      [
+        'onmove.get_note_by_path',
+        {
+          focusTitle: focus.title,
+          threadTitle: thread.title,
+          commitmentTitle: commitment.title,
+          noteTitle: 'default'
+        },
+        { type: 'note', id: note.id }
+      ]
+    ] as const) {
+      const response = await client.callTool({ name: tool, arguments: argumentsValue })
+      expect(response.isError).not.toBe(true)
+      expect(response.structuredContent).toMatchObject({
+        status: 'resolved',
+        target: { reference }
+      })
+    }
+
+    const secondFocus = database.domain.focuses.create({ title: 'Second exact parent' }).toSnapshot()
+    database.domain.threads.create({
+      focusId: secondFocus.id,
+      title: thread.title,
+      reviewFrequencyDays: 7
+    })
+    const ambiguous = await client.callTool({
+      name: 'onmove.get_thread_by_path',
+      arguments: { threadTitle: thread.title }
+    })
+    expect(ambiguous.structuredContent).toMatchObject({
+      status: 'ambiguous',
+      target: null,
+      diagnostics: { resolutionStatus: 'ambiguous', candidateCount: 2 }
+    })
+
+    const mixedIdentity = await client.callTool({
+      name: 'onmove.get_thread_by_path',
+      arguments: { focusId: focus.id, threadTitle: thread.title }
+    })
+    expect(mixedIdentity.isError).toBe(true)
+
+    const routineById = await client.callTool({
+      name: 'onmove.get_routine_by_id',
+      arguments: { id: routine.id }
+    })
+    expect(routineById.structuredContent).toMatchObject({
+      reference: { type: 'routine', id: routine.id }
+    })
+  })
+
+  it('searches one named entity kind at a time with stable specialized continuations', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const searchableFocus = database.domain.focuses.create({ title: 'Kindneedle Focus' }).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Kindneedle Thread',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const commitment = database.domain.commitments.create({
+      type: 'tracking',
+      parent: { type: 'thread', id: thread.id },
+      title: 'Kindneedle Commitment'
+    }).snapshot()
+    const update = database.domain.updates.create({
+      parent: { type: 'commitment', id: commitment.id },
+      observation: 'Kindneedle Update evidence'
+    }).toSnapshot()
+    const todo = database.domain.todos.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Kindneedle Todo'
+    })
+    const routine = database.domain.routines.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Kindneedle Routine',
+      scheduleWeekdays: ['tuesday'],
+      checklist: [{ inspection: 'Verify Kindneedle.' }]
+    })
+    const subject = database.domain.threadScopes.addSubject(thread.id, {
+      name: 'Kindneedle Subject'
+    }).subjects[0]
+    const notes = [
+      database.domain.notes.list({ type: 'focus', id: focus.id })[0],
+      database.domain.notes.list({ type: 'thread', id: thread.id })[0],
+      database.domain.notes.list({ type: 'commitment', id: commitment.id })[0]
+    ]
+    notes.forEach((note, index) => database.domain.richTextDocuments.save(
+      { type: 'note', id: note.id, field: 'content' },
+      `Notepagingneedle content ${index}`
+    ))
+
+    for (const [tool, reference] of [
+      ['onmove.search_focuses', { type: 'focus', id: searchableFocus.id }],
+      ['onmove.search_threads', { type: 'thread', id: thread.id }],
+      ['onmove.search_commitments', { type: 'commitment', id: commitment.id }],
+      ['onmove.search_routines', { type: 'routine', id: routine.id }],
+      ['onmove.search_updates', { type: 'update', id: update.id }],
+      ['onmove.search_todos', { type: 'todo', id: todo.id }],
+      ['onmove.search_subjects', { type: 'subject', id: subject.id }]
+    ] as const) {
+      const response = await client.callTool({
+        name: tool,
+        arguments: { text: 'kindneedle' }
+      })
+      expect(response.isError).not.toBe(true)
+      expect(response.structuredContent).toMatchObject({
+        records: [expect.objectContaining({ reference })],
+        diagnostics: { resultCount: 1 }
+      })
+    }
+
+    const seen: number[] = []
+    let page = await client.callTool({
+      name: 'onmove.search_notes',
+      arguments: {
+        text: 'notepagingneedle',
+        projection: { hierarchy: true, richText: true },
+        page: { size: 1 }
+      }
+    })
+    for (;;) {
+      expect(page.isError).not.toBe(true)
+      const content = page.structuredContent as {
+        records: Array<{
+          reference: { type: string; id: number }
+          hierarchy: unknown
+          editableRichText: unknown
+        }>
+        hasMore: boolean
+        continuationToken: string | null
+      }
+      expect(content.records[0]).toMatchObject({
+        reference: { type: 'note' },
+        hierarchy: expect.any(Object),
+        editableRichText: expect.any(Object)
+      })
+      seen.push(content.records[0].reference.id)
+      if (!content.hasMore) break
+      page = await client.callTool({
+        name: 'onmove.search_notes',
+        arguments: { continuationToken: content.continuationToken }
+      })
+    }
+    expect(new Set(seen)).toEqual(new Set(notes.map(({ id }) => id)))
+
+    const first = await client.callTool({
+      name: 'onmove.search_notes',
+      arguments: { text: 'notepagingneedle', page: { size: 1 } }
+    })
+    const noteToken = (first.structuredContent as { continuationToken: string }).continuationToken
+    const wrongSearch = await client.callTool({
+      name: 'onmove.search_updates',
+      arguments: { continuationToken: noteToken }
+    })
+    expect(wrongSearch.isError).toBe(true)
+    expect(JSON.stringify(wrongSearch)).toContain('different entity search')
+  })
+
   it('treats omitted or null continuation tokens as initial searches and rejects only invalid values', async () => {
     const withNull = await client.callTool({
       name: 'onmove.search',
@@ -274,7 +504,7 @@ describe('OnMove MCP protocol adapter', () => {
     })
 
     const entityConflict = await client.callTool({
-      name: 'onmove.resolve_target',
+      name: 'onmove.resolve_work_target',
       arguments: { thread: { id: first.id, title: 'ID two name' } }
     })
     expect(entityConflict.isError).toBe(true)
@@ -297,7 +527,7 @@ describe('OnMove MCP protocol adapter', () => {
     )
   })
 
-  it('keeps get_thread usable when a stored rich-text structure is unsupported', async () => {
+  it('keeps get_thread_by_id usable when a stored rich-text structure is unsupported', async () => {
     const focus = database.domain.focuses.requireModel(1).toSnapshot()
     const thread = database.domain.threads.create({
       focusId: focus.id,
@@ -324,7 +554,7 @@ describe('OnMove MCP protocol adapter', () => {
     )
 
     const compact = await client.callTool({
-      name: 'onmove.get_thread',
+      name: 'onmove.get_thread_by_id',
       arguments: { id: thread.id }
     })
     expect(compact.isError).not.toBe(true)
@@ -341,7 +571,7 @@ describe('OnMove MCP protocol adapter', () => {
     }).updates[0]).not.toHaveProperty('observationRichText')
 
     const expanded = await client.callTool({
-      name: 'onmove.get_thread',
+      name: 'onmove.get_thread_by_id',
       arguments: { id: thread.id, includeRichText: true }
     })
     expect(expanded.isError).not.toBe(true)
@@ -566,7 +796,7 @@ describe('OnMove MCP protocol adapter', () => {
     database.mcpSettings.update({ allowMutations: true })
 
     const resolved = await client.callTool({
-      name: 'onmove.resolve_target',
+      name: 'onmove.resolve_work_target',
       arguments: {
         thread: { title: 'leadership team' },
         commitment: { title: '1:1' },
@@ -650,7 +880,7 @@ describe('OnMove MCP protocol adapter', () => {
     }
 
     const ambiguous = await client.callTool({
-      name: 'onmove.resolve_target',
+      name: 'onmove.resolve_work_target',
       arguments: { thread: { title: 'Team' }, commitment: { title: '1:1' } }
     })
     expect(ambiguous.structuredContent).toMatchObject({
@@ -856,7 +1086,7 @@ describe('OnMove MCP protocol adapter', () => {
     expect(owningThreadId).toBe(thread.id)
 
     const context = await client.callTool({
-      name: 'onmove.get_thread',
+      name: 'onmove.get_thread_by_id',
       arguments: { id: owningThreadId }
     })
     expect(context.structuredContent).toMatchObject({
@@ -877,7 +1107,7 @@ describe('OnMove MCP protocol adapter', () => {
     database.mcpSettings.update({ allowMutations: true })
 
     const read = await client.callTool({
-      name: 'onmove.get_note', arguments: { id: note.id }
+      name: 'onmove.get_note_by_id', arguments: { id: note.id }
     })
     expect(read.isError).not.toBe(true)
     expect(read.structuredContent).toMatchObject({
@@ -1006,7 +1236,7 @@ describe('OnMove MCP protocol adapter', () => {
         currentRevision: note.revision + 1
       },
       recovery: {
-        inspect: { tool: 'onmove.get_note', arguments: { id: note.id } },
+        inspect: { tool: 'onmove.get_note_by_id', arguments: { id: note.id } },
         retry: null
       }
     })
@@ -1036,10 +1266,10 @@ describe('OnMove MCP protocol adapter', () => {
     }, database.mcpSettings.accessPolicy())
 
     const resolved = await client.callTool({
-      name: 'onmove.resolve_note',
+      name: 'onmove.get_note_by_path',
       arguments: {
-        focus: { title: 'launch readiness' },
-        note: { title: 'default' },
+        focusTitle: 'launch readiness',
+        noteTitle: 'default',
         includeRichText: true
       }
     })
@@ -1116,7 +1346,7 @@ describe('OnMove MCP protocol adapter', () => {
     }, database.mcpSettings.accessPolicy())
 
     const focusRead = await client.callTool({
-      name: 'onmove.get_focus',
+      name: 'onmove.get_focus_by_id',
       arguments: { id: focus.id, includeRichText: true }
     })
     expect(focusRead.structuredContent).toMatchObject({
@@ -1191,7 +1421,7 @@ describe('OnMove MCP protocol adapter', () => {
     })
 
     const threadRead = await client.callTool({
-      name: 'onmove.get_thread', arguments: { id: thread.id, includeRichText: true }
+      name: 'onmove.get_thread_by_id', arguments: { id: thread.id, includeRichText: true }
     })
     expect(threadRead.structuredContent).toMatchObject({
       updates: [{
@@ -1202,7 +1432,7 @@ describe('OnMove MCP protocol adapter', () => {
       }]
     })
     const updateRead = await client.callTool({
-      name: 'onmove.get_update', arguments: { id: updateId }
+      name: 'onmove.get_update_by_id', arguments: { id: updateId }
     })
     expect(updateRead.structuredContent).toMatchObject({
       reference: { type: 'update', id: updateId },
@@ -1261,7 +1491,7 @@ describe('OnMove MCP protocol adapter', () => {
         expectedRevision: 0,
         currentRevision: 1
       },
-      recovery: { inspect: { tool: 'onmove.get_update', arguments: { id: updateId } } }
+      recovery: { inspect: { tool: 'onmove.get_update_by_id', arguments: { id: updateId } } }
     })
 
     const accidentalClear = await client.callTool({
@@ -1282,7 +1512,7 @@ describe('OnMove MCP protocol adapter', () => {
         target: { type: 'update-observation', updateId }
       },
       recovery: {
-        inspect: { tool: 'onmove.get_update', arguments: { id: updateId } },
+        inspect: { tool: 'onmove.get_update_by_id', arguments: { id: updateId } },
         retry: {
           tool: 'onmove.update_rich_text',
           arguments: { clear: true }
@@ -1302,14 +1532,14 @@ describe('OnMove MCP protocol adapter', () => {
     }, database.mcpSettings.accessPolicy())
 
     const compact = await client.callTool({
-      name: 'onmove.get_focus', arguments: { id: focus.id }
+      name: 'onmove.get_focus_by_id', arguments: { id: focus.id }
     })
     const compactNotes = (compact.structuredContent as { notes: Array<Record<string, unknown>> }).notes
     expect(compactNotes[0]).not.toHaveProperty('richText')
     expect(compactNotes[0]).not.toHaveProperty('writeGuide')
 
     const complete = await client.callTool({
-      name: 'onmove.get_focus',
+      name: 'onmove.get_focus_by_id',
       arguments: { id: focus.id, includeRichText: true }
     })
     expect(complete.structuredContent).toMatchObject({
@@ -1428,7 +1658,7 @@ describe('OnMove MCP protocol adapter', () => {
     const tools = (await client.listTools()).tools
     const updateNote = tools.find(({ name }) => name === 'onmove.update_note')!
     const patchNote = tools.find(({ name }) => name === 'onmove.patch_note_text')!
-    const resolveNote = tools.find(({ name }) => name === 'onmove.resolve_note')!
+    const resolveNote = tools.find(({ name }) => name === 'onmove.get_note_by_path')!
     const schema = JSON.stringify(updateNote.inputSchema)
     expect(schema).toContain('bullet-list')
     expect(schema).toContain('checklist')
@@ -1570,7 +1800,7 @@ describe('OnMove MCP protocol adapter', () => {
     database.mcpSettings.update({ allowMutations: true })
 
     const context = await client.callTool({
-      name: 'onmove.get_thread',
+      name: 'onmove.get_thread_by_id',
       arguments: { id: thread.id }
     })
     expect(context.structuredContent).toMatchObject({
@@ -1609,7 +1839,7 @@ describe('OnMove MCP protocol adapter', () => {
       },
       recovery: {
         inspect: {
-          tool: 'onmove.get_thread',
+          tool: 'onmove.get_thread_by_id',
           arguments: { id: thread.id },
           path: 'writeGuide.createUpdate'
         },
@@ -1654,7 +1884,7 @@ describe('OnMove MCP protocol adapter', () => {
     database.mcpSettings.update({ allowMutations: true })
 
     const context = await client.callTool({
-      name: 'onmove.get_thread', arguments: { id: thread.id }
+      name: 'onmove.get_thread_by_id', arguments: { id: thread.id }
     })
     expect(context.structuredContent).toMatchObject({
       writeGuide: {
@@ -1683,7 +1913,7 @@ describe('OnMove MCP protocol adapter', () => {
       error: { code: 'open_parent_cannot_target_subject' },
       recovery: {
         inspect: {
-          tool: 'onmove.get_thread',
+          tool: 'onmove.get_thread_by_id',
           arguments: { id: thread.id },
           path: 'writeGuide.createTodo'
         },
@@ -1713,7 +1943,7 @@ describe('OnMove MCP protocol adapter', () => {
     database.mcpSettings.update({ allowMutations: true })
 
     const context = await client.callTool({
-      name: 'onmove.get_thread',
+      name: 'onmove.get_thread_by_id',
       arguments: { id: thread.id }
     })
     expect(context.structuredContent).toMatchObject({
@@ -1839,8 +2069,8 @@ describe('OnMove MCP protocol adapter', () => {
 
   it('returns the same not-found behavior for hidden and unknown records', async () => {
     database.domain.focuses.requireModel(1).update({ sensitive: true })
-    const hidden = await client.callTool({ name: 'onmove.get_focus', arguments: { id: 1 } })
-    const missing = await client.callTool({ name: 'onmove.get_focus', arguments: { id: 999 } })
+    const hidden = await client.callTool({ name: 'onmove.get_focus_by_id', arguments: { id: 1 } })
+    const missing = await client.callTool({ name: 'onmove.get_focus_by_id', arguments: { id: 999 } })
     expect(hidden.isError).toBe(true)
     expect(missing.isError).toBe(true)
     expect(hidden.content).toEqual(missing.content)
@@ -2389,7 +2619,7 @@ describe('OnMove MCP protocol adapter', () => {
     })
 
     const targetSuggestion = await client.callTool({
-      name: 'onmove.resolve_target',
+      name: 'onmove.resolve_work_target',
       arguments: { thread: { title: 'my Xs' } }
     })
     expect(targetSuggestion.isError).not.toBe(true)
@@ -2766,7 +2996,7 @@ describe('OnMove MCP protocol adapter', () => {
     }).items[0]).not.toHaveProperty('editableRichText')
 
     const bulk = await client.callTool({
-      name: 'onmove.get_updates',
+      name: 'onmove.get_updates_by_ids',
       arguments: { ids: [ordinary.id, malformed.id, ordinary.id, 999_999] }
     })
     expect(bulk.isError).not.toBe(true)

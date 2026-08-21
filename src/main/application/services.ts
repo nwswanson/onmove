@@ -266,6 +266,23 @@ export interface ApplicationNoteResolution {
   candidates: ApplicationNoteContext[]
 }
 
+export type ApplicationEntityPathQuery =
+  | { type: 'focus'; focusTitle: string }
+  | { type: 'thread'; focusTitle?: string; threadTitle: string }
+  | {
+      type: 'commitment'
+      focusTitle?: string
+      threadTitle: string
+      commitmentTitle: string
+    }
+  | { type: 'routine'; focusTitle?: string; threadTitle: string; routineTitle: string }
+
+export interface ApplicationEntityPathResolution {
+  status: 'resolved' | 'ambiguous' | 'not_found'
+  requested: ApplicationEntityPathQuery
+  candidates: ApplicationEntityContext[]
+}
+
 export interface ApplicationResolvedTargetCandidate {
   parent: { type: 'thread' | 'commitment'; id: number }
   hierarchy: {
@@ -844,6 +861,66 @@ export class OnMoveQueryService {
       else unavailableIds.push(id)
     }
     return { items, unavailableIds }
+  }
+
+  /**
+   * Reads an addressable hierarchy entity from exact, case-insensitive titles.
+   * Paths never accept IDs; ID lookups use the dedicated get-by-ID boundary.
+   */
+  getEntityByPath(
+    query: ApplicationEntityPathQuery,
+    access: OnMoveAccessPolicy,
+    options: ApplicationEntityReadOptions = {}
+  ): ApplicationEntityPathResolution {
+    const exact = (actual: string, expected: string): boolean =>
+      normalizedLookup(actual) === normalizedLookup(expected)
+    const focusMatches = (title?: string): FocusSnapshot[] => this.domain.focuses.list()
+      .filter((focus) => title === undefined || exact(focus.title, title))
+    let candidates: ApplicationEntityContext[]
+
+    if (query.type === 'focus') {
+      candidates = focusMatches(query.focusTitle).flatMap((focus) => {
+        const context = this.getFocus(focus.id, access, options)
+        return context ? [context] : []
+      })
+    } else if (query.type === 'thread') {
+      candidates = focusMatches(query.focusTitle).flatMap((focus) =>
+        this.domain.threads.listForFocus(focus.id)
+          .filter((thread) => exact(thread.title, query.threadTitle))
+          .flatMap((thread) => {
+            const context = this.getThread(thread.id, access, options)
+            return context ? [context] : []
+          }))
+    } else if (query.type === 'commitment') {
+      candidates = focusMatches(query.focusTitle).flatMap((focus) =>
+        this.domain.threads.listForFocus(focus.id)
+          .filter((thread) => exact(thread.title, query.threadTitle))
+          .flatMap((thread) => this.domain.commitments.listForThread(thread.id)
+            .filter(trackingCommitment)
+            .filter((commitment) => exact(commitment.title, query.commitmentTitle))
+            .flatMap((commitment) => {
+              const context = this.getCommitment(commitment.id, access, options)
+              return context ? [context] : []
+            })))
+    } else {
+      candidates = this.domain.routines.list().flatMap((routine) => {
+        if (routine.parent.type !== 'thread' || !exact(routine.name, query.routineTitle)) return []
+        const thread = this.domain.threads.find(routine.parent.id)
+        const focus = thread ? this.domain.focuses.find(thread.focusId) : null
+        if (!thread || !focus || !exact(thread.title, query.threadTitle) ||
+            (query.focusTitle !== undefined && !exact(focus.title, query.focusTitle))) return []
+        const context = this.getRoutine(routine.id, access)
+        return context ? [context] : []
+      })
+    }
+
+    return {
+      status: candidates.length === 1
+        ? 'resolved'
+        : candidates.length === 0 ? 'not_found' : 'ambiguous',
+      requested: structuredClone(query),
+      candidates
+    }
   }
 
   private updateContext(

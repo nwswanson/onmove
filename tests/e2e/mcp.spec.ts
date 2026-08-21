@@ -85,12 +85,12 @@ test('serves MCP from the running app and immediately refreshes its open windows
 
     const tools = await client.listTools()
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.search')
-    expect(tools.tools.map(({ name }) => name)).toContain('onmove.resolve_note')
-    expect(tools.tools.map(({ name }) => name)).toContain('onmove.resolve_target')
+    expect(tools.tools.map(({ name }) => name)).toContain('onmove.get_note_by_path')
+    expect(tools.tools.map(({ name }) => name)).toContain('onmove.resolve_work_target')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.review_subject')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.patch_note_text')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.update_note')
-    expect(tools.tools.map(({ name }) => name)).toContain('onmove.get_update')
+    expect(tools.tools.map(({ name }) => name)).toContain('onmove.get_update_by_id')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.patch_rich_text')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.update_rich_text')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.reparent_update')
@@ -106,7 +106,7 @@ test('serves MCP from the running app and immediately refreshes its open windows
       })
     }, { threadId: thread.id })
     const hiddenNote = await client.callTool({
-      name: 'onmove.get_note',
+      name: 'onmove.get_note_by_id',
       arguments: { id: threadNote.id }
     })
     expect(hiddenNote.isError).toBe(true)
@@ -122,7 +122,7 @@ test('serves MCP from the running app and immediately refreshes its open windows
       })
     }, { threadId: thread.id })
     const visibleNote = await client.callTool({
-      name: 'onmove.get_note',
+      name: 'onmove.get_note_by_id',
       arguments: { id: threadNote.id }
     })
     expect(visibleNote.isError).not.toBe(true)
@@ -192,11 +192,11 @@ test('serves MCP from the running app and immediately refreshes its open windows
     }, { noteId: threadNote.id, revision: threadNote.revision + 1 })).toBe(true)
 
     const resolvedNote = await client.callTool({
-      name: 'onmove.resolve_note',
+      name: 'onmove.get_note_by_path',
       arguments: {
-        focus: { title: 'MCP launch' },
-        thread: { title: 'MCP delivery' },
-        note: { title: 'Default' },
+        focusTitle: 'MCP launch',
+        threadTitle: 'MCP delivery',
+        noteTitle: 'Default',
         includeRichText: true
       }
     })
@@ -268,7 +268,7 @@ test('serves MCP from the running app and immediately refreshes its open windows
     }, { updateId: threadUpdate.id })).toBe(true)
 
     const resolved = await client.callTool({
-      name: 'onmove.resolve_target',
+      name: 'onmove.resolve_work_target',
       arguments: {
         thread: { title: 'Leadership Team' },
         commitment: { title: '1:1' },
@@ -394,7 +394,7 @@ test('serves MCP from the running app and immediately refreshes its open windows
       await window.onmove.domain.updateThread(threadId, { title: 'Edited in the live app' })
     }, { threadId: thread.id })
     const liveThread = await client.callTool({
-      name: 'onmove.get_thread',
+      name: 'onmove.get_thread_by_id',
       arguments: { id: thread.id }
     })
     expect(liveThread.structuredContent).toMatchObject({
@@ -439,7 +439,7 @@ test('serves MCP from the running app and immediately refreshes its open windows
     })
     expect(recoveredUpdate.isError).not.toBe(true)
     const updatedThread = await client.callTool({
-      name: 'onmove.get_thread',
+      name: 'onmove.get_thread_by_id',
       arguments: { id: thread.id, includeRichText: true }
     })
     expect(updatedThread.structuredContent).toMatchObject({
