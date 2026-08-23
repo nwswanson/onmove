@@ -5,6 +5,7 @@ import type { WorkspaceTabBarModel } from '@/components/ui/workspace-tab-bar'
 import type { RoutineHistoryModel } from '@/features/routines/routine-history'
 import type { RoutineManagementListModel } from '@/features/routines/routine-management-list'
 import type { RoutineCellChecklistModel } from '@/features/routines/routine-cell-checklist'
+import { entityReference } from '../../../../shared/entity-reference'
 
 const WEEKDAY_LABELS = {
   monday: 'Mon',
@@ -97,6 +98,7 @@ export function routineHistoryModel(
 
   return {
     name: routine.name,
+    reference: { value: entityReference('routine', routine.id), label: 'Routine ID' },
     stateLabel: statusModel(routine.status),
     scheduleLabel: routineScheduleLabel(routine),
     scopeLabel: routine.scope?.name ?? 'No scope',
@@ -119,6 +121,7 @@ export function routineManagementListModel(
   return {
     items: routines.map((routine) => ({
       id: routine.id,
+      reference: { value: entityReference('routine', routine.id), label: 'Routine ID' },
       name: routine.name,
       scheduleLabel: routineScheduleLabel(routine),
       scopeLabel: routine.scope?.name ?? 'No scope',
@@ -163,6 +166,12 @@ export function routineDrawerAdapter({
         {
           id: 'routine',
           fields: [
+            {
+              kind: 'static',
+              id: 'reference',
+              label: 'ID',
+              value: entityReference('routine', routine.id)
+            },
             { kind: 'static', id: 'name', label: 'Name', value: routine.name },
             {
               kind: 'static',

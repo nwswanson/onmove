@@ -4,6 +4,7 @@ import { StateLabel } from '@/components/ui/state-label'
 import { SensitivityToggle } from '@/features/shared/sensitivity-toggle'
 import type { UpdateListStateOptionModel } from '@/features/updates/update-list-contract'
 import { cn } from '@/lib/utils'
+import { EntityReference, type EntityReferenceModel } from '@/components/ui/entity-reference'
 
 export interface UpdateMetadataValue {
   date: string
@@ -17,6 +18,7 @@ interface UpdateMetadataBarProps {
   stateOptions: readonly UpdateListStateOptionModel[]
   onValueChange: (changes: Partial<UpdateMetadataValue>) => void
   contextLabel?: string
+  reference?: EntityReferenceModel
   disabled?: boolean
   sensitivityDisabled?: boolean
   actions?: ReactNode
@@ -33,6 +35,7 @@ export function UpdateMetadataBar({
   stateOptions,
   onValueChange,
   contextLabel,
+  reference,
   disabled = false,
   sensitivityDisabled = disabled,
   actions,
@@ -46,6 +49,7 @@ export function UpdateMetadataBar({
       'flex flex-wrap items-end gap-3 border-b border-border/65 bg-muted/20 p-3',
       className
     )}>
+      {reference ? <EntityReference {...reference} className="self-center" /> : null}
       {contextLabel ? (
         <span className="self-center rounded-full border border-primary/45 bg-primary/15 px-2 py-1 text-[0.6875rem] font-semibold">
           {contextLabel}

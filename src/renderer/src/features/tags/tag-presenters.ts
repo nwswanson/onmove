@@ -4,9 +4,12 @@ import type {
 } from '../../../../shared/contracts'
 import type { ContextualSidebarItemModel } from '@/components/ui/contextual-sidebar'
 import type { FocusWorkspaceDestinationTarget } from '@/features/application/application-navigation'
+import type { EntityReferenceModel } from '@/components/ui/entity-reference'
+import { entityReference, type EntityReferenceKind } from '../../../../shared/entity-reference'
 
 export interface TagUseRowModel {
   id: string
+  reference: EntityReferenceModel
   location: string
   source: string
   snippet: string
@@ -46,6 +49,17 @@ function sourceLabel(use: TagUseSnapshot): string {
   }
 }
 
+function sourceReference(use: TagUseSnapshot): EntityReferenceModel {
+  const kind = use.source.type as EntityReferenceKind
+  const label = kind === 'todo'
+    ? 'Todo'
+    : kind[0].toUpperCase() + kind.slice(1)
+  return {
+    value: entityReference(kind, use.source.id),
+    label: `${label} ID`
+  }
+}
+
 function locationLabel(use: TagUseSnapshot): string {
   return [
     use.context.focus.title,
@@ -73,6 +87,7 @@ export function tagUseRows(
     .filter((use) => !hideSensitiveContent || !use.effectiveSensitive)
     .map((use) => ({
       id: use.id,
+      reference: sourceReference(use),
       location: locationLabel(use),
       source: sourceLabel(use),
       snippet: use.snippet,

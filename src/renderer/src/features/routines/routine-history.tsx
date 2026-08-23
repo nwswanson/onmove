@@ -2,6 +2,7 @@ import { AlertTriangle, ListChecks } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StateLabel, type StateLabelModel } from '@/components/ui/state-label'
 import { TaggedText } from '@/components/ui/tagged-text'
+import { EntityReference, type EntityReferenceModel } from '@/components/ui/entity-reference'
 import {
   RoutineCellChecklist,
   type RoutineCellChecklistModel,
@@ -28,6 +29,7 @@ export interface RoutineCheckInModel {
 
 export interface RoutineHistoryModel {
   name: string
+  reference: EntityReferenceModel
   stateLabel: StateLabelModel
   scheduleLabel: string
   scopeLabel: string
@@ -113,6 +115,7 @@ export function RoutineHistory({
               <h1 id="routine-history-heading" className="text-2xl font-semibold tracking-[-0.025em]">
                 <TaggedText value={model.name} />
               </h1>
+              <EntityReference {...model.reference} />
               <StateLabel model={model.stateLabel} />
             </div>
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">

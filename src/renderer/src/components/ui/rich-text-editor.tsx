@@ -96,6 +96,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { EntityReference, type EntityReferenceModel } from '@/components/ui/entity-reference'
 import { firstTextTag } from '../../../../shared/text-tags'
 import {
   RICH_TEXT_PREFIX,
@@ -386,6 +387,7 @@ export { richTextPlainText }
 
 interface RichTextToolbarProps {
   compact: boolean
+  reference?: EntityReferenceModel
   onOpenInWindow?: () => void
   onOpenHistory?: () => void
 }
@@ -494,6 +496,7 @@ function LinkPastePlugin(): null {
 
 function RichTextToolbar({
   compact,
+  reference,
   onOpenInWindow,
   onOpenHistory
 }: RichTextToolbarProps): React.JSX.Element {
@@ -810,6 +813,7 @@ function RichTextToolbar({
           onOpenHistory,
           <History aria-hidden="true" />
         ) : null}
+        {reference ? <EntityReference {...reference} className="ml-1" /> : null}
       </div>
       {linkEditorOpen ? (
         <div
@@ -875,6 +879,8 @@ export interface RichTextEditorProps {
   ariaLabel: string
   placeholder?: string
   compact?: boolean
+  /** Public id for the persisted document owner; omitted for transient drafts. */
+  reference?: EntityReferenceModel
   autoFocus?: boolean
   /** Lets the editor document consume a height supplied by its parent. */
   fillHeight?: boolean
@@ -955,6 +961,7 @@ function RichTextEditor({
   ariaLabel,
   placeholder = 'Write something…',
   compact = false,
+  reference,
   autoFocus = false,
   fillHeight = false,
   className,
@@ -991,6 +998,7 @@ function RichTextEditor({
       <LexicalComposer initialConfig={config}>
         <RichTextToolbar
           compact={compact}
+          reference={reference}
           onOpenInWindow={onOpenInWindow}
           onOpenHistory={onOpenHistory}
         />

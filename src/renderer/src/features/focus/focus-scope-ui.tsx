@@ -2,6 +2,8 @@ import { Plus, X } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { EntityReference } from '@/components/ui/entity-reference'
+import { entityReference } from '../../../../shared/entity-reference'
 
 export interface FocusScopeSubjectItemModel {
   id: number
@@ -106,6 +108,11 @@ function ScopeSubjectEditor({
                 className="inline-flex h-7 items-center gap-1 rounded-md border border-primary/50 bg-primary/25 pl-2.5 pr-1 text-xs font-medium text-foreground"
               >
                 {subject.name}
+                <EntityReference
+                  value={entityReference('subject', subject.id)}
+                  label="Subject ID"
+                  className="h-4 border-primary/35 bg-background/35 px-1 text-[0.5625rem]"
+                />
                 <button
                   type="button"
                   aria-label={removeLabel(subject.name)}

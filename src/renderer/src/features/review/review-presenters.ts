@@ -8,9 +8,12 @@ import { buildCommitmentListModel } from '@/features/focus/commitment-list-model
 import { dateOrNeverLabel } from '@/features/focus/focus-presenters'
 import { healthStateLabel } from '@/features/shared/state-presenters'
 import { workStatusLabel } from '@/features/shared/work-status'
+import type { EntityReferenceModel } from '@/components/ui/entity-reference'
+import { entityReference } from '../../../../shared/entity-reference'
 
 export interface ReviewCommitmentRowModel {
   id: string
+  reference: EntityReferenceModel
   title: string
   status: LifecycleStatusOptionModel
   state: StateLabelModel
@@ -19,6 +22,7 @@ export interface ReviewCommitmentRowModel {
 
 export interface ReviewUpdateRowModel {
   id: string
+  reference: EntityReferenceModel
   date: string
   observation: string
   state: StateLabelModel
@@ -32,6 +36,7 @@ export interface ReviewDefaultNoteModel {
 
 export interface ReviewItemModel {
   key: string
+  reference: EntityReferenceModel
   kind: 'thread' | 'commitment'
   kindLabel: 'Thread' | 'Commitment'
   title: string
@@ -90,6 +95,10 @@ export function reviewItemModel(
 
   return {
     key: item.key,
+    reference: {
+      value: entityReference(item.kind, record.id),
+      label: `${item.kind === 'thread' ? 'Thread' : 'Commitment'} ID`
+    },
     kind: item.kind,
     kindLabel: item.kind === 'thread' ? 'Thread' : 'Commitment',
     title: record.title,
@@ -106,6 +115,10 @@ export function reviewItemModel(
     cadenceDays: item.commitment?.cadenceDays ?? null,
     commitments: commitments.map((commitment) => ({
       id: String(commitment.id),
+      reference: {
+        value: entityReference('commitment', commitment.id),
+        label: 'Commitment ID'
+      },
       title: commitment.title,
       status: workStatusLabel(commitment.status),
       state: healthStateLabel(commitment.state),
@@ -113,6 +126,7 @@ export function reviewItemModel(
     })),
     updates: updates.map((update) => ({
       id: String(update.id),
+      reference: { value: entityReference('update', update.id), label: 'Update ID' },
       date: update.date,
       observation: update.observation,
       state: healthStateLabel(update.state)

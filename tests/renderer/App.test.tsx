@@ -1712,10 +1712,10 @@ describe('App', () => {
     expect(within(dialog).getByRole('option', { name: /^Project Atlas Focus/ })).toBeVisible()
     expect(within(dialog).getByRole('option', { name: /^Sprint execution/ })).toBeVisible()
     expect(within(dialog).getByRole('option', {
-      name: /Improve ticket quality Project Atlas › Sprint execution › All subjects/
+      name: /Improve ticket quality Commitment ID C\.25 Project Atlas › Sprint execution › All subjects/
     })).toBeVisible()
     expect(within(dialog).getByRole('option', {
-      name: /Improve ticket quality Project Atlas › Sprint execution › Customer Operations/
+      name: /Improve ticket quality Commitment ID C\.25 Project Atlas › Sprint execution › Customer Operations/
     })).toBeVisible()
     expect(within(dialog).getByRole('option', { name: /^Confirm launch owner/ })).toBeVisible()
     expect(within(dialog).getByRole('option', { name: /^@launch/ })).toBeVisible()
@@ -1725,7 +1725,7 @@ describe('App', () => {
       'ticket quality'
     )
     await user.click(within(dialog).getByRole('option', {
-      name: /Improve ticket quality Project Atlas › Sprint execution › All subjects/
+      name: /Improve ticket quality Commitment ID C\.25 Project Atlas › Sprint execution › All subjects/
     }))
     expect(await screen.findByRole('heading', {
       name: 'Improve ticket quality'
@@ -1741,7 +1741,7 @@ describe('App', () => {
       'customer operations'
     )
     await user.click(within(reopened).getByRole('option', {
-      name: /Improve ticket quality Project Atlas › Sprint execution › Customer Operations/
+      name: /Improve ticket quality Commitment ID C\.25 Project Atlas › Sprint execution › Customer Operations/
     }))
 
     expect(await screen.findByRole('tab', { name: 'Work in Customer Operations' }))
@@ -3113,10 +3113,10 @@ describe('App', () => {
     const archive = screen.getByRole('dialog', { name: 'Archived threads' })
     const archivedList = within(archive).getByRole('list', { name: 'Archived threads' })
     expect(archivedList).toHaveTextContent(
-      'Abandoned experimentCancelled · Last reviewed Never · Due 2026-08-15'
+      'Abandoned experimentT.12Cancelled · Last reviewed Never · Due 2026-08-15'
     )
     expect(archivedList).toHaveTextContent(
-      'Historical planningDone · Last reviewed 2026-08-01'
+      'Historical planningT.11Done · Last reviewed 2026-08-01'
     )
 
     await user.click(within(archive).getByRole('button', {
@@ -3141,7 +3141,7 @@ describe('App', () => {
 
     await user.click(screen.getByRole('button', { name: 'Open archived threads' }))
     expect(screen.getByRole('dialog', { name: 'Archived threads' })).toHaveTextContent(
-      'Sprint executionDone'
+      'Sprint executionT.10Done'
     )
   })
 

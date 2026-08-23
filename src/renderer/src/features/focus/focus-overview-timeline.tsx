@@ -5,9 +5,12 @@ import { RichTextContent } from '@/components/ui/rich-text-editor'
 import { focusTimelineThreadColors } from '@/features/focus/focus-timeline-colors'
 import { WorkKindIcon } from '@/features/shared/work-kind-icon'
 import { cn } from '@/lib/utils'
+import { EntityReference, type EntityReferenceModel } from '@/components/ui/entity-reference'
+import { entityReference } from '../../../../shared/entity-reference'
 
 export interface FocusOverviewTimelineUpdateModel {
   id: number
+  reference: EntityReferenceModel
   threadId: number
   subjectId: number | null
   subjectName: string
@@ -444,6 +447,11 @@ export function FocusOverviewTimeline({
                 }}
               >
                 <span className="truncate">{thread.title}</span>
+                <EntityReference
+                  value={entityReference('thread', thread.id)}
+                  label="Thread ID"
+                  className="h-4 border-current/20 bg-transparent px-1 text-[0.5625rem]"
+                />
               </button>
             )
           })}
@@ -628,6 +636,7 @@ export function FocusOverviewTimeline({
                   <span className="truncate text-[11px] font-medium">
                     {update.sourceLabel}
                   </span>
+                  <EntityReference {...update.reference} className="h-4 px-1 text-[0.5625rem]" />
                 </span>
                 <StateDot state={update.state} />
               </span>
@@ -664,7 +673,10 @@ export function FocusOverviewTimeline({
       >
         {selectedUpdate && (
           <div className="space-y-4">
-            <StateDot state={selectedUpdate.state} />
+            <div className="flex items-center gap-2">
+              <EntityReference {...selectedUpdate.reference} />
+              <StateDot state={selectedUpdate.state} />
+            </div>
             {selectedUpdate.observation ? (
               <RichTextContent
                 value={selectedUpdate.observation}

@@ -30,6 +30,7 @@ function archived(overrides: Partial<ArchivedUpdateSnapshot> = {}): ArchivedUpda
 describe('archive presenters', () => {
   it('builds a former hierarchy path and receiver-owned semantic state', () => {
     expect(archivedUpdateItems([archived()], false)).toMatchObject([{
+      reference: { value: 'U.4', label: 'Original Update ID' },
       contextLabel: 'Project Atlas › Sprint execution',
       recordedOn: '2026-08-10',
       state: { label: 'Yellow', tone: 'warning' },
@@ -54,7 +55,7 @@ describe('archive presenters', () => {
     })
 
     expect(archivedUpdateItems([fallback], false)[0].contextLabel)
-      .toBe('Former Thread #3 › Subject #9')
+      .toBe('Former Thread T.3 › Subject S.9')
     expect(archivedUpdateItems([fallback, sensitive], true).map(({ id }) => id))
       .toEqual(['b'.repeat(32)])
   })

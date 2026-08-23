@@ -13,6 +13,7 @@ import { WorkDueDateField } from '@/features/shared/work-due-date-field'
 import { WorkKindIcon } from '@/features/shared/work-kind-icon'
 import { WorkStatusSelect } from '@/features/shared/work-status-select'
 import type { WorkStatus } from '@/features/shared/work-status'
+import { EntityReference } from '@/components/ui/entity-reference'
 
 interface DueWorkTableProps {
   groups: readonly DueWorkGroupModel[]
@@ -81,6 +82,7 @@ export function DueWorkTable({
                       <span className="truncate font-medium">
                         <TaggedText value={row.title} />
                       </span>
+                      <EntityReference {...row.reference} />
                     </div>
                   </TableCell>
                   <TableCell>

@@ -44,6 +44,12 @@
   markup.
 - Every selected destination must update the main view, use `aria-current="page"`, and retain a
   visible keyboard focus state.
+- Expose every user-addressable record through the shared compact entity-reference badge wherever
+  it appears as a destination, editable row, or selected detail. Public references are derived from
+  the stable SQLite id and a collision-free kind prefix: `F` Focus, `T` Thread, `C` Commitment,
+  `R` Routine, `U` Update, `TD` Todo, `N` Note, and `S` Subject. Never display a bare numeric id,
+  reuse a prefix across tables, persist the formatted label, or expose internal Scope overlays,
+  memberships, Routine Runs, and cells as if they were user-addressable records.
 - Show unobtrusive, receiver-owned sidebar indicators for Sensitive and Excluded from reviews on
   Focus, Thread, Commitment, and Routine destinations. Apply them to primary, contextual, and
   nested contextual rows as applicable; do not repeat the Focus indicators on its Overall row.

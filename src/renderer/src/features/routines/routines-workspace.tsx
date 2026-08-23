@@ -30,6 +30,8 @@ import {
   type RoutineParentOption
 } from '@/features/routines/use-routines-model'
 import { sidebarIndicatorProps } from '@/features/shared/sidebar-indicator-presenters'
+import { EntityReference } from '@/components/ui/entity-reference'
+import { entityReference } from '../../../../shared/entity-reference'
 
 const CONTEXTUAL_SIDEBAR_MIN = 220
 const CONTEXTUAL_SIDEBAR_MAX = 340
@@ -150,6 +152,7 @@ function queueSidebarItems(entries: readonly RoutineQueueEntry[]): ContextualSid
   return entries.map((entry) => ({
     id: entry.id,
     label: entry.routine.name,
+    reference: { value: entityReference('routine', entry.routine.id), label: 'Routine ID' },
     ariaLabel: `${entry.routine.name} — ${entry.subject?.name ?? 'No scope'}`,
     description: [entry.subject?.name ?? 'No scope', entry.parent?.label]
       .filter(Boolean)
@@ -267,6 +270,10 @@ export function RoutinesWorkspace({
                         <h1 id="routines-heading" className="text-xl font-semibold tracking-tight">
                           {selectedEntry.routine.name}
                         </h1>
+                        <EntityReference
+                          value={entityReference('routine', selectedEntry.routine.id)}
+                          label="Routine ID"
+                        />
                         <StateLabel model={statusModel(selectedEntry.routine.status)} />
                       </div>
                       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">

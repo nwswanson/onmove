@@ -14,6 +14,7 @@ import type {
 import type {
   CommandPaletteSnapshot
 } from '@/features/application/use-command-palette-model'
+import { entityReference } from '../../../../shared/entity-reference'
 
 export type CommandPaletteDestination =
   | { type: 'focus'; target: FocusWorkspaceDestinationTarget }
@@ -109,6 +110,7 @@ export function commandPaletteGroups(
         id: `focus:${focus.id}`,
         icon: 'folder' as const,
         label: focus.title,
+        reference: { value: entityReference('focus', focus.id), label: 'Focus ID' },
         description: 'Focus · Overall',
         keywords: ['focus', 'overall', focus.title],
         destination: { type: 'focus' as const, target: focusTarget(focus.id) }
@@ -123,6 +125,7 @@ export function commandPaletteGroups(
           id: `thread:${thread.id}`,
           icon: 'branch' as const,
           label: thread.title,
+          reference: { value: entityReference('thread', thread.id), label: 'Thread ID' },
           description: focus.title,
           keywords: ['thread', thread.title, focus.title],
           destination: {
@@ -148,6 +151,10 @@ export function commandPaletteGroups(
           id: `commitment:${commitment.id}`,
           icon: 'item' as const,
           label: commitment.title,
+          reference: {
+            value: entityReference('commitment', commitment.id),
+            label: 'Commitment ID'
+          },
           description: `${path} › ${ordinaryContextLabel}`,
           keywords: [
             'commitment',
@@ -167,6 +174,10 @@ export function commandPaletteGroups(
             id: `commitment:${commitment.id}:scope:${cell.scopeId}:subject:${cell.subjectId}`,
             icon: 'item',
             label: commitment.title,
+            reference: {
+              value: entityReference('commitment', commitment.id),
+              label: 'Commitment ID'
+            },
             description: `${path} › ${cell.subject.name}`,
             keywords: [
               'commitment',
@@ -207,6 +218,7 @@ export function commandPaletteGroups(
           id: `todo:${todo.id}`,
           icon: 'check' as const,
           label: todo.name,
+          reference: { value: entityReference('todo', todo.id), label: 'Todo ID' },
           description: path.join(' › '),
           keywords: ['todo', todo.name, ...path],
           destination: {

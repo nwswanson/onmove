@@ -21,6 +21,7 @@ import {
 } from '@/features/review/review-presenters'
 import { useReviewModel } from '@/features/review/use-review-model'
 import { WorkKindIcon } from '@/features/shared/work-kind-icon'
+import { EntityReference } from '@/components/ui/entity-reference'
 import { DirectTodos } from '@/features/todos/direct-todos'
 import { useUpdateComposer } from '@/features/updates/update-composer-context'
 import { reviewUpdateCommandTarget } from '@/features/updates/update-command-presenters'
@@ -77,6 +78,7 @@ function ReviewSupportingDetails({
                 <span className="min-w-40 flex-1 truncate text-sm">
                   <TaggedText value={commitment.title} />
                 </span>
+                <EntityReference {...commitment.reference} />
                 <LifecycleStatusLabel model={commitment.status} size="compact" />
                 <StateLabel model={commitment.state} size="compact" />
                 <span className="text-[0.6875rem] text-muted-foreground">
@@ -117,6 +119,7 @@ function ReviewUpdates({ model }: { model: ReviewItemModel }): React.JSX.Element
           {model.updates.map((update) => (
             <li key={update.id} className="py-3">
               <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                <EntityReference {...update.reference} />
                 <time className="text-xs font-medium">{update.date}</time>
                 <StateLabel model={update.state} size="compact" />
               </div>
@@ -225,6 +228,7 @@ export function ReviewWorkspace({
                           <h2 className="min-w-0 text-base font-semibold tracking-[-0.015em]">
                             <TaggedText value={currentModel.title} />
                           </h2>
+                          <EntityReference {...currentModel.reference} />
                           <LifecycleStatusLabel model={currentModel.status} />
                           {currentModel.state && <StateLabel model={currentModel.state} />}
                           {currentModel.subjectLabel && (

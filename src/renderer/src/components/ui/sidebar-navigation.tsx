@@ -30,11 +30,16 @@ import {
   SidebarItemIndicators,
   type SidebarItemIndicator
 } from '@/components/ui/sidebar-item-indicators'
+import {
+  EntityReference,
+  type EntityReferenceModel
+} from '@/components/ui/entity-reference'
 
 /** Receiver-owned row contract for primary sidebar navigation. */
 export interface SidebarNavigationItemModel {
   id: string
   label: string
+  reference?: EntityReferenceModel
   ariaLabel?: string
   icon?: 'todos' | 'tags' | 'review' | 'routines' | 'due' | 'archive' | 'sunflower' | 'paused'
   sunflower?: SemanticSunflowerModel
@@ -133,6 +138,7 @@ function SidebarNavigationRow({
             <SemanticSunflower className="!size-6" model={item.sunflower} />
           ) : null}
           <span className="min-w-0 flex-1 truncate"><TaggedText value={item.label} /></span>
+          {item.reference && <EntityReference {...item.reference} />}
           <SidebarItemIndicators indicators={item.indicators} />
           {item.badge && (
             <span

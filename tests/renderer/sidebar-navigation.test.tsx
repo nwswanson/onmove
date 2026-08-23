@@ -17,6 +17,7 @@ describe('SidebarNavigation', () => {
           {
             id: '1',
             label: 'Active focus',
+            reference: { value: 'F.1', label: 'Focus ID' },
             icon: 'sunflower',
             sunflower: {
               ariaLabel: 'Overall Green; one active commitment Red',
@@ -48,6 +49,8 @@ describe('SidebarNavigation', () => {
       'aria-current',
       'page'
     )
+    expect(within(screen.getByRole('button', { name: 'Active focus' }))
+      .getByLabelText('Focus ID F.1')).toHaveTextContent('F.1')
     const sunflower = screen.getByRole('img', {
       name: 'Overall Green; one active commitment Red'
     })

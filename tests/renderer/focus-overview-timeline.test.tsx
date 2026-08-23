@@ -32,6 +32,7 @@ const model: FocusOverviewTimelineModel = {
   updates: [
     {
       id: 9,
+      reference: { value: 'U.9', label: 'Update ID' },
       threadId: 1,
       subjectId: 101,
       subjectName: 'North region',
@@ -45,6 +46,7 @@ const model: FocusOverviewTimelineModel = {
     },
     {
       id: 10,
+      reference: { value: 'U.10', label: 'Update ID' },
       threadId: 1,
       subjectId: 102,
       subjectName: 'South region',
@@ -58,6 +60,7 @@ const model: FocusOverviewTimelineModel = {
     },
     {
       id: 11,
+      reference: { value: 'U.11', label: 'Update ID' },
       threadId: 2,
       subjectId: null,
       subjectName: 'Thread-wide',

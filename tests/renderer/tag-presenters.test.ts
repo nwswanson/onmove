@@ -58,6 +58,7 @@ describe('Tags presenters', () => {
 
     expect(tagUseRows([hidden, visible], true)).toEqual([{
       id: visible.id,
+      reference: { value: 'U.30', label: 'Update ID' },
       location: 'Project Atlas › Sprint execution › Improve tickets › Customer Operations',
       source: 'Update',
       snippet: visible.snippet,

@@ -123,6 +123,7 @@ describe('Routine presentation adapters', () => {
 
     expect(model).toMatchObject({
       name: 'Weekly evidence inspection',
+      reference: { value: 'R.31', label: 'Routine ID' },
       stateLabel: { label: 'Overdue', tone: 'warning' },
       scheduleLabel: 'Mon',
       scopeLabel: 'No scope',

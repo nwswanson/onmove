@@ -13,6 +13,7 @@ import {
   type LifecycleStatusOptionModel
 } from '@/components/ui/lifecycle-status'
 import { StateLabel, type StateLabelModel } from '@/components/ui/state-label'
+import { EntityReference, type EntityReferenceModel } from '@/components/ui/entity-reference'
 
 interface NewCommitmentDialogProps {
   parent: CommitmentParent
@@ -126,6 +127,7 @@ export function NewCommitmentDialog({
 
 export interface CommitmentCollectionItemModel {
   id: number
+  reference: EntityReferenceModel
   title: string
   statusLabel: LifecycleStatusOptionModel
   lastUpdatedLabel: string
@@ -210,7 +212,10 @@ export function CommitmentCollection({
           onClick={() => onOpen(item.id)}
         >
           <span className="min-w-0 flex-1">
-            <span className="block truncate"><TaggedText value={item.title} /></span>
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 flex-1 truncate"><TaggedText value={item.title} /></span>
+              <EntityReference {...item.reference} />
+            </span>
             <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               <LifecycleStatusLabel
                 model={item.statusLabel}

@@ -39,6 +39,8 @@ import { RichTextHistoryDialog } from '@/features/rich-text/rich-text-history'
 import { TaggedInput, TaggedText } from '@/components/ui/tagged-text'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
 import { WorkspaceTabBar } from '@/components/ui/workspace-tab-bar'
+import { EntityReference } from '@/components/ui/entity-reference'
+import { entityReference } from '../../../../shared/entity-reference'
 import type {
   FocusWorkspaceDestination
 } from '@/features/application/application-navigation'
@@ -1924,6 +1926,11 @@ export function FocusWorkspace({
                     <h1 id="commitment-heading" className="text-2xl font-semibold tracking-[-0.025em]">
                       <TaggedText value={selectedCommitment.title} />
                     </h1>
+                    <EntityReference
+                      value={entityReference('commitment', selectedCommitment.id)}
+                      label="Commitment ID"
+                      className="mt-2"
+                    />
                     <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                       <WorkDueDateField
                         entityLabel="Commitment"
@@ -2056,6 +2063,11 @@ export function FocusWorkspace({
                 <h1 id="thread-heading" className="text-2xl font-semibold tracking-[-0.025em]">
                   <TaggedText value={displayedThread.title} />
                 </h1>
+                <EntityReference
+                  value={entityReference('thread', displayedThread.id)}
+                  label="Thread ID"
+                  className="mt-2"
+                />
                 <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
                   <WorkDueDateField
                     entityLabel="Thread"
@@ -2232,6 +2244,11 @@ export function FocusWorkspace({
                 <h1 id="focus-heading" className="truncate text-2xl font-semibold tracking-[-0.025em]">
                   <TaggedText value={focusTitle} />
                 </h1>
+                <EntityReference
+                  value={entityReference('focus', focus.id)}
+                  label="Focus ID"
+                  className="mt-2"
+                />
                 <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
                   <WorkDueDateField
                     entityLabel="Focus"
