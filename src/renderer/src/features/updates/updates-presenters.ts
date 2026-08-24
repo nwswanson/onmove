@@ -4,7 +4,6 @@ import type {
   UpdateListStateOptionModel
 } from '@/features/updates/update-list-contract'
 import { healthStateLabel } from '@/features/shared/state-presenters'
-import { entityReference } from '../../../../shared/entity-reference'
 
 export const UPDATE_LIST_STATE_OPTIONS: readonly UpdateListStateOptionModel[] = [
   { value: 'red', ...healthStateLabel('red') },
@@ -48,7 +47,6 @@ export function updateListProjection(
       : subjectLabel
     const item = {
       id: String(update.id),
-      reference: { value: entityReference('update', update.id), label: 'Update ID' },
       date: update.date,
       observation: update.observation,
       state: update.state,

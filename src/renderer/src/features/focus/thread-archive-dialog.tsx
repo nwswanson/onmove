@@ -3,7 +3,6 @@ import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
 import { TaggedText } from '@/components/ui/tagged-text'
 import type { ArchivedThreadItemModel } from '@/features/focus/focus-presenters'
-import { EntityReference } from '@/components/ui/entity-reference'
 
 interface ThreadArchiveDialogProps {
   items: readonly ArchivedThreadItemModel[]
@@ -38,10 +37,7 @@ export function ThreadArchiveDialog({
           {items.map((item) => (
             <li key={item.id} className="flex min-w-0 items-center gap-4 py-3">
               <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 items-center gap-2">
-                  <p className="min-w-0 truncate text-sm font-medium"><TaggedText value={item.title} /></p>
-                  <EntityReference {...item.reference} />
-                </div>
+                <p className="truncate text-sm font-medium"><TaggedText value={item.title} /></p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {item.statusLabel} · Last reviewed {item.lastReviewedLabel}
                   {item.dueDateLabel ? ` · Due ${item.dueDateLabel}` : ''}

@@ -121,7 +121,6 @@ export function routineManagementListModel(
   return {
     items: routines.map((routine) => ({
       id: routine.id,
-      reference: { value: entityReference('routine', routine.id), label: 'Routine ID' },
       name: routine.name,
       scheduleLabel: routineScheduleLabel(routine),
       scopeLabel: routine.scope?.name ?? 'No scope',
@@ -166,12 +165,6 @@ export function routineDrawerAdapter({
         {
           id: 'routine',
           fields: [
-            {
-              kind: 'static',
-              id: 'reference',
-              label: 'ID',
-              value: entityReference('routine', routine.id)
-            },
             { kind: 'static', id: 'name', label: 'Name', value: routine.name },
             {
               kind: 'static',

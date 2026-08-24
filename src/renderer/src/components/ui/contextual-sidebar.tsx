@@ -35,10 +35,6 @@ import {
   type SidebarItemIndicator
 } from '@/components/ui/sidebar-item-indicators'
 import { cn } from '@/lib/utils'
-import {
-  EntityReference,
-  type EntityReferenceModel
-} from '@/components/ui/entity-reference'
 
 export interface ContextualSidebarItemGroup {
   id: string
@@ -48,7 +44,6 @@ export interface ContextualSidebarItemGroup {
 export interface ContextualSidebarChildItemModel {
   id: string
   label: string
-  reference?: EntityReferenceModel
   ariaLabel?: string
   icon?: 'checklist'
   state?: StateLabelModel
@@ -84,7 +79,6 @@ export interface ContextualSidebarChildCollectionModel {
 export interface ContextualSidebarItemModel {
   id: string
   label: string
-  reference?: EntityReferenceModel
   description?: string
   ariaLabel?: string
   group?: ContextualSidebarItemGroup
@@ -1052,7 +1046,6 @@ function ContextualSidebarDraggableChild({
           )}
           {child.state && <StateDot model={child.state} />}
           <span className="min-w-0 flex-1 truncate"><TaggedText value={child.label} /></span>
-          {child.reference && <EntityReference {...child.reference} className="h-4 px-1 text-[0.5625rem]" />}
           <SidebarItemIndicators indicators={child.indicators} size="compact" />
         </button>
       </SidebarItemContextMenu>
@@ -1142,7 +1135,6 @@ function ContextualSidebarItemButton({
             </span>
           )}
         </span>
-        {item.reference && <EntityReference {...item.reference} />}
         <SidebarItemIndicators indicators={item.indicators} />
         {item.stateLabel && <StateLabel model={item.stateLabel} size="compact" />}
         {item.accessory === 'disclosure' && (

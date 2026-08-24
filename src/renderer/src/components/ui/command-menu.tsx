@@ -9,7 +9,6 @@ import {
   CommandLoading,
   CommandShortcut
 } from '@/components/ui/command'
-import { EntityReference, type EntityReferenceModel } from '@/components/ui/entity-reference'
 
 export type CommandMenuIcon = 'folder' | 'branch' | 'item' | 'check' | 'tag'
 
@@ -19,7 +18,6 @@ export interface CommandMenuItemModel {
   label: string
   description: string
   keywords: readonly string[]
-  reference?: EntityReferenceModel
 }
 
 export interface CommandMenuGroupModel {
@@ -87,13 +85,12 @@ export function CommandMenu({
                 {group.items.map((item) => (
                   <CommandItem
                     key={item.id}
-                    value={`${item.label} ${item.description} ${item.id} ${item.reference?.value ?? ''}`}
-                    keywords={[...item.keywords, ...(item.reference ? [item.reference.value] : [])]}
+                    value={`${item.label} ${item.description} ${item.id}`}
+                    keywords={[...item.keywords]}
                     onSelect={() => onSelect(item.id)}
                   >
                     <ResultIcon icon={item.icon} />
                     <span className="min-w-0 flex-1 truncate font-medium">{item.label}</span>
-                    {item.reference ? <EntityReference {...item.reference} /> : null}
                     <span className="max-w-[45%] truncate text-xs text-muted-foreground">
                       {item.description}
                     </span>

@@ -1,11 +1,9 @@
 import { ChevronRight, ListChecks } from 'lucide-react'
 import { StateLabel, type StateLabelModel } from '@/components/ui/state-label'
 import { TaggedText } from '@/components/ui/tagged-text'
-import { EntityReference, type EntityReferenceModel } from '@/components/ui/entity-reference'
 
 export interface RoutineManagementItemModel {
   id: number
-  reference: EntityReferenceModel
   name: string
   scheduleLabel: string
   scopeLabel: string
@@ -46,10 +44,7 @@ export function RoutineManagementList({
             >
               <ListChecks className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               <span className="min-w-0 flex-1">
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate font-medium"><TaggedText value={item.name} /></span>
-                  <EntityReference {...item.reference} />
-                </span>
+                <span className="block truncate font-medium"><TaggedText value={item.name} /></span>
                 <span className="mt-0.5 flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
                   <span>{item.scheduleLabel}</span>
                   <span>{item.scopeLabel}</span>

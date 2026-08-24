@@ -3,7 +3,6 @@ import { Button } from '@/components/ui/button'
 import { RichTextContent } from '@/components/ui/rich-text-editor'
 import { StateLabel } from '@/components/ui/state-label'
 import type { ArchivedUpdateItemModel } from '@/features/archive/archive-presenters'
-import { EntityReference } from '@/components/ui/entity-reference'
 
 interface ArchiveListProps {
   items: readonly ArchivedUpdateItemModel[]
@@ -34,10 +33,7 @@ export function ArchiveList({
         >
           <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
             <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 items-center gap-2">
-                <p className="min-w-0 truncate text-sm font-semibold">{item.contextLabel}</p>
-                <EntityReference {...item.reference} />
-              </div>
+              <p className="truncate text-sm font-semibold">{item.contextLabel}</p>
               <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                 <div className="flex gap-1">
                   <dt>Update date</dt>

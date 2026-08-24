@@ -56,7 +56,6 @@ import {
 } from '@/features/shared/work-status'
 import { sidebarIndicatorProps } from '@/features/shared/sidebar-indicator-presenters'
 import { richTextPlainText } from '../../../../shared/rich-text-value'
-import { entityReference } from '../../../../shared/entity-reference'
 
 function textValue(values: ContextDrawerValues, id: string): string {
   const value = values[id]
@@ -145,7 +144,6 @@ export function focusOverviewTimelineModel(
       .sort((left, right) => right.date.localeCompare(left.date) || right.id - left.id)
       .map((update) => ({
         id: update.id,
-        reference: { value: entityReference('update', update.id), label: 'Update ID' },
         threadId: update.threadId,
         subjectId: update.scope?.subject.id ?? null,
         subjectName: update.scope?.subject.name ?? 'Thread-wide',
@@ -277,7 +275,6 @@ export function focusPrimaryNavigationItems(
     return {
       id: String(focus.id),
       label,
-      reference: { value: entityReference('focus', focus.id), label: 'Focus ID' },
       ariaLabel: `${label}${paused ? ', paused' : ''}`,
       icon: paused ? 'paused' : 'sunflower',
       ...(paused ? {} : { sunflower }),
@@ -302,7 +299,6 @@ export function threadSidebarItemId(threadId: number): string {
 
 export interface ArchivedThreadItemModel {
   id: number
-  reference: { value: string; label: string }
   title: string
   statusLabel: 'Done' | 'Cancelled'
   lastReviewedLabel: string
@@ -319,7 +315,6 @@ export function archivedThreadItems(
     }))
     .map((thread) => ({
       id: thread.id,
-      reference: { value: entityReference('thread', thread.id), label: 'Thread ID' },
       title: thread.title,
       statusLabel: thread.status === 'done' ? 'Done' : 'Cancelled',
       lastReviewedLabel: dateOrNeverLabel(thread.lastReviewDate),
@@ -442,10 +437,6 @@ export function pinnedPrimaryNavigationItems(
     return {
       id: `pin:${key}`,
       label: pin.title,
-      reference: {
-        value: entityReference(target.type, target.id),
-        label: `${target.type === 'focus' ? 'Focus' : 'Thread'} ID`
-      },
       ariaLabel: `${pin.title}, pinned ${target.type === 'focus' ? 'Focus' : 'Thread'}${
         paused ? ', paused' : ''
       }`,
@@ -522,10 +513,6 @@ function contextWorkChildCollection(
       ...buildCommitmentListModel(commitments).current.map((commitment) => ({
         id: String(commitment.id),
         label: commitment.title,
-        reference: {
-          value: entityReference('commitment', commitment.id),
-          label: 'Commitment ID'
-        },
         ariaLabel: `Open ${ownerLabel} commitment ${commitment.title}`,
         state: healthStateLabel(commitment.state),
         ...sidebarIndicatorProps(commitment.sensitive, commitment.needsReview),
@@ -540,7 +527,6 @@ function contextWorkChildCollection(
       ...routines.map((routine) => ({
         id: `routine:${routine.id}`,
         label: routine.name,
-        reference: { value: entityReference('routine', routine.id), label: 'Routine ID' },
         ariaLabel: `Open ${ownerLabel} Routine ${routine.name}`,
         icon: 'checklist' as const,
         state: routine.status === 'green'
@@ -597,7 +583,6 @@ export function focusContextSidebarItems(
       return {
         id: threadSidebarItemId(thread.id),
         label,
-        reference: { value: entityReference('thread', thread.id), label: 'Thread ID' },
         ariaLabel: `${label}${paused ? ', paused' : ''}`,
         icon: paused ? ('paused' as const) : ('sunflower' as const),
         ...(paused ? {} : { sunflower }),
@@ -645,7 +630,6 @@ export function pinnedThreadContextSidebarItems(
     {
       id: threadSidebarItemId(thread.id),
       label: 'Overview',
-      reference: { value: entityReference('thread', thread.id), label: 'Thread ID' },
       ariaLabel: `${thread.title} overview${paused ? ', paused' : ''}`,
       icon: 'overview',
       tone: paused ? 'muted' : 'default',
@@ -674,10 +658,6 @@ export function commitmentContextSidebarItems(
       return {
         id: String(commitment.id),
         label: commitment.title,
-        reference: {
-          value: entityReference('commitment', commitment.id),
-          label: 'Commitment ID'
-        },
         description: `${status.label} · Last updated · ${dateOrNeverLabel(commitment.lastUpdateDate)}`,
         group: { id: group.id, label: group.label },
         lines: 2,
@@ -704,7 +684,6 @@ export function commitmentCollectionModel(
     label: group.label,
     items: group.commitments.map((commitment) => ({
       id: commitment.id,
-      reference: { value: entityReference('commitment', commitment.id), label: 'Commitment ID' },
       title: commitment.title,
       statusLabel: workStatusLabel(commitment.status),
       lastUpdatedLabel: dateOrNeverLabel(commitment.lastUpdateDate),
@@ -759,12 +738,6 @@ export function focusDrawerAdapter({
         {
           id: 'identity',
           fields: [
-            {
-              kind: 'static',
-              id: 'reference',
-              label: 'ID',
-              value: entityReference('focus', focus.id)
-            },
             {
               kind: 'text',
               id: 'title',
@@ -961,12 +934,6 @@ export function threadDrawerAdapter({
           id: 'details',
           fields: [
             {
-              kind: 'static',
-              id: 'reference',
-              label: 'ID',
-              value: entityReference('thread', thread.id)
-            },
-            {
               kind: 'text',
               id: 'title',
               label: 'Title',
@@ -1101,12 +1068,6 @@ export function commitmentDrawerAdapter({
         {
           id: 'details',
           fields: [
-            {
-              kind: 'static',
-              id: 'reference',
-              label: 'ID',
-              value: entityReference('commitment', commitment.id)
-            },
             {
               kind: 'text',
               id: 'title',

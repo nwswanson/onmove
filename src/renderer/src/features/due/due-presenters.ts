@@ -5,8 +5,6 @@ import type {
 } from '../../../../shared/contracts'
 import type { FocusWorkspaceDestinationTarget } from '@/features/application/application-navigation'
 import type { ParentDueDateModel } from '@/features/shared/work-due-date'
-import type { EntityReferenceModel } from '@/components/ui/entity-reference'
-import { entityReference } from '../../../../shared/entity-reference'
 
 export type DueUrgency = 'past-due' | 'today' | 'this-week' | 'this-month' | 'upcoming'
 
@@ -17,7 +15,6 @@ export interface DueWorkFilters {
 
 export interface DueWorkRowModel {
   id: string
-  reference: EntityReferenceModel
   kind: 'focus' | 'thread' | 'commitment'
   kindLabel: 'Focus' | 'Thread' | 'Commitment'
   title: string
@@ -78,16 +75,14 @@ function rowFor(item: DueWorkItemSnapshot, asOf: string): DueWorkRowModel {
   const record = item.commitment ?? item.thread ?? item.focus
   const threadId = item.thread?.id ?? null
   const commitmentId = item.commitment?.id ?? null
-  const kindLabel = item.kind === 'focus'
-    ? 'Focus'
-    : item.kind === 'thread'
-      ? 'Thread'
-      : 'Commitment'
   return {
     id: item.key,
-    reference: { value: entityReference(item.kind, record.id), label: `${kindLabel} ID` },
     kind: item.kind,
-    kindLabel,
+    kindLabel: item.kind === 'focus'
+      ? 'Focus'
+      : item.kind === 'thread'
+        ? 'Thread'
+        : 'Commitment',
     title: record.title,
     locationLabel: item.kind === 'focus'
       ? 'Portfolio'

@@ -23,7 +23,6 @@ describe('Update presenters', () => {
     expect(updateListItems([update])).toEqual([
       {
         id: '8',
-        reference: { value: 'U.8', label: 'Update ID' },
         date: '2026-08-07',
         observation: 'Ticket quality improved',
         state: 'green',

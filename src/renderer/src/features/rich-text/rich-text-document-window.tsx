@@ -7,8 +7,6 @@ import { useDurableRichText } from '@/features/rich-text/use-durable-rich-text'
 import { WorkKindIcon } from '@/features/shared/work-kind-icon'
 import { UpdateMetadataBar } from '@/features/updates/update-metadata-bar'
 import { UPDATE_LIST_STATE_OPTIONS } from '@/features/updates/updates-presenters'
-import { EntityReference } from '@/components/ui/entity-reference'
-import { entityReference } from '../../../../shared/entity-reference'
 
 export function RichTextDocumentWindow({
   reference
@@ -16,11 +14,6 @@ export function RichTextDocumentWindow({
   reference: RichTextDocumentReference
 }): React.JSX.Element {
   const editor = useDurableRichText(reference)
-  const publicReference = editor.kind === 'note'
-    ? { value: entityReference('note', reference.id), label: 'Note ID' }
-    : editor.kind === 'update'
-      ? { value: entityReference('update', reference.id), label: 'Update ID' }
-      : { value: entityReference('focus', reference.id), label: 'Focus ID' }
 
   useEffect(() => {
     const contextTitle = editor.context.map(({ title }) => title)
@@ -94,19 +87,15 @@ export function RichTextDocumentWindow({
             </nav>
           ) : null}
           {editor.kind !== 'update' ? (
-            <div className="mt-2 flex items-center gap-2">
-              <p className="text-sm font-semibold text-foreground">
-                {editor.kind === 'note' ? 'Default Note' : 'Description'}
-              </p>
-              <EntityReference {...publicReference} />
-            </div>
+            <p className="mt-2 text-sm font-semibold text-foreground">
+              {editor.kind === 'note' ? 'Default Note' : 'Description'}
+            </p>
           ) : null}
         </div>
         {editor.kind === 'update' && editor.updateMetadata ? (
           <UpdateMetadataBar
             idPrefix={`detached-update-${reference.id}`}
             value={editor.updateMetadata}
-            reference={publicReference}
             stateOptions={UPDATE_LIST_STATE_OPTIONS}
             disabled={editor.metadataSaving}
             sensitivityDisabled={editor.metadataSaving}

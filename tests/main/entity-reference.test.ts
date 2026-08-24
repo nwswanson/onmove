@@ -1,22 +1,27 @@
 import { describe, expect, it } from 'vitest'
 import {
   ENTITY_REFERENCE_PREFIXES,
-  entityReference
+  entityReference,
+  parseEntityReference
 } from '../../src/shared/entity-reference'
 
 describe('entityReference', () => {
-  it('keeps every user-addressable record kind globally unambiguous', () => {
-    expect(Object.values(ENTITY_REFERENCE_PREFIXES)).toEqual([
-      'F', 'T', 'C', 'R', 'U', 'TD', 'N', 'S'
-    ])
-    expect(new Set(Object.values(ENTITY_REFERENCE_PREFIXES)).size)
-      .toBe(Object.keys(ENTITY_REFERENCE_PREFIXES).length)
-    expect(entityReference('focus', 2)).toBe('F.2')
-    expect(entityReference('thread', 2)).toBe('T.2')
-    expect(entityReference('update', 90)).toBe('U.90')
+  it('uses collision-free canonical hash-prefixed references', () => {
+    expect(new Set(Object.values(ENTITY_REFERENCE_PREFIXES)).size).toBe(8)
+    expect(entityReference('focus', 2)).toBe('#F2')
+    expect(entityReference('thread', 4)).toBe('#T4')
+    expect(entityReference('update', 90)).toBe('#U90')
+    expect(entityReference('todo', 11)).toBe('#TD11')
   })
 
-  it('rejects ids that cannot name persisted records', () => {
+  it('parses canonical and tolerant user input into a canonical reference', () => {
+    expect(parseEntityReference('#T4')).toEqual({ kind: 'thread', id: 4, code: '#T4' })
+    expect(parseEntityReference('td11')).toEqual({ kind: 'todo', id: 11, code: '#TD11' })
+    expect(parseEntityReference('#F0')).toBeNull()
+    expect(parseEntityReference('#X2')).toBeNull()
+  })
+
+  it('rejects invalid ids', () => {
     expect(() => entityReference('focus', 0)).toThrow('positive numeric id')
     expect(() => entityReference('thread', -1)).toThrow('positive numeric id')
     expect(() => entityReference('update', 'not-an-id')).toThrow('positive numeric id')

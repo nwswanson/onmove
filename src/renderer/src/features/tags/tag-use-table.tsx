@@ -9,7 +9,6 @@ import {
   TableRow
 } from '@/components/ui/table'
 import type { TagUseRowModel } from '@/features/tags/tag-presenters'
-import { EntityReference } from '@/components/ui/entity-reference'
 
 interface TagUseTableProps {
   tagName: string
@@ -50,10 +49,7 @@ export function TagUseTable({
                 </a>
               </TableCell>
               <TableCell className="align-top text-xs text-muted-foreground">
-                <span className="flex flex-wrap items-center gap-2">
-                  <span>{row.source}</span>
-                  <EntityReference {...row.reference} />
-                </span>
+                {row.source}
               </TableCell>
               <TableCell className="align-top text-sm leading-5 text-foreground/85">
                 <span className="line-clamp-3 break-words">

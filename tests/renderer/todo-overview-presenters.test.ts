@@ -133,14 +133,8 @@ describe('Todo overview presenters', () => {
 
     expect(rows).toEqual([expect.objectContaining({
       id: '1',
-      reference: { value: 'TD.1', label: 'Todo ID' },
       sharedAcrossSubjects: true,
-      subjectCompletions: [{
-        subjectId: '12',
-        label: 'Customer Operations',
-        reference: { value: 'S.12', label: 'Subject ID' },
-        done: true
-      }]
+      subjectCompletions: [{ subjectId: '12', label: 'Customer Operations', done: true }]
     })])
   })
 

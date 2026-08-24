@@ -18,7 +18,6 @@ import {
   type TodoOverviewSortKey
 } from '@/features/todos/todo-overview-presenters'
 import { cn } from '@/lib/utils'
-import { EntityReference } from '@/components/ui/entity-reference'
 
 interface TodoOverviewTableProps {
   rows: readonly TodoOverviewRowModel[]
@@ -211,10 +210,7 @@ export function TodoOverviewTable({
                       )}
                     </TableCell>
                   <TableCell className={cn('font-medium', row.done && 'line-through')}>
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate"><TaggedText value={row.name} /></span>
-                      <EntityReference {...row.reference} />
-                    </span>
+                    <TaggedText value={row.name} />
                   </TableCell>
                   <TableCell>{row.project}</TableCell>
                   <TableCell>
@@ -276,10 +272,6 @@ export function TodoOverviewTable({
                               )}>
                                 {completion.label}
                               </span>
-                              <EntityReference
-                                {...completion.reference}
-                                className="h-4 px-1 text-[0.5625rem]"
-                              />
                             </li>
                           ))}
                         </ul>

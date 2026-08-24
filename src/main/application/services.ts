@@ -210,6 +210,13 @@ export interface ApplicationUpdateContext {
   warnings?: string[]
 }
 
+export interface ApplicationStandaloneEntityContext {
+  reference: { type: 'todo' | 'subject'; id: number }
+  uri: string
+  effectiveSensitive: boolean
+  entity: unknown
+}
+
 export interface ApplicationUpdatesResult {
   items: ApplicationUpdateContext[]
   /** Missing and non-visible IDs intentionally share one externally indistinguishable bucket. */
@@ -1192,6 +1199,30 @@ export class OnMoveQueryService {
     assertPositiveId(id, 'update id')
     const update = this.domain.updates.find(id)
     return update ? this.updateContext(update, access, options) : null
+  }
+
+  getTodo(id: number, access: OnMoveAccessPolicy): ApplicationStandaloneEntityContext | null {
+    assertPositiveId(id, 'todo id')
+    const todo = this.domain.todos.find(id)
+    if (!todo || !this.sensitivity.canRead('todo', id, access)) return null
+    return {
+      reference: { type: 'todo', id },
+      uri: `onmove://todo/${id}`,
+      effectiveSensitive: Boolean(this.sensitivity.isSensitive('todo', id)),
+      entity: plainProjection(todo)
+    }
+  }
+
+  getSubject(id: number, access: OnMoveAccessPolicy): ApplicationStandaloneEntityContext | null {
+    assertPositiveId(id, 'subject id')
+    const subject = this.domain.subjects.find(id)
+    if (!subject || !this.sensitivity.canRead('subject', id, access)) return null
+    return {
+      reference: { type: 'subject', id },
+      uri: `onmove://subject/${id}`,
+      effectiveSensitive: Boolean(this.sensitivity.isSensitive('subject', id)),
+      entity: plainProjection(subject)
+    }
   }
 
   getUpdates(

@@ -22,7 +22,6 @@ import { ChevronDown, GripVertical, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { TaggedInput, TaggedText } from '@/components/ui/tagged-text'
-import { EntityReference } from '@/components/ui/entity-reference'
 import {
   validateTodoListModel,
   type TodoListItemModel,
@@ -182,7 +181,6 @@ function TodoRow({
             }
           }}
         />
-        {item.reference ? <EntityReference {...item.reference} /> : null}
         {item.contextLabel && (
           <span className="rounded-full border border-primary/45 bg-primary/15 px-2 py-0.5 text-[0.6875rem] font-semibold">
             {item.contextLabel}
@@ -254,12 +252,6 @@ function TodoRow({
                     onChange={(event) =>
                       void mutateSubject(completion.subjectId, event.target.checked)}
                   />
-                  {completion.reference ? (
-                    <EntityReference
-                      {...completion.reference}
-                      className="h-4 px-1 text-[0.5625rem]"
-                    />
-                  ) : null}
                   <span className={cn(completion.done && 'text-muted-foreground line-through')}>
                     {completion.label}
                   </span>

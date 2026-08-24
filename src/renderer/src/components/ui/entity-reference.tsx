@@ -5,7 +5,7 @@ export interface EntityReferenceModel {
   label: string
 }
 
-/** Compact, selectable public id for a user-addressable record. */
+/** Compact, selectable public id for the record selected in the main pane. */
 export function EntityReference({
   value,
   label,

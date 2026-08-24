@@ -126,7 +126,6 @@ function UpdateEditorCard({
         value={draft}
         stateOptions={stateOptions}
         contextLabel={item.contextLabel}
-        reference={item.reference}
         disabled={deleting}
         sensitivityDisabled={autosave.saving || deleting}
         onValueChange={updateDraft}

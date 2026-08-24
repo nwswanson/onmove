@@ -124,7 +124,6 @@ describe('Focus presentation adapters', () => {
     ])).toEqual([
       {
         id: 11,
-        reference: { value: 'T.11', label: 'Thread ID' },
         title: 'Abandoned plan',
         statusLabel: 'Cancelled',
         lastReviewedLabel: '2026-01-05',
@@ -132,7 +131,6 @@ describe('Focus presentation adapters', () => {
       },
       {
         id: 12,
-        reference: { value: 'T.12', label: 'Thread ID' },
         title: 'Zeta history',
         statusLabel: 'Done',
         lastReviewedLabel: 'Never',
@@ -245,7 +243,6 @@ describe('Focus presentation adapters', () => {
       {
         id: '1',
         label: 'Project Atlas',
-        reference: { value: 'F.1', label: 'Focus ID' },
         ariaLabel: 'Project Atlas',
         icon: 'sunflower',
         sunflower,
@@ -274,7 +271,6 @@ describe('Focus presentation adapters', () => {
       {
         id: '2',
         label: 'Project Atlas',
-        reference: { value: 'F.2', label: 'Focus ID' },
         ariaLabel: 'Project Atlas, paused',
         icon: 'paused',
         tone: 'muted',
@@ -329,7 +325,6 @@ describe('Focus presentation adapters', () => {
       {
         id: 'thread:10',
         label: 'Sprint execution',
-        reference: { value: 'T.10', label: 'Thread ID' },
         ariaLabel: 'Sprint execution',
         icon: 'sunflower',
         sunflower,
@@ -383,7 +378,6 @@ describe('Focus presentation adapters', () => {
       {
         id: '20',
         label: 'Improve ticket quality',
-        reference: { value: 'C.20', label: 'Commitment ID' },
         description: 'Active · Last updated · 2026-01-07',
         group: { id: 'active', label: 'Active' },
         lines: 2,
@@ -521,7 +515,6 @@ describe('Focus presentation adapters', () => {
     expect(items[0]).toEqual(expect.objectContaining({
       id: 'thread:10',
       label: 'Overview',
-      reference: { value: 'T.10', label: 'Thread ID' },
       group: { id: 'thread', label: 'Sprint execution' },
       contextMenu: expect.objectContaining({
         items: expect.arrayContaining([
@@ -533,7 +526,6 @@ describe('Focus presentation adapters', () => {
     expect(items[1]).toEqual(expect.objectContaining({
       id: '31',
       label: 'Improve ticket quality',
-      reference: { value: 'C.31', label: 'Commitment ID' },
       group: { id: 'active', label: 'Active' }
     }))
     expect(items.some(({ id }) => id === '32')).toBe(false)
@@ -654,7 +646,6 @@ describe('Focus presentation adapters', () => {
         {
           id: '21',
           label: 'Improve ticket quality',
-          reference: { value: 'C.21', label: 'Commitment ID' },
           ariaLabel: 'Open Sprint execution commitment Improve ticket quality',
           state: { label: 'Yellow', tone: 'warning' },
           contextMenu: expect.objectContaining({
@@ -742,7 +733,6 @@ describe('Focus presentation adapters', () => {
       {
         id: 'routine:31',
         label: 'Weekly evidence inspection',
-        reference: { value: 'R.31', label: 'Routine ID' },
         ariaLabel: 'Open Sprint execution Routine Weekly evidence inspection',
         icon: 'checklist',
         state: { label: 'Overdue', tone: 'warning' },
@@ -1055,7 +1045,6 @@ describe('Focus presentation adapters', () => {
     expect(adapter.model.sections[0]).toEqual({
       id: 'details',
       fields: [
-        { kind: 'static', id: 'reference', label: 'ID', value: 'C.20' },
         {
           kind: 'text',
           id: 'title',

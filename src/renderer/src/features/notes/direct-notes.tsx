@@ -6,7 +6,6 @@ import {
 import { RichTextEditorWithHistory } from '@/features/rich-text/rich-text-history'
 import { useDurableRichText } from '@/features/rich-text/use-durable-rich-text'
 import { cn } from '@/lib/utils'
-import { entityReference } from '../../../../shared/entity-reference'
 
 export interface NoteEditorModel {
   id: number
@@ -38,7 +37,6 @@ export function NoteEditor({
     )}>
       <RichTextEditorWithHistory
         historyReference={{ type: 'note', id: note.id, field: 'content' }}
-        reference={{ value: entityReference('note', note.id), label: 'Note ID' }}
         className="min-h-0 flex-1 rounded-none border-0 bg-background shadow-none"
         ariaLabel={`${note.title} note`}
         placeholder="Write a note…"

@@ -1,15 +1,11 @@
-import type { EntityReferenceModel } from '@/components/ui/entity-reference'
-
 export interface TodoListSubjectCompletionModel {
   subjectId: string
   label: string
-  reference?: EntityReferenceModel
   done: boolean
 }
 
 export interface TodoListItemModel {
   id: string
-  reference?: EntityReferenceModel
   name: string
   dueDate: string | null
   done: boolean

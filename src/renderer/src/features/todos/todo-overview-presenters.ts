@@ -2,8 +2,6 @@ import type { TodoOverviewItemSnapshot } from '../../../../shared/contracts'
 import type {
   FocusWorkspaceDestinationTarget
 } from '@/features/application/application-navigation'
-import type { EntityReferenceModel } from '@/components/ui/entity-reference'
-import { entityReference } from '../../../../shared/entity-reference'
 
 export const TODO_OVERVIEW_SORT_KEYS = [
   'name',
@@ -24,7 +22,6 @@ export interface TodoOverviewSort {
 /** Receiver-owned row contract; the table never receives domain records. */
 export interface TodoOverviewRowModel {
   id: string
-  reference: EntityReferenceModel
   name: string
   project: string
   context: string
@@ -36,7 +33,6 @@ export interface TodoOverviewRowModel {
   subjectCompletions: readonly {
     subjectId: string
     label: string
-    reference: EntityReferenceModel
     done: boolean
   }[]
 }
@@ -61,7 +57,6 @@ export function todoOverviewRows(
     ].filter((part): part is string => part !== undefined).join(' › ')
     return [{
       id: String(todo.id),
-      reference: { value: entityReference('todo', todo.id), label: 'Todo ID' },
       name: todo.name,
       project: todo.focus.title,
       context,
@@ -76,10 +71,6 @@ export function todoOverviewRows(
           : [{
               subjectId: String(completion.subject.id),
               label: completion.subject.name,
-              reference: {
-                value: entityReference('subject', completion.subject.id),
-                label: 'Subject ID'
-              },
               done: completion.done
             }]
       )

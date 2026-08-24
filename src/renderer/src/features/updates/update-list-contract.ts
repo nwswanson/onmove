@@ -1,5 +1,4 @@
 import type { StateLabelModel } from '@/components/ui/state-label'
-import type { EntityReferenceModel } from '@/components/ui/entity-reference'
 import type { RichTextHistoryReference } from '../../../../shared/contracts'
 
 export interface UpdateListStateOptionModel extends StateLabelModel {
@@ -15,7 +14,6 @@ export interface UpdateListDraft {
 
 export interface UpdateListItemModel extends UpdateListDraft {
   id: string
-  reference?: EntityReferenceModel
   contextLabel?: string
   externalRevision?: string | number
   historyReference?: RichTextHistoryReference

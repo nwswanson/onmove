@@ -18,6 +18,7 @@ import {
   useContextualSidebarNavigation
 } from '@/components/ui/contextual-sidebar'
 import { StateLabel, type StateLabelModel } from '@/components/ui/state-label'
+import { EntityReference } from '@/components/ui/entity-reference'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
 import type { FocusWorkspaceDestinationTarget } from '@/features/application/application-navigation'
 import {
@@ -30,7 +31,6 @@ import {
   type RoutineParentOption
 } from '@/features/routines/use-routines-model'
 import { sidebarIndicatorProps } from '@/features/shared/sidebar-indicator-presenters'
-import { EntityReference } from '@/components/ui/entity-reference'
 import { entityReference } from '../../../../shared/entity-reference'
 
 const CONTEXTUAL_SIDEBAR_MIN = 220
@@ -152,7 +152,6 @@ function queueSidebarItems(entries: readonly RoutineQueueEntry[]): ContextualSid
   return entries.map((entry) => ({
     id: entry.id,
     label: entry.routine.name,
-    reference: { value: entityReference('routine', entry.routine.id), label: 'Routine ID' },
     ariaLabel: `${entry.routine.name} — ${entry.subject?.name ?? 'No scope'}`,
     description: [entry.subject?.name ?? 'No scope', entry.parent?.label]
       .filter(Boolean)

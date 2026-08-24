@@ -1,8 +1,8 @@
 import { AlertTriangle, ListChecks } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { EntityReference, type EntityReferenceModel } from '@/components/ui/entity-reference'
 import { StateLabel, type StateLabelModel } from '@/components/ui/state-label'
 import { TaggedText } from '@/components/ui/tagged-text'
-import { EntityReference, type EntityReferenceModel } from '@/components/ui/entity-reference'
 import {
   RoutineCellChecklist,
   type RoutineCellChecklistModel,

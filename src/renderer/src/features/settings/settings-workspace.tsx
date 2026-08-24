@@ -14,8 +14,6 @@ import {
   type McpPermissionResourceSelector
 } from '../../../../shared/contracts'
 import { useMcpSettingsModel, type McpSettingsModel } from './use-mcp-settings-model'
-import { EntityReference } from '@/components/ui/entity-reference'
-import { entityReference } from '../../../../shared/entity-reference'
 
 function formatDate(value: string | null): string {
   if (value === null) return 'Not yet created'
@@ -114,10 +112,6 @@ function PermissionOverrideEditor({
     <div className={nested ? 'border-t border-border/60 px-3 py-3' : 'px-4 py-4'}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
-        <EntityReference
-          value={entityReference(target.type, target.id)}
-          label={`${target.type === 'focus' ? 'Focus' : 'Thread'} ID`}
-        />
         <PermissionChoice
           label={`${title} view access`}
           value={value('all', 'view')}
@@ -290,9 +284,7 @@ function McpPermissionSettings({ model }: { model: McpSettingsModel }): React.JS
           >
             <option value="">Choose a Focus…</option>
             {availableFocuses.map((focus) => (
-              <option key={focus.id} value={focus.id}>
-                {focus.title} · {entityReference('focus', focus.id)}
-              </option>
+              <option key={focus.id} value={focus.id}>{focus.title}</option>
             ))}
           </select>
           <select
@@ -345,7 +337,7 @@ function McpPermissionSettings({ model }: { model: McpSettingsModel }): React.JS
                 key={configuredFocusId}
                 model={model}
                 focusTarget={focusTarget}
-                title={focus?.title ?? `Focus ${entityReference('focus', configuredFocusId)}`}
+                title={focus?.title ?? `Focus ${configuredFocusId}`}
                 threadIds={threadIds}
                 threads={threads}
                 availableThreads={availableThreads}
@@ -390,9 +382,7 @@ function FocusPermissionGroup({
           >
             <option value="">Add a Thread exception…</option>
             {availableThreads.map((thread) => (
-              <option key={thread.id} value={thread.id}>
-                {thread.title} · {entityReference('thread', thread.id)}
-              </option>
+              <option key={thread.id} value={thread.id}>{thread.title}</option>
             ))}
           </select>
           <select
@@ -436,7 +426,7 @@ function FocusPermissionGroup({
             key={id}
             model={model}
             target={{ type: 'thread', id, focusId: focusTarget.id }}
-            title={thread?.title ?? `Thread ${entityReference('thread', id)}`}
+            title={thread?.title ?? `Thread ${id}`}
             nested
           />
         )

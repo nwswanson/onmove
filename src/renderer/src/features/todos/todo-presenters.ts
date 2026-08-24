@@ -1,6 +1,5 @@
 import type { TodoSnapshot, UpdateScopeCell } from '../../../../shared/contracts'
 import type { TodoListItemModel } from '@/features/todos/todo-list-contract'
-import { entityReference } from '../../../../shared/entity-reference'
 
 export interface TodoListProjection {
   items: TodoListItemModel[]
@@ -41,9 +40,7 @@ export function todoListProjection(
         ? currentSubjectIds.size > 0
         : !currentSubjectIds.has(scope.subjectId)
     )
-    const subjectName = todo.subject?.name ?? (
-      scope ? `Subject ${entityReference('subject', scope.subjectId)}` : null
-    )
+    const subjectName = todo.subject?.name ?? (scope ? `Subject ${scope.subjectId}` : null)
     const contextLabel = todo.sharedAcrossSubjects
       ? options.selectedSubjectId === undefined ? 'All subjects' : 'Shared'
       : orphaned
@@ -52,7 +49,6 @@ export function todoListProjection(
     const displayedDone = selectedCompletion?.done ?? todo.done
     const item = {
       id: String(todo.id),
-      reference: { value: entityReference('todo', todo.id), label: 'Todo ID' },
       name: todo.name,
       dueDate: todo.dueDate,
       done: displayedDone,
@@ -61,12 +57,8 @@ export function todoListProjection(
         ? {
             canToggleDone: false,
             subjectCompletions: todo.subjectCompletions.map((completion) => ({
-            subjectId: String(completion.subject.id),
-            label: completion.subject.name,
-            reference: {
-              value: entityReference('subject', completion.subject.id),
-              label: 'Subject ID'
-            },
+              subjectId: String(completion.subject.id),
+              label: completion.subject.name,
               done: completion.done
             }))
           }

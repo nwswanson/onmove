@@ -54,6 +54,7 @@ describe('OnMove MCP protocol adapter', () => {
       'onmove.list_threads',
       'onmove.list_commitments',
       'onmove.list_routines',
+      'onmove.get_entity_by_code',
       'onmove.get_thread_by_id',
       'onmove.get_thread_by_path',
       'onmove.get_focus_by_id',
@@ -95,7 +96,7 @@ describe('OnMove MCP protocol adapter', () => {
       'onmove.update_note',
       'onmove.poke_review'
     ]))
-    expect(listed.tools).toHaveLength(52)
+    expect(listed.tools).toHaveLength(53)
     expect(listed.tools.map(({ name }) => name)).not.toEqual(expect.arrayContaining([
       'onmove.get_focus',
       'onmove.get_thread',
@@ -123,6 +124,7 @@ describe('OnMove MCP protocol adapter', () => {
     expect(search.isError).not.toBe(true)
     expect(search.structuredContent).toMatchObject({
       items: [expect.objectContaining({
+        code: '#F1',
         reference: { type: 'focus', id: 1 },
         contextPath: ['Launch readiness'],
         hierarchy: {
@@ -142,8 +144,75 @@ describe('OnMove MCP protocol adapter', () => {
     const focus = await client.readResource({ uri: 'onmove://focus/1' })
     expect(focus.contents[0]).toMatchObject({ uri: 'onmove://focus/1', mimeType: 'application/json' })
     expect(JSON.parse('text' in focus.contents[0] ? focus.contents[0].text : '{}')).toMatchObject({
+      code: '#F1',
       reference: { type: 'focus', id: 1 },
       diagnostics: { appliedScope: { mode: 'all', focusId: null, subjectId: null } }
+    })
+  })
+
+  it('resolves public entity codes directly and returns canonical codes throughout MCP reads', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Code-addressable thread',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const commitment = database.domain.commitments.create({
+      type: 'tracking',
+      parent: { type: 'thread', id: thread.id },
+      title: 'Code-addressable commitment'
+    }).snapshot()
+    const routine = database.domain.routines.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Code-addressable routine',
+      scheduleWeekdays: ['friday'],
+      checklist: [{ inspection: 'Verify the code resolver reaches this Routine.' }]
+    }).snapshot()
+    const update = database.domain.updates.create({
+      parent: { type: 'commitment', id: commitment.id },
+      observation: 'Code-addressable evidence'
+    }).toSnapshot()
+    const todo = database.domain.todos.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Code-addressable todo'
+    }).toSnapshot()
+    const note = database.domain.notes.list({ type: 'thread', id: thread.id })[0]
+    const scope = database.domain.threadScopes.addSubject(thread.id, { name: 'Code Subject' })
+    const subject = scope.subjects[0]
+
+    for (const [code, type, id] of [
+      [`#F${focus.id}`, 'focus', focus.id],
+      [`#T${thread.id}`, 'thread', thread.id],
+      [`#C${commitment.id}`, 'commitment', commitment.id],
+      [`#R${routine.id}`, 'routine', routine.id],
+      [`#U${update.id}`, 'update', update.id],
+      [`#TD${todo.id}`, 'todo', todo.id],
+      [`#N${note.id}`, 'note', note.id],
+      [`#S${subject.id}`, 'subject', subject.id]
+    ] as const) {
+      const response = await client.callTool({
+        name: 'onmove.get_entity_by_code',
+        arguments: { code: code.toLowerCase().replace('#', '') }
+      })
+      expect(response.isError).not.toBe(true)
+      expect(response.structuredContent).toMatchObject({
+        code,
+        reference: { type, id }
+      })
+    }
+
+    const list = await client.callTool({
+      name: 'onmove.list_threads', arguments: { focusId: focus.id }
+    })
+    expect(list.structuredContent).toMatchObject({
+      items: [expect.objectContaining({
+        code: `#T${thread.id}`,
+        reference: { type: 'thread', id: thread.id },
+        hierarchy: expect.objectContaining({
+          focus: { id: focus.id, title: focus.title },
+          thread: { id: thread.id, title: thread.title }
+        })
+      })]
     })
   })
 

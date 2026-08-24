@@ -163,7 +163,6 @@ describe('command palette presenters', () => {
       {
         id: 'focus:1',
         label: 'Project Atlas',
-        reference: { value: 'F.1', label: 'Focus ID' },
         destination: {
           type: 'focus',
           target: { focusId: 1, threadId: null, commitmentId: null, subjectId: null }
@@ -172,7 +171,6 @@ describe('command palette presenters', () => {
       {
         id: 'thread:10',
         label: 'Sprint execution',
-        reference: { value: 'T.10', label: 'Thread ID' },
         destination: {
           type: 'focus',
           target: { focusId: 1, threadId: 10, commitmentId: null, subjectId: null }
@@ -181,7 +179,6 @@ describe('command palette presenters', () => {
       {
         id: 'commitment:20',
         label: 'Improve ticket quality',
-        reference: { value: 'C.20', label: 'Commitment ID' },
         description: 'Project Atlas › Sprint execution › All subjects',
         destination: {
           type: 'focus',
@@ -191,7 +188,6 @@ describe('command palette presenters', () => {
       {
         id: 'commitment:20:scope:4:subject:30',
         label: 'Improve ticket quality',
-        reference: { value: 'C.20', label: 'Commitment ID' },
         description: 'Project Atlas › Sprint execution › North region',
         destination: {
           type: 'focus',
@@ -201,7 +197,6 @@ describe('command palette presenters', () => {
       {
         id: 'commitment:20:scope:4:subject:31',
         label: 'Improve ticket quality',
-        reference: { value: 'C.20', label: 'Commitment ID' },
         description: 'Project Atlas › Sprint execution › South region',
         destination: {
           type: 'focus',
@@ -211,7 +206,6 @@ describe('command palette presenters', () => {
       {
         id: 'todo:40',
         label: 'Confirm regional owner',
-        reference: { value: 'TD.40', label: 'Todo ID' },
         description: 'Project Atlas › Sprint execution › Improve ticket quality › North region',
         destination: {
           type: 'focus',

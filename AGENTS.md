@@ -44,12 +44,13 @@
   markup.
 - Every selected destination must update the main view, use `aria-current="page"`, and retain a
   visible keyboard focus state.
-- Expose every user-addressable record through the shared compact entity-reference badge wherever
-  it appears as a destination, editable row, or selected detail. Public references are derived from
-  the stable SQLite id and a collision-free kind prefix: `F` Focus, `T` Thread, `C` Commitment,
-  `R` Routine, `U` Update, `TD` Todo, `N` Note, and `S` Subject. Never display a bare numeric id,
-  reuse a prefix across tables, persist the formatted label, or expose internal Scope overlays,
-  memberships, Routine Runs, and cells as if they were user-addressable records.
+- Expose a selected user-addressable record's public code only in its main-pane detail header;
+  never repeat codes in primary/contextual sidebars, collection rows, tables, menus, drawers, or
+  other list projections. Public codes derive from the stable SQLite id and a collision-free kind
+  prefix in `#T4` form: `F` Focus, `T` Thread, `C` Commitment, `R` Routine, `U` Update, `TD` Todo,
+  `N` Note, and `S` Subject. Do not persist the formatted code or expose internal Scope overlays,
+  memberships, Routine Runs, and cells as user-addressable records. MCP responses own the same
+  canonical codes even when the compact UI list intentionally omits them.
 - Show unobtrusive, receiver-owned sidebar indicators for Sensitive and Excluded from reviews on
   Focus, Thread, Commitment, and Routine destinations. Apply them to primary, contextual, and
   nested contextual rows as applicable; do not repeat the Focus indicators on its Overall row.
@@ -786,6 +787,11 @@ foreground colors and do not rely on color alone to communicate selection or sta
   and queryless lists, and `resolve_work_target` for semantic scoped-write
   planning; neither replaces the explicit single-kind contracts. Do not retain ambiguous legacy
   names such as `get_note`, `get_thread`, or `resolve_note` as aliases.
+- Treat a public entity code as an already-resolved identity: `get_entity_by_code` dispatches by its
+  collision-free prefix and must not invoke discovery. Preserve existing `{type,id}` reference and
+  selector shapes; expose the canonical `#T4`-style value as a sibling `code` on entity-bearing MCP
+  results through one serialization boundary. Code lookup remains subject to the same live RBAC,
+  sensitivity, compact-rich-text defaults, and not-found behavior as the corresponding by-ID tool.
 - Keep queryless entity inventory separate from both full entity reads and FTS discovery. Expose
   `list_focuses`, `list_threads`, `list_commitments`, and `list_routines` as compact paginated
   projections with stable durable `reference` ids, full owning hierarchy, readable `displayPath`,

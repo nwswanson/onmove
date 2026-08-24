@@ -18,6 +18,7 @@ import type {
   UpdateThreadInput
 } from '../../../../shared/contracts'
 import { Button } from '@/components/ui/button'
+import { EntityReference } from '@/components/ui/entity-reference'
 import {
   ContextDrawerOutlet,
   type ContextDrawerAdapter,
@@ -39,7 +40,6 @@ import { RichTextHistoryDialog } from '@/features/rich-text/rich-text-history'
 import { TaggedInput, TaggedText } from '@/components/ui/tagged-text'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
 import { WorkspaceTabBar } from '@/components/ui/workspace-tab-bar'
-import { EntityReference } from '@/components/ui/entity-reference'
 import { entityReference } from '../../../../shared/entity-reference'
 import type {
   FocusWorkspaceDestination

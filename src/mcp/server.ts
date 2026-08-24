@@ -28,6 +28,11 @@ import {
 } from '../main/application/search-index'
 import type { McpUiContextSnapshot, RichTextDocumentSnapshot } from '../shared/contracts'
 import {
+  entityReference,
+  parseEntityReference,
+  type EntityReferenceKind
+} from '../shared/entity-reference'
+import {
   ONMOVE_RICH_TEXT_MARKS,
   OnMoveRichTextPatchError,
   OnMoveRichTextValidationError,
@@ -104,6 +109,12 @@ const GLOBAL_SCOPE: AppliedSearchScope = {
 
 const idSchema = z.number().int().positive()
   .describe('A positive OnMove database ID. Use the ID for the named entity type, not a child record ID.')
+const entityCodeSchema = z.string().min(2).max(32).refine(
+  (value) => parseEntityReference(value) !== null,
+  'Use a public OnMove entity code such as #F2, #T4, #C7, #R3, #U90, #TD11, #N5, or #S8.'
+).describe(
+  'A canonical public OnMove code shown in the app and returned by MCP. The # prefix and uppercase letters are canonical; lookup tolerates lowercase or an omitted #.'
+)
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/u)
   .describe('A local calendar date in YYYY-MM-DD form.')
 const pageSchema = {
@@ -914,15 +925,63 @@ function result(value: unknown, diagnostics: McpDiagnostics = diagnosticsScope()
   content: Array<{ type: 'text'; text: string }>
   structuredContent: Record<string, unknown>
 } {
-  const structuredContent = value && typeof value === 'object' && !Array.isArray(value)
-    ? { ...(value as Record<string, unknown>), diagnostics }
-    : { items: value, diagnostics }
+  const decoratedValue = withEntityCodes(value)
+  const structuredContent = decoratedValue && typeof decoratedValue === 'object' &&
+      !Array.isArray(decoratedValue)
+    ? { ...(decoratedValue as Record<string, unknown>), diagnostics }
+    : { items: decoratedValue, diagnostics }
   return {
     // MCP clients commonly retain both content and structuredContent. Compact JSON avoids
     // needlessly doubling whitespace in the model context while preserving identical data.
     content: [{ type: 'text', text: JSON.stringify(structuredContent) }],
     structuredContent
   }
+}
+
+const ENTITY_REFERENCE_KINDS = new Set<EntityReferenceKind>([
+  'focus', 'thread', 'commitment', 'routine', 'update', 'todo', 'note', 'subject'
+])
+
+function entityKind(value: unknown): EntityReferenceKind | null {
+  return typeof value === 'string' && ENTITY_REFERENCE_KINDS.has(value as EntityReferenceKind)
+    ? value as EntityReferenceKind
+    : null
+}
+
+/** Adds public codes at the MCP serialization boundary without changing domain snapshots. */
+function withEntityCodes(value: unknown, key: string | null = null): unknown {
+  if (Array.isArray(value)) return value.map((item) => withEntityCodes(item, key))
+  const current = record(value)
+  if (!current) return value
+
+  const decorated = Object.fromEntries(
+    Object.entries(current).map(([childKey, childValue]) => [
+      childKey,
+      withEntityCodes(childValue, childKey)
+    ])
+  )
+  const reference = record(current.reference) ?? record(current.source)
+  const referencedKind = entityKind(reference?.type)
+  const structuralKind = 'subjectCompletions' in current && 'sort' in current && 'done' in current
+    ? 'todo'
+    : 'observation' in current && 'date' in current && 'state' in current
+      ? 'update'
+      : null
+  const explicitKind = key !== 'reference' && key !== 'parent' && key !== 'contextPath'
+    ? entityKind(current.type) ?? entityKind(current.kind)
+    : null
+  const hierarchy = record(current.hierarchy)
+  const explicitEntity = explicitKind
+    ? record(current[explicitKind]) ?? record(hierarchy?.[explicitKind])
+    : null
+  const discoverySubject = key === 'namedSubjectDiscovery' ? record(current.subject) : null
+  const inferredKind = referencedKind ?? structuralKind ?? explicitKind ??
+    (discoverySubject ? 'subject' : null)
+  const id = Number(reference?.id ?? current.id ?? explicitEntity?.id ?? discoverySubject?.id)
+  if (inferredKind && Number.isSafeInteger(id) && id > 0) {
+    decorated.code = entityReference(inferredKind, id)
+  }
+  return decorated
 }
 
 /** Measures the complete MCP tool result, including duplicated text and structured payloads. */
@@ -1000,9 +1059,12 @@ function resource(uri: URL, value: unknown): {
       uri: uri.href,
       mimeType: 'application/json',
       text: JSON.stringify(
-        value && typeof value === 'object' && !Array.isArray(value)
-          ? { ...(value as Record<string, unknown>), diagnostics: diagnosticsScope() }
-          : { items: value, diagnostics: diagnosticsScope() },
+        (() => {
+          const decorated = withEntityCodes(value)
+          return decorated && typeof decorated === 'object' && !Array.isArray(decorated)
+            ? { ...(decorated as Record<string, unknown>), diagnostics: diagnosticsScope() }
+            : { items: decorated, diagnostics: diagnosticsScope() }
+        })(),
         null,
         2
       )
@@ -1654,7 +1716,7 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Choose reads by intent. For a compact queryless inventory use list_focuses, list_threads, list_commitments, or list_routines; these return hierarchy and one explicit projection row per applicable Subject without child Updates, Notes, or rich-text documents. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Search never returns lossless rich text. Request includeRichText=true on one known entity only immediately before a full structural replacement. Use onmove.search only for initial cross-kind discovery, queryless structured listing, or Subject hierarchy projection. Send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility. Initial search tools never accept continuationToken. Natural-language wrappers retain meaningful entity terms. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Use projection={hierarchy,subjects,scopes}; omitted projection fields are false. Inspect projections.*.complete before treating auxiliary paths or Subject uses as exhaustive. Never invent or alter a continuationToken. For another page call onmove.continue_search with only the exact non-null signed token; it preserves the originating search, complete query, and stable cursor. If SEARCH_CURSOR_STALE is returned, restart the original search tool with its criteria. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop global discovery and fetch returned IDs or continue only inside the returned boundary. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and View/Edit grants by resource, Focus, and Thread.'
+        'Choose reads by intent. Every user-addressable entity returned by MCP has a canonical code such as #F2, #T4, or #U90. When the user supplies one, call onmove.get_entity_by_code directly and do not search. For a compact queryless inventory use list_focuses, list_threads, list_commitments, or list_routines; these return hierarchy and one explicit projection row per applicable Subject without child Updates, Notes, or rich-text documents. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Search never returns lossless rich text. Request includeRichText=true on one known entity only immediately before a full structural replacement. Use onmove.search only for initial cross-kind discovery, queryless structured listing, or Subject hierarchy projection. Send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility. Initial search tools never accept continuationToken. Natural-language wrappers retain meaningful entity terms. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Use projection={hierarchy,subjects,scopes}; omitted projection fields are false. Inspect projections.*.complete before treating auxiliary paths or Subject uses as exhaustive. Never invent or alter a continuationToken. For another page call onmove.continue_search with only the exact non-null signed token; it preserves the originating search, complete query, and stable cursor. If SEARCH_CURSOR_STALE is returned, restart the original search tool with its criteria. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop global discovery and fetch returned IDs or continue only inside the returned boundary. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and View/Edit grants by resource, Focus, and Thread.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -1705,6 +1767,62 @@ export function createOnMoveMcpServer(
       candidateCount: candidates.length
     })
   }
+
+  server.registerTool(
+    'onmove.get_entity_by_code',
+    {
+      title: 'Get an OnMove entity by public code',
+      description: 'Resolve a user-visible code such as #T4 or #U90 directly to its exact visible record. This is deterministic ID lookup, not text search. The prefix selects the entity kind, so never search after the user provides a valid code.',
+      inputSchema: z.strictObject({
+        code: entityCodeSchema,
+        includeRichText: z.boolean().optional().describe(
+          'Defaults to false and renders rich fields as Markdown. Set true only immediately before replacing a complete Focus description, Update observation, or Note document.'
+        )
+      }),
+      annotations: { readOnlyHint: true }
+    },
+    async ({ code, includeRichText }) => {
+      const parsed = parseEntityReference(code)
+      if (!parsed) throw new TypeError('The public OnMove entity code is invalid.')
+      const include = includeRichText === true
+      let context: unknown
+      if (parsed.kind === 'focus') {
+        const focus = found(database.queries.getFocus(parsed.id, policy(), {
+          includeRichText: include
+        }))
+        context = include
+          ? withFocusDescriptionWriteGuide(withEmbeddedNoteWriteGuides(focus))
+          : focus
+      } else if (parsed.kind === 'thread') {
+        context = withWriteGuide(found(database.queries.getThread(
+          parsed.id, policy(), { includeRichText: include }
+        )))
+      } else if (parsed.kind === 'commitment') {
+        context = withWriteGuide(found(database.queries.getCommitment(
+          parsed.id, policy(), { includeRichText: include }
+        )))
+      } else if (parsed.kind === 'routine') {
+        context = withWriteGuide(found(database.queries.getRoutine(parsed.id, policy())))
+      } else if (parsed.kind === 'update') {
+        context = withUpdateContextWriteGuide(found(database.queries.getUpdate(
+          parsed.id, policy(), { includeRichText: include }
+        )))
+      } else if (parsed.kind === 'note') {
+        context = withNoteWriteGuide(found(database.queries.getNote(
+          parsed.id, policy(), { includeRichText: include }
+        )))
+      } else if (parsed.kind === 'todo') {
+        context = found(database.queries.getTodo(parsed.id, policy()))
+      } else {
+        context = found(database.queries.getSubject(parsed.id, policy()))
+      }
+      const richTextCapable = ['focus', 'thread', 'commitment', 'update', 'note']
+        .includes(parsed.kind)
+      return result(context, !include && richTextCapable
+        ? compactEntityReadDiagnostics(context)
+        : entityReadDiagnostics(context))
+    }
+  )
 
   server.registerTool(
     'onmove.list_focuses',
@@ -2236,6 +2354,7 @@ export function createOnMoveMcpServer(
     reference: searchReferenceOutputSchema,
     uri: z.string(),
     field: z.string(),
+    code: z.string(),
     title: z.string(),
     snippet: z.string().max(200),
     rank: z.number(),

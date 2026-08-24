@@ -13,7 +13,6 @@ import { entityReference } from '../../../../shared/entity-reference'
 
 export interface ReviewCommitmentRowModel {
   id: string
-  reference: EntityReferenceModel
   title: string
   status: LifecycleStatusOptionModel
   state: StateLabelModel
@@ -22,7 +21,6 @@ export interface ReviewCommitmentRowModel {
 
 export interface ReviewUpdateRowModel {
   id: string
-  reference: EntityReferenceModel
   date: string
   observation: string
   state: StateLabelModel
@@ -36,10 +34,10 @@ export interface ReviewDefaultNoteModel {
 
 export interface ReviewItemModel {
   key: string
-  reference: EntityReferenceModel
   kind: 'thread' | 'commitment'
   kindLabel: 'Thread' | 'Commitment'
   title: string
+  reference: EntityReferenceModel
   contextPath: readonly string[]
   subjectLabel: string | null
   status: LifecycleStatusOptionModel
@@ -95,13 +93,13 @@ export function reviewItemModel(
 
   return {
     key: item.key,
+    kind: item.kind,
+    kindLabel: item.kind === 'thread' ? 'Thread' : 'Commitment',
+    title: record.title,
     reference: {
       value: entityReference(item.kind, record.id),
       label: `${item.kind === 'thread' ? 'Thread' : 'Commitment'} ID`
     },
-    kind: item.kind,
-    kindLabel: item.kind === 'thread' ? 'Thread' : 'Commitment',
-    title: record.title,
     contextPath: item.kind === 'thread' && item.thread
         ? [item.focus.title, item.thread.title]
         : [item.focus.title, item.thread?.title ?? 'Overall', record.title],
@@ -115,10 +113,6 @@ export function reviewItemModel(
     cadenceDays: item.commitment?.cadenceDays ?? null,
     commitments: commitments.map((commitment) => ({
       id: String(commitment.id),
-      reference: {
-        value: entityReference('commitment', commitment.id),
-        label: 'Commitment ID'
-      },
       title: commitment.title,
       status: workStatusLabel(commitment.status),
       state: healthStateLabel(commitment.state),
@@ -126,7 +120,6 @@ export function reviewItemModel(
     })),
     updates: updates.map((update) => ({
       id: String(update.id),
-      reference: { value: entityReference('update', update.id), label: 'Update ID' },
       date: update.date,
       observation: update.observation,
       state: healthStateLabel(update.state)
