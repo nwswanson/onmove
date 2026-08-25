@@ -4,6 +4,7 @@ import type {
   CommitmentWorkingContextSnapshot,
   FocusSnapshot,
   TagSummarySnapshot,
+  ThreadScopeSnapshot,
   ThreadSnapshot,
   TodoSnapshot
 } from '../../../../shared/contracts'
@@ -11,6 +12,7 @@ import type {
 export interface CommandPaletteSnapshot {
   focuses: readonly FocusSnapshot[]
   threads: readonly ThreadSnapshot[]
+  threadScopes: readonly ThreadScopeSnapshot[]
   commitments: readonly CommitmentSnapshot[]
   commitmentWorkingContexts: readonly CommitmentWorkingContextSnapshot[]
   todos: readonly TodoSnapshot[]
@@ -37,15 +39,16 @@ async function loadSnapshot(
         window.onmove.domain.listThreads(focus.id),
         window.onmove.domain.listCommitments({ type: 'focus', id: focus.id })
       ])
-      const threadCommitments = await Promise.all(
-        threads.map((thread) =>
-          window.onmove.domain.listCommitments({ type: 'thread', id: thread.id }))
-      )
+      const [threadCommitments, threadScopes] = await Promise.all([
+        Promise.all(threads.map((thread) =>
+          window.onmove.domain.listCommitments({ type: 'thread', id: thread.id }))),
+        Promise.all(threads.map(({ id }) => window.onmove.domain.getThreadScope(id)))
+      ])
       const commitments = [...focusCommitments, ...threadCommitments.flat()]
       const commitmentWorkingContexts = await Promise.all(
         commitments.map(({ id }) => window.onmove.domain.getCommitmentWorkingContext(id))
       )
-      return { threads, commitments, commitmentWorkingContexts }
+      return { threads, threadScopes, commitments, commitmentWorkingContexts }
     })),
     window.onmove.domain.queryTodos(),
     window.onmove.domain.listTags()
@@ -54,6 +57,7 @@ async function loadSnapshot(
   return {
     focuses,
     threads: focusBundles.flatMap(({ threads }) => threads),
+    threadScopes: focusBundles.flatMap(({ threadScopes }) => threadScopes),
     commitments: focusBundles.flatMap(({ commitments }) => commitments),
     commitmentWorkingContexts: focusBundles.flatMap(
       ({ commitmentWorkingContexts }) => commitmentWorkingContexts

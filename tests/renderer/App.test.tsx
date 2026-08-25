@@ -1770,7 +1770,7 @@ describe('App', () => {
       .toHaveAttribute('aria-current', 'page')
   })
 
-  it('opens the command palette with Cmd-K and deep-links Commitments and Tags', async () => {
+  it('opens the command palette with Cmd-K and deep-links Thread Subjects, Commitments, and Tags', async () => {
     const project = focus({ id: 5, title: 'Project Atlas' })
     const sprint = thread({ id: 15, focusId: project.id, title: 'Sprint execution' })
     const customerOperations = subject(61, 'Customer Operations')
@@ -1845,7 +1845,12 @@ describe('App', () => {
     fireEvent.keyDown(document, { key: 'k', metaKey: true })
     const dialog = await screen.findByRole('dialog', { name: 'Jump to anything' })
     expect(within(dialog).getByRole('option', { name: /^Project Atlas Focus/ })).toBeVisible()
-    expect(within(dialog).getByRole('option', { name: /^Sprint execution/ })).toBeVisible()
+    expect(within(dialog).getByRole('option', {
+      name: /Sprint execution Project Atlas › All subjects/
+    })).toBeVisible()
+    expect(within(dialog).getByRole('option', {
+      name: /Sprint execution Project Atlas › Customer Operations/
+    })).toBeVisible()
     expect(within(dialog).getByRole('option', {
       name: /Improve ticket quality Project Atlas › Sprint execution › All subjects/
     })).toBeVisible()
@@ -1857,9 +1862,22 @@ describe('App', () => {
 
     await user.type(
       within(dialog).getByPlaceholderText(/Search Focuses, Threads, Commitments/),
-      'ticket quality'
+      'sprint customer operations'
     )
     await user.click(within(dialog).getByRole('option', {
+      name: /Sprint execution Project Atlas › Customer Operations/
+    }))
+    expect(await screen.findByRole('heading', { name: 'Sprint execution' })).toBeVisible()
+    expect(await screen.findByRole('tab', { name: 'Work in Customer Operations' }))
+      .toHaveAttribute('aria-selected', 'true')
+
+    fireEvent.keyDown(document, { key: 'k', metaKey: true })
+    const commitmentSearch = await screen.findByRole('dialog', { name: 'Jump to anything' })
+    await user.type(
+      within(commitmentSearch).getByPlaceholderText(/Search Focuses, Threads, Commitments/),
+      'ticket quality'
+    )
+    await user.click(within(commitmentSearch).getByRole('option', {
       name: /Improve ticket quality Project Atlas › Sprint execution › All subjects/
     }))
     expect(await screen.findByRole('heading', {

@@ -115,6 +115,17 @@ function snapshot(overrides: Partial<CommandPaletteSnapshot> = {}): CommandPalet
   return {
     focuses: [focus()],
     threads: [thread()],
+    threadScopes: [{
+      threadId: 10,
+      focusId: 1,
+      mode: 'explicit',
+      scopeId: 4,
+      subjects: [
+        subject(),
+        subject({ id: 31, name: 'South region' })
+      ],
+      focusSubjects: []
+    }],
     commitments: [commitment()],
     commitmentWorkingContexts: [{
       commitmentId: 20,
@@ -171,9 +182,28 @@ describe('command palette presenters', () => {
       {
         id: 'thread:10',
         label: 'Sprint execution',
+        description: 'Project Atlas › All subjects',
         destination: {
           type: 'focus',
           target: { focusId: 1, threadId: 10, commitmentId: null, subjectId: null }
+        }
+      },
+      {
+        id: 'thread:10:scope:4:subject:30',
+        label: 'Sprint execution',
+        description: 'Project Atlas › North region',
+        destination: {
+          type: 'focus',
+          target: { focusId: 1, threadId: 10, commitmentId: null, subjectId: 30 }
+        }
+      },
+      {
+        id: 'thread:10:scope:4:subject:31',
+        label: 'Sprint execution',
+        description: 'Project Atlas › South region',
+        destination: {
+          type: 'focus',
+          target: { focusId: 1, threadId: 10, commitmentId: null, subjectId: 31 }
         }
       },
       {
@@ -257,6 +287,23 @@ describe('command palette presenters', () => {
 
     expect(groups.find(({ id }) => id === 'commitments')?.items).toMatchObject([
       { id: 'commitment:20' }
+    ])
+  })
+
+  it('filters sensitive Thread scope Subjects without hiding its All subjects destination', () => {
+    const groups = commandPaletteGroups(snapshot({
+      threadScopes: [{
+        threadId: 10,
+        focusId: 1,
+        mode: 'explicit',
+        scopeId: 4,
+        subjects: [subject({ sensitive: true })],
+        focusSubjects: []
+      }]
+    }), true)
+
+    expect(groups.find(({ id }) => id === 'threads')?.items).toMatchObject([
+      { id: 'thread:10' }
     ])
   })
 })

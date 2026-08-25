@@ -92,6 +92,9 @@ export function commandPaletteGroups(
     return Boolean(focus) && (!hideSensitiveContent || !thread.sensitive)
   })
   const threadById = new Map(threads.map((thread) => [thread.id, thread]))
+  const threadScopeById = new Map(
+    snapshot.threadScopes.map((scope) => [scope.threadId, scope])
+  )
   const commitments = snapshot.commitments.filter((commitment) => {
     const context = commitmentContext(commitment, focusById, threadById)
     return Boolean(context) && (!hideSensitiveContent || !commitment.sensitive)
@@ -117,19 +120,44 @@ export function commandPaletteGroups(
     {
       id: 'threads',
       label: 'Threads',
-      items: sorted(threads.map((thread) => {
+      items: sorted(threads.flatMap((thread) => {
         const focus = focusById.get(thread.focusId) as FocusSnapshot
-        return {
+        const scope = threadScopeById.get(thread.id)
+        const ordinaryContextLabel = scope?.scopeId == null
+          ? 'Thread-wide'
+          : 'All subjects'
+        const ordinaryDestination: CommandPaletteItemModel = {
           id: `thread:${thread.id}`,
           icon: 'branch' as const,
           label: thread.title,
-          description: focus.title,
-          keywords: ['thread', thread.title, focus.title],
+          description: `${focus.title} › ${ordinaryContextLabel}`,
+          keywords: ['thread', 'scope', thread.title, focus.title, ordinaryContextLabel],
           destination: {
             type: 'focus' as const,
             target: focusTarget(focus.id, thread.id)
           }
         }
+        const scopedDestinations = !scope || scope.scopeId === null ? [] : scope.subjects
+          .filter((subject) => !hideSensitiveContent || !subject.sensitive)
+          .map((subject): CommandPaletteItemModel => ({
+            id: `thread:${thread.id}:scope:${scope.scopeId}:subject:${subject.id}`,
+            icon: 'branch',
+            label: thread.title,
+            description: `${focus.title} › ${subject.name}`,
+            keywords: [
+              'thread',
+              'scope',
+              'subject',
+              thread.title,
+              focus.title,
+              subject.name
+            ],
+            destination: {
+              type: 'focus',
+              target: focusTarget(focus.id, thread.id, null, subject.id)
+            }
+          }))
+        return [ordinaryDestination, ...scopedDestinations]
       }))
     },
     {

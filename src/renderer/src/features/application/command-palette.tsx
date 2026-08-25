@@ -46,7 +46,7 @@ export function ApplicationCommandPalette({
     <CommandMenu
       open={open}
       label="Jump to anything"
-      placeholder="Search Focuses, Threads, Commitments, Todos, and Tags…"
+      placeholder="Search Focuses, Threads, Commitments, Subjects, Todos, and Tags…"
       groups={groups}
       loading={model.loading}
       error={model.error}
