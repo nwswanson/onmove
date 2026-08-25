@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AppDatabase } from '../../src/main/database'
@@ -94,9 +95,10 @@ describe('OnMove MCP protocol adapter', () => {
       'onmove.update_rich_text',
       'onmove.patch_note_text',
       'onmove.update_note',
+      'onmove.delete_entity',
       'onmove.poke_review'
     ]))
-    expect(listed.tools).toHaveLength(53)
+    expect(listed.tools).toHaveLength(54)
     expect(listed.tools.map(({ name }) => name)).not.toEqual(expect.arrayContaining([
       'onmove.get_focus',
       'onmove.get_thread',
@@ -214,6 +216,134 @@ describe('OnMove MCP protocol adapter', () => {
         })
       })]
     })
+  })
+
+  it('deletes every addressable entity only with confirmation and its independent grant', async () => {
+    const leafFocus = database.domain.focuses.create({ title: 'Leaf deletion owner' }).toSnapshot()
+    const leafThread = database.domain.threads.create({
+      focusId: leafFocus.id,
+      title: 'Leaf deletion thread',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const note = database.domain.notes.list({ type: 'thread', id: leafThread.id })[0]
+    const todo = database.domain.todos.create({
+      parent: { type: 'thread', id: leafThread.id },
+      name: 'Delete this Todo'
+    }).toSnapshot()
+    const directUpdate = database.domain.updates.create({
+      parent: { type: 'thread', id: leafThread.id },
+      observation: 'Delete this Update'
+    }).toSnapshot()
+    const subject = database.domain.subjects.create({ name: 'Unused delete target' }).toSnapshot()
+
+    const commitment = database.domain.commitments.create({
+      type: 'tracking',
+      parent: { type: 'thread', id: leafThread.id },
+      title: 'Delete this Commitment'
+    }).snapshot()
+    const commitmentUpdate = database.domain.updates.create({
+      parent: { type: 'commitment', id: commitment.id },
+      observation: 'Cascade-archived Commitment evidence'
+    }).toSnapshot()
+    const routine = database.domain.routines.create({
+      parent: { type: 'thread', id: leafThread.id },
+      name: 'Delete this Routine',
+      scheduleWeekdays: ['friday'],
+      checklist: [{ inspection: 'Verify the Routine can be deleted.' }]
+    }).snapshot()
+
+    const threadFocus = database.domain.focuses.create({ title: 'Thread cascade owner' }).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: threadFocus.id,
+      title: 'Delete this Thread',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const threadUpdate = database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      observation: 'Cascade-archived Thread evidence'
+    }).toSnapshot()
+
+    const focus = database.domain.focuses.create({ title: 'Delete this Focus' }).toSnapshot()
+    const focusThread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Owned by deleted Focus',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const focusUpdate = database.domain.updates.create({
+      parent: { type: 'thread', id: focusThread.id },
+      observation: 'Cascade-archived Focus evidence'
+    }).toSnapshot()
+
+    const missingConfirmation = await client.callTool({
+      name: 'onmove.delete_entity',
+      arguments: { target: { type: 'note', id: note.id } }
+    })
+    expect(missingConfirmation.isError).toBe(true)
+
+    const denied = await client.callTool({
+      name: 'onmove.delete_entity',
+      arguments: { target: { type: 'note', id: note.id }, confirm: true }
+    })
+    expect(denied.isError).toBe(true)
+    expect(database.domain.notes.find(note.id)).not.toBeNull()
+
+    database.mcpSettings.update({
+      permission: {
+        target: { type: 'default' }, resource: 'all', delete: true
+      }
+    })
+
+    for (const target of [
+      { type: 'update' as const, id: directUpdate.id },
+      { type: 'todo' as const, id: todo.id },
+      { type: 'note' as const, id: note.id },
+      { type: 'subject' as const, id: subject.id },
+      { type: 'commitment' as const, id: commitment.id },
+      { type: 'routine' as const, id: routine.id },
+      { type: 'thread' as const, id: thread.id },
+      { type: 'focus' as const, id: focus.id }
+    ]) {
+      const response = await client.callTool({
+        name: 'onmove.delete_entity',
+        arguments: { target, confirm: true }
+      })
+      expect(response.isError, `${target.type} ${target.id}`).not.toBe(true)
+      expect(response.structuredContent).toMatchObject({
+        deleted: true,
+        reference: target,
+        code: expect.stringMatching(/^#(?:F|T|C|R|U|TD|N|S)\d+$/u)
+      })
+    }
+
+    expect(database.domain.updates.find(directUpdate.id)).toBeNull()
+    expect(database.domain.todos.find(todo.id)).toBeNull()
+    expect(database.domain.notes.find(note.id)).toBeNull()
+    expect(database.domain.subjects.find(subject.id)).toBeNull()
+    expect(database.domain.commitments.find(commitment.id)).toBeNull()
+    expect(database.domain.routines.find(routine.id)).toBeNull()
+    expect(database.domain.threads.find(thread.id)).toBeNull()
+    expect(database.domain.focuses.find(focus.id)).toBeNull()
+    for (const updateId of [
+      directUpdate.id, commitmentUpdate.id, threadUpdate.id, focusUpdate.id
+    ]) {
+      expect(database.domain.archivedUpdates.listForOriginalUpdate(updateId)).toHaveLength(1)
+    }
+    const raw = new DatabaseSync(join(directory, 'onmove.sqlite3'))
+    const deletionAudits = raw.prepare(
+      `SELECT tool_name, entity_type, category, client_name
+       FROM mcp_mutation_audit WHERE category = 'delete' ORDER BY id`
+    ).all()
+    raw.close()
+    expect(deletionAudits).toHaveLength(8)
+    expect(deletionAudits).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        tool_name: 'onmove.delete_entity',
+        entity_type: 'focus',
+        category: 'delete',
+        client_name: 'vitest-mcp-client'
+      }),
+      expect.objectContaining({ entity_type: 'subject', category: 'delete' })
+    ]))
   })
 
   it('lists compact hierarchy rows and expands scoped work once per Subject', async () => {

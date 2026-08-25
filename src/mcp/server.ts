@@ -1716,7 +1716,7 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Choose reads by intent. Every user-addressable entity returned by MCP has a canonical code such as #F2, #T4, or #U90. When the user supplies one, call onmove.get_entity_by_code directly and do not search. For a compact queryless inventory use list_focuses, list_threads, list_commitments, or list_routines; these return hierarchy and one explicit projection row per applicable Subject without child Updates, Notes, or rich-text documents. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Search never returns lossless rich text. Request includeRichText=true on one known entity only immediately before a full structural replacement. Use onmove.search only for initial cross-kind discovery, queryless structured listing, or Subject hierarchy projection. Send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility. Initial search tools never accept continuationToken. Natural-language wrappers retain meaningful entity terms. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Use projection={hierarchy,subjects,scopes}; omitted projection fields are false. Inspect projections.*.complete before treating auxiliary paths or Subject uses as exhaustive. Never invent or alter a continuationToken. For another page call onmove.continue_search with only the exact non-null signed token; it preserves the originating search, complete query, and stable cursor. If SEARCH_CURSOR_STALE is returned, restart the original search tool with its criteria. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop global discovery and fetch returned IDs or continue only inside the returned boundary. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and View/Edit grants by resource, Focus, and Thread.'
+        'Choose reads by intent. Every user-addressable entity returned by MCP has a canonical code such as #F2, #T4, or #U90. When the user supplies one, call onmove.get_entity_by_code directly and do not search. For a compact queryless inventory use list_focuses, list_threads, list_commitments, or list_routines; these return hierarchy and one explicit projection row per applicable Subject without child Updates, Notes, or rich-text documents. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Search never returns lossless rich text. Request includeRichText=true on one known entity only immediately before a full structural replacement. Use onmove.search only for initial cross-kind discovery, queryless structured listing, or Subject hierarchy projection. Send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility. Initial search tools never accept continuationToken. Natural-language wrappers retain meaningful entity terms. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Use projection={hierarchy,subjects,scopes}; omitted projection fields are false. Inspect projections.*.complete before treating auxiliary paths or Subject uses as exhaustive. Never invent or alter a continuationToken. For another page call onmove.continue_search with only the exact non-null signed token; it preserves the originating search, complete query, and stable cursor. If SEARCH_CURSOR_STALE is returned, restart the original search tool with its criteria. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop global discovery and fetch returned IDs or continue only inside the returned boundary. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Delete only after the user explicitly asks for and confirms the exact target; onmove.delete_entity requires confirm=true and may cascade through owned descendants. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and independent View/Edit/Delete grants by resource, Focus, and Thread.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -4213,6 +4213,75 @@ export function createOnMoveMcpServer(
     },
     async ({ id }) => mutationResult(() => database.commands.updateTodo(
       { id, done: true }, policy(), 'onmove.complete_todo', server.server.getClientVersion()?.name
+    ))
+  )
+
+  const deleteEntityTargetSchema = z.discriminatedUnion('type', [
+    z.strictObject({
+      type: z.literal('focus'),
+      id: idSchema.describe(
+        'The Focus ID. Deleting it also deletes its owned Threads and all descendants.'
+      )
+    }),
+    z.strictObject({
+      type: z.literal('thread'),
+      id: idSchema.describe(
+        'The Thread ID. Deleting it also deletes its Commitments, Routines, Todos, Notes, and evidence.'
+      )
+    }),
+    z.strictObject({
+      type: z.literal('commitment'),
+      id: idSchema.describe(
+        'The tracking Commitment ID. Deleting it also deletes its Todos, Note, and evidence.'
+      )
+    }),
+    z.strictObject({
+      type: z.literal('routine'),
+      id: idSchema.describe(
+        'The Routine ID. Deleting it also deletes its checklist Runs, cells, notes, and owned evidence.'
+      )
+    }),
+    z.strictObject({
+      type: z.literal('update'),
+      id: idSchema.describe(
+        'The Update ID. Its immutable snapshot moves to OnMove\'s bounded 30-day Update Archive.'
+      )
+    }),
+    z.strictObject({
+      type: z.literal('todo'),
+      id: idSchema.describe('The Todo ID. This permanently deletes the Todo.')
+    }),
+    z.strictObject({
+      type: z.literal('note'),
+      id: idSchema.describe('The Note ID. This permanently deletes the Note and its history.')
+    }),
+    z.strictObject({
+      type: z.literal('subject'),
+      id: idSchema.describe(
+        'The canonical Subject ID. Historical Scope, Update, or Todo references prevent deletion; remove active applicability instead when history must remain.'
+      )
+    })
+  ]).describe(
+    'The exact user-addressable record to delete. Type discriminates the meaning of id; use the reference returned by an OnMove read.'
+  )
+
+  server.registerTool(
+    'onmove.delete_entity',
+    {
+      title: 'Delete an OnMove entity',
+      description: 'Delete one exact Focus, Thread, tracking Commitment, Routine, Update, Todo, Note, or unused Subject through OnMove\'s normal domain invariants. Requires the independent Delete grant for that resource and an explicit confirmation. Parent deletion cascades through owned descendants even when their separate Delete grants are denied; every removed Update is rescued into the bounded 30-day Archive. Subject deletion is rejected while durable attribution or applicability history references it.',
+      inputSchema: z.strictObject({
+        target: deleteEntityTargetSchema,
+        confirm: z.literal(true).describe(
+          'Must be true only after the user explicitly confirms deletion of this exact target and understands any described descendants will also be deleted.'
+        )
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false }
+    },
+    async ({ target }) => mutationResult(() => database.commands.deleteEntity(
+      target,
+      policy(),
+      server.server.getClientVersion()?.name
     ))
   )
 

@@ -746,8 +746,8 @@ foreground colors and do not rely on color alone to communicate selection or sta
   run migrations independently. MCP and Electron call the typed application boundary in
   `src/main/application`; neither exposes SQL, raw tables, renderer models, or migration column names.
 - Re-read persisted MCP permissions on every request. Sensitive access is an independent global
-  gate; ordinary access is a resource-specific View/Edit policy for Focus, Thread, Commitment,
-  Routine, Update, Todo, Note, and Subject. Edit also requires View. Resolve global defaults, then
+  gate; ordinary access is a resource-specific View/Edit/Delete policy for Focus, Thread, Commitment,
+  Routine, Update, Todo, Note, and Subject. Edit and Delete also require View. Resolve global defaults, then
   sparse Focus wildcard/resource overrides, then sparse Thread wildcard/resource overrides; the
   most specific non-inherited value wins. Never materialize an override row for every hierarchy
   record. This must support both default-deny Focus whitelists and default-allow Focus blacklists.
@@ -759,8 +759,15 @@ foreground colors and do not rely on color alone to communicate selection or sta
   to plain text, keep queries bounded, and resolve effective sensitivity against live hierarchy
   records at query time. Never accept SQL or field expressions from an MCP caller.
 - MCP writes must go through `OnMoveCommandService`, preserve exact Scope × Subject attribution, and
-  emit metadata-only mutation audits. Do not add destructive MCP tools without an explicit product
-  decision and confirmation design.
+  emit metadata-only mutation audits. Delete is independent from Edit, also requires View, defaults
+  to denied during migration, and must be resolved through the same global, Focus, and Thread
+  hierarchy. `onmove.delete_entity` is the one typed destructive boundary for Focus, Thread,
+  Commitment, Routine, Update, Todo, Note, and Subject; it requires `confirm=true`, declares its
+  destructive annotation, and must only be called after explicit user confirmation of the exact
+  target. A parent Delete grant authorizes that entity's normal domain cascade even when a child
+  resource has a different Delete grant. Always reuse domain repositories so every deleted Update,
+  including cascades, enters the bounded archive. Subject deletion remains referentially protected
+  while Scope, Update, or Todo history exists.
 - Start and stop MCP through the persisted Settings toggle. Bind only to `127.0.0.1`, validate
   localhost Host and Origin headers, expose the configured `/mcp` endpoint only while OnMove is
   running, and stop the listener before closing the shared database. Successful MCP mutations must
@@ -1019,9 +1026,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - Keep mutations narrow, typed, auditable, and opt-in. Route them only through
   `OnMoveCommandService`. The non-destructive surface may create and edit Focuses, Threads,
   Commitments, Routines, Updates, Todos, Notes, and their supported lifecycle metadata only when
-  the effective resource Edit grant is enabled. Never expose generic model dispatch, arbitrary
-  fields, SQL, delete, import, move, or archive clearing without a separate product and confirmation
-  design. Return the refreshed canonical record and diagnostics after a successful mutation.
+  the effective resource Edit grant is enabled. The separately designed `delete_entity` boundary
+  above is the only destructive exception. Never expose generic model dispatch, arbitrary fields,
+  SQL, additional delete surfaces, import, move, or archive clearing without a separate product and
+  confirmation design. Return the refreshed canonical record and diagnostics after a successful mutation.
 - MCP operates beside the live editor, not against a second database connection or a database file
   snapshot. It must share the running main process's repositories and command services. Every
   successful write must synchronously commit, refresh the search projection as designed, and

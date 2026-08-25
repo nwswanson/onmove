@@ -33,7 +33,7 @@ search index, not a general query engine.
 - Do not let an MCP caller bypass archive, status-transition, Scope, review, or hierarchy rules.
 - Do not make the renderer or its view models an MCP dependency.
 - Do not add embeddings or a vector database for the first release.
-- Do not expose destructive delete or cross-parent move tools in the first write-capable release.
+- Do not expose arbitrary/unconfirmed deletion, archive clearing, or unrestricted cross-parent moves.
 - Do not treat the sensitive flag as encryption or an operating-system security boundary.
 
 ## Current readiness
@@ -87,7 +87,7 @@ The exact types can evolve, but the ownership boundary should resemble:
 interface OnMoveAccessPolicy {
   sensitiveContent: 'deny' | 'allow'
   permissionPolicy: {
-    defaults: Record<ResourceType, { view: boolean; edit: boolean }>
+    defaults: Record<ResourceType, { view: boolean; edit: boolean; delete: boolean }>
     overrides: SparseFocusOrThreadOverride[]
   }
 }
@@ -117,6 +117,7 @@ interface OnMoveCommandService {
   reparentUpdate(input: ReparentApplicationUpdate, access: OnMoveAccessPolicy): UpdateSnapshot
   createTodo(input: CreateApplicationTodo, access: OnMoveAccessPolicy): TodoSnapshot
   updateTodo(input: UpdateApplicationTodo, access: OnMoveAccessPolicy): TodoSnapshot
+  deleteEntity(input: DeleteApplicationEntity, access: OnMoveAccessPolicy): DeleteReceipt
   pokeReview(input: PokeApplicationReview, access: OnMoveAccessPolicy): ReviewTargetSnapshot
 }
 ```
@@ -262,8 +263,12 @@ Add writes only after concurrency, invalidation, and audit work is complete:
 - `onmove.update_todo`
 - `onmove.complete_todo`
 - `onmove.poke_review`
+- `onmove.delete_entity` (independent Delete grant plus explicit confirmation)
 
-The server omits generic delete, import, archive-clear, and arbitrary move/status tools. The narrow
+The server omits import, archive-clear, and arbitrary move/status tools. Its single typed
+`delete_entity` boundary accepts only public entity kinds, requires `confirm=true`, resolves an
+independent hierarchical Delete grant, audits the mutation, and delegates to existing repositories
+so cascade-deleted Updates are archived. The narrow
 `reparent_update` correction is an explicit exception: it changes only an existing Update's typed
 parent and exact current Subject cell, preserves the record and rich-text revision, validates both
 source and destination permissions, audits the move, and returns the previous destination for undo.
@@ -327,7 +332,7 @@ must not implicitly grant an external model access.
 The access decision is server configuration, not a tool argument. Do not add an
 `include_sensitive: true` argument that the model can use to grant itself access.
 
-Ordinary View/Edit permission is controlled separately from sensitive access. It is a sparse,
+Ordinary View/Edit/Delete permission is controlled separately from sensitive access. It is a sparse,
 hierarchical capability policy rather than one mutation switch:
 
 ```ts
@@ -335,19 +340,26 @@ hierarchical capability policy rather than one mutation switch:
   sensitiveContent: 'deny' | 'allow',
   permissionPolicy: {
     defaults: {
-      focus: { view: true, edit: false },
+      focus: { view: true, edit: false, delete: false },
       // thread, commitment, routine, update, todo, note, subject
     },
     overrides: [
-      { target: { type: 'focus', id: 12 }, resource: 'all', view: false, edit: false },
-      { target: { type: 'thread', id: 31 }, resource: 'note', view: true, edit: true }
+      {
+        target: { type: 'focus', id: 12 }, resource: 'all',
+        view: false, edit: false, delete: false
+      },
+      {
+        target: { type: 'thread', id: 31 }, resource: 'note',
+        view: true, edit: true, delete: false
+      }
     ]
   }
 }
 ```
 
 Resolve defaults first, then Focus wildcard/resource overrides, then Thread wildcard/resource
-overrides; the most specific non-inherited field wins, and Edit is effective only with View. Store
+overrides; the most specific non-inherited field wins, and Edit and Delete are effective only with
+View. Store
 only explicit exceptions. This supports default-deny whitelists and default-allow blacklists without
 creating a rule for every Focus or Thread.
 
@@ -581,7 +593,7 @@ Exit criteria:
 
 - Keep SQLite transactions short and bounded.
 - Add a generic in-process domain-change notification from MCP to Electron windows.
-- Add the initial non-destructive write tools.
+- Add the initial non-destructive write tools and the separately confirmed delete boundary.
 - Resolve Subject input to exact effective Scope cells in the command service.
 - Add mutation origin auditing.
 - Refresh active UI models and badges after MCP commits.

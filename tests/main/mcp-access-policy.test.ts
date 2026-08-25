@@ -40,7 +40,9 @@ describe('hierarchical MCP permissions', () => {
     const first = hierarchy('First')
     const initial = database.mcpSettings.get()
     expect(Object.keys(initial.permissionPolicy.defaults)).toHaveLength(8)
-    expect(initial.permissionPolicy.defaults.note).toEqual({ view: true, edit: false })
+    expect(initial.permissionPolicy.defaults.note).toEqual({
+      view: true, edit: false, delete: false
+    })
     expect(initial.permissionPolicy.overrides).toEqual([])
 
     const changed = database.mcpSettings.update({
@@ -55,7 +57,8 @@ describe('hierarchical MCP permissions', () => {
       target: { type: 'focus', id: first.focusId },
       resource: 'all',
       view: false,
-      edit: false
+      edit: false,
+      delete: null
     }])
 
     database.mcpSettings.update({
@@ -145,6 +148,72 @@ describe('hierarchical MCP permissions', () => {
       type: 'focus', id: target.focusId
     } })
     expect(database.mcpSettings.get().permissionPolicy.overrides).toEqual([])
+  })
+
+  it('keeps delete independent from edit and resolves it through hierarchy overrides', () => {
+    const target = hierarchy('Deletion target')
+    database.mcpSettings.update({
+      permission: {
+        target: { type: 'default' }, resource: 'note', view: true, edit: true,
+        delete: false
+      }
+    })
+    expect(() => database.commands.deleteEntity(
+      { type: 'note', id: target.noteId },
+      database.mcpSettings.accessPolicy()
+    )).toThrow('note deletion is disabled')
+    expect(database.domain.notes.find(target.noteId)).not.toBeNull()
+
+    database.mcpSettings.update({
+      permission: {
+        target: { type: 'thread', id: target.threadId },
+        resource: 'note', edit: false, delete: true
+      }
+    })
+    expect(database.commands.deleteEntity(
+      { type: 'note', id: target.noteId },
+      database.mcpSettings.accessPolicy()
+    )).toMatchObject({
+      deleted: true,
+      reference: { type: 'note', id: target.noteId },
+      updatesUseArchive: false
+    })
+    expect(database.domain.notes.find(target.noteId)).toBeNull()
+  })
+
+  it('authorizes parent cascades by the parent grant and preserves referentially used Subjects', () => {
+    const target = hierarchy('Cascade deletion target')
+    const update = database.domain.updates.create({
+      parent: { type: 'thread', id: target.threadId },
+      observation: 'Evidence rescued from a parent cascade'
+    }).toSnapshot()
+    database.mcpSettings.update({
+      permission: {
+        target: { type: 'focus', id: target.focusId },
+        resource: 'focus', delete: true
+      }
+    })
+    expect(database.commands.deleteEntity(
+      { type: 'focus', id: target.focusId },
+      database.mcpSettings.accessPolicy()
+    )).toMatchObject({ deleted: true, updatesUseArchive: true })
+    expect(database.domain.archivedUpdates.listForOriginalUpdate(update.id)).toHaveLength(1)
+
+    const retained = hierarchy('Subject history owner')
+    const scoped = database.domain.focusScopes.addSubject(retained.focusId, {
+      name: 'Historically attributed person'
+    })
+    const subject = scoped.subjects[0]
+    database.mcpSettings.update({
+      permission: {
+        target: { type: 'default' }, resource: 'subject', delete: true
+      }
+    })
+    expect(() => database.commands.deleteEntity(
+      { type: 'subject', id: subject.id },
+      database.mcpSettings.accessPolicy()
+    )).toThrow('cannot be deleted while Scope or Update history references it')
+    expect(database.domain.subjects.find(subject.id)).not.toBeNull()
   })
 
   it('filters global search before pagination and changes immediately without reconnecting', () => {

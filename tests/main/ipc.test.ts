@@ -457,14 +457,14 @@ describe('registerAppIpc', () => {
         updatedAt: '2026-08-10T12:00:00.000Z',
         permissionPolicy: {
           defaults: {
-            focus: { view: true, edit: false },
-            thread: { view: true, edit: false },
-            commitment: { view: true, edit: false },
-            routine: { view: true, edit: false },
-            update: { view: true, edit: false },
-            todo: { view: true, edit: false },
-            note: { view: true, edit: false },
-            subject: { view: true, edit: false }
+            focus: { view: true, edit: false, delete: false },
+            thread: { view: true, edit: false, delete: false },
+            commitment: { view: true, edit: false, delete: false },
+            routine: { view: true, edit: false, delete: false },
+            update: { view: true, edit: false, delete: false },
+            todo: { view: true, edit: false, delete: false },
+            note: { view: true, edit: false, delete: false },
+            subject: { view: true, edit: false, delete: false }
           },
           overrides: []
         },
@@ -480,14 +480,14 @@ describe('registerAppIpc', () => {
         updatedAt: '2026-08-10T12:01:00.000Z',
         permissionPolicy: {
           defaults: {
-            focus: { view: true, edit: true },
-            thread: { view: true, edit: true },
-            commitment: { view: true, edit: true },
-            routine: { view: true, edit: true },
-            update: { view: true, edit: true },
-            todo: { view: true, edit: true },
-            note: { view: true, edit: true },
-            subject: { view: true, edit: true }
+            focus: { view: true, edit: true, delete: false },
+            thread: { view: true, edit: true, delete: false },
+            commitment: { view: true, edit: true, delete: false },
+            routine: { view: true, edit: true, delete: false },
+            update: { view: true, edit: true, delete: false },
+            todo: { view: true, edit: true, delete: false },
+            note: { view: true, edit: true, delete: false },
+            subject: { view: true, edit: true, delete: false }
           },
           overrides: []
         },

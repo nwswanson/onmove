@@ -76,13 +76,21 @@ source, so clean clones produce the same Finder and Dock icon without a machine-
    ```
 
 Keep OnMove open while using MCP. The server and sensitive-content access are off by default.
-Under **Default access**, grant View and Edit independently for Focuses, Threads, Commitments,
-Routines, Updates, Todos, Notes, and Subjects. Edit also requires View. Add a Focus override only
+Under **Default access**, grant View, Edit, and Delete independently for Focuses, Threads,
+Commitments, Routines, Updates, Todos, Notes, and Subjects. Edit and Delete also require View;
+Delete defaults to denied. Add a Focus override only
 when it differs from those defaults, then optionally add a more-specific Thread override. This
 sparse hierarchy supports either a whitelist (deny by default, allow selected work) or a blacklist
 (allow by default, deny selected work) without generating a rule for every record. Use **Allow
 sensitive content** only when the connected client should be able to access effectively sensitive
 records. If the default port is occupied, change **Local port** and update the client URL.
+
+`onmove.delete_entity` is the single destructive MCP tool. It accepts a discriminated
+`{ "type", "id" }` target for a Focus, Thread, Commitment, Routine, Update, Todo, Note, or Subject,
+requires that resource's Delete grant, and requires `confirm: true` after the user explicitly
+confirms that exact deletion. Deleting a parent follows OnMove's normal descendant cascade; any
+affected Updates are retained in the 30-day Update Archive. Subjects that still participate in
+Scope, Update, or Todo history remain protected and cannot be hard-deleted.
 
 Use the tool whose name matches what you know:
 

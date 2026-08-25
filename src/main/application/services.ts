@@ -38,6 +38,7 @@ import { richTextPlainText, serializedRichTextEditorState } from '../../shared/r
 import type { DomainStore } from '../data/domain'
 import { ModelNotFoundError, ModelValidationError } from '../data/model'
 import type { SqliteAdapter } from '../data/sqlite-adapter'
+import { UPDATE_ARCHIVE_RETENTION_DAYS } from '../data/update-archive'
 import {
   EffectiveSensitivityRepository,
   type OnMoveAccessPolicy,
@@ -55,6 +56,22 @@ export type ApplicationEntityReference =
   | { type: 'thread'; id: number }
   | { type: 'commitment'; id: number }
   | { type: 'routine'; id: number }
+
+export type ApplicationDeletableEntityReference =
+  | ApplicationEntityReference
+  | { type: 'update'; id: number }
+  | { type: 'todo'; id: number }
+  | { type: 'note'; id: number }
+  | { type: 'subject'; id: number }
+
+export interface ApplicationDeleteEntityResult {
+  deleted: true
+  reference: ApplicationDeletableEntityReference
+  /** Static policy signal; never leaks the count of inaccessible descendants. */
+  updatesUseArchive: boolean
+  archiveRetentionDays: number
+  descendantRecordsMayBeDeleted: boolean
+}
 
 export interface ListFocusesQuery {
   statuses?: readonly string[]
@@ -2799,6 +2816,42 @@ export class OnMoveCommandService {
     })
   }
 
+  deleteEntity(
+    reference: ApplicationDeletableEntityReference,
+    access: OnMoveAccessPolicy,
+    clientName?: string
+  ): ApplicationDeleteEntityResult {
+    this.assertDeletePermission(reference.type, reference.id, access)
+    const affectedSensitive = Boolean(this.sensitivity.isSensitive(
+      reference.type,
+      reference.id
+    ))
+    return this.database.transaction(() => {
+      const deleted = this.deletePersistedEntity(reference)
+      if (!deleted) {
+        const label = reference.type[0].toUpperCase() + reference.type.slice(1)
+        throw new ModelNotFoundError(label, reference.id)
+      }
+      this.audit.record({
+        toolName: 'onmove.delete_entity',
+        entityType: reference.type,
+        entityId: reference.id,
+        category: 'delete',
+        clientName,
+        affectedSensitive
+      })
+      return {
+        deleted: true,
+        reference: structuredClone(reference),
+        updatesUseArchive: ['focus', 'thread', 'commitment', 'routine', 'update']
+          .includes(reference.type),
+        archiveRetentionDays: UPDATE_ARCHIVE_RETENTION_DAYS,
+        descendantRecordsMayBeDeleted: ['focus', 'thread', 'commitment', 'routine']
+          .includes(reference.type)
+      }
+    })
+  }
+
   updateRichText(
     input: UpdateApplicationRichText,
     access: OnMoveAccessPolicy,
@@ -3039,6 +3092,39 @@ export class OnMoveCommandService {
       throw new ModelValidationError(
         `MCP ${resource} editing is disabled for this item in OnMove settings`
       )
+    }
+  }
+
+  private assertDeletePermission(
+    resource: SensitiveEntityType,
+    id: number,
+    access: OnMoveAccessPolicy
+  ): void {
+    assertPositiveId(id, `${resource} id`)
+    if (!this.sensitivity.canRead(resource, id, access)) {
+      const label = resource[0].toUpperCase() + resource.slice(1)
+      throw new ModelNotFoundError(label, id)
+    }
+    if (!access.permissionPolicy && access.mutations !== 'allow') {
+      throw new ModelValidationError('MCP mutations are disabled in OnMove settings')
+    }
+    if (!this.sensitivity.canDelete(resource, id, access)) {
+      throw new ModelValidationError(
+        `MCP ${resource} deletion is disabled for this item in OnMove settings`
+      )
+    }
+  }
+
+  private deletePersistedEntity(reference: ApplicationDeletableEntityReference): boolean {
+    switch (reference.type) {
+      case 'focus': return this.domain.focuses.delete(reference.id)
+      case 'thread': return this.domain.threads.delete(reference.id)
+      case 'commitment': return this.domain.commitments.delete(reference.id)
+      case 'routine': return this.domain.routines.delete(reference.id)
+      case 'update': return this.domain.updates.delete(reference.id)
+      case 'todo': return this.domain.todos.delete(reference.id)
+      case 'note': return this.domain.notes.delete(reference.id)
+      case 'subject': return this.domain.subjects.delete(reference.id)
     }
   }
 

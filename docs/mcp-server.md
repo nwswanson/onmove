@@ -19,22 +19,31 @@ default is already in use.
 
 ## Permissions
 
-The server itself, sensitive access, and write access all default to off. The independent grants live in
+The server itself and sensitive access default to off. Ordinary records default to View allowed,
+with Edit and Delete denied. The independent grants live in
 OnMove → Settings → Model Context Protocol:
 
 - Run MCP server
 - Allow sensitive content
-- Allow safe MCP writes
+- Per-resource View, Edit, and Delete defaults
+- Sparse Focus and Thread overrides
 
 The server reads these settings on every request, so a running session observes revocation without
 being restarted. The View menu's sensitive-content preference does not affect MCP permission.
 Hidden records are indistinguishable from unknown IDs. Effective sensitivity includes Focus,
 Thread, Commitment or Routine, Scope, Subject cell, and record-level sensitivity.
 
-Write access is intentionally limited to creating Updates and Todos, editing or completing Todos,
-editing existing Focus descriptions, Update observations, and Notes, and poking Thread or
-Commitment reviews. There are no delete, move, import, archive-clear, or status transition tools.
-Successful MCP writes store a metadata-only audit row without user-authored text.
+Every mutation goes through the shared application command service. Successful MCP writes and
+deletions store a metadata-only audit row without user-authored text.
+
+Delete is independent from Edit and also requires View. `onmove.delete_entity` accepts one exact,
+discriminated `{ type, id }` target for a Focus, Thread, tracking Commitment, Routine, Update, Todo,
+Note, or unused Subject. It requires `confirm: true` after explicit user confirmation and advertises
+itself as destructive. Parent deletion follows the normal domain cascade even when a descendant
+resource has a separate denied Delete grant. Every affected Update, including a directly deleted
+Update, is rescued into the bounded 30-day Archive. Subject deletion is rejected while Scope,
+Update, or Todo history still references that Subject. There are no MCP import or archive-clear
+tools.
 
 ### Creating Updates
 

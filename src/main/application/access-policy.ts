@@ -48,6 +48,7 @@ interface PermissionDefaultRow {
   resource_type: McpPermissionResource
   can_view: number
   can_edit: number
+  can_delete: number
 }
 
 interface PermissionOverrideRow {
@@ -56,6 +57,13 @@ interface PermissionOverrideRow {
   resource_type: McpPermissionResourceSelector
   can_view: number | null
   can_edit: number | null
+}
+
+interface DeletePermissionOverrideRow {
+  target_id: number
+  focus_id: number | null
+  resource_type: McpPermissionResourceSelector
+  can_delete: number
 }
 
 function timestamp(now = new Date()): string {
@@ -143,14 +151,26 @@ export class McpSettingsRepository {
         const table = input.removePermissionTarget.type === 'focus'
           ? 'mcp_focus_permission_overrides'
           : 'mcp_thread_permission_overrides'
+        const deleteTable = input.removePermissionTarget.type === 'focus'
+          ? 'mcp_focus_delete_permission_overrides'
+          : 'mcp_thread_delete_permission_overrides'
         const idColumn = input.removePermissionTarget.type === 'focus' ? 'focus_id' : 'thread_id'
         this.database.run(
           `DELETE FROM ${table} WHERE ${idColumn} = ?`,
           [input.removePermissionTarget.id]
         )
+        this.database.run(
+          `DELETE FROM ${deleteTable} WHERE ${idColumn} = ?`,
+          [input.removePermissionTarget.id]
+        )
         if (input.removePermissionTarget.type === 'focus') {
           this.database.run(
             `DELETE FROM mcp_thread_permission_overrides
+             WHERE thread_id IN (SELECT id FROM threads WHERE focus_id = ?)`,
+            [input.removePermissionTarget.id]
+          )
+          this.database.run(
+            `DELETE FROM mcp_thread_delete_permission_overrides
              WHERE thread_id IN (SELECT id FROM threads WHERE focus_id = ?)`,
             [input.removePermissionTarget.id]
           )
@@ -179,22 +199,26 @@ export class McpSettingsRepository {
   private permissionPolicy(): McpPermissionPolicySnapshot {
     const defaults = {} as Record<McpPermissionResource, McpPermissionGrant>
     for (const row of this.database.all<PermissionDefaultRow>(
-      `SELECT resource_type, can_view, can_edit
+      `SELECT resource_type, can_view, can_edit, can_delete
        FROM mcp_permission_defaults ORDER BY resource_type`
     )) {
       defaults[row.resource_type] = {
         view: Boolean(row.can_view),
-        edit: Boolean(row.can_edit)
+        edit: Boolean(row.can_edit),
+        delete: Boolean(row.can_delete)
       }
     }
     for (const resource of MCP_PERMISSION_RESOURCES) {
-      defaults[resource] ??= { view: true, edit: false }
+      defaults[resource] ??= { view: true, edit: false, delete: false }
     }
     const overrides: McpPermissionOverrideSnapshot[] = []
     for (const target of ['focus', 'thread'] as const) {
       const table = target === 'focus'
         ? 'mcp_focus_permission_overrides'
         : 'mcp_thread_permission_overrides'
+      const deleteTable = target === 'focus'
+        ? 'mcp_focus_delete_permission_overrides'
+        : 'mcp_thread_delete_permission_overrides'
       const rows = this.database.all<PermissionOverrideRow>(
         target === 'focus'
           ? `SELECT focus_id AS target_id, focus_id, resource_type, can_view, can_edit
@@ -215,8 +239,39 @@ export class McpSettingsRepository {
             },
         resource: row.resource_type,
         view: row.can_view === null ? null : Boolean(row.can_view),
-        edit: row.can_edit === null ? null : Boolean(row.can_edit)
+        edit: row.can_edit === null ? null : Boolean(row.can_edit),
+        delete: null
       })))
+      const deleteRows = this.database.all<DeletePermissionOverrideRow>(
+        target === 'focus'
+          ? `SELECT focus_id AS target_id, focus_id, resource_type, can_delete
+             FROM ${deleteTable} ORDER BY focus_id, resource_type`
+          : `SELECT permission.thread_id AS target_id, thread.focus_id,
+                    permission.resource_type, permission.can_delete
+             FROM ${deleteTable} permission
+             JOIN threads thread ON thread.id = permission.thread_id
+             ORDER BY permission.thread_id, permission.resource_type`
+      )
+      for (const row of deleteRows) {
+        const existing = overrides.findIndex((override) =>
+          override.target.type === target && override.target.id === Number(row.target_id) &&
+          override.resource === row.resource_type)
+        if (existing >= 0) {
+          overrides[existing] = { ...overrides[existing], delete: Boolean(row.can_delete) }
+          continue
+        }
+        overrides.push({
+          target: target === 'focus'
+            ? { type: 'focus', id: Number(row.target_id) }
+            : {
+                type: 'thread', id: Number(row.target_id), focusId: Number(row.focus_id)
+              },
+          resource: row.resource_type,
+          view: null,
+          edit: null,
+          delete: Boolean(row.can_delete)
+        })
+      }
     }
     return { defaults, overrides }
   }
@@ -235,15 +290,22 @@ export class McpSettingsRepository {
     } else if (input.target.type !== 'default') {
       throw new TypeError('permission target is unsupported')
     }
-    for (const [field, value] of [['view', input.view], ['edit', input.edit]] as const) {
+    for (const [field, value] of [
+      ['view', input.view],
+      ['edit', input.edit],
+      ['delete', input.delete]
+    ] as const) {
       if (value !== undefined && value !== null && typeof value !== 'boolean') {
         throw new TypeError(`permission ${field} must be a boolean or null`)
       }
     }
-    if (input.view === undefined && input.edit === undefined) {
-      throw new TypeError('permission must change view or edit')
+    if (input.view === undefined && input.edit === undefined && input.delete === undefined) {
+      throw new TypeError('permission must change view, edit, or delete')
     }
-    if (input.target.type === 'default' && (input.view === null || input.edit === null)) {
+    if (
+      input.target.type === 'default' &&
+      (input.view === null || input.edit === null || input.delete === null)
+    ) {
       throw new TypeError('default permissions cannot inherit')
     }
   }
@@ -264,11 +326,15 @@ export class McpSettingsRepository {
       for (const resource of resources) {
         this.database.run(
           `UPDATE mcp_permission_defaults
-           SET can_view = COALESCE(?, can_view), can_edit = COALESCE(?, can_edit), updated_at = ?
+           SET can_view = COALESCE(?, can_view),
+               can_edit = COALESCE(?, can_edit),
+               can_delete = COALESCE(?, can_delete),
+               updated_at = ?
            WHERE resource_type = ?`,
           [
             input.view === undefined ? null : input.view ? 1 : 0,
             input.edit === undefined ? null : input.edit ? 1 : 0,
+            input.delete === undefined ? null : input.delete ? 1 : 0,
             changedAt,
             resource
           ]
@@ -279,32 +345,57 @@ export class McpSettingsRepository {
     const table = input.target.type === 'focus'
       ? 'mcp_focus_permission_overrides'
       : 'mcp_thread_permission_overrides'
+    const deleteTable = input.target.type === 'focus'
+      ? 'mcp_focus_delete_permission_overrides'
+      : 'mcp_thread_delete_permission_overrides'
     const idColumn = input.target.type === 'focus' ? 'focus_id' : 'thread_id'
-    const current = this.database.get<{ can_view: number | null; can_edit: number | null }>(
-      `SELECT can_view, can_edit FROM ${table} WHERE ${idColumn} = ? AND resource_type = ?`,
-      [input.target.id, input.resource]
-    )
-    const view = input.view === undefined
-      ? current?.can_view ?? null
-      : input.view === null ? null : input.view ? 1 : 0
-    const edit = input.edit === undefined
-      ? current?.can_edit ?? null
-      : input.edit === null ? null : input.edit ? 1 : 0
-    if (view === null && edit === null) {
+    if (input.view !== undefined || input.edit !== undefined) {
+      const current = this.database.get<{
+        can_view: number | null
+        can_edit: number | null
+      }>(
+        `SELECT can_view, can_edit
+         FROM ${table} WHERE ${idColumn} = ? AND resource_type = ?`,
+        [input.target.id, input.resource]
+      )
+      const view = input.view === undefined
+        ? current?.can_view ?? null
+        : input.view === null ? null : input.view ? 1 : 0
+      const edit = input.edit === undefined
+        ? current?.can_edit ?? null
+        : input.edit === null ? null : input.edit ? 1 : 0
+      if (view === null && edit === null) {
+        this.database.run(
+          `DELETE FROM ${table} WHERE ${idColumn} = ? AND resource_type = ?`,
+          [input.target.id, input.resource]
+        )
+      } else {
+        this.database.run(
+          `INSERT INTO ${table} (${idColumn}, resource_type, can_view, can_edit, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT (${idColumn}, resource_type) DO UPDATE SET
+             can_view = excluded.can_view,
+             can_edit = excluded.can_edit,
+             updated_at = excluded.updated_at`,
+          [input.target.id, input.resource, view, edit, changedAt]
+        )
+      }
+    }
+    if (input.delete === undefined) return
+    if (input.delete === null) {
       this.database.run(
-        `DELETE FROM ${table} WHERE ${idColumn} = ? AND resource_type = ?`,
+        `DELETE FROM ${deleteTable} WHERE ${idColumn} = ? AND resource_type = ?`,
         [input.target.id, input.resource]
       )
       return
     }
     this.database.run(
-      `INSERT INTO ${table} (${idColumn}, resource_type, can_view, can_edit, updated_at)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO ${deleteTable} (${idColumn}, resource_type, can_delete, updated_at)
+       VALUES (?, ?, ?, ?)
        ON CONFLICT (${idColumn}, resource_type) DO UPDATE SET
-         can_view = excluded.can_view,
-         can_edit = excluded.can_edit,
+         can_delete = excluded.can_delete,
          updated_at = excluded.updated_at`,
-      [input.target.id, input.resource, view, edit, changedAt]
+      [input.target.id, input.resource, input.delete ? 1 : 0, changedAt]
     )
   }
 }
@@ -345,6 +436,13 @@ export class EffectiveSensitivityRepository {
       this.canEditResource(type, access, this.contextFor(type, id))
   }
 
+  canDelete(type: SensitiveEntityType, id: number, access: OnMoveAccessPolicy): boolean {
+    const sensitive = this.isSensitive(type, id)
+    return sensitive !== null &&
+      (access.sensitiveContent === 'allow' || !sensitive) &&
+      this.canDeleteResource(type, access, this.contextFor(type, id))
+  }
+
   canViewResource(
     resource: McpPermissionResource,
     access: OnMoveAccessPolicy,
@@ -360,6 +458,15 @@ export class EffectiveSensitivityRepository {
   ): boolean {
     const grant = this.resolveGrant(resource, access, context)
     return grant.view && grant.edit
+  }
+
+  canDeleteResource(
+    resource: McpPermissionResource,
+    access: OnMoveAccessPolicy,
+    context: McpPermissionContext
+  ): boolean {
+    const grant = this.resolveGrant(resource, access, context)
+    return grant.view && grant.delete
   }
 
   contextFor(type: SensitiveEntityType, id: number): McpPermissionContext {
@@ -432,10 +539,15 @@ export class EffectiveSensitivityRepository {
   ): McpPermissionGrant {
     const policy = access.permissionPolicy
     if (!policy) {
-      return { view: true, edit: access.mutations === 'allow' }
+      return {
+        view: true,
+        edit: access.mutations === 'allow',
+        delete: access.mutations === 'allow'
+      }
     }
     let view = policy.defaults[resource].view
     let edit = policy.defaults[resource].edit
+    let deleteGrant = policy.defaults[resource].delete
     const apply = (target: 'focus' | 'thread', id: number | null): void => {
       if (id === null) return
       for (const selector of ['all', resource] as const) {
@@ -445,11 +557,12 @@ export class EffectiveSensitivityRepository {
         if (!row) continue
         if (row.view !== null) view = row.view
         if (row.edit !== null) edit = row.edit
+        if (row.delete !== null) deleteGrant = row.delete
       }
     }
     apply('focus', context.focusId)
     apply('thread', context.threadId)
-    return { view, edit }
+    return { view, edit, delete: deleteGrant }
   }
 
   private query(type: SensitiveEntityType): string {

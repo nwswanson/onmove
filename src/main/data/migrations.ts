@@ -3721,6 +3721,39 @@ const migrations: readonly Migration[] = [
           WHERE thread_id IS NOT NULL;
       `)
     }
+  },
+  {
+    version: 42,
+    name: 'mcp_delete_permissions',
+    up(database) {
+      database.exec(`
+        ALTER TABLE mcp_permission_defaults
+          ADD COLUMN can_delete INTEGER NOT NULL DEFAULT 0
+            CHECK (can_delete IN (0, 1));
+
+        CREATE TABLE mcp_focus_delete_permission_overrides (
+          focus_id INTEGER NOT NULL REFERENCES focuses(id) ON DELETE CASCADE,
+          resource_type TEXT NOT NULL CHECK (resource_type IN (
+            'all', 'focus', 'thread', 'commitment', 'routine',
+            'update', 'todo', 'note', 'subject'
+          )),
+          can_delete INTEGER NOT NULL CHECK (can_delete IN (0, 1)),
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (focus_id, resource_type)
+        ) STRICT, WITHOUT ROWID;
+
+        CREATE TABLE mcp_thread_delete_permission_overrides (
+          thread_id INTEGER NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+          resource_type TEXT NOT NULL CHECK (resource_type IN (
+            'all', 'focus', 'thread', 'commitment', 'routine',
+            'update', 'todo', 'note', 'subject'
+          )),
+          can_delete INTEGER NOT NULL CHECK (can_delete IN (0, 1)),
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (thread_id, resource_type)
+        ) STRICT, WITHOUT ROWID;
+      `)
+    }
   }
 ]
 

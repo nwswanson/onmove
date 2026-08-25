@@ -73,10 +73,12 @@ describe('database migrations', () => {
 
     const legacy = new DatabaseSync(databasePath)
     legacy.exec(`
+      DROP TABLE mcp_thread_delete_permission_overrides;
+      DROP TABLE mcp_focus_delete_permission_overrides;
       DROP TABLE mcp_thread_permission_overrides;
       DROP TABLE mcp_focus_permission_overrides;
       DROP TABLE mcp_permission_defaults;
-      DELETE FROM schema_migrations WHERE version = 38;
+      DELETE FROM schema_migrations WHERE version IN (38, 42);
       UPDATE mcp_settings SET allow_mutations = 1;
     `)
     legacy.close()
@@ -88,6 +90,7 @@ describe('database migrations', () => {
       expect.arrayContaining([expect.objectContaining({ view: true, edit: true })])
     )
     expect(Object.values(policy.defaults).every(({ view, edit }) => view && edit)).toBe(true)
+    expect(Object.values(policy.defaults).every((grant) => !grant.delete)).toBe(true)
     expect(policy.overrides).toEqual([])
     migrated.close()
   })

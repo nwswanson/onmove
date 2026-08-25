@@ -96,11 +96,14 @@ function PermissionOverrideEditor({
   const rows = model.state?.permissionPolicy.overrides.filter((override) =>
     override.target.type === target.type && override.target.id === target.id
   ) ?? []
-  const value = (resource: McpPermissionResourceSelector, field: 'view' | 'edit'): boolean | null =>
+  const value = (
+    resource: McpPermissionResourceSelector,
+    field: 'view' | 'edit' | 'delete'
+  ): boolean | null =>
     rows.find((row) => row.resource === resource)?.[field] ?? null
   const write = (
     resource: McpPermissionResourceSelector,
-    field: 'view' | 'edit',
+    field: 'view' | 'edit' | 'delete',
     next: boolean | null
   ): void => {
     void model.update({
@@ -124,6 +127,12 @@ function PermissionOverrideEditor({
           disabled={model.saving}
           onChange={(next) => write('all', 'edit', next)}
         />
+        <PermissionChoice
+          label={`${title} delete access`}
+          value={value('all', 'delete')}
+          disabled={model.saving}
+          onChange={(next) => write('all', 'delete', next)}
+        />
         <Button
           type="button"
           variant="ghost"
@@ -142,7 +151,7 @@ function PermissionOverrideEditor({
         </summary>
         <div className="mt-2 divide-y divide-border/50 border-y border-border/50">
           {MCP_PERMISSION_RESOURCES.map((resource) => (
-            <div key={resource} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 py-2">
+            <div key={resource} className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-2 py-2">
               <span className="text-xs">{permissionLabels[resource]}</span>
               <PermissionChoice
                 label={`${title} ${permissionLabels[resource]} view access`}
@@ -156,6 +165,12 @@ function PermissionOverrideEditor({
                 disabled={model.saving}
                 onChange={(next) => write(resource, 'edit', next)}
               />
+              <PermissionChoice
+                label={`${title} ${permissionLabels[resource]} delete access`}
+                value={value(resource, 'delete')}
+                disabled={model.saving}
+                onChange={(next) => write(resource, 'delete', next)}
+              />
             </div>
           ))}
         </div>
@@ -167,7 +182,7 @@ function PermissionOverrideEditor({
 function McpPermissionSettings({ model }: { model: McpSettingsModel }): React.JSX.Element {
   const [focusId, setFocusId] = useState<number | null>(null)
   const [preset, setPreset] = useState<'allow' | 'deny'>('deny')
-  const [defaultPreset, setDefaultPreset] = useState<'deny' | 'view' | 'edit'>('view')
+  const [defaultPreset, setDefaultPreset] = useState<'deny' | 'view' | 'edit' | 'full'>('view')
   const policy = model.state?.permissionPolicy
   const focusIds = useMemo(() => [...new Set(policy?.overrides.map((override) =>
     override.target.type === 'focus' ? override.target.id : override.target.focusId
@@ -186,7 +201,7 @@ function McpPermissionSettings({ model }: { model: McpSettingsModel }): React.JS
         <div>
           <h3 className="text-sm font-medium">Default access</h3>
           <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-            View and edit are independent per record type. Edit also requires View.
+            View, edit, and delete are independent per record type. Edit and delete require View.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -196,12 +211,13 @@ function McpPermissionSettings({ model }: { model: McpSettingsModel }): React.JS
             value={defaultPreset}
             disabled={model.saving}
             onChange={(event) => setDefaultPreset(
-              event.target.value as 'deny' | 'view' | 'edit'
+              event.target.value as 'deny' | 'view' | 'edit' | 'full'
             )}
           >
             <option value="deny">Deny all</option>
             <option value="view">View only</option>
             <option value="edit">View and edit</option>
+            <option value="full">View, edit, and delete</option>
           </select>
           <Button
             type="button"
@@ -214,7 +230,8 @@ function McpPermissionSettings({ model }: { model: McpSettingsModel }): React.JS
                 target: { type: 'default' },
                 resource: 'all',
                 view: defaultPreset !== 'deny',
-                edit: defaultPreset === 'edit'
+                edit: defaultPreset === 'edit' || defaultPreset === 'full',
+                delete: defaultPreset === 'full'
               }
             })}
           >
@@ -226,7 +243,7 @@ function McpPermissionSettings({ model }: { model: McpSettingsModel }): React.JS
         {policy && MCP_PERMISSION_RESOURCES.map((resource) => {
           const grant = policy.defaults[resource]
           return (
-            <div key={resource} className="grid grid-cols-[1fr_5rem_5rem] items-center gap-3 py-2.5">
+            <div key={resource} className="grid grid-cols-[1fr_5rem_5rem_5rem] items-center gap-3 py-2.5">
               <span className="text-sm">{permissionLabels[resource]}</span>
               <label className="flex items-center gap-2 text-xs">
                 <input
@@ -240,7 +257,7 @@ function McpPermissionSettings({ model }: { model: McpSettingsModel }): React.JS
                       target: { type: 'default' },
                       resource,
                       view: event.target.checked,
-                      ...(event.target.checked ? {} : { edit: false })
+                      ...(event.target.checked ? {} : { edit: false, delete: false })
                     }
                   })}
                 />
@@ -262,6 +279,23 @@ function McpPermissionSettings({ model }: { model: McpSettingsModel }): React.JS
                   })}
                 />
                 Edit
+              </label>
+              <label className="flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-primary"
+                  aria-label={`Delete ${permissionLabels[resource]} by default`}
+                  checked={grant.delete && grant.view}
+                  disabled={model.saving || !grant.view}
+                  onChange={(event) => void model.update({
+                    permission: {
+                      target: { type: 'default' },
+                      resource,
+                      delete: event.target.checked
+                    }
+                  })}
+                />
+                Delete
               </label>
             </div>
           )
@@ -309,7 +343,8 @@ function McpPermissionSettings({ model }: { model: McpSettingsModel }): React.JS
                   target: { type: 'focus', id: focusId },
                   resource: 'all',
                   view: preset === 'allow',
-                  edit: preset === 'allow'
+                  edit: preset === 'allow',
+                  delete: preset === 'allow'
                 }
               })
               setFocusId(null)
@@ -408,7 +443,8 @@ function FocusPermissionGroup({
                   target: { type: 'thread', id: threadId },
                   resource: 'all',
                   view: preset === 'allow',
-                  edit: preset === 'allow'
+                  edit: preset === 'allow',
+                  delete: preset === 'allow'
                 }
               })
               setThreadId(null)

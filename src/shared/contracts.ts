@@ -1435,6 +1435,7 @@ export type McpPermissionResourceSelector = McpPermissionResource | 'all'
 export interface McpPermissionGrant {
   view: boolean
   edit: boolean
+  delete: boolean
 }
 
 export interface McpPermissionOverrideSnapshot {
@@ -1446,6 +1447,8 @@ export interface McpPermissionOverrideSnapshot {
   view: boolean | null
   /** Null means inherit from the next less-specific policy. */
   edit: boolean | null
+  /** Null means inherit from the next less-specific policy. */
+  delete: boolean | null
 }
 
 /**
@@ -1462,6 +1465,7 @@ export interface UpdateMcpPermissionInput {
   resource: McpPermissionResourceSelector
   view?: boolean | null
   edit?: boolean | null
+  delete?: boolean | null
 }
 
 export interface UpdateMcpSettingsInput {

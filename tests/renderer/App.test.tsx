@@ -454,14 +454,14 @@ function installApi(
     updatedAt: '2026-08-10T12:00:00.000Z',
     permissionPolicy: {
       defaults: {
-        focus: { view: true, edit: false },
-        thread: { view: true, edit: false },
-        commitment: { view: true, edit: false },
-        routine: { view: true, edit: false },
-        update: { view: true, edit: false },
-        todo: { view: true, edit: false },
-        note: { view: true, edit: false },
-        subject: { view: true, edit: false }
+        focus: { view: true, edit: false, delete: false },
+        thread: { view: true, edit: false, delete: false },
+        commitment: { view: true, edit: false, delete: false },
+        routine: { view: true, edit: false, delete: false },
+        update: { view: true, edit: false, delete: false },
+        todo: { view: true, edit: false, delete: false },
+        note: { view: true, edit: false, delete: false },
+        subject: { view: true, edit: false, delete: false }
       },
       overrides: []
     },
@@ -519,7 +519,7 @@ function installApi(
         const serverPort = input.serverPort ?? mcpState.serverPort
         let permissionPolicy = mcpState.permissionPolicy
         if (input.permission) {
-          const { target, resource, view, edit } = input.permission
+          const { target, resource, view, edit, delete: deleteGrant } = input.permission
           if (target.type === 'default') {
             const resources: McpPermissionResource[] = resource === 'all'
               ? Object.keys(permissionPolicy.defaults) as Array<keyof typeof permissionPolicy.defaults>
@@ -528,7 +528,8 @@ function installApi(
             for (const key of resources) {
               defaults[key] = {
                 view: view ?? defaults[key].view,
-                edit: edit ?? defaults[key].edit
+                edit: edit ?? defaults[key].edit,
+                delete: deleteGrant ?? defaults[key].delete
               }
             }
             permissionPolicy = { ...permissionPolicy, defaults }
@@ -555,7 +556,8 @@ function installApi(
               target: snapshotTarget,
               resource,
               view: view === undefined ? existing?.view ?? null : view,
-              edit: edit === undefined ? existing?.edit ?? null : edit
+              edit: edit === undefined ? existing?.edit ?? null : edit,
+              delete: deleteGrant === undefined ? existing?.delete ?? null : deleteGrant
             }
             permissionPolicy = {
               ...permissionPolicy,
@@ -564,7 +566,7 @@ function installApi(
                   override.target.type === target.type && override.target.id === target.id &&
                   override.resource === resource
                 )),
-                ...(next.view === null && next.edit === null ? [] : [next])
+                ...(next.view === null && next.edit === null && next.delete === null ? [] : [next])
               ]
             }
           }
@@ -5555,8 +5557,10 @@ describe('App', () => {
     const serverEnabled = screen.getByRole('checkbox', { name: /Run MCP server/i })
     const sensitiveAccess = screen.getByRole('checkbox', { name: /Allow sensitive content/i })
     const updateEditAccess = screen.getByRole('checkbox', { name: 'Edit Updates by default' })
+    const updateDeleteAccess = screen.getByRole('checkbox', { name: 'Delete Updates by default' })
     expect(sensitiveAccess).not.toBeChecked()
     expect(updateEditAccess).not.toBeChecked()
+    expect(updateDeleteAccess).not.toBeChecked()
     await user.click(serverEnabled)
     expect(api.mcp.update).toHaveBeenCalledWith({ serverEnabled: true })
     expect(await screen.findByText('http://127.0.0.1:47832/mcp')).toBeVisible()
@@ -5572,6 +5576,14 @@ describe('App', () => {
         target: { type: 'default' },
         resource: 'update',
         edit: true
+      }
+    })
+    await user.click(screen.getByRole('checkbox', { name: 'Delete Updates by default' }))
+    expect(api.mcp.update).toHaveBeenCalledWith({
+      permission: {
+        target: { type: 'default' },
+        resource: 'update',
+        delete: true
       }
     })
     expect(screen.getByText('1 of 10 snapshots')).toBeVisible()
@@ -5610,7 +5622,8 @@ describe('App', () => {
         target: { type: 'default' },
         resource: 'all',
         view: false,
-        edit: false
+        edit: false,
+        delete: false
       }
     })
     const focusPicker = await screen.findByRole('combobox', {
@@ -5624,7 +5637,8 @@ describe('App', () => {
         target: { type: 'focus', id: accessFocus.id },
         resource: 'all',
         view: false,
-        edit: false
+        edit: false,
+        delete: false
       }
     })
 
@@ -5642,7 +5656,8 @@ describe('App', () => {
         target: { type: 'thread', id: accessThread.id },
         resource: 'all',
         view: true,
-        edit: true
+        edit: true,
+        delete: true
       }
     })
 
@@ -5659,6 +5674,19 @@ describe('App', () => {
         target: { type: 'focus', id: accessFocus.id },
         resource: 'note',
         view: true
+      }
+    })
+    await user.selectOptions(
+      screen.getByRole('combobox', {
+        name: `${accessFocus.title} Notes delete access`
+      }),
+      'allow'
+    )
+    expect(api.mcp.update).toHaveBeenCalledWith({
+      permission: {
+        target: { type: 'focus', id: accessFocus.id },
+        resource: 'note',
+        delete: true
       }
     })
   })
