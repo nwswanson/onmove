@@ -5542,7 +5542,7 @@ describe('App', () => {
     })
   })
 
-  it('opens backup settings and runs named backup and storage actions from the footer', async () => {
+  it('opens backup settings without exposing raw data-folder actions in the app shell', async () => {
     const api = installApi()
     const user = userEvent.setup()
     render(<App />)
@@ -5593,9 +5593,9 @@ describe('App', () => {
     expect(api.backups.createNow).toHaveBeenCalledOnce()
     await user.click(screen.getByRole('button', { name: 'Show backups' }))
     expect(api.backups.showFolder).toHaveBeenCalledOnce()
-
-    await user.click(screen.getByRole('button', { name: 'Data & storage' }))
-    expect(api.showDataFolder).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('button', { name: 'Data & storage' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Show data in Finder' })).not.toBeInTheDocument()
+    expect(api.showDataFolder).not.toHaveBeenCalled()
 
     await user.click(screen.getByRole('button', { name: 'Todos' }))
     expect(await screen.findByRole('heading', { name: 'Todos' })).toBeVisible()
@@ -5698,7 +5698,8 @@ describe('App', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'The local database could not be opened.'
     )
-    expect(screen.getByRole('button', { name: 'Data & storage' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Data & storage' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Show data in Finder' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'New focus' })).toBeDisabled()
   })
 

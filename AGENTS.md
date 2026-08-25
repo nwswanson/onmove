@@ -26,8 +26,10 @@
 - Give every primary Focus row the receiver-owned context menu used by Focus Overall. Its review
   checkbox controls descendant review tracking for the whole Focus; keep the Overall entry as a
   second access point to the same setting.
-- Put workspace utilities such as Settings, help, and data/storage actions at the bottom of the
-  sidebar.
+- Keep Settings as the only primary-sidebar footer destination. Do not expose raw data-folder
+  actions such as `Show data in Finder` or `Data & storage` in the toolbar or primary sidebar;
+  data-folder access may remain in the native application menu, and backup-folder access belongs
+  within Settings.
 - Expose `Archive` as a top-level item destination. It renders only deleted Updates retained by the
   bounded archive projection, never editable Update controls. The receiver owns permanent per-row
   deletion and a confirmed Clear all action; sensitive archive rows follow the application-wide

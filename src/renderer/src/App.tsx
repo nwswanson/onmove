@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
-import { AlertTriangle, FolderOpen, Info, Search, Settings } from 'lucide-react'
+import { AlertTriangle, Info, Search, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   contextDrawerReducer,
@@ -62,7 +62,6 @@ interface AppToolbarProps {
   enabled: boolean
   onOpenCommandPalette: () => void
   onToggleContext: () => void
-  onShowData: () => void
 }
 
 function AppToolbar({
@@ -70,8 +69,7 @@ function AppToolbar({
   contextOpen,
   enabled,
   onOpenCommandPalette,
-  onToggleContext,
-  onShowData
+  onToggleContext
 }: AppToolbarProps): React.JSX.Element {
   return (
     <Toolbar aria-label="Application toolbar">
@@ -102,18 +100,6 @@ function AppToolbar({
           onClick={onToggleContext}
         >
           <Info aria-hidden="true" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8 text-muted-foreground"
-          aria-label="Show data in Finder"
-          title="Show data in Finder"
-          disabled={!enabled}
-          onClick={onShowData}
-        >
-          <FolderOpen aria-hidden="true" />
         </Button>
       </ToolbarGroup>
     </Toolbar>
@@ -149,7 +135,6 @@ interface AppSidebarProps {
     checked?: boolean
   ) => void
   onNewFocus: () => void
-  onShowData: () => void
 }
 
 function AppSidebar({
@@ -172,8 +157,7 @@ function AppSidebar({
   onSelectPinned,
   onPinnedContextMenuAction,
   onFocusContextMenuAction,
-  onNewFocus,
-  onShowData
+  onNewFocus
 }: AppSidebarProps): React.JSX.Element {
   const selectedItemId =
     selectedView === 'todos' || selectedView === 'tags' ||
@@ -298,12 +282,6 @@ function AppSidebar({
             >
               <Settings aria-hidden="true" />
               <span>Settings</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton type="button" onClick={onShowData} disabled={!enabled}>
-              <FolderOpen aria-hidden="true" />
-              <span>Data &amp; storage</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -510,7 +488,6 @@ export function App(): React.JSX.Element {
             enabled={application.enabled}
             onOpenCommandPalette={() => setCommandPaletteOpen(true)}
             onToggleContext={() => dispatchContextDrawer({ type: 'toggle' })}
-            onShowData={() => void application.showDataFolder()}
           />
         }
         primarySidebar={
@@ -611,7 +588,6 @@ export function App(): React.JSX.Element {
               }
             }}
             onNewFocus={() => setNewFocusOpen(true)}
-            onShowData={() => void application.showDataFolder()}
           />
         }
         primarySidebarResize={{

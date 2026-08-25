@@ -51,7 +51,6 @@ export interface ApplicationModel {
   deleteFocus: (focusId: number) => Promise<void>
   setNavigationPin: (target: NavigationPinTarget, pinned: boolean) => Promise<void>
   refreshNavigationPins: () => Promise<void>
-  showDataFolder: () => Promise<void>
 }
 
 /**
@@ -413,7 +412,6 @@ export function useApplicationModel(): ApplicationModel {
     refreshFocusStatusSummary,
     deleteFocus,
     setNavigationPin,
-    refreshNavigationPins,
-    showDataFolder: () => window.onmove.showDataFolder()
+    refreshNavigationPins
   }
 }
