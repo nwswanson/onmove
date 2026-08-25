@@ -16,6 +16,7 @@ import type {
   OnMoveApi,
   ReviewQueueItemSnapshot,
   RichTextDocumentSnapshot,
+  SidebarFolderSnapshot,
   RoutineSnapshot,
   SubjectSnapshot,
   ThreadSnapshot,
@@ -483,6 +484,13 @@ function installApi(
       set: vi.fn().mockResolvedValue([]),
       onChanged: vi.fn(() => () => undefined)
     },
+    sidebarFolders: {
+      list: vi.fn().mockResolvedValue([]),
+      create: vi.fn().mockResolvedValue([]),
+      delete: vi.fn().mockResolvedValue([]),
+      setMembership: vi.fn().mockResolvedValue([]),
+      onChanged: vi.fn(() => () => undefined)
+    },
     backups: {
       getState: vi.fn().mockResolvedValue({
         automatic: true,
@@ -650,6 +658,125 @@ describe('App', () => {
     expect(screen.getByLabelText('Primary sidebar')).toBeInTheDocument()
     expect(screen.getByRole('toolbar', { name: 'Application toolbar' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'New focus' })).toBeDisabled()
+  })
+
+  it('creates and deletes visual Focus folders without deleting their Focuses', async () => {
+    const alpha = focus({ id: 1, title: 'Alpha' })
+    const beta = focus({ id: 2, title: 'Beta' })
+    let folders: SidebarFolderSnapshot[] = []
+    const createFolder = vi.fn(async (input: { name: string }) => {
+      folders = [{
+        id: 7,
+        name: input.name,
+        area: { type: 'focus' },
+        targetIds: [],
+        createdAt: '2026-08-25T12:00:00.000Z',
+        updatedAt: '2026-08-25T12:00:00.000Z'
+      }]
+      return folders
+    })
+    const deleteFolder = vi.fn(async () => {
+      folders = []
+      return folders
+    })
+    installApi(
+      { listFocuses: vi.fn().mockResolvedValue([alpha, beta]) },
+      {
+        sidebarFolders: {
+          list: vi.fn(async () => folders),
+          create: createFolder,
+          delete: deleteFolder,
+          setMembership: vi.fn(async () => folders),
+          onChanged: vi.fn(() => () => undefined)
+        }
+      }
+    )
+    const user = userEvent.setup()
+    render(<App />)
+
+    await screen.findByRole('button', { name: 'Alpha' })
+    await user.click(screen.getByRole('button', { name: 'New folder' }))
+    const dialog = screen.getByRole('dialog', { name: 'New folder' })
+    await user.type(within(dialog).getByLabelText('Name'), 'Planning 2026')
+    await user.click(within(dialog).getByRole('button', { name: 'Create folder' }))
+
+    const folder = await screen.findByRole('button', { name: 'Planning 2026 folder' })
+    expect(createFolder).toHaveBeenCalledWith({
+      area: { type: 'focus' },
+      name: 'Planning 2026'
+    })
+    fireEvent.contextMenu(folder)
+    await user.click(screen.getByRole('menuitem', { name: 'Delete folder' }))
+    expect(deleteFolder).toHaveBeenCalledWith(7)
+    await waitFor(() => expect(screen.queryByRole('button', {
+      name: 'Planning 2026 folder'
+    })).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Alpha' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Beta' })).toBeVisible()
+    expect(screen.queryByRole('dialog', { name: /delete/i })).not.toBeInTheDocument()
+  })
+
+  it('shows per-Focus Thread folders and exposes their creation beside New thread', async () => {
+    const currentFocus = focus({ id: 1, title: 'Project Atlas' })
+    const alpha = thread({ id: 11, focusId: 1, title: 'Alpha Thread' })
+    const beta = thread({ id: 12, focusId: 1, title: 'Beta Thread' })
+    let folders: SidebarFolderSnapshot[] = [{
+      id: 9,
+      name: 'Delivery',
+      area: { type: 'thread', focusId: 1 },
+      targetIds: [alpha.id],
+      createdAt: '2026-08-25T12:00:00.000Z',
+      updatedAt: '2026-08-25T12:00:00.000Z'
+    }]
+    const createFolder = vi.fn(async (input) => {
+      folders = [...folders, {
+        id: 10,
+        name: input.name,
+        area: { type: 'thread' as const, focusId: 1 },
+        targetIds: [],
+        createdAt: '2026-08-25T12:01:00.000Z',
+        updatedAt: '2026-08-25T12:01:00.000Z'
+      }]
+      return folders
+    })
+    installApi(
+      {
+        listFocuses: vi.fn().mockResolvedValue([currentFocus]),
+        listThreads: vi.fn().mockResolvedValue([beta, alpha])
+      },
+      {
+        sidebarFolders: {
+          list: vi.fn(async () => folders),
+          create: createFolder,
+          delete: vi.fn(async () => folders),
+          setMembership: vi.fn(async () => folders),
+          onChanged: vi.fn(() => () => undefined)
+        }
+      }
+    )
+    const user = userEvent.setup()
+    render(<App />)
+    await user.click(await screen.findByRole('button', { name: 'Project Atlas' }))
+    const contextual = screen.getByLabelText('Contextual sidebar')
+
+    const folder = await within(contextual).findByRole('button', { name: 'Delivery folder' })
+    const alphaButton = within(contextual).getByRole('button', { name: 'Alpha Thread' })
+    const betaButton = within(contextual).getByRole('button', { name: 'Beta Thread' })
+    expect(folder.compareDocumentPosition(alphaButton) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy()
+    expect(alphaButton.compareDocumentPosition(betaButton) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy()
+
+    await user.click(within(contextual).getByRole('button', { name: 'New folder' }))
+    const dialog = screen.getByRole('dialog', { name: 'New folder' })
+    await user.type(within(dialog).getByLabelText('Name'), 'People 1')
+    await user.click(within(dialog).getByRole('button', { name: 'Create folder' }))
+    expect(createFolder).toHaveBeenCalledWith({
+      area: { type: 'thread', focusId: 1 },
+      name: 'People 1'
+    })
+    expect(await within(contextual).findByRole('button', { name: 'People 1 folder' }))
+      .toBeVisible()
   })
 
   it('starts on Todos with focuses exposed directly beneath the Focuses label', async () => {

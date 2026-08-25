@@ -21,6 +21,9 @@ import {
   type McpUiContextSnapshot,
   type NavigationPinSnapshot,
   type NavigationPinTarget,
+  type CreateSidebarFolderInput,
+  type SidebarFolderSnapshot,
+  type SidebarFolderTarget,
   type FocusStatus,
   type SetItemStatusInput,
   type TodoListOptions,
@@ -71,7 +74,8 @@ export function registerAppIpc(
   invalidateNavigationBadges: () => void = () => undefined,
   notifyRoutinesChanged: () => void = () => undefined,
   notifyMcpSettingsChanged: (settings: McpSettingsSnapshot) => void = () => undefined,
-  notifyNavigationPinsChanged: (pins: NavigationPinSnapshot[]) => void = () => undefined
+  notifyNavigationPinsChanged: (pins: NavigationPinSnapshot[]) => void = () => undefined,
+  notifySidebarFoldersChanged: (folders: SidebarFolderSnapshot[]) => void = () => undefined
 ): () => void {
   function mutation<T>(operation: () => T): T {
     const result = operation()
@@ -94,6 +98,28 @@ export function registerAppIpc(
       const pins = database.navigationPins.set(target, pinned)
       notifyNavigationPinsChanged(pins)
       return pins
+    }
+  )
+  ipcMain.handle(IPC_CHANNELS.listSidebarFolders, () => database.sidebarFolders.list())
+  ipcMain.handle(
+    IPC_CHANNELS.createSidebarFolder,
+    (_event, input: CreateSidebarFolderInput) => {
+      const folders = database.sidebarFolders.create(input)
+      notifySidebarFoldersChanged(folders)
+      return folders
+    }
+  )
+  ipcMain.handle(IPC_CHANNELS.deleteSidebarFolder, (_event, id: number) => {
+    const folders = database.sidebarFolders.delete(id)
+    notifySidebarFoldersChanged(folders)
+    return folders
+  })
+  ipcMain.handle(
+    IPC_CHANNELS.setSidebarFolderMembership,
+    (_event, target: SidebarFolderTarget, folderId: number | null) => {
+      const folders = database.sidebarFolders.setMembership(target, folderId)
+      notifySidebarFoldersChanged(folders)
+      return folders
     }
   )
   ipcMain.handle(IPC_CHANNELS.getMcpSettings, () => mcpRuntime.snapshot())

@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   AppState,
+  CreateSidebarFolderInput,
   CreateFocusInput,
   FocusSnapshot,
   McpUiContextSnapshot,
   NavigationPinSnapshot,
   NavigationPinTarget,
+  SidebarFolderSnapshot,
+  SidebarFolderTarget,
   UpdateFocusInput
 } from '../../../../shared/contracts'
 import { isVisibleFocus } from '@/features/focus/focus-utils'
@@ -24,6 +27,7 @@ export interface ApplicationModel {
   focuses: FocusSnapshot[]
   navigableFocuses: FocusSnapshot[]
   navigationPins: NavigationPinSnapshot[]
+  sidebarFolders: SidebarFolderSnapshot[]
   navigableNavigationPins: NavigationPinSnapshot[]
   pinnedFocusIds: ReadonlySet<number>
   pinnedThreadIds: ReadonlySet<number>
@@ -51,6 +55,13 @@ export interface ApplicationModel {
   deleteFocus: (focusId: number) => Promise<void>
   setNavigationPin: (target: NavigationPinTarget, pinned: boolean) => Promise<void>
   refreshNavigationPins: () => Promise<void>
+  createSidebarFolder: (input: CreateSidebarFolderInput) => Promise<void>
+  deleteSidebarFolder: (id: number) => Promise<void>
+  setSidebarFolderMembership: (
+    target: SidebarFolderTarget,
+    folderId: number | null
+  ) => Promise<void>
+  refreshSidebarFolders: () => Promise<void>
 }
 
 /**
@@ -66,6 +77,7 @@ export function useApplicationModel(): ApplicationModel {
     Record<number, StatusSummary | undefined>
   >({})
   const [navigationPins, setNavigationPins] = useState<NavigationPinSnapshot[]>([])
+  const [sidebarFolders, setSidebarFolders] = useState<SidebarFolderSnapshot[]>([])
   const [pinnedThreadStatusSummaries, setPinnedThreadStatusSummaries] = useState<
     Record<number, StatusSummary | undefined>
   >({})
@@ -134,11 +146,13 @@ export function useApplicationModel(): ApplicationModel {
     const unsubscribeDomain = window.onmove.onDomainChanged(() => {
       void Promise.all([
         window.onmove.domain.listFocuses(),
-        window.onmove.navigationPins.list()
-      ]).then(([nextFocuses, nextPins]) => {
+        window.onmove.navigationPins.list(),
+        window.onmove.sidebarFolders.list()
+      ]).then(([nextFocuses, nextPins, nextFolders]) => {
         focusesRef.current = nextFocuses
         setFocuses(nextFocuses)
         applyNavigationPins(nextPins)
+        setSidebarFolders(nextFolders)
         void Promise.all(nextFocuses.map(async (focus) => [
           focus.id,
           await loadFocusStatusSummary(window.onmove.domain, focus.id)
@@ -148,20 +162,25 @@ export function useApplicationModel(): ApplicationModel {
     const unsubscribeNavigationPins = window.onmove.navigationPins.onChanged((nextPins) => {
       if (active) applyNavigationPins(nextPins)
     })
+    const unsubscribeSidebarFolders = window.onmove.sidebarFolders.onChanged((folders) => {
+      if (active) setSidebarFolders(folders)
+    })
 
     Promise.all([
       window.onmove.getAppState(),
       window.onmove.domain.listFocuses(),
       window.onmove.getSensitiveContentHidden(),
-      window.onmove.navigationPins.list()
+      window.onmove.navigationPins.list(),
+      window.onmove.sidebarFolders.list()
     ]).then(
-      ([nextState, nextFocuses, nextSensitiveContentHidden, nextPins]) => {
+      ([nextState, nextFocuses, nextSensitiveContentHidden, nextPins, nextFolders]) => {
         if (!active) return
         focusesRef.current = nextFocuses
         applySensitiveContentVisibility(nextSensitiveContentHidden)
         setState(nextState)
         setFocuses(nextFocuses)
         applyNavigationPins(nextPins)
+        setSidebarFolders(nextFolders)
         void Promise.all(
           nextFocuses.map(async (focus) => {
             try {
@@ -189,6 +208,7 @@ export function useApplicationModel(): ApplicationModel {
       unsubscribeRichText()
       unsubscribeDomain()
       unsubscribeNavigationPins()
+      unsubscribeSidebarFolders()
     }
   }, [])
 
@@ -362,6 +382,25 @@ export function useApplicationModel(): ApplicationModel {
     applyNavigationPins(await window.onmove.navigationPins.list())
   }
 
+  async function createSidebarFolder(input: CreateSidebarFolderInput): Promise<void> {
+    setSidebarFolders(await window.onmove.sidebarFolders.create(input))
+  }
+
+  async function deleteSidebarFolder(id: number): Promise<void> {
+    setSidebarFolders(await window.onmove.sidebarFolders.delete(id))
+  }
+
+  async function setSidebarFolderMembership(
+    target: SidebarFolderTarget,
+    folderId: number | null
+  ): Promise<void> {
+    setSidebarFolders(await window.onmove.sidebarFolders.setMembership(target, folderId))
+  }
+
+  async function refreshSidebarFolders(): Promise<void> {
+    setSidebarFolders(await window.onmove.sidebarFolders.list())
+  }
+
   const pinnedFocusIds = new Set(
     navigationPins.flatMap((pin) => pin.target.type === 'focus' ? [pin.target.id] : [])
   )
@@ -386,6 +425,7 @@ export function useApplicationModel(): ApplicationModel {
         sensitiveRecordIsVisible(focus, sensitiveContentHidden)
     ),
     navigationPins,
+    sidebarFolders,
     navigableNavigationPins,
     pinnedFocusIds,
     pinnedThreadIds,
@@ -412,6 +452,10 @@ export function useApplicationModel(): ApplicationModel {
     refreshFocusStatusSummary,
     deleteFocus,
     setNavigationPin,
-    refreshNavigationPins
+    refreshNavigationPins,
+    createSidebarFolder,
+    deleteSidebarFolder,
+    setSidebarFolderMembership,
+    refreshSidebarFolders
   }
 }

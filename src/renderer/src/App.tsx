@@ -37,6 +37,13 @@ import type {
   TagsWorkspaceDestination
 } from '@/features/application/application-navigation'
 import { NewFocusDialog } from '@/features/focus/focus-ui'
+import { SidebarFolderDialog } from '@/features/shared/sidebar-folder-dialog'
+import {
+  FOCUS_FOLDER_DROP_TYPE,
+  SIDEBAR_FOLDER_ROOT_ID,
+  parseSidebarFolderId,
+  sidebarFolderModels
+} from '@/features/shared/sidebar-folder-presenters'
 import { focusPrimaryNavigationItems } from '@/features/focus/focus-presenters'
 import { pinnedPrimaryNavigationItems } from '@/features/focus/focus-presenters'
 import { FocusWorkspace } from '@/features/focus/focus-workspace'
@@ -50,6 +57,7 @@ import { ArchiveWorkspace } from '@/features/archive/archive-workspace'
 import { UpdateComposerProvider } from '@/features/updates/update-composer'
 import type { ThreadSnapshot } from '../../shared/contracts'
 import type { NavigationBadgeCounts } from '@/features/application/navigation-badge-presenters'
+import type { SidebarFolderModel } from '@/components/ui/sidebar-folder'
 
 const SIDEBAR_MIN = 208
 const SIDEBAR_MAX = 288
@@ -109,6 +117,7 @@ function AppToolbar({
 interface AppSidebarProps {
   pinnedItems: readonly SidebarNavigationItemModel[]
   focusItems: readonly SidebarNavigationItemModel[]
+  focusFolders: readonly SidebarFolderModel[]
   navigationBadges: NavigationBadgeCounts | null
   selectedFocusId: string | null
   selectedPinnedItemId: string | null
@@ -134,12 +143,15 @@ interface AppSidebarProps {
     actionId: string,
     checked?: boolean
   ) => void
+  onFocusFolderContextMenuAction: (folderId: string, actionId: string) => void
+  onNewFocusFolder: () => void
   onNewFocus: () => void
 }
 
 function AppSidebar({
   pinnedItems,
   focusItems,
+  focusFolders,
   navigationBadges,
   selectedFocusId,
   selectedPinnedItemId,
@@ -157,6 +169,8 @@ function AppSidebar({
   onSelectPinned,
   onPinnedContextMenuAction,
   onFocusContextMenuAction,
+  onFocusFolderContextMenuAction,
+  onNewFocusFolder,
   onNewFocus
 }: AppSidebarProps): React.JSX.Element {
   const selectedItemId =
@@ -254,17 +268,29 @@ function AppSidebar({
           <SidebarGroupLabel>Focuses</SidebarGroupLabel>
           <SidebarNavigation
             items={focusItems}
+            folders={focusFolders}
+            folderRootDropTarget={{ type: FOCUS_FOLDER_DROP_TYPE, id: SIDEBAR_FOLDER_ROOT_ID }}
             selectedItemId={selectedFocusId}
             emptyLabel="No focuses yet"
             onSelect={onSelectFocus}
             onContextMenuAction={onFocusContextMenuAction}
-            actions={[{
-              id: 'new-focus',
-              label: 'New focus',
-              icon: 'add',
-              disabled: !enabled,
-              onInvoke: onNewFocus
-            }]}
+            onFolderContextMenuAction={onFocusFolderContextMenuAction}
+            actions={[
+              {
+                id: 'new-folder',
+                label: 'New folder',
+                icon: 'add',
+                disabled: !enabled,
+                onInvoke: onNewFocusFolder
+              },
+              {
+                id: 'new-focus',
+                label: 'New focus',
+                icon: 'add',
+                disabled: !enabled,
+                onInvoke: onNewFocus
+              }
+            ]}
           />
         </SidebarGroup>
       </SidebarContent>
@@ -305,6 +331,7 @@ function LoadingView(): React.JSX.Element {
 export function App(): React.JSX.Element {
   const application = useApplicationModel()
   const [newFocusOpen, setNewFocusOpen] = useState(false)
+  const [newFocusFolderOpen, setNewFocusFolderOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
   const [contextDrawerState, dispatchContextDrawer] = useReducer(
     contextDrawerReducer,
@@ -327,12 +354,34 @@ export function App(): React.JSX.Element {
   const selectedSubjectId = selectedFocus
     ? (focusSubjectSelections[selectedFocus.id] ?? null)
     : null
-  const focusItems = focusPrimaryNavigationItems(
+  const baseFocusItems = focusPrimaryNavigationItems(
     application.navigableFocuses.filter((focus) =>
       !application.pinnedFocusIds.has(focus.id)),
     application.focusStatusSummaries,
     application.sensitiveContentHidden,
     application.pinnedFocusIds
+  )
+  const focusItems = baseFocusItems.map((item) => ({
+    ...item,
+    transfer: {
+      acceptedTargetTypes: [FOCUS_FOLDER_DROP_TYPE],
+      onDrop: (target: { targetType: string; targetId: string }) => {
+        if (target.targetType !== FOCUS_FOLDER_DROP_TYPE) return
+        const folderId = target.targetId === SIDEBAR_FOLDER_ROOT_ID
+          ? null
+          : Number(target.targetId)
+        if (folderId !== null && (!Number.isSafeInteger(folderId) || folderId <= 0)) return
+        void application.setSidebarFolderMembership(
+          { type: 'focus', id: Number(item.id) },
+          folderId
+        )
+      }
+    }
+  }))
+  const focusFolders = sidebarFolderModels(
+    application.sidebarFolders,
+    { type: 'focus' },
+    new Set(focusItems.map(({ id }) => id))
   )
   const pinnedItems = pinnedPrimaryNavigationItems(
     application.navigableNavigationPins,
@@ -410,6 +459,7 @@ export function App(): React.JSX.Element {
 
   async function deleteFocus(focusId: number): Promise<void> {
     await application.deleteFocus(focusId)
+    await application.refreshSidebarFolders()
     contextDrawer.onInvalidate([`focus:${focusId}`])
   }
 
@@ -449,6 +499,7 @@ export function App(): React.JSX.Element {
     await Promise.all([
       application.refreshFocusStatusSummary(fromFocusId),
       application.refreshFocusStatusSummary(thread.focusId),
+      application.refreshSidebarFolders(),
       application.pinnedThreadIds.has(thread.id)
         ? application.refreshNavigationPins()
         : Promise.resolve()
@@ -494,6 +545,7 @@ export function App(): React.JSX.Element {
           <AppSidebar
             pinnedItems={pinnedItems}
             focusItems={focusItems}
+            focusFolders={focusFolders}
             navigationBadges={application.navigationBadges}
             selectedFocusId={selectedFocus && !selectedPinnedItemId
               ? String(selectedFocus.id)
@@ -587,6 +639,12 @@ export function App(): React.JSX.Element {
                 void application.setNavigationPin({ type: 'focus', id: Number(focusId) }, checked)
               }
             }}
+            onFocusFolderContextMenuAction={(folderItemId, actionId) => {
+              if (actionId !== 'delete') return
+              const folderId = parseSidebarFolderId(folderItemId)
+              if (folderId !== null) void application.deleteSidebarFolder(folderId)
+            }}
+            onNewFocusFolder={() => setNewFocusFolderOpen(true)}
             onNewFocus={() => setNewFocusOpen(true)}
           />
         }
@@ -677,8 +735,23 @@ export function App(): React.JSX.Element {
               pinnedThreadIds={application.pinnedThreadIds}
               onThreadPinChange={(threadId, pinned) =>
                 application.setNavigationPin({ type: 'thread', id: threadId }, pinned)}
-              onThreadChanged={() => application.refreshNavigationPins()}
+              onThreadChanged={() => Promise.all([
+                application.refreshNavigationPins(),
+                application.refreshSidebarFolders()
+              ]).then(() => undefined)}
               onActiveThreadChange={setActiveFocusThreadId}
+              sidebarFolders={application.sidebarFolders}
+              onCreateThreadFolder={(name) => application.createSidebarFolder({
+                area: { type: 'thread', focusId: selectedFocus.id },
+                name
+              })}
+              onDeleteThreadFolder={(folderId) =>
+                application.deleteSidebarFolder(folderId)}
+              onSetThreadFolder={(threadId, folderId) =>
+                application.setSidebarFolderMembership(
+                  { type: 'thread', id: threadId },
+                  folderId
+                )}
             />
           ) : (
             <TodoWorkspace
@@ -711,6 +784,16 @@ export function App(): React.JSX.Element {
         <NewFocusDialog
           onClose={() => setNewFocusOpen(false)}
           onCreate={application.createFocus}
+        />
+      )}
+      {newFocusFolderOpen && (
+        <SidebarFolderDialog
+          noun="focuses"
+          onClose={() => setNewFocusFolderOpen(false)}
+          onCreate={(name) => application.createSidebarFolder({
+            area: { type: 'focus' },
+            name
+          })}
         />
       )}
 

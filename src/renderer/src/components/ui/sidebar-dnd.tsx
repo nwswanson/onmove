@@ -21,7 +21,7 @@ export interface SidebarTransferTarget {
 export interface SidebarTransferSourceData {
   kind: 'sidebar-transfer-source'
   sourceId: string
-  acceptedTargetType: string
+  acceptedTargetTypes: readonly string[]
   preview: {
     label: string
     state?: StateLabelModel
@@ -81,7 +81,7 @@ export function SidebarDndProvider({ children }: { children: ReactNode }): React
     const source = event.active.data.current
     const target = event.over?.data.current
     if (!isSidebarTransferSourceData(source) || !isSidebarTransferTargetData(target)) return
-    if (source.acceptedTargetType !== target.targetType) return
+    if (!source.acceptedTargetTypes.includes(target.targetType)) return
     source.onDrop({ targetType: target.targetType, targetId: target.targetId })
   }
 

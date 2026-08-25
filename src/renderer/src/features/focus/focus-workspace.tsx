@@ -7,6 +7,7 @@ import type {
   CreateThreadInput,
   FocusSnapshot,
   RoutineSnapshot,
+  SidebarFolderSnapshot,
   SubjectSnapshot,
   ThreadSnapshot,
   ThreadMovePlanSnapshot,
@@ -76,6 +77,14 @@ import { useCommitmentWorkingContextModel } from '@/features/focus/use-commitmen
 import { useFocusWorkspaceModel } from '@/features/focus/use-focus-workspace-model'
 import { WorkStatusSelect } from '@/features/shared/work-status-select'
 import { WorkDueDateField } from '@/features/shared/work-due-date-field'
+import { SidebarFolderDialog } from '@/features/shared/sidebar-folder-dialog'
+import {
+  SIDEBAR_FOLDER_ROOT_ID,
+  THREAD_FOLDER_DROP_TYPE,
+  parseSidebarFolderId,
+  sidebarFolderModels
+} from '@/features/shared/sidebar-folder-presenters'
+import type { SidebarFolderModel } from '@/components/ui/sidebar-folder'
 import { visibleSensitiveRecords } from '@/features/shared/sensitivity'
 import { SensitivityToggle } from '@/features/shared/sensitivity-toggle'
 import { DirectTodos } from '@/features/todos/direct-todos'
@@ -224,6 +233,10 @@ interface FocusWorkspaceProps {
   onThreadPinChange: (threadId: number, pinned: boolean) => void | Promise<void>
   onThreadChanged: () => void | Promise<void>
   onActiveThreadChange: (threadId: number | null) => void
+  sidebarFolders: readonly SidebarFolderSnapshot[]
+  onCreateThreadFolder: (name: string) => Promise<void>
+  onDeleteThreadFolder: (folderId: number) => void | Promise<void>
+  onSetThreadFolder: (threadId: number, folderId: number | null) => void | Promise<void>
 }
 
 export function FocusWorkspace({
@@ -242,10 +255,15 @@ export function FocusWorkspace({
   pinnedThreadIds,
   onThreadPinChange,
   onThreadChanged,
-  onActiveThreadChange
+  onActiveThreadChange,
+  sidebarFolders,
+  onCreateThreadFolder,
+  onDeleteThreadFolder,
+  onSetThreadFolder
 }: FocusWorkspaceProps): React.JSX.Element {
   const model = useFocusWorkspaceModel({ focus })
   const [newThreadOpen, setNewThreadOpen] = useState(false)
+  const [newThreadFolderOpen, setNewThreadFolderOpen] = useState(false)
   const [newCommitmentParent, setNewCommitmentParent] =
     useState<CommitmentParent | null>(null)
   const [newRoutineParent, setNewRoutineParent] = useState<CommitmentParent | null>(null)
@@ -302,6 +320,7 @@ export function FocusWorkspace({
   const threadMoveRequest = useRef<(move: ContextualSidebarItemMove) => void>(
     () => undefined
   )
+  const threadFolderModelsRef = useRef<readonly SidebarFolderModel[]>([])
   const childMoveRequest = useRef<(move: ContextualSidebarChildMove) => void>(
     () => undefined
   )
@@ -366,23 +385,44 @@ export function FocusWorkspace({
           sourceCollectionId === 'commitments' && targetCollectionId === 'commitments',
         onMoveChild: (move) => childMoveRequest.current(move),
         itemMoveTargetType: 'focus',
-        canMoveItem: ({ itemId, targetId }) =>
-          itemId.startsWith('thread:') && Number(targetId) !== focus.id,
+        itemMoveTargetTypes: [THREAD_FOLDER_DROP_TYPE],
+        canMoveItem: ({ itemId, targetType, targetId }) =>
+          itemId.startsWith('thread:') && (
+            targetType === THREAD_FOLDER_DROP_TYPE || Number(targetId) !== focus.id
+          ),
         onMoveItem: (move) => threadMoveRequest.current(move),
+        folders: () => threadFolderModelsRef.current,
+        folderRootDropTarget: {
+          type: THREAD_FOLDER_DROP_TYPE,
+          id: SIDEBAR_FOLDER_ROOT_ID
+        },
+        onFolderContextMenuAction: (folderItemId, actionId) => {
+          if (actionId !== 'delete') return
+          const folderId = parseSidebarFolderId(folderItemId)
+          if (folderId !== null) void onDeleteThreadFolder(folderId)
+        },
         newItem: {
           label: 'New thread',
           onCreate: () => setNewThreadOpen(true)
         },
-        footerActions: [{
-          id: 'archive',
-          label: 'Archive',
-          ariaLabel: 'Open archived threads',
-          icon: 'archive',
-          onInvoke: () => {
-            setThreadArchiveError(null)
-            setThreadArchiveOpen(true)
+        footerActions: [
+          {
+            id: 'new-folder',
+            label: 'New folder',
+            icon: 'add',
+            onInvoke: () => setNewThreadFolderOpen(true)
+          },
+          {
+            id: 'archive',
+            label: 'Archive',
+            ariaLabel: 'Open archived threads',
+            icon: 'archive',
+            onInvoke: () => {
+              setThreadArchiveError(null)
+              setThreadArchiveOpen(true)
+            }
           }
-        }]
+        ]
       })
   )
 
@@ -427,6 +467,15 @@ export function FocusWorkspace({
       focus.sensitive
     ),
     [focus.sensitive, hideSensitiveContent, model.threads]
+  )
+  threadFolderModelsRef.current = sidebarFolderModels(
+    sidebarFolders,
+    { type: 'thread', focusId: focus.id },
+    new Set([...visibleThreadRecords]
+      .sort((left, right) => left.title.localeCompare(right.title, undefined, {
+        sensitivity: 'base'
+      }))
+      .map(({ id }) => threadSidebarItemId(id)))
   )
   const archivedThreads = useMemo(
     () => archivedThreadItems(visibleSensitiveRecords(
@@ -659,8 +708,17 @@ export function FocusWorkspace({
   }
 
   async function requestThreadMove(move: ContextualSidebarItemMove): Promise<void> {
-    if (!move.itemId.startsWith('thread:') || move.targetType !== 'focus') return
+    if (!move.itemId.startsWith('thread:')) return
     const threadId = Number(move.itemId.slice('thread:'.length))
+    if (move.targetType === THREAD_FOLDER_DROP_TYPE) {
+      const folderId = move.targetId === SIDEBAR_FOLDER_ROOT_ID
+        ? null
+        : Number(move.targetId)
+      if (folderId !== null && (!Number.isSafeInteger(folderId) || folderId <= 0)) return
+      await onSetThreadFolder(threadId, folderId)
+      return
+    }
+    if (move.targetType !== 'focus') return
     const targetFocusId = Number(move.targetId)
     const thread = model.threads.find((candidate) => candidate.id === threadId)
     const target = threadMoveTargets.find((candidate) => candidate.id === targetFocusId)
@@ -2396,6 +2454,13 @@ export function FocusWorkspace({
           focusId={focus.id}
           onClose={() => setNewThreadOpen(false)}
           onCreate={createThread}
+        />
+      )}
+      {newThreadFolderOpen && (
+        <SidebarFolderDialog
+          noun="threads"
+          onClose={() => setNewThreadFolderOpen(false)}
+          onCreate={onCreateThreadFolder}
         />
       )}
       {threadArchiveOpen && (

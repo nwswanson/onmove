@@ -31,6 +31,12 @@ import {
   type SidebarTransferTargetData
 } from '@/components/ui/sidebar-dnd'
 import {
+  SidebarFolderRootTarget,
+  SidebarFolderSection,
+  type SidebarFolderModel,
+  validateSidebarFolders
+} from '@/components/ui/sidebar-folder'
+import {
   SidebarItemIndicators,
   type SidebarItemIndicator
 } from '@/components/ui/sidebar-item-indicators'
@@ -146,9 +152,17 @@ export interface ContextualSidebarLevelOptions extends ContextualSidebarLevelBas
     actionId: string,
     checked?: boolean
   ) => void
+  folders?: readonly SidebarFolderModel[] | (() => readonly SidebarFolderModel[])
+  folderRootDropTarget?: { type: string; id: string }
+  onFolderContextMenuAction?: (
+    folderId: string,
+    actionId: string,
+    checked?: boolean
+  ) => void
   canMoveChild?: (move: ContextualSidebarChildMove) => boolean
   onMoveChild?: (move: ContextualSidebarChildMove) => void
   itemMoveTargetType?: string
+  itemMoveTargetTypes?: readonly string[]
   canMoveItem?: (move: ContextualSidebarItemMove) => boolean
   onMoveItem?: (move: ContextualSidebarItemMove) => void
 }
@@ -269,8 +283,16 @@ export abstract class ContextualSidebarLevelBase {
   abstract notifyChildMove(move: ContextualSidebarChildMove): void
   abstract canDragItem(itemId: string): boolean
   abstract getItemMoveTargetType(): string | null
+  abstract getItemMoveTargetTypes(): readonly string[]
   abstract notifyItemMove(move: ContextualSidebarItemMove): void
   abstract notifyContextMenuAction(itemId: string, actionId: string, checked?: boolean): void
+  abstract getFolders(): readonly SidebarFolderModel[]
+  abstract getFolderRootDropTarget(): { type: string; id: string } | null
+  abstract notifyFolderContextMenuAction(
+    folderId: string,
+    actionId: string,
+    checked?: boolean
+  ): void
 
   getNewItem(): ContextualSidebarNewItemAction | null {
     const action = this.resolveNewItem()
@@ -328,9 +350,12 @@ export class ContextualSidebarLevel extends ContextualSidebarLevelBase {
   private readonly onCollectionAction?: ContextualSidebarLevelOptions['onChildCollectionAction']
   private readonly onChildItemContextMenuAction?: ContextualSidebarLevelOptions['onChildContextMenuAction']
   private readonly onItemContextMenuAction?: ContextualSidebarLevelOptions['onContextMenuAction']
+  private readonly folderSource: NonNullable<ContextualSidebarLevelOptions['folders']>
+  private readonly folderRootDropTarget?: { type: string; id: string }
+  private readonly onFolderAction?: ContextualSidebarLevelOptions['onFolderContextMenuAction']
   private readonly allowChildMove?: ContextualSidebarLevelOptions['canMoveChild']
   private readonly onChildMove?: ContextualSidebarLevelOptions['onMoveChild']
-  private readonly itemMoveTargetType?: string
+  private readonly itemMoveTargetTypes: readonly string[]
   private readonly allowItemMove?: ContextualSidebarLevelOptions['canMoveItem']
   private readonly onItemMove?: ContextualSidebarLevelOptions['onMoveItem']
 
@@ -342,9 +367,15 @@ export class ContextualSidebarLevel extends ContextualSidebarLevelBase {
     this.onCollectionAction = options.onChildCollectionAction
     this.onChildItemContextMenuAction = options.onChildContextMenuAction
     this.onItemContextMenuAction = options.onContextMenuAction
+    this.folderSource = options.folders ?? []
+    this.folderRootDropTarget = options.folderRootDropTarget
+    this.onFolderAction = options.onFolderContextMenuAction
     this.allowChildMove = options.canMoveChild
     this.onChildMove = options.onMoveChild
-    this.itemMoveTargetType = options.itemMoveTargetType?.trim()
+    this.itemMoveTargetTypes = [
+      ...(options.itemMoveTargetType ? [options.itemMoveTargetType] : []),
+      ...(options.itemMoveTargetTypes ?? [])
+    ].map((targetType) => targetType.trim()).filter(Boolean)
     this.allowItemMove = options.canMoveItem
     this.onItemMove = options.onMoveItem
     this.readEntries()
@@ -352,6 +383,35 @@ export class ContextualSidebarLevel extends ContextualSidebarLevelBase {
 
   get items(): readonly ContextualSidebarItemModel[] {
     return typeof this.itemSource === 'function' ? this.itemSource() : this.itemSource
+  }
+
+  getFolders(): readonly SidebarFolderModel[] {
+    const folders = typeof this.folderSource === 'function'
+      ? this.folderSource()
+      : this.folderSource
+    validateSidebarFolders(folders)
+    if (folders.length > 0 && (!this.folderRootDropTarget || !this.onFolderAction)) {
+      throw new Error(
+        `Contextual sidebar level "${this.id}" folders require root-drop and context-menu receivers.`
+      )
+    }
+    return folders
+  }
+
+  getFolderRootDropTarget(): { type: string; id: string } | null {
+    return this.folderRootDropTarget ?? null
+  }
+
+  notifyFolderContextMenuAction(
+    folderId: string,
+    actionId: string,
+    checked?: boolean
+  ): void {
+    const folder = this.getFolders().find(({ id }) => id === folderId)
+    const action = folder?.contextMenu.items.find(({ id }) => id === actionId)
+    if (!folder || !action || action.disabled || !this.onFolderAction) return
+    if (action.kind === 'checkbox' && typeof checked !== 'boolean') return
+    this.onFolderAction(folderId, actionId, checked)
   }
 
   setItems(items: readonly ContextualSidebarItemModel[]): void {
@@ -497,21 +557,25 @@ export class ContextualSidebarLevel extends ContextualSidebarLevelBase {
   canDragItem(itemId: string): boolean {
     return Boolean(
       this.getItem(itemId)?.movable &&
-      this.itemMoveTargetType &&
+      this.itemMoveTargetTypes.length > 0 &&
       this.allowItemMove &&
       this.onItemMove
     )
   }
 
   getItemMoveTargetType(): string | null {
-    return this.itemMoveTargetType ?? null
+    return this.itemMoveTargetTypes[0] ?? null
+  }
+
+  getItemMoveTargetTypes(): readonly string[] {
+    return this.itemMoveTargetTypes
   }
 
   notifyItemMove(move: ContextualSidebarItemMove): void {
     this.requireItem(move.itemId)
     if (
       !this.canDragItem(move.itemId) ||
-      move.targetType !== this.itemMoveTargetType ||
+      !this.itemMoveTargetTypes.includes(move.targetType) ||
       !this.allowItemMove?.(move)
     ) return
     this.onItemMove?.(move)
@@ -995,7 +1059,7 @@ function ContextualSidebarDraggableChild({
     data: {
       kind: 'sidebar-transfer-source',
       sourceId: child.id,
-      acceptedTargetType: contextualParentTargetType(level.id),
+      acceptedTargetTypes: [contextualParentTargetType(level.id)],
       preview: { label: child.label, ...(child.state ? { state: child.state } : {}) },
       onDrop: (target) => {
         const destination = parseContextualParentTargetId(target.targetId)
@@ -1067,14 +1131,14 @@ function ContextualSidebarItemButton({
   selectedChildBelongsToItem: boolean
 }): React.JSX.Element {
   const draggable = level.canDragItem(item.id)
-  const targetType = level.getItemMoveTargetType()
+  const targetTypes = level.getItemMoveTargetTypes()
   const { attributes, isDragging, listeners, setNodeRef } = useDraggable({
     id: `contextual-item:${level.id}:${item.id}`,
-    disabled: !draggable || !targetType,
-    data: targetType ? {
+    disabled: !draggable || targetTypes.length === 0,
+    data: targetTypes.length > 0 ? {
       kind: 'sidebar-transfer-source',
       sourceId: item.id,
-      acceptedTargetType: targetType,
+      acceptedTargetTypes: targetTypes,
       preview: { label: item.label },
       onDrop: (target) => level.notifyItemMove({
         itemId: item.id,
@@ -1174,6 +1238,7 @@ function ContextualSidebarContent({
   const snapshot = useContextualSidebarNavigation(navigation)
   const { level, parent, selectedItemId, selectedChild } = snapshot
   const itemIds = level.getItemIds()
+  const folders = level.getFolders()
   const groups = itemIds.reduce<Array<{ group: ContextualSidebarItemGroup | null; itemIds: string[] }>>(
     (result, itemId) => {
       const group = level.getItem(itemId)?.group ?? null
@@ -1187,6 +1252,12 @@ function ContextualSidebarContent({
     },
     []
   )
+  for (const folder of folders) {
+    const folderGroup = folder.group ?? null
+    if (!groups.some(({ group }) => group?.id === folderGroup?.id)) {
+      groups.push({ group: folderGroup, itemIds: [] })
+    }
+  }
   const footerActions = level.getFooterActions()
   const dragEnabled = itemIds.some((itemId) => {
     const collection = level.getItem(itemId)?.childCollection
@@ -1194,6 +1265,89 @@ function ContextualSidebarContent({
       level.canDragChild(itemId, collection.id, child.id)
     ) ?? false
   })
+  const itemElement = (itemId: string): React.JSX.Element | null => {
+    const selected = itemId === selectedItemId
+    const item = level.getItem(itemId)
+    if (!item) return null
+    const childCollection = item.childCollection
+    const childCollectionActions = childCollection
+      ? [
+          ...(childCollection.action ? [childCollection.action] : []),
+          ...(childCollection.actions ?? [])
+        ]
+      : []
+    const selectedChildBelongsToItem = selectedChild?.parentItemId === itemId
+    return (
+      <ContextualSidebarDropItem
+        key={itemId}
+        levelId={level.id}
+        itemId={itemId}
+        collectionId={childCollection?.id ?? 'none'}
+        disabled={!dragEnabled || !childCollection}
+      >
+        <ContextualSidebarItemButton
+          level={level}
+          navigation={navigation}
+          item={item}
+          selected={selected}
+          selectedChildBelongsToItem={selectedChildBelongsToItem}
+        />
+        {childCollection && (
+          childCollectionActions.length > 0 || childCollection.items.length > 0
+        ) && (
+          <div
+            className="ml-4 border-l border-sidebar-border/80 pl-2"
+            data-child-collection-id={childCollection.id}
+          >
+            {childCollectionActions.map((action) => (
+              <button
+                key={action.id}
+                type="button"
+                className="flex min-h-7 w-full items-center gap-1 rounded-md px-2 text-left text-[0.6875rem] font-semibold text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring/55 disabled:pointer-events-none disabled:opacity-50"
+                aria-label={action.ariaLabel ?? action.label}
+                disabled={action.disabled}
+                onClick={() => level.notifyChildCollectionAction(
+                  itemId,
+                  childCollection.id,
+                  action.id
+                )}
+              >
+                <Plus className="size-3.5" aria-hidden="true" />
+                <span className="truncate">{action.label}</span>
+              </button>
+            ))}
+            <ul
+              role="list"
+              aria-label={`${item.label} ${childCollection.label}`}
+              className="pb-1"
+            >
+              {childCollection.items.map((child) => {
+                const childSelected = selectedChildBelongsToItem &&
+                  selectedChild?.collectionId === childCollection.id &&
+                  selectedChild.childItemId === child.id
+                return (
+                  <ContextualSidebarDraggableChild
+                    key={child.id}
+                    level={level}
+                    navigation={navigation}
+                    parentItemId={itemId}
+                    collection={childCollection}
+                    child={child}
+                    selected={childSelected}
+                  />
+                )
+              })}
+              {childCollection.items.length === 0 && (
+                <li className="px-2 py-1 text-[0.6875rem] text-muted-foreground">
+                  {childCollection.emptyState ?? 'No items'}
+                </li>
+              )}
+            </ul>
+          </div>
+        )}
+      </ContextualSidebarDropItem>
+    )
+  }
   return (
     <Sidebar
       data-slot="contextual-sidebar"
@@ -1226,97 +1380,28 @@ function ContextualSidebarContent({
             <SidebarGroup key={group?.id ?? `ungrouped-${groupIndex}`} className="mb-3 last:mb-0">
               {group && <SidebarGroupLabel>{group.label}</SidebarGroupLabel>}
               <SidebarMenu>
-                {groupItemIds.map((itemId) => {
-                  const selected = itemId === selectedItemId
-                  const item = level.getItem(itemId)
-                  if (!item) return null
-                  const childCollection = item.childCollection
-                  const childCollectionActions = childCollection
-                    ? [
-                        ...(childCollection.action ? [childCollection.action] : []),
-                        ...(childCollection.actions ?? [])
-                      ]
-                    : []
-                  const selectedChildBelongsToItem =
-                    selectedChild?.parentItemId === itemId
-                  return (
-                    <ContextualSidebarDropItem
-                      key={itemId}
-                      levelId={level.id}
-                      itemId={itemId}
-                      collectionId={childCollection?.id ?? 'none'}
-                      disabled={!dragEnabled || !childCollection}
+                {folders
+                  .filter((folder) => folder.group?.id === group?.id)
+                  .map((folder) => (
+                    <SidebarFolderSection
+                      key={folder.id}
+                      folder={folder}
+                      onContextMenuAction={(folderId, actionId, checked) =>
+                        level.notifyFolderContextMenuAction(folderId, actionId, checked)}
                     >
-                      <ContextualSidebarItemButton
-                        level={level}
-                        navigation={navigation}
-                        item={item}
-                        selected={selected}
-                        selectedChildBelongsToItem={selectedChildBelongsToItem}
-                      />
-                      {childCollection && (
-                        childCollectionActions.length > 0 || childCollection.items.length > 0
-                      ) && (
-                        <div
-                          className="ml-4 border-l border-sidebar-border/80 pl-2"
-                          data-child-collection-id={childCollection.id}
-                        >
-                          {childCollectionActions.map((action) => (
-                            <button
-                              key={action.id}
-                              type="button"
-                              className="flex min-h-7 w-full items-center gap-1 rounded-md px-2 text-left text-[0.6875rem] font-semibold text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring/55 disabled:pointer-events-none disabled:opacity-50"
-                              aria-label={
-                                action.ariaLabel ?? action.label
-                              }
-                              disabled={action.disabled}
-                              onClick={() =>
-                                level.notifyChildCollectionAction(
-                                  itemId,
-                                  childCollection.id,
-                                  action.id
-                                )
-                              }
-                            >
-                              <Plus className="size-3.5" aria-hidden="true" />
-                              <span className="truncate">
-                                {action.label}
-                              </span>
-                            </button>
-                          ))}
-                          <ul
-                            role="list"
-                            aria-label={`${item.label} ${childCollection.label}`}
-                            className="pb-1"
-                          >
-                            {childCollection.items.map((child) => {
-                              const childSelected =
-                                selectedChildBelongsToItem &&
-                                selectedChild.collectionId === childCollection.id &&
-                                selectedChild.childItemId === child.id
-                              return (
-                                <ContextualSidebarDraggableChild
-                                  key={child.id}
-                                  level={level}
-                                  navigation={navigation}
-                                  parentItemId={itemId}
-                                  collection={childCollection}
-                                  child={child}
-                                  selected={childSelected}
-                                />
-                              )
-                            })}
-                            {childCollection.items.length === 0 && (
-                              <li className="px-2 py-1 text-[0.6875rem] text-muted-foreground">
-                                {childCollection.emptyState ?? 'No items'}
-                              </li>
-                            )}
-                          </ul>
-                        </div>
-                      )}
-                    </ContextualSidebarDropItem>
-                  )
-                })}
+                      {folder.itemIds.map(itemElement)}
+                    </SidebarFolderSection>
+                  ))}
+                {folders.some((folder) => folder.group?.id === group?.id) &&
+                  level.getFolderRootDropTarget() && (
+                    <SidebarFolderRootTarget dropTarget={level.getFolderRootDropTarget() as {
+                      type: string
+                      id: string
+                    }} />
+                  )}
+                {groupItemIds
+                  .filter((itemId) => !folders.some((folder) => folder.itemIds.includes(itemId)))
+                  .map(itemElement)}
               </SidebarMenu>
             </SidebarGroup>
           ))}

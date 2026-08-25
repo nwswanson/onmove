@@ -78,6 +78,27 @@ describe('registerAppIpc', () => {
           createdAt: '2026-08-10T12:00:00.000Z'
         }])
       },
+      sidebarFolders: {
+        list: vi.fn(() => [{
+          id: 7,
+          name: 'Planning',
+          area: { type: 'focus' as const },
+          targetIds: [12]
+        }]),
+        create: vi.fn(() => [{
+          id: 8,
+          name: 'Delivery',
+          area: { type: 'thread' as const, focusId: 12 },
+          targetIds: []
+        }]),
+        delete: vi.fn(() => []),
+        setMembership: vi.fn(() => [{
+          id: 7,
+          name: 'Planning',
+          area: { type: 'focus' as const },
+          targetIds: [12]
+        }])
+      },
       domain: {
         relations: {
           create: vi.fn(() => ({ toSnapshot: () => ({ id: 4, name: 'blocks' }) })),
@@ -443,6 +464,7 @@ describe('registerAppIpc', () => {
     const notifyRoutinesChanged = vi.fn()
     const notifyMcpSettingsChanged = vi.fn()
     const notifyNavigationPinsChanged = vi.fn()
+    const notifySidebarFoldersChanged = vi.fn()
     const richTextWindows = {
       open: vi.fn(),
       targetFor: vi.fn(() => null),
@@ -508,7 +530,8 @@ describe('registerAppIpc', () => {
       invalidateNavigationBadges,
       notifyRoutinesChanged,
       notifyMcpSettingsChanged,
-      notifyNavigationPinsChanged
+      notifyNavigationPinsChanged,
+      notifySidebarFoldersChanged
     )
 
     expect(ipcMain.handle).toHaveBeenCalledTimes(Object.keys(IPC_CHANNELS).length)
@@ -528,6 +551,29 @@ describe('registerAppIpc', () => {
     expect(notifyNavigationPinsChanged).toHaveBeenCalledWith([
       expect.objectContaining({ target: { type: 'thread', id: 21, focusId: 12 } })
     ])
+    expect(await handlers.get(IPC_CHANNELS.listSidebarFolders)?.()).toEqual([
+      expect.objectContaining({ id: 7, name: 'Planning' })
+    ])
+    expect(await handlers.get(IPC_CHANNELS.createSidebarFolder)?.(
+      undefined,
+      { area: { type: 'thread', focusId: 12 }, name: 'Delivery' }
+    )).toEqual([expect.objectContaining({ id: 8, name: 'Delivery' })])
+    expect(database.sidebarFolders.create).toHaveBeenCalledWith({
+      area: { type: 'thread', focusId: 12 },
+      name: 'Delivery'
+    })
+    expect(await handlers.get(IPC_CHANNELS.setSidebarFolderMembership)?.(
+      undefined,
+      { type: 'focus', id: 12 },
+      7
+    )).toEqual([expect.objectContaining({ id: 7, targetIds: [12] })])
+    expect(database.sidebarFolders.setMembership).toHaveBeenCalledWith(
+      { type: 'focus', id: 12 },
+      7
+    )
+    expect(await handlers.get(IPC_CHANNELS.deleteSidebarFolder)?.(undefined, 7)).toEqual([])
+    expect(database.sidebarFolders.delete).toHaveBeenCalledWith(7)
+    expect(notifySidebarFoldersChanged).toHaveBeenCalledTimes(3)
     expect(await handlers.get(IPC_CHANNELS.getMcpSettings)?.()).toMatchObject({
       allowSensitive: false,
       allowMutations: false

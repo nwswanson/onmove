@@ -3784,6 +3784,100 @@ const migrations: readonly Migration[] = [
       }
       database.run('UPDATE search_index_state SET dirty = 1 WHERE singleton = 1')
     }
+  },
+  {
+    version: 44,
+    name: 'visual_sidebar_folders',
+    up(database) {
+      database.exec(`
+        CREATE TABLE sidebar_folders (
+          id INTEGER PRIMARY KEY,
+          kind TEXT NOT NULL CHECK (kind IN ('focus', 'thread')),
+          owner_focus_id INTEGER REFERENCES focuses(id) ON DELETE CASCADE,
+          name TEXT NOT NULL CHECK (
+            length(trim(name)) BETWEEN 1 AND 80 AND
+            name = trim(name) AND
+            name NOT GLOB '*[^A-Za-z0-9 ]*'
+          ),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          CHECK (
+            (kind = 'focus' AND owner_focus_id IS NULL) OR
+            (kind = 'thread' AND owner_focus_id IS NOT NULL)
+          )
+        ) STRICT;
+
+        CREATE UNIQUE INDEX sidebar_focus_folder_name_index
+          ON sidebar_folders(name COLLATE NOCASE)
+          WHERE kind = 'focus';
+        CREATE UNIQUE INDEX sidebar_thread_folder_name_index
+          ON sidebar_folders(owner_focus_id, name COLLATE NOCASE)
+          WHERE kind = 'thread';
+
+        CREATE TABLE sidebar_folder_memberships (
+          folder_id INTEGER NOT NULL REFERENCES sidebar_folders(id) ON DELETE CASCADE,
+          focus_id INTEGER REFERENCES focuses(id) ON DELETE CASCADE,
+          thread_id INTEGER REFERENCES threads(id) ON DELETE CASCADE,
+          created_at TEXT NOT NULL,
+          CHECK (
+            (focus_id IS NOT NULL AND thread_id IS NULL) OR
+            (focus_id IS NULL AND thread_id IS NOT NULL)
+          )
+        ) STRICT;
+
+        CREATE UNIQUE INDEX sidebar_folder_focus_membership_index
+          ON sidebar_folder_memberships(focus_id)
+          WHERE focus_id IS NOT NULL;
+        CREATE UNIQUE INDEX sidebar_folder_thread_membership_index
+          ON sidebar_folder_memberships(thread_id)
+          WHERE thread_id IS NOT NULL;
+        CREATE INDEX sidebar_folder_memberships_folder_index
+          ON sidebar_folder_memberships(folder_id);
+
+        CREATE TRIGGER sidebar_folder_membership_matches_target_insert
+        BEFORE INSERT ON sidebar_folder_memberships
+        WHEN NOT EXISTS (
+          SELECT 1
+          FROM sidebar_folders folder
+          WHERE folder.id = NEW.folder_id AND (
+            (folder.kind = 'focus' AND NEW.focus_id IS NOT NULL) OR
+            (folder.kind = 'thread' AND NEW.thread_id IS NOT NULL AND EXISTS (
+              SELECT 1 FROM threads thread
+              WHERE thread.id = NEW.thread_id
+                AND thread.focus_id = folder.owner_focus_id
+            ))
+          )
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'sidebar folder membership does not match its target');
+        END;
+
+        CREATE TRIGGER sidebar_folder_membership_matches_target_update
+        BEFORE UPDATE OF folder_id, focus_id, thread_id ON sidebar_folder_memberships
+        WHEN NOT EXISTS (
+          SELECT 1
+          FROM sidebar_folders folder
+          WHERE folder.id = NEW.folder_id AND (
+            (folder.kind = 'focus' AND NEW.focus_id IS NOT NULL) OR
+            (folder.kind = 'thread' AND NEW.thread_id IS NOT NULL AND EXISTS (
+              SELECT 1 FROM threads thread
+              WHERE thread.id = NEW.thread_id
+                AND thread.focus_id = folder.owner_focus_id
+            ))
+          )
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'sidebar folder membership does not match its target');
+        END;
+
+        CREATE TRIGGER sidebar_folder_remove_moved_thread
+        AFTER UPDATE OF focus_id ON threads
+        WHEN OLD.focus_id IS NOT NEW.focus_id
+        BEGIN
+          DELETE FROM sidebar_folder_memberships WHERE thread_id = NEW.id;
+        END;
+      `)
+    }
   }
 ]
 

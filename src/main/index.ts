@@ -12,6 +12,7 @@ import {
   IPC_EVENTS,
   type McpSettingsSnapshot,
   type NavigationPinSnapshot,
+  type SidebarFolderSnapshot,
   type RichTextDocumentChange,
   type RichTextDocumentReference
 } from '../shared/contracts'
@@ -191,6 +192,14 @@ function broadcastNavigationPinsChanged(pins: NavigationPinSnapshot[]): void {
   }
 }
 
+function broadcastSidebarFoldersChanged(folders: SidebarFolderSnapshot[]): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(IPC_EVENTS.sidebarFoldersChanged, folders)
+    }
+  }
+}
+
 function showDataFolder(): void {
   if (database) {
     shell.showItemInFolder(database.getState().databasePath)
@@ -364,7 +373,8 @@ app.whenReady().then(async () => {
     invalidateNavigationBadges,
     broadcastRoutinesChanged,
     broadcastMcpSettingsChanged,
-    broadcastNavigationPinsChanged
+    broadcastNavigationPinsChanged,
+    broadcastSidebarFoldersChanged
   )
 
   Menu.setApplicationMenu(

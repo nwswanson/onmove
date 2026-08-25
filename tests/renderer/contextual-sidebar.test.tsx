@@ -17,6 +17,7 @@ import type { StateLabelModel } from '../../src/renderer/src/components/ui/state
 import type { SidebarFooterActionModel } from '../../src/renderer/src/components/ui/sidebar'
 import type { SidebarContextMenuModel } from '../../src/renderer/src/components/ui/sidebar-context-menu'
 import type { SidebarItemIndicator } from '../../src/renderer/src/components/ui/sidebar-item-indicators'
+import type { SidebarFolderModel } from '../../src/renderer/src/components/ui/sidebar-folder'
 
 interface TestItem {
   id: string
@@ -59,11 +60,15 @@ function level(
     canMoveChild?: (move: ContextualSidebarChildMove) => boolean
     onMoveChild?: (move: ContextualSidebarChildMove) => void
     itemMoveTargetType?: string
+    itemMoveTargetTypes?: readonly string[]
     canMoveItem?: (move: ContextualSidebarItemMove) => boolean
     onMoveItem?: (move: ContextualSidebarItemMove) => void
     getItemGroup?: (item: TestItem) => { id: string; label: string } | null
     newItem?: ContextualSidebarNewItemAction
     footerActions?: readonly SidebarFooterActionModel[]
+    folders?: readonly SidebarFolderModel[]
+    folderRootDropTarget?: { type: string; id: string }
+    onFolderContextMenuAction?: (folderId: string, actionId: string) => void
   } = {}
 ): ContextualSidebarLevel {
   const resolveItems = (): TestItem[] => {
@@ -90,8 +95,12 @@ function level(
     canMoveChild: options.canMoveChild,
     onMoveChild: options.onMoveChild,
     itemMoveTargetType: options.itemMoveTargetType,
+    itemMoveTargetTypes: options.itemMoveTargetTypes,
     canMoveItem: options.canMoveItem,
-    onMoveItem: options.onMoveItem
+    onMoveItem: options.onMoveItem,
+    folders: options.folders,
+    folderRootDropTarget: options.folderRootDropTarget,
+    onFolderContextMenuAction: options.onFolderContextMenuAction
   })
 }
 
@@ -517,6 +526,70 @@ describe('ContextualSidebarNavigation', () => {
       targetType: 'focus',
       targetId: '3'
     })
+  })
+
+  it('groups movable Threads in top-sorted visual folders without changing selection', async () => {
+    const onMoveItem = vi.fn()
+    const onFolderAction = vi.fn()
+    const root = level(
+      'focus:1',
+      'Focus',
+      [
+        { id: 'overall', label: 'Overall' },
+        { id: 'thread:2', label: 'Alpha Thread', movable: true },
+        { id: 'thread:3', label: 'Beta Thread', movable: true },
+        { id: 'thread:4', label: 'Gamma Thread', movable: true }
+      ],
+      {
+        getItemGroup: (item) => item.id === 'overall'
+          ? { id: 'focus', label: 'Focus' }
+          : { id: 'threads', label: 'Threads' },
+        itemMoveTargetTypes: ['thread-folder'],
+        canMoveItem: () => true,
+        onMoveItem,
+        folders: [{
+          id: 'folder:9',
+          label: 'Delivery',
+          group: { id: 'threads', label: 'Threads' },
+          itemIds: ['thread:2', 'thread:3'],
+          dropTarget: { type: 'thread-folder', id: '9' },
+          contextMenu: {
+            ariaLabel: 'Delivery folder actions',
+            items: [{ kind: 'action', id: 'delete', label: 'Delete folder' }]
+          }
+        }],
+        folderRootDropTarget: { type: 'thread-folder', id: 'root' },
+        onFolderContextMenuAction: onFolderAction
+      }
+    )
+    const navigation = new ContextualSidebarNavigation(root)
+    render(<ContextualSidebar navigation={navigation} />)
+
+    const folder = screen.getByRole('button', { name: 'Delivery folder' })
+    const alpha = screen.getByRole('button', { name: 'Alpha Thread' })
+    const beta = screen.getByRole('button', { name: 'Beta Thread' })
+    const gamma = screen.getByRole('button', { name: 'Gamma Thread' })
+    expect(folder.compareDocumentPosition(alpha) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(alpha.compareDocumentPosition(beta) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(beta.compareDocumentPosition(gamma) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(navigation.getSnapshot().selectedItemId).toBe('overall')
+
+    root.notifyItemMove({
+      itemId: 'thread:4',
+      targetType: 'thread-folder',
+      targetId: '9'
+    })
+    expect(onMoveItem).toHaveBeenCalledWith({
+      itemId: 'thread:4',
+      targetType: 'thread-folder',
+      targetId: '9'
+    })
+
+    fireEvent.contextMenu(folder)
+    await userEvent.setup().click(await screen.findByRole('menuitem', {
+      name: 'Delete folder'
+    }))
+    expect(onFolderAction).toHaveBeenCalledWith('folder:9', 'delete', undefined)
   })
 
   it('falls back to the selected parent when a nested child is removed', () => {

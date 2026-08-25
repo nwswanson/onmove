@@ -154,4 +154,69 @@ describe('SidebarNavigation', () => {
     await user.click(within(menu).getByRole('menuitem', { name: 'Delete Focus' }))
     expect(onContextMenuAction).toHaveBeenLastCalledWith('focus:1', 'delete', undefined)
   })
+
+  it('renders visual folders before unfiled items and deletes them through the receiver', async () => {
+    const onFolderAction = vi.fn()
+    const onDrop = vi.fn()
+    render(
+      <SidebarNavigation
+        items={[
+          {
+            id: '1',
+            label: 'Alpha Focus',
+            transfer: { acceptedTargetTypes: ['focus-folder'], onDrop }
+          },
+          {
+            id: '2',
+            label: 'Beta Focus',
+            transfer: { acceptedTargetTypes: ['focus-folder'], onDrop }
+          },
+          {
+            id: '3',
+            label: 'Gamma Focus',
+            transfer: { acceptedTargetTypes: ['focus-folder'], onDrop }
+          }
+        ]}
+        folders={[{
+          id: 'folder:7',
+          label: 'Planning',
+          itemIds: ['1', '2'],
+          dropTarget: { type: 'focus-folder', id: '7' },
+          contextMenu: {
+            ariaLabel: 'Planning folder actions',
+            items: [{
+              kind: 'action',
+              id: 'delete',
+              label: 'Delete folder',
+              icon: 'delete',
+              tone: 'destructive'
+            }]
+          }
+        }]}
+        folderRootDropTarget={{ type: 'focus-folder', id: 'root' }}
+        selectedItemId={null}
+        onSelect={vi.fn()}
+        onFolderContextMenuAction={onFolderAction}
+      />
+    )
+
+    const folder = screen.getByRole('button', { name: 'Planning folder' })
+    const alpha = screen.getByRole('button', { name: 'Alpha Focus' })
+    const beta = screen.getByRole('button', { name: 'Beta Focus' })
+    const gamma = screen.getByRole('button', { name: 'Gamma Focus' })
+    expect(folder.compareDocumentPosition(alpha) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(alpha.compareDocumentPosition(beta) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(beta.compareDocumentPosition(gamma) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(alpha).toHaveAttribute('aria-roledescription', 'draggable')
+    expect(screen.getByText('Unfiled')).toHaveAttribute(
+      'data-slot',
+      'sidebar-folder-root-target'
+    )
+
+    fireEvent.contextMenu(folder)
+    await userEvent.setup().click(await screen.findByRole('menuitem', {
+      name: 'Delete folder'
+    }))
+    expect(onFolderAction).toHaveBeenCalledWith('folder:7', 'delete', undefined)
+  })
 })

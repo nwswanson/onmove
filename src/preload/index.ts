@@ -45,6 +45,21 @@ const api: OnMoveApi = {
       return () => ipcRenderer.removeListener(IPC_EVENTS.navigationPinsChanged, handler)
     }
   },
+  sidebarFolders: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.listSidebarFolders),
+    create: (input) => ipcRenderer.invoke(IPC_CHANNELS.createSidebarFolder, input),
+    delete: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteSidebarFolder, id),
+    setMembership: (target, folderId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.setSidebarFolderMembership, target, folderId),
+    onChanged: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        folders: Parameters<typeof listener>[0]
+      ): void => listener(folders)
+      ipcRenderer.on(IPC_EVENTS.sidebarFoldersChanged, handler)
+      return () => ipcRenderer.removeListener(IPC_EVENTS.sidebarFoldersChanged, handler)
+    }
+  },
   backups: {
     getState: () => ipcRenderer.invoke(IPC_CHANNELS.getBackupState),
     createNow: () => ipcRenderer.invoke(IPC_CHANNELS.createBackup),

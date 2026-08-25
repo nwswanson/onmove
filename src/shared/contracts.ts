@@ -3,6 +3,10 @@ export const IPC_CHANNELS = {
   getSensitiveContentHidden: 'app:get-sensitive-content-hidden',
   getNavigationPins: 'app:get-navigation-pins',
   setNavigationPin: 'app:set-navigation-pin',
+  listSidebarFolders: 'app:list-sidebar-folders',
+  createSidebarFolder: 'app:create-sidebar-folder',
+  deleteSidebarFolder: 'app:delete-sidebar-folder',
+  setSidebarFolderMembership: 'app:set-sidebar-folder-membership',
   getMcpSettings: 'app:get-mcp-settings',
   updateMcpSettings: 'app:update-mcp-settings',
   setMcpUiContext: 'app:set-mcp-ui-context',
@@ -98,6 +102,7 @@ export const IPC_EVENTS = {
   routinesChanged: 'app:routines-changed',
   domainChanged: 'app:domain-changed',
   navigationPinsChanged: 'app:navigation-pins-changed',
+  sidebarFoldersChanged: 'app:sidebar-folders-changed',
   mcpSettingsChanged: 'app:mcp-settings-changed',
   richTextDocumentChanged: 'rich-text:document-changed'
 } as const
@@ -1383,6 +1388,40 @@ export interface NavigationPinApi {
   onChanged: (listener: (pins: NavigationPinSnapshot[]) => void) => () => void
 }
 
+/** Shell-owned visual organization; these records are deliberately absent from domain/MCP APIs. */
+export type SidebarFolderArea =
+  | { type: 'focus' }
+  | { type: 'thread'; focusId: number }
+
+export type SidebarFolderTarget =
+  | { type: 'focus'; id: number }
+  | { type: 'thread'; id: number }
+
+export interface SidebarFolderSnapshot {
+  id: number
+  name: string
+  area: SidebarFolderArea
+  targetIds: number[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateSidebarFolderInput {
+  area: SidebarFolderArea
+  name: string
+}
+
+export interface SidebarFolderApi {
+  list: () => Promise<SidebarFolderSnapshot[]>
+  create: (input: CreateSidebarFolderInput) => Promise<SidebarFolderSnapshot[]>
+  delete: (id: number) => Promise<SidebarFolderSnapshot[]>
+  setMembership: (
+    target: SidebarFolderTarget,
+    folderId: number | null
+  ) => Promise<SidebarFolderSnapshot[]>
+  onChanged: (listener: (folders: SidebarFolderSnapshot[]) => void) => () => void
+}
+
 export interface BackupSnapshot {
   fileName: string
   createdAt: string
@@ -1501,6 +1540,7 @@ export interface OnMoveApi {
   recordGreeting: () => Promise<AppState>
   showDataFolder: () => Promise<void>
   navigationPins: NavigationPinApi
+  sidebarFolders: SidebarFolderApi
   backups: BackupApi
   mcp: McpSettingsApi
   domain: DomainApi

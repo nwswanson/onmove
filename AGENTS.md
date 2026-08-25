@@ -20,6 +20,17 @@
   Focus and Thread context menus declare a receiver-owned checked Pin
   item; deleted targets cascade their references, while closed or sensitivity-hidden targets retain
   the preference but remain absent from navigation until visible again.
+- Treat sidebar folders as shell-owned visual organization, never Focus/Thread fields or MCP
+  resources. Global primary folders contain Focus references; contextual folders belong to one
+  Focus and contain its Thread references. Render folders alphabetically above unfiled records and
+  retain each collection's ordinary item ordering inside folders. Create them through the shared
+  sidebar footer-action and alphanumeric-name dialog contracts. Focus and Thread rows remain generic
+  sidebar transfer sources: dropping on a folder changes only membership, while the receiver-owned
+  Unfiled target removes membership. Folder context menus own immediate Delete with no confirmation;
+  deleting a folder cascades only memberships and must never delete, close, or otherwise mutate its
+  contents. Moving a Thread to another Focus clears its obsolete contextual-folder membership.
+  Keep folder projection, drop feedback, disclosure, and context-menu markup in domain-free shared
+  sidebar receivers; feature adapters provide only data models and typed shell-preference mutations.
 - Focus records with `active` or `paused` status appear in the selector. Paused focuses remain
   selectable but visually muted; `cancelled` and `done` focuses remain in SQLite but are filtered
   from navigation.
