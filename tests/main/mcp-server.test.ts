@@ -130,7 +130,7 @@ describe('OnMove MCP protocol adapter', () => {
         reference: { type: 'focus', id: 1 },
         contextPath: ['Launch readiness'],
         hierarchy: {
-          focus: { id: 1, title: 'Launch readiness' },
+          focus: { id: 1, code: '#F1', title: 'Launch readiness' },
           thread: null,
           commitment: null
         }
@@ -839,6 +839,181 @@ describe('OnMove MCP protocol adapter', () => {
     })
     expect(stale.isError).toBe(true)
     expect(JSON.stringify(stale)).toContain('SEARCH_CURSOR_STALE')
+  })
+
+  it('searches every Note text format with complete actionable hierarchy and reindexes MCP writes', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Evidence container',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const commitment = database.domain.commitments.create({
+      type: 'tracking',
+      parent: { type: 'thread', id: thread.id },
+      title: 'Evidence leaf'
+    }).snapshot()
+    const focusNote = database.domain.notes.list({ type: 'focus', id: focus.id })[0]
+    const threadNote = database.domain.notes.list({ type: 'thread', id: thread.id })[0]
+    const commitmentNote = database.domain.notes.list({
+      type: 'commitment', id: commitment.id
+    })[0]
+    database.domain.richTextDocuments.save(
+      { type: 'note', id: focusNote.id, field: 'content' },
+      'legacy plain note contains plainnoteuniquestring'
+    )
+    database.domain.richTextDocuments.save(
+      { type: 'note', id: threadNote.id, field: 'content' },
+      '# Legacy heading\n\nMarkdown has **markdownnoteuniquestring** here.'
+    )
+    database.domain.richTextDocuments.save(
+      { type: 'note', id: commitmentNote.id, field: 'content' },
+      onMoveRichTextDocumentToStored(richText('Rich note contains richnoteuniquestring'))
+    )
+
+    for (const [text, note] of [
+      ['plainnoteuniquestring', focusNote],
+      ['markdownnoteuniquestring', threadNote],
+      ['richnoteuniquestring', commitmentNote]
+    ] as const) {
+      const specialized = await client.callTool({
+        name: 'onmove.search_notes',
+        arguments: { text }
+      })
+      expect(specialized.isError).not.toBe(true)
+      expect(specialized.structuredContent).toMatchObject({
+        records: [expect.objectContaining({
+          code: `#N${note.id}`,
+          reference: { type: 'note', id: note.id },
+          field: 'content',
+          path: expect.objectContaining({ complete: true }),
+          recommendedWriteTarget: {
+            reference: { type: 'note', id: note.id },
+            code: `#N${note.id}`,
+            field: 'content',
+            tool: 'onmove.patch_note_text',
+            requiresReadBeforeWrite: true
+          }
+        })],
+        searchStatus: { targetSelectionReady: true }
+      })
+
+      const global = await client.callTool({
+        name: 'onmove.search',
+        arguments: { kinds: ['note'], text, projection: { hierarchy: true } }
+      })
+      expect(global.isError).not.toBe(true)
+      expect(global.structuredContent).toMatchObject({
+        items: [expect.objectContaining({ reference: { type: 'note', id: note.id } })],
+        hierarchyPaths: [],
+        searchStatus: { targetSelectionReady: true }
+      })
+    }
+
+    const richMatch = (await client.callTool({
+      name: 'onmove.search_notes',
+      arguments: { text: 'richnoteuniquestring' }
+    })).structuredContent as { records: Array<Record<string, unknown>> }
+    expect(richMatch.records[0]).toMatchObject({
+      containingThread: { id: thread.id, code: `#T${thread.id}`, title: thread.title },
+      hierarchy: {
+        focus: { id: focus.id, code: `#F${focus.id}`, title: focus.title },
+        thread: { id: thread.id, code: `#T${thread.id}`, title: thread.title },
+        commitment: {
+          id: commitment.id,
+          code: `#C${commitment.id}`,
+          title: commitment.title
+        }
+      },
+      path: {
+        complete: true,
+        segments: [
+          { type: 'focus', id: focus.id, code: `#F${focus.id}`, title: focus.title },
+          { type: 'thread', id: thread.id, code: `#T${thread.id}`, title: thread.title },
+          {
+            type: 'commitment', id: commitment.id,
+            code: `#C${commitment.id}`, title: commitment.title
+          },
+          { type: 'note', id: commitmentNote.id, code: `#N${commitmentNote.id}`, title: 'Default' }
+        ]
+      }
+    })
+
+    const aboutThread = await client.callTool({
+      name: 'onmove.search',
+      arguments: { text: 'find richnoteuniquestring about the thread' }
+    })
+    expect(aboutThread.isError).not.toBe(true)
+    expect(aboutThread.structuredContent).toMatchObject({
+      items: [expect.objectContaining({
+        reference: { type: 'note', id: commitmentNote.id },
+        containingThread: { id: thread.id, code: `#T${thread.id}`, title: thread.title }
+      })]
+    })
+
+    const titleMatches = await client.callTool({
+      name: 'onmove.search_notes',
+      arguments: { text: 'Default' }
+    })
+    expect((titleMatches.structuredContent as {
+      records: Array<{ reference: { id: number }; field: string }>
+    }).records).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        reference: expect.objectContaining({ id: commitmentNote.id }),
+        field: 'title'
+      })
+    ]))
+
+    database.mcpSettings.update({ allowMutations: true })
+    const current = database.domain.notes.find(commitmentNote.id)!
+    const written = await client.callTool({
+      name: 'onmove.update_note',
+      arguments: {
+        id: commitmentNote.id,
+        expectedRevision: current.revision,
+        richText: richText('MCP write contains mcpreindexednoteuniquestring')
+      }
+    })
+    expect(written.isError).not.toBe(true)
+    const afterWrite = await client.callTool({
+      name: 'onmove.search',
+      arguments: { kinds: ['note'], text: 'mcpreindexednoteuniquestring' }
+    })
+    expect(afterWrite.isError).not.toBe(true)
+    expect(afterWrite.structuredContent).toMatchObject({
+      items: [expect.objectContaining({
+        reference: { type: 'note', id: commitmentNote.id },
+        field: 'content'
+      })]
+    })
+  })
+
+  it('rejects nonexistent positive hierarchy scope IDs with machine-readable error codes', async () => {
+    for (const [mode, key, code] of [
+      ['focus', 'focusId', 'FOCUS_NOT_FOUND'],
+      ['thread', 'threadId', 'THREAD_NOT_FOUND'],
+      ['subject', 'subjectId', 'SUBJECT_NOT_FOUND']
+    ] as const) {
+      const global = await client.callTool({
+        name: 'onmove.search',
+        arguments: {
+          text: 'anything',
+          scope: { mode, [key]: 99_999_999 }
+        }
+      })
+      expect(global.isError).toBe(true)
+      expect(JSON.stringify(global)).toContain(code)
+
+      const notes = await client.callTool({
+        name: 'onmove.search_notes',
+        arguments: {
+          text: 'anything',
+          scope: { mode, [key]: 99_999_999 }
+        }
+      })
+      expect(notes.isError).toBe(true)
+      expect(JSON.stringify(notes)).toContain(code)
+    }
   })
 
   it('separates initial search criteria from opaque continuation requests', async () => {
@@ -2701,14 +2876,14 @@ describe('OnMove MCP protocol adapter', () => {
       subjectUses: expect.arrayContaining([
         expect.objectContaining({
           reference: { type: 'update', id: existingMichaelUse.id },
-          matchedSubject: { id: michael.id, name: 'Michael' },
+          matchedSubject: expect.objectContaining({ id: michael.id, name: 'Michael' }),
           hierarchy: expect.objectContaining({
-            commitment: { id: oneToOnes.id, title: '1:1s' }
+            commitment: expect.objectContaining({ id: oneToOnes.id, title: '1:1s' })
           })
         })
       ]),
       namedSubjectDiscovery: [{
-        subject: { id: michael.id, name: 'Michael' },
+        subject: expect.objectContaining({ id: michael.id, name: 'Michael' }),
         applicablePaths: expect.arrayContaining([
           expect.objectContaining({
             hierarchy: {
@@ -2736,7 +2911,7 @@ describe('OnMove MCP protocol adapter', () => {
         expect.objectContaining({
           reference: { type: 'subject', id: michael.id },
           subjectDiscovery: expect.objectContaining({
-            subject: { id: michael.id, name: 'Michael' },
+            subject: expect.objectContaining({ id: michael.id, name: 'Michael' }),
             reviewContexts: [expect.objectContaining({
               focus: { id: focus.id, title: focus.title },
               thread: { id: team.id, title: team.title }

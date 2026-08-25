@@ -334,14 +334,16 @@ SQL. It indexes readable plain-text projections of:
 - Routine names and current checklist templates
 - Update observations
 - Todo names
-- Note titles and content
+- Note titles plus current rich text, legacy Markdown, and legacy plain-text content
 - Subject names and descriptions
 
 The index uses Unicode tokenization, prefix matching, BM25 ranking, bounded result sets, stable
 entity references, self-describing hierarchy IDs, hierarchy paths, and Subject context. Rich-text
-Lexical envelopes are parsed to plain text before indexing. Database triggers mark the projection
-dirty after relevant writes; the index rebuild is transactional and effective sensitivity is still
-resolved against the live hierarchy at query time.
+Lexical envelopes are parsed to plain text before indexing; legacy Markdown/plain text remains
+searchable as stored. Migration 43 marks every existing Note for transactional backfill and
+reinstalls Note invalidation triggers. Relevant database writes mark the projection dirty, and the
+MCP mutation boundary also invalidates it defensively after every successful command. Effective
+sensitivity is still resolved against the live hierarchy at query time.
 
 Search is global by default. Omitting `scope`, passing `scope: null`, or using null/omitted hierarchy
 IDs never inherits the Focus currently selected in OnMove. Narrowing is always named and explicit:
@@ -381,8 +383,17 @@ query or scope starts a new call to the original search tool. A live write betwe
 `SEARCH_CURSOR_STALE`; restart the original search with its criteria. Broaden only when the user
 requests all people or all records.
 
-Search always returns records. Compact responses default to ten records and cap pages at 25. One
-`projection` object controls optional `hierarchy`, `subjects`, and `scopes` output. Search does not
+Search always returns records. Compact responses default to ten records and cap pages at 25. Every
+primary match always includes the exact `reference`, the `field` that matched, `containingThread`
+when applicable, a complete root-to-record `path` whose every segment has a canonical code, and a
+`recommendedWriteTarget`. `searchStatus.targetSelectionReady` is true only when every returned
+primary match has that complete path. This metadata is mandatory: byte-budget enforcement may
+shorten snippets, remove auxiliary projections, or shorten the primary page and provide a
+continuation token, but it never removes a primary match's hierarchy.
+
+The `projection` object controls optional Subject/Scope discovery. Ordinary match paths are not
+duplicated into the global `hierarchyPaths` array; that array is reserved for bounded applicability
+expansion when Subject/Scope discovery needs paths beyond the primary records. Search does not
 accept a rich-text projection and never returns a lossless document.
 Search `snippet` values are deliberately bounded plain-text match excerpts, not full content
 renderings; queryless previews use the same 200-character ceiling. Once a record is selected, its
@@ -433,9 +444,22 @@ that did not fit appear in `omittedIds` for a subsequent bounded request. A malf
 rich-text observation degrades to readable fallback text with a diagnostic warning rather than
 failing the search, single getter, bulk getter, or containing entity read.
 
-Each search hit identifies the matched record under `reference` and its owners under `hierarchy`.
-For example, when an Update matches, pass `hierarchy.thread.id` to `onmove.get_thread_by_id`; do not pass
-the Update's `reference.id`. This distinction is also described directly in the tool schemas.
+Each search hit identifies the matched record under `reference`, its exact matching field under
+`field`, and its owners under `hierarchy`. For example, when an Update matches, pass
+`hierarchy.thread.id` to `onmove.get_thread_by_id`; do not pass the Update's `reference.id`.
+`recommendedWriteTarget` identifies the safe mutation target and whether a direct read is required
+before a revision-guarded rich-text write. This distinction is also described directly in the tool
+schemas.
+
+Natural-language container nouns are treated as location hints when a more specific term exists.
+For example, `find rolloutuniquestring about the thread` searches for the specific evidence term
+across descendants instead of requiring the Thread title to contain every wrapper word. An explicit
+`kinds:["thread"]` still means Thread records only; omit that narrowing when the answer may live in
+a Note, Update, Todo, Routine, or other evidence record.
+
+A non-null named search boundary must exist. Positive unknown IDs fail clearly as
+`FOCUS_NOT_FOUND`, `THREAD_NOT_FOUND`, or `SUBJECT_NOT_FOUND`; they are never reported as ordinary
+empty searches.
 
 ## Tools and resources
 

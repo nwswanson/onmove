@@ -110,6 +110,12 @@ do not have a by-path getter because several Updates may occupy the same hierarc
 use `search_updates` and then `get_update_by_id` or `get_updates_by_ids`. Use `onmove.search` only
 when discovery genuinely spans multiple kinds or needs queryless structured listing.
 
+Use cross-kind `onmove.search` for requests such as “find the rollout note about this Thread.” The
+matching text may live in a descendant Note or Update rather than the Thread title. Note discovery
+searches titles, current rich text, legacy Markdown, and legacy plain text. Every primary hit
+returns its exact matching field, complete coded parent path, containing Thread, and recommended
+write target; use those fields directly instead of requesting a separate global hierarchy dump.
+
 The list tools keep the durable entity ID under `reference` and give every output row a separate
 `projectionKey`. A scoped Thread, Commitment, or Routine appears once per applicable Subject with
 `projection.projectedScope: true`; its readable `displayPath` ends in `[Subject name]`. Unscoped,

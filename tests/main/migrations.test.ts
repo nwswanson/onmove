@@ -156,6 +156,54 @@ describe('database migrations', () => {
     raw.close()
   })
 
+  it('backfills existing Notes and reinstalls their search invalidation triggers', () => {
+    const current = new AppDatabase(databasePath)
+    const focus = current.domain.focuses.create({ title: 'Legacy searchable Focus' }).toSnapshot()
+    const note = current.domain.notes.list({ type: 'focus', id: focus.id })[0]
+    current.domain.richTextDocuments.save(
+      { type: 'note', id: note.id, field: 'content' },
+      '# Legacy note\n\nExisting migrationnoteuniquestring content.'
+    )
+    expect(current.queries.search(
+      { text: 'migrationnoteuniquestring', kinds: ['note'] },
+      current.mcpSettings.accessPolicy()
+    )).toHaveLength(1)
+    current.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      DELETE FROM search_documents WHERE entity_type = 'note';
+      UPDATE search_index_state SET dirty = 0;
+      DROP TRIGGER mcp_search_dirty_notes_insert;
+      DROP TRIGGER mcp_search_dirty_notes_update;
+      DROP TRIGGER mcp_search_dirty_notes_delete;
+      DELETE FROM schema_migrations WHERE version = 43;
+    `)
+    legacy.close()
+
+    const migrated = new AppDatabase(databasePath)
+    const results = migrated.queries.search(
+      { text: 'migrationnoteuniquestring', kinds: ['note'] },
+      migrated.mcpSettings.accessPolicy()
+    )
+    expect(results).toEqual([
+      expect.objectContaining({
+        reference: { type: 'note', id: note.id },
+        field: 'content'
+      })
+    ])
+    migrated.close()
+
+    const raw = new DatabaseSync(databasePath)
+    expect(raw.prepare(
+      'SELECT version FROM schema_migrations WHERE version = 43'
+    ).get()).toEqual({ version: 43 })
+    expect(raw.prepare(
+      "SELECT COUNT(*) AS count FROM search_documents WHERE entity_type = 'note'"
+    ).get()).toEqual({ count: 1 })
+    raw.close()
+  })
+
   it('adds cascading shell-owned Focus and Thread navigation references', () => {
     const database = new AppDatabase(databasePath)
     const focus = database.domain.focuses.create({ title: 'Pinned migration Focus' })

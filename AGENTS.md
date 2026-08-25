@@ -816,6 +816,19 @@ foreground colors and do not rely on color alone to communicate selection or sta
   with the maintained FTS5 projection and readable rich-text extraction, not a collection of
   entity-specific `LIKE` queries. `get_thread_by_id` and other direct getters retrieve known entity ids;
   they are not substitutes for global search.
+- Index every Note title and content value, including current Lexical rich text, legacy Markdown,
+  and legacy plain text. A migration must mark existing Note records for transactional backfill,
+  Note table triggers must invalidate future projections, and the MCP mutation boundary must also
+  invalidate defensively after every successful write. Preserve regressions through both
+  `search_notes` and cross-kind `search(kinds:["note"])` so live MCP edits become discoverable
+  without restarting the app.
+- Make every primary search hit independently actionable. It always retains the exact matched
+  entity and field, its containing Thread when one exists, a complete root-to-record path with a
+  canonical code on every segment, and a `recommendedWriteTarget`. This primary hierarchy is not
+  an optional projection and must never be removed to satisfy `page.maxBytes`; shorten snippets,
+  drop auxiliary projections, or shorten the primary page and return a continuation token instead.
+  Report `searchStatus.targetSelectionReady=true` only when every returned primary match has that
+  complete path.
 - Treat structured listing and hierarchy discovery as first-class parts of `onmove.search`, not as
   text matching alone. A null or omitted `text` performs a queryless record list selected by
   `kinds`, named scope, and structured date predicates; it must never invent an FTS term. Control
@@ -846,7 +859,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - Keep search output bounded and purpose-specific. Default to ten records and cap a requested page
   at 25. Enforce the caller's complete MCP-result byte budget by dropping optional projection data
   before shortening the record page, and emit a token from the last record actually returned.
-  Never return an unbounded hierarchy fanout merely because one Subject or parent matched.
+  Never return an unbounded hierarchy fanout merely because one Subject or parent matched. Do not
+  duplicate ordinary primary-match paths in a global `hierarchyPaths` array; reserve that array for
+  bounded Subject/Scope applicability expansion, with its own completeness metadata and next step.
 - Expose `date`, `createdAt`, and `updatedAt` on every search record. `date` is the Update's recorded
   local date or a dated entity's due date and is compared directly; `createdAt` and `updatedAt` are
   instants filtered by inclusive local calendar ranges using an explicit IANA timezone. These are
@@ -868,6 +883,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
   context. Return the normalized
   `diagnostics.appliedScope` on every response, plus applied kinds and result counts where relevant,
   so an agent can tell what the server actually searched.
+- Validate every non-null positive search scope ID against its named entity table before searching.
+  Unknown IDs return explicit `FOCUS_NOT_FOUND`, `THREAD_NOT_FOUND`, or `SUBJECT_NOT_FOUND` errors
+  with a correction; never turn an invalid narrow boundary into a plausible empty result.
 - Treat an empty narrow search as diagnosable, not conclusive. A focus-, thread-, subject-, current-,
   or kinds-filtered empty result must say to refine while retaining the named boundary and to search
   globally only when the user requests all people or all records. Put important recovery guidance

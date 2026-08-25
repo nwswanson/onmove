@@ -3754,6 +3754,36 @@ const migrations: readonly Migration[] = [
         ) STRICT, WITHOUT ROWID;
       `)
     }
+  },
+  {
+    version: 43,
+    name: 'rebuild_note_search_projection',
+    up(database) {
+      const notesExist = database.get<{ found: number }>(
+        "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = 'notes'"
+      )
+      if (notesExist) {
+        database.exec(`
+          DROP TRIGGER IF EXISTS mcp_search_dirty_notes_insert;
+          DROP TRIGGER IF EXISTS mcp_search_dirty_notes_update;
+          DROP TRIGGER IF EXISTS mcp_search_dirty_notes_delete;
+
+          CREATE TRIGGER mcp_search_dirty_notes_insert
+          AFTER INSERT ON notes BEGIN
+            UPDATE search_index_state SET dirty = 1 WHERE singleton = 1;
+          END;
+          CREATE TRIGGER mcp_search_dirty_notes_update
+          AFTER UPDATE ON notes BEGIN
+            UPDATE search_index_state SET dirty = 1 WHERE singleton = 1;
+          END;
+          CREATE TRIGGER mcp_search_dirty_notes_delete
+          AFTER DELETE ON notes BEGIN
+            UPDATE search_index_state SET dirty = 1 WHERE singleton = 1;
+          END;
+        `)
+      }
+      database.run('UPDATE search_index_state SET dirty = 1 WHERE singleton = 1')
+    }
   }
 ]
 

@@ -1,4 +1,5 @@
 import { richTextPlainText } from '../../shared/rich-text-value'
+import { entityReference } from '../../shared/entity-reference'
 import type { OnMoveAccessPolicy } from './access-policy'
 import type { SqlValue, SqliteAdapter } from '../data/sqlite-adapter'
 
@@ -60,9 +61,24 @@ export interface SearchPage {
 }
 
 export interface SearchHierarchyReference {
-  focus: { id: number; title: string } | null
-  thread: { id: number; title: string } | null
-  commitment: { id: number; title: string } | null
+  focus: { id: number; code: string; title: string } | null
+  thread: { id: number; code: string; title: string } | null
+  commitment: { id: number; code: string; title: string } | null
+}
+
+export interface SearchPathSegment {
+  type: SearchEntityType
+  id: number
+  code: string
+  title: string
+}
+
+export interface SearchRecommendedWriteTarget {
+  reference: { type: SearchEntityType; id: number }
+  code: string
+  field: string
+  tool: string | null
+  requiresReadBeforeWrite: boolean
 }
 
 export interface SearchResult {
@@ -71,9 +87,12 @@ export interface SearchResult {
   field: string
   title: string
   contextPath: string[]
-  /** Self-describing owner IDs for safe follow-up get_focus/get_thread/get_commitment calls. */
+  /** Complete owner chain; this is required primary-match metadata and is never optional projection. */
   hierarchy: SearchHierarchyReference
-  subject: { id: number; name: string } | null
+  containingThread: { id: number; code: string; title: string } | null
+  subject: { id: number; code: string; name: string } | null
+  path: { display: string; complete: true; segments: SearchPathSegment[] }
+  recommendedWriteTarget: SearchRecommendedWriteTarget
   snippet: string
   rank: number
   effectiveSensitive: boolean
@@ -111,6 +130,7 @@ interface SearchRow {
   thread_title: string | null
   commitment_id: number | null
   commitment_title: string | null
+  commitment_behavior_type: string | null
   subject_id: number | null
   subject_name: string | null
   snippet: string
@@ -121,6 +141,34 @@ interface SearchRow {
   updated_at: string
   source_key: string
   sort_value: string | number
+}
+
+function writeTool(type: SearchEntityType, field: string): {
+  tool: string | null
+  requiresReadBeforeWrite: boolean
+} {
+  if (type === 'note') {
+    return { tool: 'onmove.patch_note_text', requiresReadBeforeWrite: true }
+  }
+  if (type === 'update') {
+    return {
+      tool: field === 'observation' ? 'onmove.patch_rich_text' : 'onmove.update_update',
+      requiresReadBeforeWrite: field === 'observation'
+    }
+  }
+  if (type === 'focus') {
+    return {
+      tool: field === 'description' ? 'onmove.patch_rich_text' : 'onmove.update_focus',
+      requiresReadBeforeWrite: field === 'description'
+    }
+  }
+  if (type === 'thread') return { tool: 'onmove.update_thread', requiresReadBeforeWrite: false }
+  if (type === 'commitment') {
+    return { tool: 'onmove.update_commitment', requiresReadBeforeWrite: false }
+  }
+  if (type === 'routine') return { tool: 'onmove.update_routine', requiresReadBeforeWrite: false }
+  if (type === 'todo') return { tool: 'onmove.update_todo', requiresReadBeforeWrite: false }
+  return { tool: null, requiresReadBeforeWrite: false }
 }
 
 function plainText(value: string | null): string {
@@ -144,9 +192,16 @@ function resourceUri(type: SearchEntityType, id: number): string {
 const SEARCH_STOP_WORDS = new Set([
   'a', 'about', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'being', 'by',
   'did', 'do', 'does', 'doing', 'for', 'from', 'had', 'has', 'have', 'how',
-  'i', 'in', 'is', 'it', 'its', 'me', 'my', 'of', 'on', 'or', 'our', 'that',
+  'i', 'in', 'is', 'it', 'its', 'locate', 'me', 'my', 'of', 'on', 'or', 'our',
+  'find', 'search', 'show',
   'the', 'their', 'them', 'they', 'this', 'to', 'was', 'we', 'were', 'what',
   'when', 'where', 'which', 'who', 'why', 'with', 'you', 'your'
+])
+
+const SEARCH_CONTAINER_WORDS = new Set([
+  'focus', 'focuses', 'thread', 'threads', 'commitment', 'commitments',
+  'routine', 'routines', 'update', 'updates', 'todo', 'todos', 'note', 'notes',
+  'subject', 'subjects'
 ])
 
 function ftsExpression(text: string): string {
@@ -156,7 +211,13 @@ function ftsExpression(text: string): string {
   // ("what has Michael been doing"). Removing only a conservative stop-word set retains that
   // name as the primary FTS term without introducing opaque semantic ranking.
   const meaningful = normalized.filter((token) => !SEARCH_STOP_WORDS.has(token))
-  const unique = (meaningful.length > 0 ? meaningful : normalized).slice(0, 24)
+  // In requests such as "find the rollout note about the Thread", the entity noun describes
+  // where evidence lives rather than text that must appear in the container title. Preserve it
+  // only when it is the sole useful term.
+  const evidenceTerms = meaningful.filter((token) => !SEARCH_CONTAINER_WORDS.has(token))
+  const unique = (evidenceTerms.length > 0
+    ? evidenceTerms
+    : meaningful.length > 0 ? meaningful : normalized).slice(0, 24)
   if (unique.length === 0) throw new TypeError('search text must contain letters or numbers')
   return unique.map((token) => `"${token.replaceAll('"', '""')}"*`).join(' OR ')
 }
@@ -221,6 +282,11 @@ function validateRange(range: SearchLocalDateRange | undefined, field: string): 
 export class SearchIndexRepository {
   constructor(private readonly database: SqliteAdapter) {}
 
+  /** MCP writes call this defensively in addition to table-level dirty triggers. */
+  invalidate(): void {
+    this.database.run('UPDATE search_index_state SET dirty = 1 WHERE singleton = 1')
+  }
+
   synchronize(now = new Date()): boolean {
     const dirty = this.database.get<{ dirty: number }>(
       'SELECT dirty FROM search_index_state WHERE singleton = 1'
@@ -283,6 +349,9 @@ export class SearchIndexRepository {
     if (query.text === null && sort.field === 'relevance') {
       throw new TypeError('sort.field=relevance requires a non-null text query')
     }
+    this.assertExistingFilter('focus', query.focusId)
+    this.assertExistingFilter('thread', query.threadId)
+    this.assertExistingFilter('subject', query.subjectId)
     this.synchronize()
 
     const textSearch = query.text !== null
@@ -421,11 +490,28 @@ export class SearchIndexRepository {
       ? `search_documents_fts
          JOIN search_documents document ON document.id = search_documents_fts.rowid`
       : 'search_documents document'
+    const matchedField = textSearch
+      ? `CASE
+           WHEN highlight(search_documents_fts, 0, char(1), char(2)) <> document.title
+             THEN CASE document.entity_type
+               WHEN 'todo' THEN 'name'
+               WHEN 'routine' THEN 'name'
+               WHEN 'subject' THEN 'name'
+               ELSE 'title'
+             END
+           ELSE document.field_name
+         END`
+      : 'document.field_name'
     const rows = this.database.all<SearchRow>(
-      `SELECT document.entity_type, document.entity_id, document.field_name, document.title,
+      `SELECT document.entity_type, document.entity_id, ${matchedField} AS field_name,
+              CASE WHEN document.entity_type = 'update'
+                THEN COALESCE(commitment.title, thread.title, 'Update')
+                ELSE document.title
+              END AS title,
               document.focus_id, focus.title AS focus_title,
               document.thread_id, thread.title AS thread_title,
               document.commitment_id, commitment.title AS commitment_title,
+              commitment.behavior_type AS commitment_behavior_type,
               document.subject_id, subject.name AS subject_name,
               ${snippet} AS snippet, ${relevance} AS rank,
               ${sensitivity} AS effective_sensitive,
@@ -465,34 +551,111 @@ export class SearchIndexRepository {
   }
 
   private projectRows(rows: readonly SearchRow[]): SearchResult[] {
-    return rows.map((row) => ({
-      reference: { type: row.entity_type, id: Number(row.entity_id) },
-      uri: resourceUri(row.entity_type, Number(row.entity_id)),
-      field: row.field_name === 'routine' ? 'template' : row.field_name,
-      title: row.title,
-      contextPath: [row.focus_title, row.thread_title, row.commitment_title]
-        .filter((value): value is string => Boolean(value)),
-      hierarchy: {
+    return rows.map((row) => {
+      const id = Number(row.entity_id)
+      const type = row.entity_type
+      const field = row.field_name === 'routine' ? 'template' : row.field_name
+      const routineOwner = row.commitment_id === null || row.commitment_behavior_type !== 'routine'
+        ? null
+        : {
+            type: 'routine' as const,
+            id: Number(row.commitment_id),
+            code: entityReference('routine', Number(row.commitment_id)),
+            title: row.commitment_title as string
+          }
+      const hierarchy: SearchHierarchyReference = {
         focus: row.focus_id === null
           ? null
-          : { id: Number(row.focus_id), title: row.focus_title as string },
+          : {
+              id: Number(row.focus_id),
+              code: entityReference('focus', Number(row.focus_id)),
+              title: row.focus_title as string
+            },
         thread: row.thread_id === null
           ? null
-          : { id: Number(row.thread_id), title: row.thread_title as string },
-        commitment: row.commitment_id === null
+          : {
+              id: Number(row.thread_id),
+              code: entityReference('thread', Number(row.thread_id)),
+              title: row.thread_title as string
+            },
+        commitment: row.commitment_id === null || routineOwner
           ? null
-          : { id: Number(row.commitment_id), title: row.commitment_title as string }
-      },
-      subject: row.subject_id === null
+          : {
+              id: Number(row.commitment_id),
+              code: entityReference('commitment', Number(row.commitment_id)),
+              title: row.commitment_title as string
+            }
+      }
+      const subject = row.subject_id === null
         ? null
-        : { id: Number(row.subject_id), name: row.subject_name as string },
-      snippet: compactSnippet(row.snippet),
-      rank: Number(row.rank),
-      effectiveSensitive: Boolean(row.effective_sensitive),
-      date: row.date_value,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at
-    }))
+        : {
+            id: Number(row.subject_id),
+            code: entityReference('subject', Number(row.subject_id)),
+            name: row.subject_name as string
+          }
+      const ancestors: SearchPathSegment[] = [
+        hierarchy.focus && { type: 'focus', ...hierarchy.focus },
+        hierarchy.thread && { type: 'thread', ...hierarchy.thread },
+        hierarchy.commitment && { type: 'commitment', ...hierarchy.commitment },
+        routineOwner
+      ].filter((entry): entry is SearchPathSegment => entry !== null)
+      if (subject && type !== 'subject') {
+        ancestors.push({ type: 'subject', id: subject.id, code: subject.code, title: subject.name })
+      }
+      const code = entityReference(type, id)
+      const entityTitle = type === 'update' ? 'Update' : row.title
+      const segments = ancestors.some((segment) => segment.type === type && segment.id === id)
+        ? ancestors
+        : [...ancestors, { type, id, code, title: entityTitle }]
+      const writable = writeTool(type, field)
+      const writableField = type === 'note' ? 'content' : field
+      return {
+        reference: { type, id },
+        uri: resourceUri(type, id),
+        field,
+        title: row.title,
+        contextPath: [row.focus_title, row.thread_title, row.commitment_title]
+          .filter((value): value is string => Boolean(value)),
+        hierarchy,
+        containingThread: hierarchy.thread,
+        subject,
+        path: {
+          display: segments.map((segment) => `${segment.title} (${segment.code})`).join(' > '),
+          complete: true,
+          segments
+        },
+        recommendedWriteTarget: {
+          reference: { type, id },
+          code,
+          field: writableField,
+          ...writable
+        },
+        snippet: compactSnippet(row.snippet),
+        rank: Number(row.rank),
+        effectiveSensitive: Boolean(row.effective_sensitive),
+        date: row.date_value,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at
+      }
+    })
+  }
+
+  private assertExistingFilter(
+    type: 'focus' | 'thread' | 'subject',
+    id: number | null | undefined
+  ): void {
+    if (id === null || id === undefined) return
+    const table = type === 'focus' ? 'focuses' : type === 'thread' ? 'threads' : 'subjects'
+    const exists = this.database.get<{ found: number }>(
+      `SELECT 1 AS found FROM ${table} WHERE id = ?`,
+      [id]
+    )
+    if (!exists) {
+      throw new TypeError(
+        `${type.toUpperCase()}_NOT_FOUND: ${type[0].toUpperCase()}${type.slice(1)} ${id} ` +
+        'does not exist. Remove this scope filter or use a valid ID returned by OnMove.'
+      )
+    }
   }
 
   private insertRows(type: SearchEntityType, rows: readonly IndexSourceRow[]): void {
@@ -506,7 +669,8 @@ export class SearchIndexRepository {
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
         [
           sourceKey(type, Number(row.id), field), type, Number(row.id), field,
-          row.title, plainText(row.body), row.focus_id, row.thread_id,
+          type === 'update' ? '' : row.title, plainText(row.body),
+          row.focus_id, row.thread_id,
           row.commitment_id, row.subject_id, row.scope_id,
           row.direct_sensitive, row.status, row.state, row.due_on,
           row.created_at, row.updated_at
@@ -517,7 +681,7 @@ export class SearchIndexRepository {
 
   private focusRows(): IndexSourceRow[] {
     return this.database.all<IndexSourceRow>(
-      `SELECT id, title, description AS body, 'overview' AS field_name,
+      `SELECT id, title, description AS body, 'description' AS field_name,
               id AS focus_id, NULL AS thread_id, NULL AS commitment_id,
               NULL AS subject_id, NULL AS scope_id, sensitive AS direct_sensitive,
               status, NULL AS state, due_on, created_at, updated_at
@@ -607,7 +771,7 @@ export class SearchIndexRepository {
 
   private subjectRows(): IndexSourceRow[] {
     return this.database.all<IndexSourceRow>(
-      `SELECT id, name AS title, description AS body, 'profile' AS field_name,
+      `SELECT id, name AS title, description AS body, 'description' AS field_name,
               NULL AS focus_id, NULL AS thread_id, NULL AS commitment_id,
               id AS subject_id, NULL AS scope_id, sensitive AS direct_sensitive,
               NULL AS status, NULL AS state, NULL AS due_on, created_at, updated_at

@@ -171,8 +171,8 @@ describe('OnMove MCP full-workspace search regressions', () => {
       expect.objectContaining({
         reference: { type: 'update', id: firstUpdate.id },
         hierarchy: {
-          focus: { id: first.focus.id, title: first.focus.title },
-          thread: { id: first.thread.id, title: first.thread.title },
+          focus: expect.objectContaining({ id: first.focus.id, title: first.focus.title }),
+          thread: expect.objectContaining({ id: first.thread.id, title: first.thread.title }),
           commitment: null
         }
       })
@@ -202,7 +202,7 @@ describe('OnMove MCP full-workspace search regressions', () => {
     expect(results).toEqual([
       expect.objectContaining({
         reference: { type: 'update', id: alphaUpdate.id },
-        subject: { id: alpha.id, name: 'Person Alpha' }
+        subject: expect.objectContaining({ id: alpha.id, name: 'Person Alpha' })
       })
     ])
   })
