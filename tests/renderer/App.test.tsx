@@ -7,6 +7,7 @@ import type {
   AppState,
   CommitmentSnapshot,
   DomainApi,
+  EnhancedRetrievalStatusSnapshot,
   FocusSnapshot,
   McpPermissionOverrideSnapshot,
   McpPermissionResource,
@@ -40,6 +41,27 @@ const initialState: AppState = {
   launchCount: 1,
   lastGreetingAt: null,
   databasePath: '/Users/test/Library/Application Support/OnMove/onmove.sqlite3'
+}
+
+function enhancedRetrievalStatus(
+  overrides: Partial<EnhancedRetrievalStatusSnapshot> = {}
+): EnhancedRetrievalStatusSnapshot {
+  return {
+    revision: 0,
+    phase: 'idle',
+    progress: null,
+    generation: null,
+    totalDocuments: null,
+    reusedEmbeddings: 0,
+    generatedEmbeddings: 0,
+    completedEmbeddingChunks: 0,
+    totalEmbeddingChunks: 0,
+    startedAt: null,
+    updatedAt: null,
+    readyAt: null,
+    error: null,
+    ...overrides
+  }
 }
 
 function focus(overrides: Partial<FocusSnapshot> = {}): FocusSnapshot {
@@ -471,6 +493,7 @@ function installApi(
     endpoint: null,
     error: null
   }
+  const retrievalStatus = enhancedRetrievalStatus()
   const api: OnMoveApi = {
     getAppState: vi.fn().mockResolvedValue(initialState),
     getSensitiveContentHidden: vi.fn().mockResolvedValue(false),
@@ -612,7 +635,9 @@ function installApi(
         return mcpState
       }),
       setUiContext: vi.fn().mockResolvedValue(undefined),
-      onChanged: vi.fn(() => () => undefined)
+      onChanged: vi.fn(() => () => undefined),
+      getRetrievalStatus: vi.fn().mockResolvedValue(retrievalStatus),
+      onRetrievalStatusChanged: vi.fn(() => () => undefined)
     },
     domain,
     richText: {
@@ -5701,6 +5726,12 @@ describe('App', () => {
     expect(settings).toHaveAttribute('aria-current', 'page')
     expect(screen.getByText('Automatic database backups')).toBeVisible()
     expect(screen.getByText('Model Context Protocol')).toBeVisible()
+    const retrievalStatusPanel = screen.getByRole('region', {
+      name: 'Enhanced retrieval index status'
+    })
+    expect(within(retrievalStatusPanel).getByText('Not prepared')).toBeVisible()
+    expect(within(retrievalStatusPanel).getByText(/Enhanced retrieval is off/)).toBeVisible()
+    expect(within(retrievalStatusPanel).queryByRole('progressbar')).not.toBeInTheDocument()
     const serverEnabled = screen.getByRole('checkbox', { name: /Run MCP server/i })
     const retrievalMode = screen.getByRole('combobox', { name: 'MCP retrieval mode' })
     const sensitiveAccess = screen.getByRole('checkbox', { name: /Allow sensitive content/i })
@@ -5722,6 +5753,103 @@ describe('App', () => {
     await user.selectOptions(retrievalMode, 'enhanced')
     expect(api.mcp.update).toHaveBeenCalledWith({ retrievalMode: 'enhanced' })
     expect(retrievalMode).toHaveValue('enhanced')
+    expect(within(retrievalStatusPanel).getByText(/Waiting for the first enhanced retrieval/))
+      .toBeVisible()
+    expect(within(retrievalStatusPanel).queryByRole('progressbar')).not.toBeInTheDocument()
+    await user.click(serverEnabled)
+    expect(api.mcp.update).toHaveBeenCalledWith({ serverEnabled: false })
+    expect(within(retrievalStatusPanel).getByText(/Start the MCP server/)).toBeVisible()
+    await user.click(serverEnabled)
+    expect(api.mcp.update).toHaveBeenCalledWith({ serverEnabled: true })
+    expect(within(retrievalStatusPanel).getByText(/Waiting for the first enhanced retrieval/))
+      .toBeVisible()
+
+    const retrievalStatusListener = vi.mocked(api.mcp.onRetrievalStatusChanged).mock.calls[0]?.[0]
+    expect(retrievalStatusListener).toBeDefined()
+    act(() => retrievalStatusListener?.({
+      revision: 1,
+      phase: 'loading-model',
+      progress: null,
+      generation: 4,
+      totalDocuments: 72,
+      reusedEmbeddings: 48,
+      generatedEmbeddings: 0,
+      completedEmbeddingChunks: 0,
+      totalEmbeddingChunks: 96,
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      readyAt: null,
+      error: null
+    }))
+    expect(within(retrievalStatusPanel).getByText('Loading the local semantic model'))
+      .toBeVisible()
+    expect(within(retrievalStatusPanel).getByRole('progressbar'))
+      .not.toHaveAttribute('aria-valuenow')
+    expect(within(retrievalStatusPanel).getByRole('progressbar'))
+      .toHaveAttribute('aria-valuetext', 'Loading the local semantic model')
+
+    act(() => retrievalStatusListener?.({
+      revision: 2,
+      phase: 'embedding',
+      progress: { completed: 24, total: 96, unit: 'chunks' },
+      generation: 4,
+      totalDocuments: 72,
+      reusedEmbeddings: 48,
+      generatedEmbeddings: 12,
+      completedEmbeddingChunks: 24,
+      totalEmbeddingChunks: 96,
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      readyAt: null,
+      error: null
+    }))
+    expect(within(retrievalStatusPanel).getByText('Generating local embeddings')).toBeVisible()
+    expect(within(retrievalStatusPanel).getByText('24 of 96 embedding chunks')).toBeVisible()
+    expect(within(retrievalStatusPanel).getByText(/High CPU use is expected/)).toBeVisible()
+    expect(within(retrievalStatusPanel).getByRole('progressbar'))
+      .toHaveAttribute('aria-valuenow', '24')
+    expect(within(retrievalStatusPanel).getByRole('progressbar'))
+      .toHaveAttribute(
+        'aria-valuetext',
+        'Generating local embeddings, 24 of 96 embedding chunks'
+      )
+
+    act(() => retrievalStatusListener?.({
+      revision: 3,
+      phase: 'ready',
+      progress: { completed: 72, total: 72, unit: 'documents' },
+      generation: 4,
+      totalDocuments: 72,
+      reusedEmbeddings: 48,
+      generatedEmbeddings: 24,
+      completedEmbeddingChunks: 96,
+      totalEmbeddingChunks: 96,
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      readyAt: new Date().toISOString(),
+      error: null
+    }))
+    expect(within(retrievalStatusPanel).getByText('Ready')).toBeVisible()
+    expect(within(retrievalStatusPanel).getByText('72 of 72 search documents')).toBeVisible()
+    act(() => retrievalStatusListener?.({
+      revision: 4,
+      phase: 'error',
+      progress: { completed: 24, total: 96, unit: 'chunks' },
+      generation: 4,
+      totalDocuments: 72,
+      reusedEmbeddings: 48,
+      generatedEmbeddings: 12,
+      completedEmbeddingChunks: 24,
+      totalEmbeddingChunks: 96,
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      readyAt: null,
+      error: 'The local model could not be loaded.'
+    }))
+    expect(within(retrievalStatusPanel).getByText('Unavailable')).toBeVisible()
+    expect(within(retrievalStatusPanel).getByRole('alert'))
+      .toHaveTextContent('The local model could not be loaded.')
+    expect(within(retrievalStatusPanel).queryByRole('progressbar')).not.toBeInTheDocument()
     await user.click(updateEditAccess)
     expect(api.mcp.update).toHaveBeenCalledWith({
       permission: {
@@ -5751,6 +5879,80 @@ describe('App', () => {
 
     await user.click(screen.getByRole('button', { name: 'Todos' }))
     expect(await screen.findByRole('heading', { name: 'Todos' })).toBeVisible()
+  })
+
+  it('keeps a newer live retrieval status when the initial status read resolves late', async () => {
+    const api = installApi()
+    let resolveInitial!: (status: EnhancedRetrievalStatusSnapshot) => void
+    const initial = new Promise<EnhancedRetrievalStatusSnapshot>((resolve) => {
+      resolveInitial = resolve
+    })
+    let listener: ((status: EnhancedRetrievalStatusSnapshot) => void) | undefined
+    vi.mocked(api.mcp.getRetrievalStatus).mockReturnValue(initial)
+    vi.mocked(api.mcp.onRetrievalStatusChanged).mockImplementation((next) => {
+      listener = next
+      return () => undefined
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Settings' }))
+    const panel = screen.getByRole('region', { name: 'Enhanced retrieval index status' })
+    act(() => listener?.(enhancedRetrievalStatus({
+      revision: 2,
+      phase: 'embedding',
+      progress: { completed: 12, total: 24, unit: 'chunks' },
+      totalDocuments: 20,
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    })))
+    expect(within(panel).getByText('Generating local embeddings')).toBeVisible()
+
+    await act(async () => {
+      resolveInitial(enhancedRetrievalStatus({
+        revision: 1,
+        phase: 'loading-cache',
+        updatedAt: new Date().toISOString()
+      }))
+      await initial
+    })
+    act(() => listener?.(enhancedRetrievalStatus({
+      revision: 2,
+      phase: 'loading-model',
+      updatedAt: new Date().toISOString()
+    })))
+    expect(within(panel).getByText('Generating local embeddings')).toBeVisible()
+    expect(within(panel).queryByText('Loading cached embeddings')).not.toBeInTheDocument()
+  })
+
+  it('shows a terminal retrieval telemetry error and recovers on a live event', async () => {
+    const api = installApi()
+    let listener: ((status: EnhancedRetrievalStatusSnapshot) => void) | undefined
+    vi.mocked(api.mcp.getRetrievalStatus).mockRejectedValue(new Error('IPC unavailable'))
+    vi.mocked(api.mcp.onRetrievalStatusChanged).mockImplementation((next) => {
+      listener = next
+      return () => undefined
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Settings' }))
+    const panel = screen.getByRole('region', { name: 'Enhanced retrieval index status' })
+    expect(await within(panel).findByText('Status unavailable')).toBeVisible()
+    expect(within(panel).getByText(/live retrieval status could not be loaded/)).toBeVisible()
+    expect(within(panel).queryByRole('progressbar')).not.toBeInTheDocument()
+
+    act(() => listener?.(enhancedRetrievalStatus({
+      revision: 1,
+      phase: 'ready',
+      progress: { completed: 4, total: 4, unit: 'documents' },
+      generation: 3,
+      totalDocuments: 4,
+      readyAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    })))
+    expect(within(panel).getByText('Ready')).toBeVisible()
+    expect(within(panel).queryByText('Status unavailable')).not.toBeInTheDocument()
   })
 
   it('configures sparse Focus and Thread MCP permission overrides', async () => {

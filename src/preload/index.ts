@@ -74,6 +74,18 @@ const api: OnMoveApi = {
         listener(settings)
       ipcRenderer.on(IPC_EVENTS.mcpSettingsChanged, handler)
       return () => ipcRenderer.removeListener(IPC_EVENTS.mcpSettingsChanged, handler)
+    },
+    getRetrievalStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getEnhancedRetrievalStatus),
+    onRetrievalStatusChanged: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        status: Parameters<typeof listener>[0]
+      ): void => listener(status)
+      ipcRenderer.on(IPC_EVENTS.enhancedRetrievalStatusChanged, handler)
+      return () => ipcRenderer.removeListener(
+        IPC_EVENTS.enhancedRetrievalStatusChanged,
+        handler
+      )
     }
   },
   domain: {

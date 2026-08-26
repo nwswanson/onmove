@@ -10,6 +10,7 @@ export const IPC_CHANNELS = {
   getMcpSettings: 'app:get-mcp-settings',
   updateMcpSettings: 'app:update-mcp-settings',
   setMcpUiContext: 'app:set-mcp-ui-context',
+  getEnhancedRetrievalStatus: 'app:get-enhanced-retrieval-status',
   recordGreeting: 'app:record-greeting',
   showDataFolder: 'app:show-data-folder',
   getBackupState: 'backup:get-state',
@@ -104,6 +105,7 @@ export const IPC_EVENTS = {
   navigationPinsChanged: 'app:navigation-pins-changed',
   sidebarFoldersChanged: 'app:sidebar-folders-changed',
   mcpSettingsChanged: 'app:mcp-settings-changed',
+  enhancedRetrievalStatusChanged: 'app:enhanced-retrieval-status-changed',
   richTextDocumentChanged: 'rich-text:document-changed'
 } as const
 
@@ -1447,6 +1449,43 @@ export interface BackupApi {
 export const MCP_RETRIEVAL_MODES = ['classic', 'enhanced'] as const
 export type McpRetrievalMode = (typeof MCP_RETRIEVAL_MODES)[number]
 
+export const ENHANCED_RETRIEVAL_PHASES = [
+  'idle',
+  'synchronizing',
+  'loading-cache',
+  'checking-documents',
+  'loading-model',
+  'embedding',
+  'preparing-index',
+  'indexing',
+  'ready',
+  'error'
+] as const
+export type EnhancedRetrievalPhase = (typeof ENHANCED_RETRIEVAL_PHASES)[number]
+
+export interface EnhancedRetrievalProgressSnapshot {
+  completed: number
+  total: number
+  unit: 'documents' | 'cache-entries' | 'chunks'
+}
+
+/** Live, process-local preparation state for the disposable enhanced retrieval index. */
+export interface EnhancedRetrievalStatusSnapshot {
+  revision: number
+  phase: EnhancedRetrievalPhase
+  progress: EnhancedRetrievalProgressSnapshot | null
+  generation: number | null
+  totalDocuments: number | null
+  reusedEmbeddings: number
+  generatedEmbeddings: number
+  completedEmbeddingChunks: number
+  totalEmbeddingChunks: number
+  startedAt: string | null
+  updatedAt: string | null
+  readyAt: string | null
+  error: string | null
+}
+
 export interface McpSettingsSnapshot {
   serverEnabled: boolean
   serverPort: number
@@ -1533,6 +1572,10 @@ export interface McpSettingsApi {
   update: (input: UpdateMcpSettingsInput) => Promise<McpSettingsSnapshot>
   setUiContext: (context: McpUiContextSnapshot) => Promise<void>
   onChanged: (listener: (settings: McpSettingsSnapshot) => void) => () => void
+  getRetrievalStatus: () => Promise<EnhancedRetrievalStatusSnapshot>
+  onRetrievalStatusChanged: (
+    listener: (status: EnhancedRetrievalStatusSnapshot) => void
+  ) => () => void
 }
 
 export interface OnMoveApi {

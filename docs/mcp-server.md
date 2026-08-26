@@ -331,6 +331,15 @@ duplicate query/ranking work, and projection, authorization, cache, and Orama ba
 application event loop. Model download, inference, or index failures also fall back and report their
 reason. Set `onUnavailable: "error"` only when fallback is undesirable.
 
+Settings shows the live, process-local Enhanced retrieval state. Preparation is lazy and begins
+with the first eligible enhanced retrieval—not when the setting is selected. The panel identifies
+projection/cache work, local model loading, embedding progress, and Orama index construction; it
+also reports document counts, reused and newly generated embeddings, generation, completion time,
+and errors. Embedding and indexing can deliberately use substantial local CPU, while MCP requests
+continue to receive Classic results until the status reaches Ready. Ready means both the derived
+Orama index and the local semantic model are prepared, including when every document vector came
+from the durable cache.
+
 SQLite resolves permissions and the complete context before Orama ranks any candidate. Responses
 report match channels, complete hierarchy provenance, requested/applied strategy, fallback reason,
 lexical and semantic generations, and semantic coverage. They return bounded excerpts, never

@@ -124,6 +124,10 @@ export function registerAppIpc(
   )
   ipcMain.handle(IPC_CHANNELS.getMcpSettings, () => mcpRuntime.snapshot())
   ipcMain.handle(
+    IPC_CHANNELS.getEnhancedRetrievalStatus,
+    () => database.queries.retrieval.status()
+  )
+  ipcMain.handle(
     IPC_CHANNELS.updateMcpSettings,
     async (_event, input: UpdateMcpSettingsInput) => {
       const settings = await mcpRuntime.update(input)

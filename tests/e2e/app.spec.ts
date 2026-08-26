@@ -2902,6 +2902,15 @@ test('creates and exposes verified rolling backups in Settings', async () => {
     await expect(window.getByRole('heading', { name: 'Settings' })).toBeVisible()
     await expect(window.getByText('Automatic database backups')).toBeVisible()
     await expect(window.getByText('1 of 10 snapshots')).toBeVisible()
+    const retrievalStatus = window.getByRole('region', {
+      name: 'Enhanced retrieval index status'
+    })
+    await expect(retrievalStatus.getByText('Not prepared')).toBeVisible()
+    await expect(retrievalStatus.getByRole('progressbar')).toHaveCount(0)
+    await window.getByRole('combobox', { name: 'MCP retrieval mode' })
+      .selectOption('enhanced')
+    await expect(retrievalStatus.getByText(/Start the MCP server/)).toBeVisible()
+    await expect(retrievalStatus.getByRole('progressbar')).toHaveCount(0)
 
     const backupDirectory = join(userDataDirectory, 'Backups')
     await expect.poll(() =>

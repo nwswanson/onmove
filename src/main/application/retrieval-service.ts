@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto'
-import type { McpRetrievalMode } from '../../shared/contracts'
+import type {
+  EnhancedRetrievalProgressSnapshot,
+  EnhancedRetrievalStatusSnapshot,
+  McpRetrievalMode
+} from '../../shared/contracts'
 import type { OnMoveAccessPolicy } from './access-policy'
 import { EmbeddingCacheRepository, type CachedEmbedding } from './embedding-cache'
 import type { EmbeddingProvider } from './embedding-provider'
@@ -147,6 +151,37 @@ const MIN_EMBEDDING_BREAK_CHARACTERS = 240
 const MAX_EMBEDDING_REQUEST_INPUTS = 24
 const EMBEDDING_PIPELINE_VERSION = 'document-content-chunks:1'
 const DEFAULT_SEMANTIC_FOREGROUND_WAIT_MS = 2_000
+const STATUS_NOTIFICATION_INTERVAL_MS = 100
+
+function initialEnhancedRetrievalStatus(): EnhancedRetrievalStatusSnapshot {
+  return {
+    revision: 0,
+    phase: 'idle',
+    progress: null,
+    generation: null,
+    totalDocuments: null,
+    reusedEmbeddings: 0,
+    generatedEmbeddings: 0,
+    completedEmbeddingChunks: 0,
+    totalEmbeddingChunks: 0,
+    startedAt: null,
+    updatedAt: null,
+    readyAt: null,
+    error: null
+  }
+}
+
+function retrievalErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) return error.message
+  return 'The enhanced retrieval index could not be prepared.'
+}
+
+type EnhancedRetrievalStatusPatch = Partial<Omit<
+  EnhancedRetrievalStatusSnapshot,
+  'progress' | 'updatedAt'
+>> & {
+  progress?: EnhancedRetrievalProgressSnapshot | null
+}
 
 export interface RetrievalServiceOptions {
   semanticForegroundWaitMs?: number
@@ -331,6 +366,12 @@ export class RetrievalService {
   private disposed = false
   private lifecycleRevision = 0
   private readonly semanticForegroundWaitMs: number
+  private enhancedStatus = initialEnhancedRetrievalStatus()
+  private readonly statusListeners = new Set<(
+    status: EnhancedRetrievalStatusSnapshot
+  ) => void>()
+  private lastStatusNotificationAt = 0
+  private lastNotifiedPhase = this.enhancedStatus.phase
 
   constructor(
     private readonly projection: RetrievalProjectionRepository,
@@ -355,6 +396,22 @@ export class RetrievalService {
     ) {
       throw new TypeError('semanticForegroundWaitMs must be a positive integer')
     }
+  }
+
+  status(): EnhancedRetrievalStatusSnapshot {
+    return {
+      ...this.enhancedStatus,
+      progress: this.enhancedStatus.progress
+        ? { ...this.enhancedStatus.progress }
+        : null
+    }
+  }
+
+  onStatusChanged(
+    listener: (status: EnhancedRetrievalStatusSnapshot) => void
+  ): () => void {
+    this.statusListeners.add(listener)
+    return () => this.statusListeners.delete(listener)
   }
 
   async retrieve(
@@ -463,6 +520,7 @@ export class RetrievalService {
     this.embeddings.dispose?.()
     this.semanticState = null
     this.buildPromise = null
+    this.statusListeners.clear()
   }
 
   private legacyPage(
@@ -532,7 +590,18 @@ export class RetrievalService {
       this.assertActive(lifecycleRevision)
       signal.throwIfAborted()
       if (!normalizedQueryVector) {
-        const [queryVector] = await this.embeddings.embed([text])
+        let queryVector: number[]
+        try {
+          [queryVector] = await this.embeddings.embed([text])
+        } catch (error) {
+          this.publishStatus(lifecycleRevision, {
+            phase: 'error',
+            progress: null,
+            readyAt: null,
+            error: retrievalErrorMessage(error)
+          })
+          throw error
+        }
         this.assertActive(lifecycleRevision)
         signal.throwIfAborted()
         normalizedQueryVector = normalizeVector(queryVector, this.embeddings.dimensions)
@@ -709,12 +778,20 @@ export class RetrievalService {
       return state
     }
     const lifecycleRevision = this.lifecycleRevision
-    const build = this.prepareSemanticIndex(lifecycleRevision)
+    // Publish the shared promise before preparation emits progress. A status listener
+    // must never be able to re-enter and start a duplicate cold build.
+    const build = Promise.resolve().then(() => this.prepareSemanticIndex(lifecycleRevision))
     this.buildPromise = build
     try {
       const state = await build
       this.assertActive(lifecycleRevision)
       return state
+    } catch (error) {
+      this.publishStatus(lifecycleRevision, {
+        phase: 'error',
+        error: retrievalErrorMessage(error)
+      })
+      throw error
     } finally {
       if (this.buildPromise === build) this.buildPromise = null
     }
@@ -725,17 +802,54 @@ export class RetrievalService {
   ): Promise<SemanticIndexState> {
     let pendingSnapshot: RetrievalProjectionSnapshot | null = null
     let buildAttempts = 0
+    let preparationStarted = this.semanticState === null
+    if (preparationStarted) this.startPreparation(lifecycleRevision)
+    await this.embeddings.prepare((progress) => {
+      if (progress.phase !== 'loading-model') return
+      if (!preparationStarted) {
+        preparationStarted = true
+        this.startPreparation(lifecycleRevision)
+      }
+      this.publishStatus(lifecycleRevision, {
+        phase: 'loading-model',
+        progress: null
+      })
+    })
+    this.assertActive(lifecycleRevision)
+    const reportProjection = (progress: { completed: number; total: number }): void => {
+      if (!preparationStarted) {
+        preparationStarted = true
+        this.startPreparation(lifecycleRevision)
+      }
+      this.publishStatus(lifecycleRevision, {
+        phase: 'synchronizing',
+        progress: { ...progress, unit: 'documents' }
+      })
+    }
     for (;;) {
       this.assertActive(lifecycleRevision)
       const snapshot = pendingSnapshot ?? await this.projection.snapshotIfChanged(
-        this.semanticState?.generation ?? null
+        this.semanticState?.generation ?? null,
+        reportProjection
       )
       this.assertActive(lifecycleRevision)
-      if (!snapshot && this.semanticState) return this.semanticState
+      if (!snapshot && this.semanticState) {
+        if (this.enhancedStatus.phase !== 'ready') {
+          this.publishReadyStatus(this.semanticState, lifecycleRevision)
+        }
+        return this.semanticState
+      }
 
-      const requiredSnapshot = snapshot ?? await this.projection.snapshotIfChanged(null)
+      const requiredSnapshot = snapshot ?? await this.projection.snapshotIfChanged(
+        null,
+        reportProjection
+      )
       this.assertActive(lifecycleRevision)
       if (!requiredSnapshot) throw new Error('semantic projection snapshot is unavailable')
+      if (!preparationStarted) {
+        preparationStarted = true
+        this.startPreparation(lifecycleRevision)
+      }
       buildAttempts += 1
       if (buildAttempts > MAX_SEMANTIC_BUILD_ATTEMPTS) {
         throw new Error('data continued changing while the semantic index was prepared')
@@ -745,9 +859,20 @@ export class RetrievalService {
       this.semanticState = state
       // Embedding and index replacement can be slow. Synchronize once more before
       // serving this generation, and rebuild immediately if a write landed meanwhile.
-      pendingSnapshot = await this.projection.snapshotIfChanged(state.generation)
+      this.publishStatus(lifecycleRevision, {
+        phase: 'synchronizing',
+        progress: null,
+        generation: state.generation
+      })
+      pendingSnapshot = await this.projection.snapshotIfChanged(
+        state.generation,
+        reportProjection
+      )
       this.assertActive(lifecycleRevision)
-      if (!pendingSnapshot) return state
+      if (!pendingSnapshot) {
+        this.publishReadyStatus(state, lifecycleRevision)
+        return state
+      }
     }
   }
 
@@ -776,7 +901,25 @@ export class RetrievalService {
     snapshot: RetrievalProjectionSnapshot,
     lifecycleRevision: number
   ): Promise<SemanticIndexState> {
-    const cached = await this.cache.list(this.embeddings.modelId, this.embeddings.dimensions)
+    this.publishStatus(lifecycleRevision, {
+      phase: 'loading-cache',
+      progress: null,
+      generation: snapshot.generation,
+      totalDocuments: snapshot.documents.length,
+      reusedEmbeddings: 0,
+      generatedEmbeddings: 0,
+      completedEmbeddingChunks: 0,
+      totalEmbeddingChunks: 0,
+      error: null
+    })
+    const cached = await this.cache.list(
+      this.embeddings.modelId,
+      this.embeddings.dimensions,
+      (progress) => this.publishStatus(lifecycleRevision, {
+        phase: 'loading-cache',
+        progress: { ...progress, unit: 'cache-entries' }
+      })
+    )
     this.assertActive(lifecycleRevision)
     const enriched: RetrievalDocument[] = []
     const missing: Array<{
@@ -784,6 +927,10 @@ export class RetrievalService {
       hash: string
       chunks: string[]
     }> = []
+    this.publishStatus(lifecycleRevision, {
+      phase: 'checking-documents',
+      progress: { completed: 0, total: snapshot.documents.length, unit: 'documents' }
+    })
     for (let index = 0; index < snapshot.documents.length; index += 1) {
       const document = snapshot.documents[index]
       const hash = contentHash(document)
@@ -796,23 +943,56 @@ export class RetrievalService {
       } else {
         missing.push({ document, hash, chunks: documentEmbeddingChunks(document) })
       }
-      if ((index + 1) % 100 === 0) {
+      const completed = index + 1
+      if (completed % 100 === 0 || completed === snapshot.documents.length) {
+        this.publishStatus(lifecycleRevision, {
+          phase: 'checking-documents',
+          progress: { completed, total: snapshot.documents.length, unit: 'documents' },
+          reusedEmbeddings: enriched.length
+        })
+      }
+      if (completed % 100 === 0) {
         await yieldToEventLoop()
         this.assertActive(lifecycleRevision)
       }
     }
 
     if (missing.length > 0) {
-      const pendingChunks = missing.flatMap((entry, documentIndex) =>
-        entry.chunks.map((text) => ({ documentIndex, text })))
+      const pendingChunks: Array<{ documentIndex: number; text: string }> = []
+      for (let documentIndex = 0; documentIndex < missing.length; documentIndex += 1) {
+        for (const text of missing[documentIndex].chunks) {
+          pendingChunks.push({ documentIndex, text })
+        }
+        if ((documentIndex + 1) % 100 === 0) {
+          await yieldToEventLoop()
+          this.assertActive(lifecycleRevision)
+        }
+      }
       const vectorsByDocument = missing.map((): number[][] => [])
+      let generatedEmbeddings = 0
+      this.publishStatus(lifecycleRevision, {
+        totalEmbeddingChunks: pendingChunks.length,
+        completedEmbeddingChunks: 0
+      })
       for (
         let start = 0;
         start < pendingChunks.length;
         start += MAX_EMBEDDING_REQUEST_INPUTS
       ) {
         const batch = pendingChunks.slice(start, start + MAX_EMBEDDING_REQUEST_INPUTS)
-        const vectors = await this.embeddings.embed(batch.map(({ text }) => text))
+        const vectors = await this.embeddings.embed(
+          batch.map(({ text }) => text),
+          (progress) => {
+            const completed = Math.min(start + progress.completed, pendingChunks.length)
+            this.publishStatus(lifecycleRevision, {
+              phase: progress.phase,
+              progress: progress.phase === 'loading-model'
+                ? null
+                : { completed, total: pendingChunks.length, unit: 'chunks' },
+              completedEmbeddingChunks: completed
+            })
+          }
+        )
         this.assertActive(lifecycleRevision)
         if (vectors.length !== batch.length) {
           throw new Error('embedding provider returned the wrong number of vectors')
@@ -840,25 +1020,122 @@ export class RetrievalService {
           })
           vectorsByDocument[documentIndex] = []
         }
+        generatedEmbeddings += stored.length
         // Persist completed work incrementally so quitting or a later provider failure
         // does not force the next enhanced request to restart a large corpus at zero.
         if (stored.length > 0) {
           this.cache.store(this.embeddings.modelId, this.embeddings.dimensions, stored)
         }
+        const completedChunks = Math.min(start + batch.length, pendingChunks.length)
+        this.publishStatus(lifecycleRevision, {
+          phase: 'embedding',
+          progress: {
+            completed: completedChunks,
+            total: pendingChunks.length,
+            unit: 'chunks'
+          },
+          generatedEmbeddings,
+          completedEmbeddingChunks: completedChunks
+        })
       }
     }
     this.assertActive(lifecycleRevision)
+    this.publishStatus(lifecycleRevision, {
+      phase: 'preparing-index',
+      progress: {
+        completed: 0,
+        total: snapshot.documents.length,
+        unit: 'documents'
+      }
+    })
     this.cache.prune(
       this.embeddings.modelId,
       new Set(snapshot.documents.map(({ sourceKey }) => sourceKey))
     )
     enriched.sort((left, right) => left.sourceKey.localeCompare(right.sourceKey))
-    await this.backend.replace({ generation: snapshot.generation, documents: enriched })
+    await this.backend.replace(
+      { generation: snapshot.generation, documents: enriched },
+      (progress) => this.publishStatus(lifecycleRevision, {
+        phase: progress.phase,
+        progress: {
+          completed: progress.completed,
+          total: progress.total,
+          unit: 'documents'
+        }
+      })
+    )
     this.assertActive(lifecycleRevision)
     return {
       generation: snapshot.generation,
       coverage: snapshot.documents.length === 0 ? 1 : enriched.length / snapshot.documents.length,
       documentsBySourceKey: new Map(enriched.map((document) => [document.sourceKey, document]))
+    }
+  }
+
+  private startPreparation(lifecycleRevision: number): void {
+    this.publishStatus(lifecycleRevision, {
+      phase: 'synchronizing',
+      progress: null,
+      generation: null,
+      totalDocuments: null,
+      reusedEmbeddings: 0,
+      generatedEmbeddings: 0,
+      completedEmbeddingChunks: 0,
+      totalEmbeddingChunks: 0,
+      startedAt: new Date().toISOString(),
+      readyAt: null,
+      error: null
+    })
+  }
+
+  private publishReadyStatus(
+    state: SemanticIndexState,
+    lifecycleRevision: number
+  ): void {
+    const totalDocuments = state.documentsBySourceKey.size
+    this.publishStatus(lifecycleRevision, {
+      phase: 'ready',
+      progress: { completed: totalDocuments, total: totalDocuments, unit: 'documents' },
+      generation: state.generation,
+      totalDocuments,
+      readyAt: new Date().toISOString(),
+      error: null
+    })
+  }
+
+  private publishStatus(
+    lifecycleRevision: number,
+    patch: EnhancedRetrievalStatusPatch
+  ): void {
+    if (this.disposed || lifecycleRevision !== this.lifecycleRevision) return
+    this.enhancedStatus = {
+      ...this.enhancedStatus,
+      ...patch,
+      revision: this.enhancedStatus.revision + 1,
+      progress: patch.progress === undefined
+        ? this.enhancedStatus.progress
+        : patch.progress,
+      updatedAt: new Date().toISOString()
+    }
+    const notificationTime = Date.now()
+    const phaseChanged = this.enhancedStatus.phase !== this.lastNotifiedPhase
+    if (
+      !phaseChanged &&
+      !['ready', 'error'].includes(this.enhancedStatus.phase) &&
+      notificationTime - this.lastStatusNotificationAt < STATUS_NOTIFICATION_INTERVAL_MS
+    ) return
+    this.lastNotifiedPhase = this.enhancedStatus.phase
+    this.lastStatusNotificationAt = notificationTime
+    const snapshot = this.status()
+    for (const listener of this.statusListeners) {
+      try {
+        listener({
+          ...snapshot,
+          progress: snapshot.progress ? { ...snapshot.progress } : null
+        })
+      } catch (error) {
+        console.error('Enhanced retrieval status listener failed:', error)
+      }
     }
   }
 

@@ -10,6 +10,7 @@ import { installTextContextMenu } from './text-context-menu'
 import { OnMoveMcpRuntime } from '../mcp/live-server'
 import {
   IPC_EVENTS,
+  type EnhancedRetrievalStatusSnapshot,
   type McpSettingsSnapshot,
   type NavigationPinSnapshot,
   type SidebarFolderSnapshot,
@@ -26,6 +27,7 @@ if (process.env.ONMOVE_USER_DATA_DIR) {
 let database: AppDatabase | undefined
 let mcpRuntime: OnMoveMcpRuntime | undefined
 let unregisterIpc: (() => void) | undefined
+let unregisterRetrievalStatus: (() => void) | undefined
 let sensitiveContentHidden = false
 const richTextWindowTargets = new Map<number, RichTextDocumentReference>()
 const MAX_IMPORT_BYTES = 512 * 1024 * 1024
@@ -180,6 +182,14 @@ function broadcastMcpSettingsChanged(settings: McpSettingsSnapshot): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
       window.webContents.send(IPC_EVENTS.mcpSettingsChanged, settings)
+    }
+  }
+}
+
+function broadcastEnhancedRetrievalStatus(status: EnhancedRetrievalStatusSnapshot): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(IPC_EVENTS.enhancedRetrievalStatusChanged, status)
     }
   }
 }
@@ -359,6 +369,9 @@ app.whenReady().then(async () => {
     })
   )
   await mcpRuntime.initialize()
+  unregisterRetrievalStatus = database.queries.retrieval.onStatusChanged(
+    broadcastEnhancedRetrievalStatus
+  )
   unregisterIpc = registerAppIpc(
     ipcMain,
     database,
@@ -414,6 +427,8 @@ app.on('before-quit', (event) => {
   backupMaintenanceTimer = undefined
   unregisterIpc?.()
   unregisterIpc = undefined
+  unregisterRetrievalStatus?.()
+  unregisterRetrievalStatus = undefined
 
   const runtime = mcpRuntime
   mcpRuntime = undefined

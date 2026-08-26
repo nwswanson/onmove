@@ -50,9 +50,15 @@ function model(): Promise<EncoderModel> {
   })
 }
 
-async function embed(texts: readonly string[]): Promise<Float32Array[]> {
+async function embed(
+  texts: readonly string[],
+  onProgress: (phase: 'loading-model' | 'embedding', completed: number) => void
+): Promise<Float32Array[]> {
   if (texts.length === 0) return []
+  const needsModelLoad = modelPromise === null
+  if (needsModelLoad) onProgress('loading-model', 0)
   const encoder = await model()
+  onProgress('embedding', 0)
   const vectors: Float32Array[] = []
   for (let start = 0; start < texts.length; start += EMBEDDING_BATCH_SIZE) {
     const tensor = await encoder.embed([...texts.slice(start, start + EMBEDDING_BATCH_SIZE)])
@@ -62,6 +68,7 @@ async function embed(texts: readonly string[]): Promise<Float32Array[]> {
     } finally {
       tensor.dispose()
     }
+    onProgress('embedding', Math.min(start + EMBEDDING_BATCH_SIZE, texts.length))
   }
   return vectors
 }
@@ -69,10 +76,9 @@ async function embed(texts: readonly string[]): Promise<Float32Array[]> {
 function isRequest(value: unknown): value is EmbeddingWorkerRequest {
   if (!value || typeof value !== 'object') return false
   const request = value as Partial<EmbeddingWorkerRequest>
-  return request.type === 'embed' &&
-    Number.isSafeInteger(request.requestId) &&
-    Number(request.requestId) > 0 &&
-    Array.isArray(request.texts) &&
+  if (!Number.isSafeInteger(request.requestId) || Number(request.requestId) < 1) return false
+  if (request.type === 'prepare') return true
+  return request.type === 'embed' && Array.isArray(request.texts) &&
     request.texts.every((text) => typeof text === 'string')
 }
 
@@ -91,7 +97,35 @@ const port = requireParentPort()
 
 async function handle(request: EmbeddingWorkerRequest): Promise<void> {
   try {
-    const vectors = await embed(request.texts)
+    if (request.type === 'prepare') {
+      if (modelPromise === null) {
+        const progress: EmbeddingWorkerResponse = {
+          type: 'progress',
+          requestId: request.requestId,
+          phase: 'loading-model',
+          completed: 0,
+          total: 0
+        }
+        port.postMessage(progress)
+      }
+      await model()
+      const prepared: EmbeddingWorkerResponse = {
+        type: 'prepared',
+        requestId: request.requestId
+      }
+      port.postMessage(prepared)
+      return
+    }
+    const vectors = await embed(request.texts, (phase, completed) => {
+      const response: EmbeddingWorkerResponse = {
+        type: 'progress',
+        requestId: request.requestId,
+        phase,
+        completed,
+        total: request.texts.length
+      }
+      port.postMessage(response)
+    })
     const response: EmbeddingWorkerResponse = {
       type: 'result',
       requestId: request.requestId,

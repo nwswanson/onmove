@@ -8,8 +8,18 @@ import type {
 export interface EmbeddingProvider {
   readonly modelId: string
   readonly dimensions: number
-  embed(texts: readonly string[]): Promise<number[][]>
+  prepare(onProgress?: (progress: EmbeddingProviderProgress) => void): Promise<void>
+  embed(
+    texts: readonly string[],
+    onProgress?: (progress: EmbeddingProviderProgress) => void
+  ): Promise<number[][]>
   dispose?(): void
+}
+
+export interface EmbeddingProviderProgress {
+  phase: 'loading-model' | 'embedding'
+  completed: number
+  total: number
 }
 
 export type EmbeddingWorkerLike = Pick<
@@ -25,13 +35,25 @@ export interface UniversalSentenceEncoderEmbeddingProviderOptions {
   requestTimeoutMs?: number
 }
 
-interface PendingEmbedding {
+interface PendingEmbeddingBase {
   worker: EmbeddingWorkerLike
   expectedCount: number
-  resolve: (vectors: number[][]) => void
   reject: (error: Error) => void
+  onProgress?: (progress: EmbeddingProviderProgress) => void
   timeout: ReturnType<typeof setTimeout>
 }
+
+interface PendingEmbedding extends PendingEmbeddingBase {
+  kind: 'embed'
+  resolve: (vectors: number[][]) => void
+}
+
+interface PendingPreparation extends PendingEmbeddingBase {
+  kind: 'prepare'
+  resolve: () => void
+}
+
+type PendingOperation = PendingEmbedding | PendingPreparation
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 5 * 60 * 1_000
 
@@ -55,7 +77,7 @@ export class UniversalSentenceEncoderEmbeddingProvider implements EmbeddingProvi
   readonly dimensions = 512
   private readonly workerFactory: EmbeddingWorkerFactory
   private readonly requestTimeoutMs: number
-  private readonly pending = new Map<number, PendingEmbedding>()
+  private readonly pending = new Map<number, PendingOperation>()
   private worker: EmbeddingWorkerLike | null = null
   private workerPromise: Promise<EmbeddingWorkerLike> | null = null
   private nextRequestId = 1
@@ -69,7 +91,41 @@ export class UniversalSentenceEncoderEmbeddingProvider implements EmbeddingProvi
     }
   }
 
-  async embed(texts: readonly string[]): Promise<number[][]> {
+  async prepare(
+    onProgress?: (progress: EmbeddingProviderProgress) => void
+  ): Promise<void> {
+    if (this.disposed) throw new Error('The embedding provider has been disposed')
+    const worker = await this.ensureWorker()
+    if (this.disposed) throw new Error('The embedding provider has been disposed')
+    const requestId = this.allocateRequestId()
+
+    return new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.failWorker(worker, new Error('The local embedding worker timed out'), true)
+      }, this.requestTimeoutMs)
+      this.pending.set(requestId, {
+        kind: 'prepare',
+        worker,
+        expectedCount: 0,
+        resolve,
+        reject,
+        onProgress,
+        timeout
+      })
+      const request: EmbeddingWorkerRequest = { type: 'prepare', requestId }
+      try {
+        worker.ref()
+        worker.postMessage(request)
+      } catch (error) {
+        this.failWorker(worker, workerError(error), true)
+      }
+    })
+  }
+
+  async embed(
+    texts: readonly string[],
+    onProgress?: (progress: EmbeddingProviderProgress) => void
+  ): Promise<number[][]> {
     if (this.disposed) throw new Error('The embedding provider has been disposed')
     if (texts.length === 0) return []
     if (texts.some((text) => typeof text !== 'string')) {
@@ -77,19 +133,19 @@ export class UniversalSentenceEncoderEmbeddingProvider implements EmbeddingProvi
     }
     const worker = await this.ensureWorker()
     if (this.disposed) throw new Error('The embedding provider has been disposed')
-    const requestId = this.nextRequestId
-    this.nextRequestId += 1
-    if (!Number.isSafeInteger(this.nextRequestId)) this.nextRequestId = 1
+    const requestId = this.allocateRequestId()
 
     return new Promise<number[][]>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.failWorker(worker, new Error('The local embedding worker timed out'), true)
       }, this.requestTimeoutMs)
       this.pending.set(requestId, {
+        kind: 'embed',
         worker,
         expectedCount: texts.length,
         resolve,
         reject,
+        onProgress,
         timeout
       })
       const request: EmbeddingWorkerRequest = {
@@ -156,6 +212,24 @@ export class UniversalSentenceEncoderEmbeddingProvider implements EmbeddingProvi
     if (!Number.isSafeInteger(response.requestId)) return
     const pending = this.pending.get(Number(response.requestId))
     if (!pending || pending.worker !== worker) return
+    if (response.type === 'progress') {
+      const completed = Number(response.completed)
+      const total = Number(response.total)
+      if (
+        (response.phase !== 'loading-model' && response.phase !== 'embedding') ||
+        !Number.isSafeInteger(completed) ||
+        !Number.isSafeInteger(total) ||
+        completed < 0 ||
+        total !== pending.expectedCount ||
+        completed > total
+      ) return
+      try {
+        pending.onProgress?.({ phase: response.phase, completed, total })
+      } catch (error) {
+        console.error('Embedding progress listener failed:', error)
+      }
+      return
+    }
     this.pending.delete(Number(response.requestId))
     clearTimeout(pending.timeout)
     this.unrefIfIdle(worker)
@@ -165,6 +239,14 @@ export class UniversalSentenceEncoderEmbeddingProvider implements EmbeddingProvi
       const error = new Error(detail?.message ?? 'The local embedding worker failed')
       error.name = detail?.name ?? 'Error'
       pending.reject(error)
+      return
+    }
+    if (pending.kind === 'prepare') {
+      if (response.type !== 'prepared') {
+        pending.reject(new Error('The local embedding worker returned an invalid response'))
+        return
+      }
+      pending.resolve()
       return
     }
     if (response.type !== 'result' || !Array.isArray(response.vectors)) {
@@ -191,6 +273,13 @@ export class UniversalSentenceEncoderEmbeddingProvider implements EmbeddingProvi
     } catch (error) {
       pending.reject(workerError(error))
     }
+  }
+
+  private allocateRequestId(): number {
+    const requestId = this.nextRequestId
+    this.nextRequestId += 1
+    if (!Number.isSafeInteger(this.nextRequestId)) this.nextRequestId = 1
+    return requestId
   }
 
   private failWorker(worker: EmbeddingWorkerLike, error: Error, terminate: boolean): void {

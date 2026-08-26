@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { OnMoveAccessPolicy } from '../../src/main/application/access-policy'
-import type { EmbeddingProvider } from '../../src/main/application/embedding-provider'
+import type {
+  EmbeddingProvider,
+  EmbeddingProviderProgress
+} from '../../src/main/application/embedding-provider'
 import { RetrievalProjectionRepository } from '../../src/main/application/retrieval-projection'
 import {
   RETRIEVAL_FALLBACK_REASONS,
@@ -24,15 +27,35 @@ class DeterministicEmbeddingProvider implements EmbeddingProvider {
   readonly modelId = 'deterministic-retrieval-test:1'
   readonly dimensions = 3
   readonly calls: string[][] = []
+  prepareCalls = 0
+  prepared = false
+  prepareFailure: Error | null = null
   failure: Error | null = null
   visibleCharacterLimit: number | null = null
+  onPrepare: (() => void | Promise<void>) | null = null
   onEmbed: ((texts: readonly string[]) => void | Promise<void>) | null = null
 
-  async embed(texts: readonly string[]): Promise<number[][]> {
+  async prepare(
+    onProgress?: (progress: EmbeddingProviderProgress) => void
+  ): Promise<void> {
+    this.prepareCalls += 1
+    if (this.prepared) return
+    onProgress?.({ phase: 'loading-model', completed: 0, total: 0 })
+    await this.onPrepare?.()
+    if (this.prepareFailure) throw this.prepareFailure
+    this.prepared = true
+  }
+
+  async embed(
+    texts: readonly string[],
+    onProgress?: (progress: EmbeddingProviderProgress) => void
+  ): Promise<number[][]> {
     const batch = [...texts]
     this.calls.push(batch)
+    onProgress?.({ phase: 'embedding', completed: 0, total: batch.length })
     await this.onEmbed?.(batch)
     if (this.failure) throw this.failure
+    onProgress?.({ phase: 'embedding', completed: batch.length, total: batch.length })
     return batch.map((text) => this.vector(text))
   }
 
@@ -329,6 +352,90 @@ describe('RetrievalService', () => {
     expect(cachedKeys).not.toContain(`update:${deleted.id}:observation`)
   })
 
+  it('does not report a fully cached index ready until the new worker prepares its model', async () => {
+    const { thread } = hierarchy('Cached restart')
+    domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      observation: 'Cached restart telemetry evidence'
+    })
+    const request = {
+      text: 'cache query monitoring',
+      kinds: ['update'] as const,
+      threadId: thread.id,
+      strategy: 'hybrid' as const,
+      diversifyBy: 'none' as const
+    }
+    await service.retrieve(request, visible, 'enhanced')
+    service.dispose()
+
+    const restartedProvider = new DeterministicEmbeddingProvider()
+    let finishPreparing!: () => void
+    restartedProvider.onPrepare = () => new Promise<void>((resolve) => {
+      finishPreparing = resolve
+    })
+    service = createService(restartedProvider, { semanticForegroundWaitMs: 10 })
+
+    const fallback = await service.retrieve(request, visible, 'enhanced')
+    expect(fallback.fallbackReason).toBe(RETRIEVAL_FALLBACK_REASONS.semanticPreparing)
+    expect(service.status()).toMatchObject({
+      phase: 'loading-model',
+      readyAt: null,
+      error: null
+    })
+    expect(restartedProvider.calls).toEqual([])
+
+    const concurrentFallback = await service.retrieve(request, visible, 'enhanced')
+    expect(concurrentFallback.fallbackReason).toBe(
+      RETRIEVAL_FALLBACK_REASONS.semanticPreparing
+    )
+    expect(restartedProvider.prepareCalls).toBe(1)
+
+    finishPreparing()
+    const hybrid = await service.retrieve(request, visible, 'enhanced')
+    expect(hybrid.appliedStrategy).toBe('hybrid')
+    expect(restartedProvider.calls).toEqual([['cache query monitoring']])
+    expect(service.status()).toMatchObject({
+      phase: 'ready',
+      readyAt: expect.any(String),
+      reusedEmbeddings: expect.any(Number),
+      generatedEmbeddings: 0,
+      error: null
+    })
+  })
+
+  it('reports model preparation failure and recovers on a later cached retry', async () => {
+    const { thread } = hierarchy('Preparation failure')
+    domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      observation: 'Cached model preparation evidence'
+    })
+    const request = {
+      text: 'cache query monitoring',
+      kinds: ['update'] as const,
+      threadId: thread.id,
+      strategy: 'hybrid' as const,
+      diversifyBy: 'none' as const
+    }
+    await service.retrieve(request, visible, 'enhanced')
+    service.dispose()
+
+    const restartedProvider = new DeterministicEmbeddingProvider()
+    restartedProvider.prepareFailure = new Error('local model preparation failed')
+    service = createService(restartedProvider)
+    const fallback = await service.retrieve(request, visible, 'enhanced')
+    expect(fallback.fallbackReason).toBe(RETRIEVAL_FALLBACK_REASONS.semanticUnavailable)
+    expect(service.status()).toMatchObject({
+      phase: 'error',
+      readyAt: null,
+      error: 'local model preparation failed'
+    })
+
+    restartedProvider.prepareFailure = null
+    const hybrid = await service.retrieve(request, visible, 'enhanced')
+    expect(hybrid.appliedStrategy).toBe('hybrid')
+    expect(service.status()).toMatchObject({ phase: 'ready', error: null })
+  })
+
   it('uses bounded content chunks so evidence at the tail contributes to one source vector', async () => {
     provider.visibleCharacterLimit = 480
     const { focus, thread } = hierarchy('Tail project')
@@ -362,6 +469,9 @@ describe('RetrievalService', () => {
   it('falls back promptly while the semantic index prepares and uses it after completion', async () => {
     service.dispose()
     service = createService(provider, { semanticForegroundWaitMs: 10 })
+    const statusUpdates = [] as ReturnType<RetrievalService['status']>[]
+    service.onStatusChanged((status) => statusUpdates.push(status))
+    expect(service.status()).toMatchObject({ revision: 0, phase: 'idle' })
     const snapshotSpy = vi.spyOn(projection, 'snapshotIfChanged')
     const { thread } = hierarchy('Background indexing')
     const update = domain.updates.create({
@@ -395,6 +505,14 @@ describe('RetrievalService', () => {
     expect(fallback.items.map(({ reference }) => reference)).toEqual([
       { type: 'update', id: update.id }
     ])
+    expect(service.status()).toMatchObject({
+      phase: 'embedding',
+      progress: expect.objectContaining({ unit: 'chunks' }),
+      generation: expect.any(Number),
+      totalDocuments: expect.any(Number),
+      readyAt: null,
+      error: null
+    })
 
     const concurrentFallback = await service.retrieve(request, visible, 'enhanced')
     expect(concurrentFallback.fallbackReason).toBe(
@@ -417,6 +535,31 @@ describe('RetrievalService', () => {
       })
     ])
     expect(provider.calls.flat().filter((text) => text === request.text)).toHaveLength(1)
+    expect(service.status()).toMatchObject({
+      phase: 'ready',
+      progress: expect.objectContaining({
+        completed: expect.any(Number),
+        total: expect.any(Number),
+        unit: 'documents'
+      }),
+      generation: hybrid.semanticGeneration,
+      generatedEmbeddings: expect.any(Number),
+      readyAt: expect.any(String),
+      error: null
+    })
+    expect(new Set(statusUpdates.map(({ phase }) => phase))).toEqual(new Set([
+      'synchronizing',
+      'loading-cache',
+      'checking-documents',
+      'loading-model',
+      'embedding',
+      'preparing-index',
+      'indexing',
+      'ready'
+    ]))
+    expect(statusUpdates.map(({ revision }) => revision)).toEqual(
+      statusUpdates.map(({ revision }) => revision).toSorted((left, right) => left - right)
+    )
   })
 
   it('rebuilds a newer generation when content changes during a long embedding build', async () => {
@@ -470,6 +613,11 @@ describe('RetrievalService', () => {
       fallbackReason: RETRIEVAL_FALLBACK_REASONS.semanticUnavailable
     })
     expect(fallback.fallbackReason).not.toContain('private provider')
+    expect(service.status()).toMatchObject({
+      phase: 'error',
+      readyAt: null,
+      error: 'private provider stack detail'
+    })
 
     let strictError: unknown
     try {
@@ -488,6 +636,7 @@ describe('RetrievalService', () => {
       text: 'fallbackneedle', kinds: ['update'], threadId: thread.id,
       strategy: 'hybrid', onUnavailable: 'fallback', diversifyBy: 'none', limit: 1
     }, visible, 'enhanced')
+    expect(service.status()).toMatchObject({ phase: 'ready', error: null })
     expect(first.nextCursor).toEqual({ type: 'ranked', offset: 1 })
     provider.failure = new Error('failure while continuing')
     await expect(service.retrieve({

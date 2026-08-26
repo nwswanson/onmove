@@ -49,6 +49,11 @@ function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve))
 }
 
+export interface RetrievalProjectionProgress {
+  completed: number
+  total: number
+}
+
 function projectionDocument(row: RetrievalProjectionRow): RetrievalDocument {
   if (!SEARCH_ENTITY_TYPES.includes(row.entity_type)) {
     throw new Error(`search projection contains unsupported entity type: ${row.entity_type}`)
@@ -91,7 +96,8 @@ export class RetrievalProjectionRepository {
   }
 
   async snapshotIfChanged(
-    knownGeneration: number | null
+    knownGeneration: number | null,
+    onProgress?: (progress: RetrievalProjectionProgress) => void
   ): Promise<RetrievalProjectionSnapshot | null> {
     if (
       knownGeneration !== null &&
@@ -103,6 +109,11 @@ export class RetrievalProjectionRepository {
     // synchronization and the state/row transaction adjacent so a write cannot mark
     // the projection dirty in between them.
     await yieldToEventLoop()
+    const pendingState = this.database.get<SearchIndexStateRow>(
+      'SELECT dirty, generation FROM search_index_state WHERE singleton = 1'
+    )
+    if (!pendingState) throw new Error('search index state is unavailable')
+    if (pendingState.dirty !== 0) onProgress?.({ completed: 0, total: 0 })
     this.legacy.synchronize()
     const snapshot = this.database.transaction(() => {
       const state = this.database.get<SearchIndexStateRow>(
@@ -123,9 +134,14 @@ export class RetrievalProjectionRepository {
     })
     if (!snapshot) return null
     const documents: RetrievalDocument[] = []
+    onProgress?.({ completed: 0, total: snapshot.rows.length })
     for (let index = 0; index < snapshot.rows.length; index += 1) {
       documents.push(projectionDocument(snapshot.rows[index]))
-      if ((index + 1) % 250 === 0) await yieldToEventLoop()
+      const completed = index + 1
+      if (completed % 250 === 0 || completed === snapshot.rows.length) {
+        onProgress?.({ completed, total: snapshot.rows.length })
+      }
+      if (completed % 250 === 0) await yieldToEventLoop()
     }
     return { generation: snapshot.generation, documents }
   }

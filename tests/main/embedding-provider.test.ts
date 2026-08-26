@@ -12,6 +12,11 @@ import type {
 } from '../../src/main/application/embedding-worker-protocol'
 
 const DIMENSIONS = 512
+type EmbedRequest = Extract<EmbeddingWorkerRequest, { type: 'embed' }>
+
+function isEmbedRequest(request: EmbeddingWorkerRequest): request is EmbedRequest {
+  return request.type === 'embed'
+}
 
 function vector(seed = 1): Float32Array {
   const result = new Float32Array(DIMENSIONS)
@@ -80,17 +85,33 @@ describe('UniversalSentenceEncoderEmbeddingProvider', () => {
       requestTimeoutMs: 1_000
     })
 
-    const first = provider.embed(['first'])
+    const progress = vi.fn()
+    const first = provider.embed(['first'], progress)
     const second = provider.embed(['second', 'third'])
     await waitForPosts(worker, 2)
 
     expect(workers.calls()).toBe(1)
-    const firstRequest = worker.posted.find(({ texts }) => texts[0] === 'first')
-    const secondRequest = worker.posted.find(({ texts }) => texts[0] === 'second')
+    const embeddingRequests = worker.posted.filter(isEmbedRequest)
+    const firstRequest = embeddingRequests.find(({ texts }) => texts[0] === 'first')
+    const secondRequest = embeddingRequests.find(({ texts }) => texts[0] === 'second')
     expect(firstRequest).toMatchObject({ type: 'embed', texts: ['first'] })
     expect(secondRequest).toMatchObject({ type: 'embed', texts: ['second', 'third'] })
     if (!firstRequest || !secondRequest) throw new Error('Both requests must be posted')
     expect(new Set(worker.posted.map(({ requestId }) => requestId)).size).toBe(2)
+    worker.respond({
+      type: 'progress',
+      requestId: firstRequest.requestId,
+      phase: 'loading-model',
+      completed: 0,
+      total: 1
+    })
+    worker.respond({
+      type: 'progress',
+      requestId: firstRequest.requestId,
+      phase: 'embedding',
+      completed: 1,
+      total: 1
+    })
     worker.respond({
       type: 'result',
       requestId: secondRequest.requestId,
@@ -107,6 +128,37 @@ describe('UniversalSentenceEncoderEmbeddingProvider', () => {
     await expect(first).resolves.toEqual([expect.arrayContaining([1])])
     expect(worker.refCalls).toBe(2)
     expect(worker.unrefCalls).toBeGreaterThanOrEqual(2)
+    expect(progress.mock.calls.map(([value]) => value)).toEqual([
+      { phase: 'loading-model', completed: 0, total: 1 },
+      { phase: 'embedding', completed: 1, total: 1 }
+    ])
+    provider.dispose()
+  })
+
+  it('prepares the model explicitly and requires a matching prepared acknowledgement', async () => {
+    const worker = new FakeEmbeddingWorker()
+    const provider = new UniversalSentenceEncoderEmbeddingProvider({
+      workerFactory: factoryFor(worker).factory,
+      requestTimeoutMs: 1_000
+    })
+    const progress = vi.fn()
+
+    const preparing = provider.prepare(progress)
+    await waitForPosts(worker, 1)
+    expect(worker.posted[0]).toEqual({ type: 'prepare', requestId: 1 })
+    worker.respond({
+      type: 'progress', requestId: 1, phase: 'loading-model', completed: 0, total: 0
+    })
+    worker.respond({ type: 'prepared', requestId: 1 })
+    await expect(preparing).resolves.toBeUndefined()
+    expect(progress).toHaveBeenCalledWith({
+      phase: 'loading-model', completed: 0, total: 0
+    })
+
+    const mismatched = provider.prepare()
+    await waitForPosts(worker, 2)
+    worker.respond({ type: 'result', requestId: 2, vectors: [] })
+    await expect(mismatched).rejects.toThrow('invalid response')
     provider.dispose()
   })
 
@@ -183,6 +235,7 @@ describe('UniversalSentenceEncoderEmbeddingProvider', () => {
     provider.dispose()
 
     await expect(pending).rejects.toThrow('disposed')
+    await expect(provider.prepare()).rejects.toThrow('disposed')
     await expect(provider.embed(['too late'])).rejects.toThrow('disposed')
     expect(worker.terminateCalls).toBe(1)
   })

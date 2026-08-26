@@ -34,6 +34,23 @@ describe('registerAppIpc', () => {
         }))
       },
       queries: {
+        retrieval: {
+          status: vi.fn(() => ({
+            revision: 7,
+            phase: 'embedding',
+            progress: { completed: 24, total: 96, unit: 'chunks' },
+            generation: 4,
+            totalDocuments: 72,
+            reusedEmbeddings: 48,
+            generatedEmbeddings: 12,
+            completedEmbeddingChunks: 24,
+            totalEmbeddingChunks: 96,
+            startedAt: '2026-08-10T12:00:00.000Z',
+            updatedAt: '2026-08-10T12:00:10.000Z',
+            readyAt: null,
+            error: null
+          }))
+        },
         listFocusSnapshots: vi.fn(() => [{ id: 12, title: 'Launch', status: 'active' }]),
         todoOverview: vi.fn(() => ({
           items: [{ id: 72, name: 'Cross-context Todo' }],
@@ -580,6 +597,11 @@ describe('registerAppIpc', () => {
       retrievalMode: 'classic',
       allowSensitive: false,
       allowMutations: false
+    })
+    expect(await handlers.get(IPC_CHANNELS.getEnhancedRetrievalStatus)?.()).toMatchObject({
+      revision: 7,
+      phase: 'embedding',
+      progress: { completed: 24, total: 96, unit: 'chunks' }
     })
     expect(await handlers.get(IPC_CHANNELS.updateMcpSettings)?.(
       undefined,

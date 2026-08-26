@@ -69,10 +69,19 @@ export interface RetrievalBackendPage {
   hasMore: boolean
 }
 
+export interface RetrievalBackendReplaceProgress {
+  phase: 'preparing-index' | 'indexing'
+  completed: number
+  total: number
+}
+
 /** Provider-neutral ranked-candidate boundary. SQLite hydrates and authorizes hits. */
 export interface RetrievalBackend {
   readonly generation: number | null
-  replace(snapshot: RetrievalProjectionSnapshot): Promise<void>
+  replace(
+    snapshot: RetrievalProjectionSnapshot,
+    onProgress?: (progress: RetrievalBackendReplaceProgress) => void
+  ): Promise<void>
   search(input: RetrievalBackendSearch): Promise<RetrievalBackendPage>
   dispose(): void
 }

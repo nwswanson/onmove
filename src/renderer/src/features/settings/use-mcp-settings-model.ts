@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
+  EnhancedRetrievalStatusSnapshot,
   FocusSnapshot,
   McpSettingsSnapshot,
   ThreadSnapshot,
@@ -8,6 +9,8 @@ import type {
 
 export interface McpSettingsModel {
   state: McpSettingsSnapshot | null
+  retrievalStatus: EnhancedRetrievalStatusSnapshot | null
+  retrievalStatusError: boolean
   loading: boolean
   saving: boolean
   error: string | null
@@ -20,18 +23,31 @@ export interface McpSettingsModel {
 /** Owns the sandboxed settings boundary and reflects the main process's live server state. */
 export function useMcpSettingsModel(): McpSettingsModel {
   const [state, setState] = useState<McpSettingsSnapshot | null>(null)
+  const [retrievalStatus, setRetrievalStatus] =
+    useState<EnhancedRetrievalStatusSnapshot | null>(null)
+  const [retrievalStatusError, setRetrievalStatusError] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [focuses, setFocuses] = useState<FocusSnapshot[]>([])
   const [threadsByFocus, setThreadsByFocus] = useState<Record<number, ThreadSnapshot[]>>({})
   const requestedThreadFocuses = useRef(new Set<number>())
+  const retrievalStatusRevision = useRef(-1)
 
   useEffect(() => {
     let active = true
     const unsubscribe = window.onmove.mcp.onChanged((next) => {
       if (active) setState(next)
     })
+    const acceptRetrievalStatus = (next: EnhancedRetrievalStatusSnapshot): void => {
+      if (!active || next.revision <= retrievalStatusRevision.current) return
+      retrievalStatusRevision.current = next.revision
+      setRetrievalStatus(next)
+      setRetrievalStatusError(false)
+    }
+    const unsubscribeRetrievalStatus = window.onmove.mcp.onRetrievalStatusChanged(
+      acceptRetrievalStatus
+    )
     window.onmove.mcp.get().then(
       (next) => {
         if (!active) return
@@ -52,9 +68,16 @@ export function useMcpSettingsModel(): McpSettingsModel {
         if (active) setError('MCP access targets could not be loaded.')
       }
     )
+    window.onmove.mcp.getRetrievalStatus().then(
+      acceptRetrievalStatus,
+      () => {
+        if (active) setRetrievalStatusError(true)
+      }
+    )
     return () => {
       active = false
       unsubscribe()
+      unsubscribeRetrievalStatus()
     }
   }, [])
 
@@ -82,5 +105,16 @@ export function useMcpSettingsModel(): McpSettingsModel {
     }
   }, [])
 
-  return { state, loading, saving, error, focuses, threadsByFocus, update, loadThreads }
+  return {
+    state,
+    retrievalStatus,
+    retrievalStatusError,
+    loading,
+    saving,
+    error,
+    focuses,
+    threadsByFocus,
+    update,
+    loadThreads
+  }
 }

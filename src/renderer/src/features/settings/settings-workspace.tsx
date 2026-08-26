@@ -14,6 +14,7 @@ import {
   type McpPermissionResourceSelector
 } from '../../../../shared/contracts'
 import { useMcpSettingsModel, type McpSettingsModel } from './use-mcp-settings-model'
+import { EnhancedRetrievalStatus } from './enhanced-retrieval-status'
 
 function formatDate(value: string | null): string {
   if (value === null) return 'Not yet created'
@@ -630,31 +631,41 @@ export function SettingsWorkspace({
                         }}
                       />
                     </label>
-                    <label className="flex items-center justify-between gap-4 py-3">
-                      <span>
-                        <span className="block text-sm font-medium">Retrieval</span>
-                        <span className="mt-0.5 block text-xs text-muted-foreground">
-                          Enhanced retrieval adds local semantic ranking while preserving exact
-                          hierarchy boundaries. Its model downloads on first use and prepares in
-                          the background; requests use classic retrieval while it warms.
+                    <div className="py-3">
+                      <label className="flex items-center justify-between gap-4">
+                        <span>
+                          <span className="block text-sm font-medium">Retrieval</span>
+                          <span className="mt-0.5 block text-xs text-muted-foreground">
+                            Enhanced retrieval adds local semantic ranking while preserving exact
+                            hierarchy boundaries. Its model loads on the first use of each app
+                            session and prepares in the background; requests use classic retrieval
+                            while it warms.
+                          </span>
                         </span>
-                      </span>
-                      <select
-                        aria-label="MCP retrieval mode"
-                        className="h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        value={mcp.state?.retrievalMode ?? 'classic'}
-                        disabled={mcp.loading || mcp.saving}
-                        onChange={(event) => {
-                          const value = event.target.value
-                          if (value === 'classic' || value === 'enhanced') {
-                            void mcp.update({ retrievalMode: value })
-                          }
-                        }}
-                      >
-                        <option value="classic">Classic</option>
-                        <option value="enhanced">Enhanced</option>
-                      </select>
-                    </label>
+                        <select
+                          aria-label="MCP retrieval mode"
+                          className="h-8 shrink-0 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          value={mcp.state?.retrievalMode ?? 'classic'}
+                          disabled={mcp.loading || mcp.saving}
+                          onChange={(event) => {
+                            const value = event.target.value
+                            if (value === 'classic' || value === 'enhanced') {
+                              void mcp.update({ retrievalMode: value })
+                            }
+                          }}
+                        >
+                          <option value="classic">Classic</option>
+                          <option value="enhanced">Enhanced</option>
+                        </select>
+                      </label>
+                      <EnhancedRetrievalStatus
+                        mode={mcp.state?.retrievalMode ?? 'classic'}
+                        serverEnabled={mcp.state?.serverEnabled ?? false}
+                        serverStatus={mcp.state?.status ?? 'stopped'}
+                        loadError={mcp.retrievalStatusError}
+                        status={mcp.retrievalStatus}
+                      />
+                    </div>
                     <label className="flex cursor-pointer items-start gap-3 py-3">
                       <input
                         type="checkbox"

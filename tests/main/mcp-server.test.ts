@@ -24,6 +24,7 @@ function richText(text: string): OnMoveRichTextDocument {
 const fakeEmbeddingProvider: EmbeddingProvider = {
   modelId: 'mcp-test-embeddings-v1',
   dimensions: 4,
+  async prepare() {},
   async embed(texts) {
     return texts.map((text) => [
       1,

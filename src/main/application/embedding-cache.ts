@@ -13,6 +13,11 @@ export interface CachedEmbedding {
   vector: number[]
 }
 
+export interface EmbeddingCacheProgress {
+  completed: number
+  total: number
+}
+
 function encodeVector(values: readonly number[]): Uint8Array {
   const bytes = new Uint8Array(values.length * Float32Array.BYTES_PER_ELEMENT)
   const view = new DataView(bytes.buffer)
@@ -40,7 +45,11 @@ function yieldToEventLoop(): Promise<void> {
 export class EmbeddingCacheRepository {
   constructor(private readonly database: SqliteAdapter) {}
 
-  async list(modelId: string, dimensions: number): Promise<Map<string, CachedEmbedding>> {
+  async list(
+    modelId: string,
+    dimensions: number,
+    onProgress?: (progress: EmbeddingCacheProgress) => void
+  ): Promise<Map<string, CachedEmbedding>> {
     const result = new Map<string, CachedEmbedding>()
     const rows = this.database.all<EmbeddingCacheRow>(
       `SELECT source_key, content_hash, dimensions, vector
@@ -48,6 +57,7 @@ export class EmbeddingCacheRepository {
        WHERE model_id = ? AND dimensions = ?`,
       [modelId, dimensions]
     )
+    onProgress?.({ completed: 0, total: rows.length })
     for (let index = 0; index < rows.length; index += 1) {
       const row = rows[index]
       const vector = decodeVector(row.vector, dimensions)
@@ -58,7 +68,11 @@ export class EmbeddingCacheRepository {
           vector
         })
       }
-      if ((index + 1) % 100 === 0) await yieldToEventLoop()
+      const completed = index + 1
+      if (completed % 100 === 0 || completed === rows.length) {
+        onProgress?.({ completed, total: rows.length })
+      }
+      if (completed % 100 === 0) await yieldToEventLoop()
     }
     return result
   }

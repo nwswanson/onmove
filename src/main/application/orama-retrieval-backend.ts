@@ -9,6 +9,7 @@ import { SEARCH_ENTITY_TYPES, type SearchEntityType } from './search-index'
 import type {
   RetrievalBackend,
   RetrievalBackendPage,
+  RetrievalBackendReplaceProgress,
   RetrievalBackendSearch,
   RetrievalDocument,
   RetrievalProjectionSnapshot,
@@ -167,11 +168,19 @@ export class OramaRetrievalBackend implements RetrievalBackend {
     return this.indexedGeneration
   }
 
-  async replace(snapshot: RetrievalProjectionSnapshot): Promise<void> {
+  async replace(
+    snapshot: RetrievalProjectionSnapshot,
+    onProgress?: (progress: RetrievalBackendReplaceProgress) => void
+  ): Promise<void> {
     nonnegativeInteger(snapshot.generation, 'snapshot.generation')
     const replacementRevision = ++this.replacementRevision
     const seen = new Set<string>()
     const documents: ReturnType<typeof oramaDocument>[] = []
+    onProgress?.({
+      phase: 'preparing-index',
+      completed: 0,
+      total: snapshot.documents.length
+    })
     for (let index = 0; index < snapshot.documents.length; index += 1) {
       if (replacementRevision !== this.replacementRevision) return
       const document = snapshot.documents[index]
@@ -180,13 +189,27 @@ export class OramaRetrievalBackend implements RetrievalBackend {
       }
       seen.add(document.sourceKey)
       documents.push(oramaDocument(document, this.vectorDimension))
-      if ((index + 1) % ORAMA_INSERT_BATCH_SIZE === 0) await yieldToEventLoop()
+      const completed = index + 1
+      if (completed % ORAMA_INSERT_BATCH_SIZE === 0 || completed === snapshot.documents.length) {
+        onProgress?.({
+          phase: 'preparing-index',
+          completed,
+          total: snapshot.documents.length
+        })
+      }
+      if (completed % ORAMA_INSERT_BATCH_SIZE === 0) await yieldToEventLoop()
     }
     if (replacementRevision !== this.replacementRevision) return
     const next = create({ schema: schemaFor(this.vectorDimension) })
+    onProgress?.({ phase: 'indexing', completed: 0, total: documents.length })
     for (let start = 0; start < documents.length; start += ORAMA_INSERT_BATCH_SIZE) {
       if (replacementRevision !== this.replacementRevision) return
       await insertMultiple(next, documents.slice(start, start + ORAMA_INSERT_BATCH_SIZE))
+      onProgress?.({
+        phase: 'indexing',
+        completed: Math.min(start + ORAMA_INSERT_BATCH_SIZE, documents.length),
+        total: documents.length
+      })
       if (start + ORAMA_INSERT_BATCH_SIZE < documents.length) await yieldToEventLoop()
     }
     if (replacementRevision !== this.replacementRevision) return

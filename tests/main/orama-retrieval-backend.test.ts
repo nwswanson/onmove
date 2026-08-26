@@ -43,6 +43,11 @@ describe('OramaRetrievalBackend', () => {
         embedding: [1, 0, 0]
       }
     ))
+    const progress: Array<{
+      phase: 'preparing-index' | 'indexing'
+      completed: number
+      total: number
+    }> = []
     let heartbeatRan = false
     const heartbeat = new Promise<void>((resolve) => {
       setTimeout(() => {
@@ -52,8 +57,23 @@ describe('OramaRetrievalBackend', () => {
     })
 
     try {
-      await backend.replace({ generation: 1, documents })
+      await backend.replace(
+        { generation: 1, documents },
+        (update) => progress.push(update)
+      )
       expect(heartbeatRan).toBe(true)
+      expect(progress[0]).toEqual({
+        phase: 'preparing-index', completed: 0, total: documents.length
+      })
+      expect(progress).toContainEqual({
+        phase: 'preparing-index', completed: documents.length, total: documents.length
+      })
+      expect(progress).toContainEqual({
+        phase: 'indexing', completed: 0, total: documents.length
+      })
+      expect(progress.at(-1)).toEqual({
+        phase: 'indexing', completed: documents.length, total: documents.length
+      })
     } finally {
       await heartbeat
       backend.dispose()
