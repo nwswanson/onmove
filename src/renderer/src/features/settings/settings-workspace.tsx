@@ -638,9 +638,9 @@ export function SettingsWorkspace({
                           <span className="block text-sm font-medium">Retrieval</span>
                           <span className="mt-0.5 block text-xs text-muted-foreground">
                             Enhanced retrieval adds local semantic ranking while preserving exact
-                            hierarchy boundaries. Its included model initializes on the first use
-                            of each app session and prepares in the background; requests use classic
-                            retrieval while it warms.
+                            hierarchy boundaries. When selected, its included model and local index
+                            initialize automatically at app launch—or immediately when Enhanced is
+                            selected; requests use classic retrieval while preparation finishes.
                           </span>
                         </span>
                         <select
@@ -661,8 +661,6 @@ export function SettingsWorkspace({
                       </label>
                       <EnhancedRetrievalStatus
                         mode={mcp.state?.retrievalMode ?? 'classic'}
-                        serverEnabled={mcp.state?.serverEnabled ?? false}
-                        serverStatus={mcp.state?.status ?? 'stopped'}
                         loadError={mcp.retrievalStatusError}
                         status={mcp.retrievalStatus}
                       />

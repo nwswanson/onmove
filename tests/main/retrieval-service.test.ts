@@ -173,6 +173,160 @@ describe('RetrievalService', () => {
     expect(provider.calls).toEqual([])
   })
 
+  it('warms the enhanced index to completion without the foreground query deadline', async () => {
+    service.dispose()
+    service = createService(provider, { semanticForegroundWaitMs: 1 })
+    const { thread } = hierarchy('Startup warm')
+    domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      observation: 'Startup warming prepares local telemetry evidence'
+    })
+    let preparationStarted!: () => void
+    let finishPreparing!: () => void
+    const started = new Promise<void>((resolve) => {
+      preparationStarted = resolve
+    })
+    const preparationGate = new Promise<void>((resolve) => {
+      finishPreparing = resolve
+    })
+    provider.onPrepare = async () => {
+      provider.onPrepare = null
+      preparationStarted()
+      await preparationGate
+    }
+
+    let settled = false
+    const warming = service.warm().then(
+      () => { settled = true },
+      (error: unknown) => {
+        settled = true
+        throw error
+      }
+    )
+    await started
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(settled).toBe(false)
+    expect(service.status()).toMatchObject({
+      phase: 'loading-model',
+      readyAt: null,
+      error: null
+    })
+
+    finishPreparing()
+    await warming
+    expect(service.status()).toMatchObject({
+      phase: 'ready',
+      generation: expect.any(Number),
+      readyAt: expect.any(String),
+      error: null
+    })
+  })
+
+  it('shares one in-flight build between startup warming and enhanced retrieval', async () => {
+    service.dispose()
+    service = createService(provider, { semanticForegroundWaitMs: 5 })
+    const snapshotSpy = vi.spyOn(projection, 'snapshotIfChanged')
+    const { thread } = hierarchy('Shared warm')
+    const update = domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      observation: 'Sharedwarmneedle local telemetry evidence'
+    }).toSnapshot()
+    let embeddingStarted!: () => void
+    let finishEmbedding!: () => void
+    const started = new Promise<void>((resolve) => {
+      embeddingStarted = resolve
+    })
+    const embeddingGate = new Promise<void>((resolve) => {
+      finishEmbedding = resolve
+    })
+    provider.onEmbed = async () => {
+      provider.onEmbed = null
+      embeddingStarted()
+      await embeddingGate
+    }
+    const request = {
+      text: 'Sharedwarmneedle telemetry',
+      kinds: ['update'] as const,
+      threadId: thread.id,
+      strategy: 'auto' as const,
+      diversifyBy: 'none' as const
+    }
+
+    const warming = service.warm()
+    await started
+    const fallback = await service.retrieve(request, visible, 'enhanced')
+
+    expect(fallback).toMatchObject({
+      appliedStrategy: 'lexical',
+      fallbackReason: RETRIEVAL_FALLBACK_REASONS.semanticPreparing
+    })
+    expect(fallback.items.map(({ reference }) => reference)).toEqual([
+      { type: 'update', id: update.id }
+    ])
+    expect(provider.prepareCalls).toBe(1)
+    expect(snapshotSpy).toHaveBeenCalledTimes(1)
+
+    finishEmbedding()
+    await warming
+    expect(snapshotSpy).toHaveBeenCalledTimes(2)
+    expect(service.status()).toMatchObject({ phase: 'ready', error: null })
+  })
+
+  it('coalesces repeated warm calls and does not rebuild a current generation', async () => {
+    const { thread } = hierarchy('Current warm')
+    domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      observation: 'Current generation telemetry evidence'
+    })
+    await service.warm()
+    const ready = service.status()
+    const prepareCalls = provider.prepareCalls
+    provider.calls.length = 0
+    const snapshotSpy = vi.spyOn(projection, 'snapshotIfChanged')
+
+    await Promise.all([service.warm(), service.warm()])
+
+    expect(provider.prepareCalls).toBe(prepareCalls + 1)
+    expect(provider.calls).toEqual([])
+    expect(snapshotSpy).toHaveBeenCalledTimes(1)
+    expect(service.status()).toEqual(ready)
+  })
+
+  it('reports warm failures and safely rejects an in-flight warm when disposed', async () => {
+    provider.prepareFailure = new Error('startup model preparation failed')
+
+    await expect(service.warm()).rejects.toThrow('startup model preparation failed')
+    expect(service.status()).toMatchObject({
+      phase: 'error',
+      readyAt: null,
+      error: 'startup model preparation failed'
+    })
+
+    provider.prepareFailure = null
+    provider.prepared = false
+    let preparationStarted!: () => void
+    let finishPreparing!: () => void
+    const started = new Promise<void>((resolve) => {
+      preparationStarted = resolve
+    })
+    const preparationGate = new Promise<void>((resolve) => {
+      finishPreparing = resolve
+    })
+    provider.onPrepare = async () => {
+      preparationStarted()
+      await preparationGate
+    }
+    const warming = service.warm()
+    await started
+
+    service.dispose()
+    finishPreparing()
+
+    await expect(warming).rejects.toThrow('retrieval service has been disposed')
+    await expect(service.warm()).rejects.toThrow('retrieval service has been disposed')
+  })
+
   it('adds paraphrase-only semantic recall and reports each matching stage', async () => {
     const { thread } = hierarchy('Semantic')
     const update = domain.updates.create({

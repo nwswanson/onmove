@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import type {
   EnhancedRetrievalPhase,
   EnhancedRetrievalStatusSnapshot,
-  McpSettingsSnapshot,
   McpRetrievalMode
 } from '../../../../shared/contracts'
 import { Progress } from '../../components/ui/progress'
@@ -61,8 +60,6 @@ function progressText(status: EnhancedRetrievalStatusSnapshot): string | null {
 
 function statusDescription(
   mode: McpRetrievalMode,
-  serverEnabled: boolean,
-  serverStatus: McpSettingsSnapshot['status'],
   loadError: boolean,
   status: EnhancedRetrievalStatusSnapshot | null
 ): string {
@@ -75,20 +72,11 @@ function statusDescription(
     if (mode !== 'enhanced') {
       return 'Enhanced retrieval is off. No local semantic index has been prepared this session.'
     }
-    if (!serverEnabled) {
-      return 'Start the MCP server. Preparation begins with the first enhanced retrieval request.'
-    }
-    if (serverStatus === 'error') {
-      return 'The MCP server is unavailable. Preparation can begin after the server error is resolved.'
-    }
-    if (serverStatus !== 'running') {
-      return 'Waiting for the MCP server to start. Preparation begins with the first enhanced retrieval request.'
-    }
-    return 'Waiting for the first enhanced retrieval request. Indexing starts on demand.'
+    return 'Startup preparation is queued. OnMove prepares the local index automatically while Enhanced retrieval is selected.'
   }
   if (status.phase === 'ready') {
     return mode === 'enhanced'
-      ? 'The local index is ready. The first query after an app restart may still briefly load the semantic model.'
+      ? 'The local semantic model and index are ready for enhanced queries.'
       : 'The index is prepared but remains unused while Classic retrieval is selected.'
   }
   if (status.phase === 'error') {
@@ -111,14 +99,10 @@ function statusDescription(
 
 export function EnhancedRetrievalStatus({
   mode,
-  serverEnabled,
-  serverStatus,
   loadError,
   status
 }: {
   mode: McpRetrievalMode
-  serverEnabled: boolean
-  serverStatus: McpSettingsSnapshot['status']
   loadError: boolean
   status: EnhancedRetrievalStatusSnapshot | null
 }): React.JSX.Element {
@@ -181,7 +165,7 @@ export function EnhancedRetrievalStatus({
         />
       )}
       <p className="mt-2 text-[0.6875rem] leading-4 text-muted-foreground">
-        {statusDescription(mode, serverEnabled, serverStatus, loadError, status)}
+        {statusDescription(mode, loadError, status)}
       </p>
 
       {status?.error && (

@@ -851,20 +851,25 @@ foreground colors and do not rely on color alone to communicate selection or sta
   OnMove source text to a hosted embedding or retrieval service.
   Cache derived vectors durably in SQLite by stable source key, model id, content hash, and
   dimensions; persist completed batches incrementally, ignore mismatched entries, and prune stale
-  source keys so the cache remains disposable and rebuildable. Bound the foreground wait for a cold
-  semantic index and return an explicit lexical `semanticPreparing` fallback while its shared build
-  continues. Cancel the abandoned request's later query/ranking work without cancelling that shared
-  build. Cooperatively yield through projection mapping, cache decoding, authorization pages, and
-  Orama insertion/search pages so cached-index work also keeps the renderer responsive.
+  source keys so the cache remains disposable and rebuildable. When Enhanced is persisted, schedule one
+  non-blocking, process-owned warmup during application startup before the MCP server accepts requests;
+  never await it before constructing the first window. Also start it immediately when Settings changes
+  from Classic to Enhanced, independent of MCP server state. Share that single-flight build with
+  concurrent retrieval requests. Bound the foreground wait for an early
+  request against a cold semantic index and return an explicit lexical `semanticPreparing` fallback
+  while its shared build continues. Cancel the abandoned request's later query/ranking work without
+  cancelling that shared build. Cooperatively yield through projection mapping, cache decoding,
+  authorization pages, and Orama insertion/search pages so cached-index work also keeps the renderer
+  responsive.
 - Keep Enhanced retrieval preparation observable through a process-local, read-only status
   contract. Report projection synchronization, cache loading, document checks, model loading,
   embedding batches, Orama preparation/insertion, final generation verification, Ready, and Error
   without exposing indexed content. Publish lightweight monotonic progress events rather than the
-  complete MCP permission snapshot. Settings must explain that preparation starts on the first
-  eligible enhanced retrieval, that high local CPU use is expected while embedding or indexing,
-  and that Classic fallback remains available. Report Ready only after the post-build generation
-  check confirms that no newer write landed and the worker has confirmed the local semantic model
-  is loaded. A fully cached or empty corpus must not report Ready before model preparation succeeds.
+  complete MCP permission snapshot. Settings must explain that preparation starts automatically at
+  app launch in Enhanced mode, that high local CPU use is expected while embedding or indexing, and
+  that Classic fallback remains available. Report Ready only after the post-build generation check
+  confirms that no newer write landed and the worker has confirmed the local semantic model is loaded.
+  A fully cached or empty corpus must not report Ready before model preparation succeeds.
 - Fuse lexical and semantic provider ranks through reciprocal-rank fusion rather than comparing or
   adding their raw scores. Keep lexical influence primary and make operational-lineage
   diversification the default so repeated corporate language, templates, and sibling Subjects do

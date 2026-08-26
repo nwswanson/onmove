@@ -195,6 +195,16 @@ function broadcastEnhancedRetrievalStatus(status: EnhancedRetrievalStatusSnapsho
   }
 }
 
+function startEnhancedRetrievalWarmup(): void {
+  const activeDatabase = database
+  if (!activeDatabase || activeDatabase.mcpSettings.get().retrievalMode !== 'enhanced') return
+  void activeDatabase.queries.retrieval.warm().catch((error: unknown) => {
+    if (!shutdownInProgress) {
+      console.error('OnMove enhanced retrieval index could not be prepared:', error)
+    }
+  })
+}
+
 function broadcastNavigationPinsChanged(pins: NavigationPinSnapshot[]): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
@@ -369,6 +379,9 @@ app.whenReady().then(async () => {
   maintainRollingBackup()
   backupMaintenanceTimer = setInterval(maintainRollingBackup, BACKUP_MAINTENANCE_CHECK_MS)
   backupMaintenanceTimer.unref()
+  unregisterRetrievalStatus = database.queries.retrieval.onStatusChanged(
+    broadcastEnhancedRetrievalStatus
+  )
   mcpRuntime = new OnMoveMcpRuntime(
     database,
     broadcastDomainChanged,
@@ -378,10 +391,10 @@ app.whenReady().then(async () => {
       sourceWindowId: 0
     })
   )
+  // Schedule preparation before the loopback server can accept a retrieval request.
+  // warm() defers the expensive work and is deliberately not awaited by application startup.
+  startEnhancedRetrievalWarmup()
   await mcpRuntime.initialize()
-  unregisterRetrievalStatus = database.queries.retrieval.onStatusChanged(
-    broadcastEnhancedRetrievalStatus
-  )
   unregisterIpc = registerAppIpc(
     ipcMain,
     database,
@@ -397,7 +410,8 @@ app.whenReady().then(async () => {
     broadcastRoutinesChanged,
     broadcastMcpSettingsChanged,
     broadcastNavigationPinsChanged,
-    broadcastSidebarFoldersChanged
+    broadcastSidebarFoldersChanged,
+    startEnhancedRetrievalWarmup
   )
 
   Menu.setApplicationMenu(

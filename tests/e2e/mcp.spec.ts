@@ -83,7 +83,9 @@ test('serves MCP from the running app and immediately refreshes its open windows
   const person = teamScope.subjects[0]
   const unrelatedSubject = seeded.domain.subjects.create({ name: 'Unrelated Subject' }).toSnapshot()
   seeded.mcpSettings.update({
-    serverEnabled: true,
+    // Enhanced preparation is an application lifecycle concern, independent of
+    // whether the loopback MCP transport is already enabled.
+    serverEnabled: false,
     serverPort,
     retrievalMode: 'enhanced',
     allowMutations: true
@@ -101,6 +103,30 @@ test('serves MCP from the running app and immediately refreshes its open windows
     })
     const window = await application.firstWindow()
     await expect(window.getByRole('button', { name: 'Todos', exact: true })).toBeVisible()
+
+    // Persisted Enhanced mode starts warming as part of application startup. Prove
+    // readiness before an MCP client connects so no tool call can be the trigger.
+    const startupRetrievalStatus = await window.evaluate(async () =>
+      window.onmove.mcp.getRetrievalStatus())
+    expect(startupRetrievalStatus).toMatchObject({
+      phase: expect.not.stringMatching(/^idle$/u),
+      startedAt: expect.any(String),
+      error: null
+    })
+    await expect.poll(
+      () => window.evaluate(async () => (await window.onmove.mcp.getRetrievalStatus()).phase),
+      { timeout: 30_000, intervals: [100, 250, 500] }
+    ).toBe('ready')
+
+    const runningSettings = await window.evaluate(
+      async ({ port }) => window.onmove.mcp.update({ serverEnabled: true, serverPort: port }),
+      { port: serverPort }
+    )
+    expect(runningSettings).toMatchObject({
+      status: 'running',
+      endpoint: `http://127.0.0.1:${serverPort}/mcp`,
+      retrievalMode: 'enhanced'
+    })
 
     const transport = new StreamableHTTPClientTransport(
       new URL(`http://127.0.0.1:${serverPort}/mcp`)
@@ -149,23 +175,6 @@ test('serves MCP from the running app and immediately refreshes its open windows
       }]
     })
 
-    const warmingRetrieval = await client.callTool({
-      name: 'onmove.retrieve',
-      arguments: {
-        text: 'initial observation',
-        context: {
-          boundary: { type: 'thread', focusId: focus.id, threadId: thread.id }
-        },
-        kinds: ['update'],
-        strategy: 'hybrid',
-        onUnavailable: 'fallback'
-      }
-    })
-    expect(warmingRetrieval.isError).not.toBe(true)
-    await expect.poll(
-      () => window.evaluate(async () => (await window.onmove.mcp.getRetrievalStatus()).phase),
-      { timeout: 30_000, intervals: [100, 250, 500] }
-    ).toBe('ready')
     const enhancedRetrieval = await client.callTool({
       name: 'onmove.retrieve',
       arguments: {

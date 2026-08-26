@@ -2919,8 +2919,12 @@ test('creates and exposes verified rolling backups in Settings', async () => {
     await expect(semanticModel.getByRole('button')).toHaveCount(0)
     await window.getByRole('combobox', { name: 'MCP retrieval mode' })
       .selectOption('enhanced')
-    await expect(retrievalStatus.getByText(/Start the MCP server/)).toBeVisible()
-    await expect(retrievalStatus.getByRole('progressbar')).toHaveCount(0)
+    await expect.poll(
+      () => window.evaluate(async () => (await window.onmove.mcp.getRetrievalStatus()).phase),
+      { timeout: 30_000, intervals: [100, 250, 500] }
+    ).toBe('ready')
+    await expect(retrievalStatus.getByText('Ready', { exact: true })).toBeVisible()
+    await expect(retrievalStatus).not.toContainText(/first enhanced retrieval request|on demand/u)
 
     const backupDirectory = join(userDataDirectory, 'Backups')
     await expect.poll(() =>

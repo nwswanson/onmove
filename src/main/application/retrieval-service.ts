@@ -414,6 +414,15 @@ export class RetrievalService {
     return () => this.statusListeners.delete(listener)
   }
 
+  /**
+   * Prepares the disposable enhanced index without a foreground-query deadline.
+   * Concurrent warm and retrieval requests share the same single-flight build.
+   */
+  async warm(): Promise<void> {
+    this.assertActive()
+    await this.ensureSemanticIndex()
+  }
+
   async retrieve(
     request: Omit<RetrievalRequest, 'context'> & Pick<SearchQuery, 'focusId' | 'threadId' | 'subjectId'>,
     access: OnMoveAccessPolicy,

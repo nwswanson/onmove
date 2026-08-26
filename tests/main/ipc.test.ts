@@ -482,6 +482,7 @@ describe('registerAppIpc', () => {
     const notifyMcpSettingsChanged = vi.fn()
     const notifyNavigationPinsChanged = vi.fn()
     const notifySidebarFoldersChanged = vi.fn()
+    const startEnhancedRetrievalWarmup = vi.fn()
     const richTextWindows = {
       open: vi.fn(),
       targetFor: vi.fn(() => null),
@@ -550,7 +551,8 @@ describe('registerAppIpc', () => {
       notifyRoutinesChanged,
       notifyMcpSettingsChanged,
       notifyNavigationPinsChanged,
-      notifySidebarFoldersChanged
+      notifySidebarFoldersChanged,
+      startEnhancedRetrievalWarmup
     )
 
     expect(ipcMain.handle).toHaveBeenCalledTimes(Object.keys(IPC_CHANNELS).length)
@@ -617,6 +619,7 @@ describe('registerAppIpc', () => {
       retrievalMode: 'enhanced',
       allowMutations: true
     }))
+    expect(startEnhancedRetrievalWarmup).toHaveBeenCalledOnce()
     await handlers.get(IPC_CHANNELS.setMcpUiContext)?.(
       undefined,
       { focusId: 12, subjectId: 61 }

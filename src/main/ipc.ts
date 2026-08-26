@@ -75,7 +75,8 @@ export function registerAppIpc(
   notifyRoutinesChanged: () => void = () => undefined,
   notifyMcpSettingsChanged: (settings: McpSettingsSnapshot) => void = () => undefined,
   notifyNavigationPinsChanged: (pins: NavigationPinSnapshot[]) => void = () => undefined,
-  notifySidebarFoldersChanged: (folders: SidebarFolderSnapshot[]) => void = () => undefined
+  notifySidebarFoldersChanged: (folders: SidebarFolderSnapshot[]) => void = () => undefined,
+  startEnhancedRetrievalWarmup: () => void = () => undefined
 ): () => void {
   function mutation<T>(operation: () => T): T {
     const result = operation()
@@ -131,6 +132,7 @@ export function registerAppIpc(
     IPC_CHANNELS.updateMcpSettings,
     async (_event, input: UpdateMcpSettingsInput) => {
       const settings = await mcpRuntime.update(input)
+      if (input.retrievalMode === 'enhanced') startEnhancedRetrievalWarmup()
       notifyMcpSettingsChanged(settings)
       return settings
     }

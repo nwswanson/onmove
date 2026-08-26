@@ -57,8 +57,9 @@ evaluation below as design history and future guidance:
   weighted reciprocal-rank fusion and, by default, interleaves results by operational lineage to
   limit sibling and template crowding. Results retain complete hierarchy provenance and report the
   channels that contributed to the rank.
-- **Fallback is explicit and safe.** A cold semantic build receives a bounded foreground wait, then
-  continues in the background while the request returns a `semanticPreparing` lexical fallback.
+- **Fallback is explicit and safe.** Enhanced mode starts its semantic build automatically at app
+  launch or when selected. An early request against a still-cold build receives a bounded foreground
+  wait, then returns a `semanticPreparing` lexical fallback while the shared build continues.
   Timed-out request-specific query/ranking work is cancelled while the shared build remains alive,
   and projection, cache, authorization, and Orama pages yield cooperatively. Missing model weights,
   a download or inference failure, an unavailable semantic index, classic mode, and

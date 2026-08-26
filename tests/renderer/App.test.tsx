@@ -5726,6 +5726,7 @@ describe('App', () => {
     expect(settings).toHaveAttribute('aria-current', 'page')
     expect(screen.getByText('Automatic database backups')).toBeVisible()
     expect(screen.getByText('Model Context Protocol')).toBeVisible()
+    expect(screen.getByText(/initialize automatically at app launch/)).toBeVisible()
     const retrievalStatusPanel = screen.getByRole('region', {
       name: 'Enhanced retrieval index status'
     })
@@ -5768,15 +5769,16 @@ describe('App', () => {
     await user.selectOptions(retrievalMode, 'enhanced')
     expect(api.mcp.update).toHaveBeenCalledWith({ retrievalMode: 'enhanced' })
     expect(retrievalMode).toHaveValue('enhanced')
-    expect(within(retrievalStatusPanel).getByText(/Waiting for the first enhanced retrieval/))
+    expect(within(retrievalStatusPanel).getByText(/Startup preparation is queued/))
       .toBeVisible()
     expect(within(retrievalStatusPanel).queryByRole('progressbar')).not.toBeInTheDocument()
     await user.click(serverEnabled)
     expect(api.mcp.update).toHaveBeenCalledWith({ serverEnabled: false })
-    expect(within(retrievalStatusPanel).getByText(/Start the MCP server/)).toBeVisible()
+    expect(within(retrievalStatusPanel).getByText(/prepares the local index automatically/))
+      .toBeVisible()
     await user.click(serverEnabled)
     expect(api.mcp.update).toHaveBeenCalledWith({ serverEnabled: true })
-    expect(within(retrievalStatusPanel).getByText(/Waiting for the first enhanced retrieval/))
+    expect(within(retrievalStatusPanel).getByText(/Startup preparation is queued/))
       .toBeVisible()
 
     const retrievalStatusListener = vi.mocked(api.mcp.onRetrievalStatusChanged).mock.calls[0]?.[0]
@@ -5848,6 +5850,8 @@ describe('App', () => {
     }))
     expect(within(retrievalStatusPanel).getByText('Ready')).toBeVisible()
     expect(within(retrievalStatusPanel).getByText('72 of 72 search documents')).toBeVisible()
+    expect(within(retrievalStatusPanel).getByText(/semantic model and index are ready/))
+      .toBeVisible()
     act(() => retrievalStatusListener?.({
       revision: 4,
       phase: 'error',

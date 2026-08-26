@@ -326,21 +326,23 @@ process, so model loading and inference do not block the application UI. The pin
 vocabulary, and weights ship with OnMove and are available offline; enhanced retrieval never
 downloads model assets at runtime. The model still initializes from those application resources
 once per app session. Completed vector batches are cached separately in the local SQLite database.
-A cold or changed semantic index receives a short foreground budget; if
-it is still preparing, the request returns lexical results with an explicit `semanticPreparing`
-fallback while the shared background build continues. The abandoned request does not continue into
-duplicate query/ranking work, and projection, authorization, cache, and Orama batches yield to the
+A persisted Enhanced setting starts model and semantic-index preparation automatically when OnMove
+launches. Selecting Enhanced during a session starts the same preparation immediately, even while the
+MCP server is off. If an early request reaches a cold or changed semantic index, it receives a short
+foreground budget; if preparation is still running, the request returns lexical results with an explicit
+`semanticPreparing` fallback while the shared build continues. The abandoned request does not continue
+into duplicate query/ranking work, and projection, authorization, cache, and Orama batches yield to the
 application event loop. Model initialization, inference, or index failures also fall back and report their
 reason. Set `onUnavailable: "error"` only when fallback is undesirable.
 
-Settings shows the live, process-local Enhanced retrieval state. Preparation is lazy and begins
-with the first eligible enhanced retrieval—not when the setting is selected. The panel identifies
-projection/cache work, local model loading, embedding progress, and Orama index construction; it
-also reports document counts, reused and newly generated embeddings, generation, completion time,
-and errors. Embedding and indexing can deliberately use substantial local CPU, while MCP requests
-continue to receive Classic results until the status reaches Ready. Ready means both the derived
-Orama index and the local semantic model are prepared, including when every document vector came
-from the durable cache.
+Settings shows the live, process-local Enhanced retrieval state. Preparation begins at application
+startup whenever Enhanced is selected and begins immediately when the setting changes from Classic
+to Enhanced. The panel identifies projection/cache work, local model loading, embedding progress,
+and Orama index construction; it also reports document counts, reused and newly generated embeddings,
+generation, completion time, and errors. Embedding and indexing can deliberately use substantial local
+CPU, while MCP requests continue to receive Classic results until the status reaches Ready. Ready means
+both the derived Orama index and the local semantic model are prepared, including when every document
+vector came from the durable cache.
 
 SQLite resolves permissions and the complete context before Orama ranks any candidate. Responses
 report match channels, complete hierarchy provenance, requested/applied strategy, fallback reason,
