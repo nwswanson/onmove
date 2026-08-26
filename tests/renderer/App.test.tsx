@@ -450,6 +450,7 @@ function installApi(
   let mcpState: McpSettingsSnapshot = {
     serverEnabled: false,
     serverPort: 47_832,
+    retrievalMode: 'classic',
     allowSensitive: false,
     allowMutations: false,
     updatedAt: '2026-08-10T12:00:00.000Z',
@@ -597,6 +598,7 @@ function installApi(
           ...mcpState,
           ...(input.serverEnabled === undefined ? {} : { serverEnabled: input.serverEnabled }),
           ...(input.serverPort === undefined ? {} : { serverPort: input.serverPort }),
+          ...(input.retrievalMode === undefined ? {} : { retrievalMode: input.retrievalMode }),
           ...(input.allowSensitive === undefined ? {} : { allowSensitive: input.allowSensitive }),
           ...(input.allowMutations === undefined ? {} : { allowMutations: input.allowMutations }),
           serverEnabled,
@@ -5700,10 +5702,12 @@ describe('App', () => {
     expect(screen.getByText('Automatic database backups')).toBeVisible()
     expect(screen.getByText('Model Context Protocol')).toBeVisible()
     const serverEnabled = screen.getByRole('checkbox', { name: /Run MCP server/i })
+    const retrievalMode = screen.getByRole('combobox', { name: 'MCP retrieval mode' })
     const sensitiveAccess = screen.getByRole('checkbox', { name: /Allow sensitive content/i })
     const updateEditAccess = screen.getByRole('checkbox', { name: 'Edit Updates by default' })
     const updateDeleteAccess = screen.getByRole('checkbox', { name: 'Delete Updates by default' })
     expect(sensitiveAccess).not.toBeChecked()
+    expect(retrievalMode).toHaveValue('classic')
     expect(updateEditAccess).not.toBeChecked()
     expect(updateDeleteAccess).not.toBeChecked()
     await user.click(serverEnabled)
@@ -5715,6 +5719,9 @@ describe('App', () => {
     await user.tab()
     expect(api.mcp.update).toHaveBeenCalledWith({ serverPort: 47_833 })
     expect(await screen.findByText('http://127.0.0.1:47833/mcp')).toBeVisible()
+    await user.selectOptions(retrievalMode, 'enhanced')
+    expect(api.mcp.update).toHaveBeenCalledWith({ retrievalMode: 'enhanced' })
+    expect(retrievalMode).toHaveValue('enhanced')
     await user.click(updateEditAccess)
     expect(api.mcp.update).toHaveBeenCalledWith({
       permission: {

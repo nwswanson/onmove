@@ -67,6 +67,51 @@ describe('database migrations', () => {
     expect(() => new AppDatabase(databasePath)).toThrow(/newer than supported/)
   })
 
+  it('defaults existing MCP settings to classic retrieval', () => {
+    const current = new AppDatabase(databasePath)
+    current.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      ALTER TABLE mcp_settings DROP COLUMN retrieval_mode;
+      DELETE FROM schema_migrations WHERE version = 45;
+    `)
+    legacy.close()
+
+    const migrated = new AppDatabase(databasePath)
+    expect(migrated.mcpSettings.get().retrievalMode).toBe('classic')
+    migrated.close()
+  })
+
+  it('creates the rebuildable embedding cache without changing authoritative search data', () => {
+    const database = new AppDatabase(databasePath)
+    const focus = database.domain.focuses.create({ title: 'Durable source record' })
+    expect(database.queries.search(
+      { text: 'durable source record' },
+      database.mcpSettings.accessPolicy()
+    )).toEqual([expect.objectContaining({ reference: { type: 'focus', id: focus.id } })])
+    database.close()
+
+    const migrated = new DatabaseSync(databasePath)
+    const columns = migrated.prepare(
+      'SELECT name FROM pragma_table_info(?) ORDER BY cid'
+    ).all('retrieval_embedding_cache') as Array<{ name: string }>
+    const sourceCount = migrated.prepare(
+      'SELECT COUNT(*) AS count FROM search_documents WHERE entity_type = ?'
+    ).get('focus') as { count: number }
+    migrated.close()
+
+    expect(columns.map(({ name }) => name)).toEqual([
+      'source_key',
+      'model_id',
+      'content_hash',
+      'dimensions',
+      'vector',
+      'updated_at'
+    ])
+    expect(Number(sourceCount.count)).toBe(1)
+  })
+
   it('migrates the legacy MCP write switch into bounded per-resource defaults', () => {
     const current = new AppDatabase(databasePath)
     current.close()

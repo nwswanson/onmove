@@ -474,6 +474,7 @@ describe('registerAppIpc', () => {
       snapshot: vi.fn(() => ({
         serverEnabled: false,
         serverPort: 47_832,
+        retrievalMode: 'classic' as const,
         allowSensitive: false,
         allowMutations: false,
         updatedAt: '2026-08-10T12:00:00.000Z',
@@ -497,6 +498,7 @@ describe('registerAppIpc', () => {
       update: vi.fn(async () => ({
         serverEnabled: true,
         serverPort: 47_832,
+        retrievalMode: 'enhanced' as const,
         allowSensitive: false,
         allowMutations: true,
         updatedAt: '2026-08-10T12:01:00.000Z',
@@ -575,15 +577,22 @@ describe('registerAppIpc', () => {
     expect(database.sidebarFolders.delete).toHaveBeenCalledWith(7)
     expect(notifySidebarFoldersChanged).toHaveBeenCalledTimes(3)
     expect(await handlers.get(IPC_CHANNELS.getMcpSettings)?.()).toMatchObject({
+      retrievalMode: 'classic',
       allowSensitive: false,
       allowMutations: false
     })
     expect(await handlers.get(IPC_CHANNELS.updateMcpSettings)?.(
       undefined,
-      { serverEnabled: true, allowMutations: true }
-    )).toMatchObject({ status: 'running', allowMutations: true })
+      { serverEnabled: true, retrievalMode: 'enhanced', allowMutations: true }
+    )).toMatchObject({ status: 'running', retrievalMode: 'enhanced', allowMutations: true })
+    expect(mcpRuntime.update).toHaveBeenCalledWith({
+      serverEnabled: true,
+      retrievalMode: 'enhanced',
+      allowMutations: true
+    })
     expect(notifyMcpSettingsChanged).toHaveBeenCalledWith(expect.objectContaining({
       status: 'running',
+      retrievalMode: 'enhanced',
       allowMutations: true
     }))
     await handlers.get(IPC_CHANNELS.setMcpUiContext)?.(

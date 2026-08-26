@@ -1444,9 +1444,13 @@ export interface BackupApi {
   showFolder: () => Promise<void>
 }
 
+export const MCP_RETRIEVAL_MODES = ['classic', 'enhanced'] as const
+export type McpRetrievalMode = (typeof MCP_RETRIEVAL_MODES)[number]
+
 export interface McpSettingsSnapshot {
   serverEnabled: boolean
   serverPort: number
+  retrievalMode: McpRetrievalMode
   allowSensitive: boolean
   /** @deprecated Compatibility summary; use permissionPolicy defaults instead. */
   allowMutations: boolean
@@ -1510,6 +1514,7 @@ export interface UpdateMcpPermissionInput {
 export interface UpdateMcpSettingsInput {
   serverEnabled?: boolean
   serverPort?: number
+  retrievalMode?: McpRetrievalMode
   allowSensitive?: boolean
   /** @deprecated Compatibility master update; changes every default edit grant. */
   allowMutations?: boolean

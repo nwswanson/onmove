@@ -7,7 +7,7 @@ does not open SQLite independently and does not expose SQL or renderer state.
 ## Enable it
 
 Open OnMove → Settings → Model Context Protocol and turn on **Run MCP server**. The Settings pane
-shows the active endpoint, which defaults to:
+also selects **Classic** or **Enhanced** retrieval and shows the active endpoint, which defaults to:
 
 ```text
 http://127.0.0.1:47832/mcp
@@ -295,9 +295,50 @@ and duplicate matches return `RICH_TEXT_NOT_FOUND` or `RICH_TEXT_AMBIGUOUS` with
 metadata. Successful edits are committed through the shared application service and broadcast to
 all open main and rich-text windows.
 
+## Context-aware retrieval
+
+Use `onmove.retrieve` when the answer must stay inside one known operational boundary or when
+paraphrase recall would help. Every request names an explicit workspace, Focus, or asserted
+Focus + Thread boundary and may intersect it with one canonical Subject ID. Retrieval never
+inherits the current UI selection and never treats a semantically similar sibling as the requested
+identity.
+
+```json
+{
+  "text": "monitoring blind spots",
+  "context": {
+    "boundary": { "type": "thread", "focusId": 4, "threadId": 17 },
+    "subjectId": 8
+  },
+  "strategy": "auto",
+  "diversifyBy": "lineage"
+}
+```
+
+The persisted retrieval setting defaults to `classic`. In Classic mode, `auto` uses the existing
+SQLite FTS5 path. In Enhanced mode, `auto` uses lexical + semantic retrieval through a derived
+in-memory Orama index, weighted reciprocal-rank fusion, and lineage diversification. Explicit
+`lexical` always stays on FTS5. A null/omitted `text` is a structured SQLite listing rather than a
+semantic query.
+
+Universal Sentence Encoder Lite runs locally in the Electron main process, but its model weights
+are not bundled: TensorFlow.js downloads them on first enhanced use. Vectors are then cached in the
+local SQLite database. If model download, inference, or semantic index preparation is unavailable,
+the default behavior falls back to lexical retrieval and reports the reason; set
+`onUnavailable: "error"` only when fallback is undesirable.
+
+SQLite resolves permissions and the complete context before Orama ranks any candidate. Responses
+report match channels, complete hierarchy provenance, requested/applied strategy, fallback reason,
+lexical and semantic generations, and semantic coverage. They return bounded excerpts, never
+lossless rich text. When `hasMore=true`, call `onmove.continue_retrieval` with only the exact signed
+token; changing access, mode, strategy, or either index generation makes that continuation stale.
+
+The established `onmove.search` and kind-specific search tools remain the deterministic lexical
+compatibility/discovery surface described below.
+
 ## Search
 
-The read contract deliberately separates three intents:
+The read contract deliberately separates these intents:
 
 | Intent | Tools |
 | --- | --- |
@@ -306,6 +347,8 @@ The read contract deliberately separates three intents:
 | Exact title hierarchy | `get_focus_by_path`, `get_thread_by_path`, `get_commitment_by_path`, `get_routine_by_path`, `get_note_by_path` |
 | Text discovery in one kind | `search_focuses`, `search_threads`, `search_commitments`, `search_routines`, `search_updates`, `search_notes`, `search_todos`, `search_subjects` |
 | Next page from any search | `continue_search` with only the returned opaque token |
+| Evidence in an exact operational context | `retrieve` with an explicit boundary and optional Subject intersection |
+| Next page from retrieval | `continue_retrieval` with only the returned opaque token |
 
 Path schemas contain title fields only. Matching is exact and case-insensitive; duplicate exact
 paths return `ambiguous` with candidates. They never accept IDs or perform fuzzy search. Updates
@@ -434,8 +477,9 @@ means an Update's recorded local date or a dated entity's due date. Creation and
 instants use inclusive local-calendar ranges interpreted through the request's IANA `timeZone`.
 All search records expose `date`, `createdAt`, and `updatedAt`.
 Natural-language wrappers use a conservative stop-word pass: a query such as “what has Michael been
-doing” retains Michael as the effective FTS term. This is deterministic lexical planning, not an
-embedding or general-language query engine.
+doing” retains Michael as the effective FTS term. `onmove.search` is deterministic lexical planning,
+not an embedding or general-language query engine; enhanced semantics are exposed only through the
+explicitly bounded `onmove.retrieve` contract.
 
 Use `onmove.get_updates_by_ids({ ids: [...] })` to hydrate up to 50 known Update IDs in one bounded
 read. It defaults to Markdown without lossless documents and enforces a 32 KiB response budget
@@ -464,7 +508,7 @@ empty searches.
 ## Tools and resources
 
 Read tools cover compact projected lists; explicit by-ID and by-path Focuses, Threads, Commitments, Routines and Notes;
-by-ID and bulk Updates; kind-specific and cross-kind search; Reviews, Due work, Todos, Tags, and
+by-ID and bulk Updates; kind-specific and cross-kind search; context-aware retrieval; Reviews, Due work, Todos, Tags, and
 hierarchy-aware work-target resolution. Write tools
 cover the safe mutations and semantic rich-text editing described above.
 Stable resource templates use:

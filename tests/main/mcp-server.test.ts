@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { EmbeddingProvider } from '../../src/main/application/embedding-provider'
 import { AppDatabase } from '../../src/main/database'
 import { createOnMoveMcpServer } from '../../src/mcp/server'
 import type { McpUiContextSnapshot } from '../../src/shared/contracts'
@@ -20,6 +21,19 @@ function richText(text: string): OnMoveRichTextDocument {
   }
 }
 
+const fakeEmbeddingProvider: EmbeddingProvider = {
+  modelId: 'mcp-test-embeddings-v1',
+  dimensions: 4,
+  async embed(texts) {
+    return texts.map((text) => [
+      1,
+      [...text].filter((character) => /[aeiou]/iu.test(character)).length + 1,
+      text.length + 1,
+      [...text].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % 997 + 1
+    ])
+  }
+}
+
 describe('OnMove MCP protocol adapter', () => {
   let directory: string
   let database: AppDatabase
@@ -29,7 +43,7 @@ describe('OnMove MCP protocol adapter', () => {
 
   beforeEach(async () => {
     directory = mkdtempSync(join(tmpdir(), 'onmove-mcp-protocol-'))
-    database = new AppDatabase(join(directory, 'onmove.sqlite3'))
+    database = new AppDatabase(join(directory, 'onmove.sqlite3'), { embeddingProvider: fakeEmbeddingProvider })
     database.domain.focuses.create({ title: 'Launch readiness' })
     currentUiContext = { focusId: null, subjectId: null }
     server = createOnMoveMcpServer(database, {
@@ -77,6 +91,8 @@ describe('OnMove MCP protocol adapter', () => {
       'onmove.search_todos',
       'onmove.search_subjects',
       'onmove.continue_search',
+      'onmove.retrieve',
+      'onmove.continue_retrieval',
       'onmove.resolve_work_target',
       'onmove.review_subject',
       'onmove.search',
@@ -98,7 +114,7 @@ describe('OnMove MCP protocol adapter', () => {
       'onmove.delete_entity',
       'onmove.poke_review'
     ]))
-    expect(listed.tools).toHaveLength(54)
+    expect(listed.tools).toHaveLength(56)
     expect(listed.tools.map(({ name }) => name)).not.toEqual(expect.arrayContaining([
       'onmove.get_focus',
       'onmove.get_thread',
@@ -475,6 +491,8 @@ describe('OnMove MCP protocol adapter', () => {
     const tools = (await client.listTools()).tools
     const search = tools.find(({ name }) => name === 'onmove.search')!
     const continueSearch = tools.find(({ name }) => name === 'onmove.continue_search')!
+    const retrieve = tools.find(({ name }) => name === 'onmove.retrieve')!
+    const continueRetrieval = tools.find(({ name }) => name === 'onmove.continue_retrieval')!
     const searchNotes = tools.find(({ name }) => name === 'onmove.search_notes')!
     const getThread = tools.find(({ name }) => name === 'onmove.get_thread_by_id')!
     const resolveTarget = tools.find(({ name }) => name === 'onmove.resolve_work_target')!
@@ -484,6 +502,8 @@ describe('OnMove MCP protocol adapter', () => {
     const updateRichText = tools.find(({ name }) => name === 'onmove.update_rich_text')!
     const searchSchema = JSON.stringify(search.inputSchema)
     const continuationSchema = JSON.stringify(continueSearch.inputSchema)
+    const retrievalSchema = JSON.stringify(retrieve.inputSchema)
+    const retrievalContinuationSchema = JSON.stringify(continueRetrieval.inputSchema)
     const threadSchema = JSON.stringify(getThread.inputSchema)
     const updateSchema = JSON.stringify(createUpdate.inputSchema)
     const resolveTargetSchema = resolveTarget.inputSchema as {
@@ -543,6 +563,30 @@ describe('OnMove MCP protocol adapter', () => {
     })
     expect(continueSearch.description).toContain('Pass only the exact non-null continuationToken')
     expect(continueSearch.description).toContain('Do not repeat or modify the search body')
+    expect(retrievalSchema).toContain('Required operational context')
+    expect(retrievalSchema).toContain('asserted owning Focus')
+    expect(retrievalSchema).toContain('durable attribution history')
+    expect(retrievalSchema).toContain('hybrid')
+    expect(retrievalSchema).toContain('lineage')
+    expect(retrievalSchema).not.toContain('continuationToken')
+    expect(retrieve.outputSchema).toMatchObject({
+      type: 'object',
+      properties: expect.objectContaining({
+        items: expect.any(Object),
+        retrieval: expect.any(Object),
+        freshness: expect.any(Object),
+        budget: expect.any(Object),
+        diagnostics: expect.any(Object)
+      })
+    })
+    expect(continueRetrieval.inputSchema).toMatchObject({
+      type: 'object',
+      required: ['continuationToken'],
+      additionalProperties: false,
+      properties: { continuationToken: expect.any(Object) }
+    })
+    expect(retrievalContinuationSchema).not.toContain('context')
+    expect(continueRetrieval.description).toContain('Do not repeat or modify the retrieval request')
     expect(searchSchema).toContain('preserve a previously returned Thread ID')
     expect(search.description).toContain('queryless structured listing')
     expect(search.description).toContain('signed continuationToken')
@@ -612,6 +656,414 @@ describe('OnMove MCP protocol adapter', () => {
     expect(noteSchema).toContain('"additionalProperties":false')
     expect(noteSchema).toContain('null is accepted and canonicalized to omission')
     expect(noteSchema).toContain('"type":"null"')
+  })
+
+  it('retrieves one exact Thread and Subject intersection without sibling-context leakage', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const projectA = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Project A',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const projectB = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Project B',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const scopeA = database.domain.threadScopes.addSubject(projectA.id, {
+      name: 'Observability'
+    })
+    const scopeB = database.domain.threadScopes.addSubject(projectB.id, {
+      name: 'Observability'
+    })
+    const observability = scopeA.subjects.find(({ name }) => name === 'Observability')!
+    const sameSubject = scopeB.subjects.find(({ name }) => name === 'Observability')!
+    expect(sameSubject.id).toBe(observability.id)
+    const updateA = database.domain.updates.create({
+      parent: { type: 'thread', id: projectA.id },
+      scope: { scopeId: scopeA.scopeId as number, subjectId: observability.id },
+      observation: 'Shared corporate telemetry blind spot'
+    }).toSnapshot()
+    const updateB = database.domain.updates.create({
+      parent: { type: 'thread', id: projectB.id },
+      scope: { scopeId: scopeB.scopeId as number, subjectId: observability.id },
+      observation: 'Shared corporate telemetry blind spot'
+    }).toSnapshot()
+
+    const retrieved = await client.callTool({
+      name: 'onmove.retrieve',
+      arguments: {
+        text: 'telemetry blind spot',
+        context: {
+          boundary: { type: 'thread', focusId: focus.id, threadId: projectA.id },
+          subjectId: observability.id
+        },
+        kinds: ['update'],
+        strategy: 'lexical',
+        diversifyBy: 'none'
+      }
+    })
+    expect(retrieved.isError).not.toBe(true)
+    expect(retrieved.structuredContent).toMatchObject({
+      items: [expect.objectContaining({
+        reference: { type: 'update', id: updateA.id },
+        hierarchy: {
+          focus: expect.objectContaining({ id: focus.id }),
+          thread: expect.objectContaining({ id: projectA.id }),
+          commitment: null
+        },
+        subject: expect.objectContaining({ id: observability.id }),
+        match: expect.objectContaining({ channels: ['lexical'] })
+      })],
+      retrieval: {
+        mode: 'classic',
+        requestedStrategy: 'lexical',
+        appliedStrategy: 'lexical',
+        fallbackReason: null
+      },
+      freshness: {
+        lexicalGeneration: expect.any(Number),
+        semanticGeneration: null,
+        semanticCoverage: null
+      },
+      appliedQuery: {
+        context: {
+          boundary: { type: 'thread', focusId: focus.id, threadId: projectA.id },
+          subjectId: observability.id
+        }
+      }
+    })
+    const structured = retrieved.structuredContent as {
+      items: Array<Record<string, unknown> & { reference: { id: number } }>
+    }
+    expect(structured.items).toHaveLength(1)
+    expect(structured.items[0]).not.toHaveProperty('rank')
+    expect(JSON.stringify(structured.items)).not.toContain('richText')
+    expect(structured.items.map(({ reference }) => reference.id)).not.toContain(updateB.id)
+
+    const otherFocus = database.domain.focuses.create({ title: 'Other portfolio' }).toSnapshot()
+    const mismatched = await client.callTool({
+      name: 'onmove.retrieve',
+      arguments: {
+        text: 'telemetry',
+        context: {
+          boundary: { type: 'thread', focusId: otherFocus.id, threadId: projectA.id }
+        }
+      }
+    })
+    expect(mismatched.isError).toBe(true)
+    expect(JSON.stringify(mismatched)).toContain('CONTEXT_NOT_FOUND_OR_NOT_VISIBLE')
+    expect(JSON.stringify(mismatched)).not.toContain(projectA.title)
+
+    database.mcpSettings.update({
+      permission: {
+        target: { type: 'focus', id: focus.id },
+        resource: 'all',
+        view: false,
+        edit: false
+      }
+    })
+    const hidden = await client.callTool({
+      name: 'onmove.retrieve',
+      arguments: {
+        text: 'telemetry',
+        context: {
+          boundary: { type: 'thread', focusId: focus.id, threadId: projectA.id }
+        }
+      }
+    })
+    expect(hidden.isError).toBe(true)
+    expect(JSON.stringify(hidden)).toContain('CONTEXT_NOT_FOUND_OR_NOT_VISIBLE')
+    expect(JSON.stringify(hidden)).not.toContain(projectA.title)
+  })
+
+  it('preserves fallback strategy and validates retrieval continuation integrity and freshness', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Retrieval cursor owner',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const expectedIds = Array.from({ length: 4 }, (_, index) =>
+      database.domain.updates.create({
+        parent: { type: 'thread', id: thread.id },
+        observation: `Retrieval cursor needle ${index}`
+      }).id)
+    const argumentsValue = {
+      text: 'retrieval cursor needle',
+      context: {
+        boundary: { type: 'thread' as const, focusId: focus.id, threadId: thread.id }
+      },
+      kinds: ['update'] as const,
+      strategy: 'hybrid' as const,
+      onUnavailable: 'fallback' as const,
+      page: { size: 1 }
+    }
+
+    const unavailable = await client.callTool({
+      name: 'onmove.retrieve',
+      arguments: { ...argumentsValue, onUnavailable: 'error' }
+    })
+    expect(unavailable.isError).toBe(true)
+    expect(JSON.stringify(unavailable)).toContain('RETRIEVAL_STRATEGY_UNAVAILABLE')
+
+    let page = await client.callTool({ name: 'onmove.retrieve', arguments: argumentsValue })
+    expect(page.isError).not.toBe(true)
+    expect(page.structuredContent).toMatchObject({
+      retrieval: {
+        mode: 'classic',
+        requestedStrategy: 'hybrid',
+        appliedStrategy: 'lexical',
+        fallbackReason: expect.stringContaining('disabled')
+      },
+      appliedQuery: { diversifyBy: 'lineage' }
+    })
+    const firstToken = (page.structuredContent as { continuationToken: string }).continuationToken
+    expect(firstToken).toMatch(/^onmove-retrieval-v1\./u)
+
+    const mixedContinuation = await client.callTool({
+      name: 'onmove.continue_retrieval',
+      arguments: { continuationToken: firstToken, text: 'not allowed' }
+    })
+    expect(mixedContinuation.isError).toBe(true)
+    expect(JSON.stringify(mixedContinuation)).toContain('Unrecognized key')
+
+    const seen: number[] = []
+    let paging = true
+    while (paging) {
+      const content = page.structuredContent as {
+        items: Array<{ reference: { id: number } }>
+        retrieval: {
+          requestedStrategy: string
+          appliedStrategy: string
+          fallbackReason: string | null
+        }
+        hasMore: boolean
+        continuationToken: string | null
+      }
+      seen.push(...content.items.map(({ reference }) => reference.id))
+      expect(content.retrieval).toMatchObject({
+        requestedStrategy: 'hybrid',
+        appliedStrategy: 'lexical',
+        fallbackReason: expect.stringContaining('disabled')
+      })
+      paging = content.hasMore
+      if (paging) {
+        page = await client.callTool({
+          name: 'onmove.continue_retrieval',
+          arguments: { continuationToken: content.continuationToken }
+        })
+        expect(page.isError).not.toBe(true)
+      }
+    }
+    expect(new Set(seen).size).toBe(seen.length)
+    expect(new Set(seen)).toEqual(new Set(expectedIds))
+
+    const separator = firstToken.lastIndexOf('.')
+    const signatureStart = separator + 1
+    const firstSignatureCharacter = firstToken[signatureStart]
+    const tampered = `${firstToken.slice(0, signatureStart)}${firstSignatureCharacter === 'a' ? 'b' : 'a'}${firstToken.slice(signatureStart + 1)}`
+    const rejected = await client.callTool({
+      name: 'onmove.continue_retrieval',
+      arguments: { continuationToken: tampered }
+    })
+    expect(rejected.isError).toBe(true)
+    expect(JSON.stringify(rejected)).toContain('invalid or incompatible')
+
+    const wrongContinuationTool = await client.callTool({
+      name: 'onmove.continue_search',
+      arguments: { continuationToken: firstToken }
+    })
+    expect(wrongContinuationTool.isError).toBe(true)
+    expect(JSON.stringify(wrongContinuationTool)).toContain('not a valid OnMove search')
+
+    const searched = await client.callTool({
+      name: 'onmove.search',
+      arguments: { text: 'retrieval cursor needle', kinds: ['update'], page: { size: 1 } }
+    })
+    const searchToken = (searched.structuredContent as { continuationToken: string })
+      .continuationToken
+    const wrongSearchTool = await client.callTool({
+      name: 'onmove.continue_retrieval',
+      arguments: { continuationToken: searchToken }
+    })
+    expect(wrongSearchTool.isError).toBe(true)
+    expect(JSON.stringify(wrongSearchTool)).toContain('not a valid OnMove retrieval')
+
+    const staleByData = await client.callTool({
+      name: 'onmove.retrieve',
+      arguments: argumentsValue
+    })
+    const dataToken = (staleByData.structuredContent as { continuationToken: string })
+      .continuationToken
+    database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      observation: 'Retrieval cursor needle changed the generation'
+    })
+    const dataStale = await client.callTool({
+      name: 'onmove.continue_retrieval',
+      arguments: { continuationToken: dataToken }
+    })
+    expect(dataStale.isError).toBe(true)
+    expect(JSON.stringify(dataStale)).toContain('RETRIEVAL_CURSOR_STALE')
+
+    const staleByMode = await client.callTool({
+      name: 'onmove.retrieve',
+      arguments: argumentsValue
+    })
+    const modeToken = (staleByMode.structuredContent as { continuationToken: string })
+      .continuationToken
+    database.mcpSettings.update({ retrievalMode: 'enhanced' })
+    const modeStale = await client.callTool({
+      name: 'onmove.continue_retrieval',
+      arguments: { continuationToken: modeToken }
+    })
+    expect(modeStale.isError).toBe(true)
+    expect(JSON.stringify(modeStale)).toContain('RETRIEVAL_CURSOR_STALE')
+    database.mcpSettings.update({ retrievalMode: 'classic' })
+
+    const staleByAccess = await client.callTool({
+      name: 'onmove.retrieve',
+      arguments: argumentsValue
+    })
+    const accessToken = (staleByAccess.structuredContent as { continuationToken: string })
+      .continuationToken
+    database.mcpSettings.update({
+      permission: {
+        target: { type: 'focus', id: focus.id },
+        resource: 'update',
+        view: false,
+        edit: false
+      }
+    })
+    const accessStale = await client.callTool({
+      name: 'onmove.continue_retrieval',
+      arguments: { continuationToken: accessToken }
+    })
+    expect(accessStale.isError).toBe(true)
+    expect(JSON.stringify(accessStale)).toContain('RETRIEVAL_CURSOR_STALE')
+    expect(JSON.stringify(accessStale)).not.toContain('Retrieval cursor needle 1')
+  })
+
+  it('runs enhanced hybrid retrieval with the injected test embedding provider', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Enhanced retrieval owner',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const expectedIds = Array.from({ length: 3 }, (_, index) =>
+      database.domain.updates.create({
+        parent: { type: 'thread', id: thread.id },
+        observation: `Enhanced retrieval evidence ${index}`
+      }).id)
+    database.mcpSettings.update({ retrievalMode: 'enhanced' })
+
+    const first = await client.callTool({
+      name: 'onmove.retrieve',
+      arguments: {
+        text: 'enhanced evidence',
+        context: {
+          boundary: { type: 'thread', focusId: focus.id, threadId: thread.id }
+        },
+        kinds: ['update'],
+        strategy: 'hybrid',
+        onUnavailable: 'error',
+        diversifyBy: 'lineage',
+        page: { size: 1 }
+      }
+    })
+    expect(first.isError).not.toBe(true)
+    expect(first.structuredContent).toMatchObject({
+      items: [expect.objectContaining({
+        reference: expect.objectContaining({ type: 'update' }),
+        match: expect.objectContaining({
+          channels: expect.arrayContaining(['semantic']),
+          semanticSimilarity: expect.any(Number),
+          lineageKey: expect.any(String)
+        })
+      })],
+      retrieval: {
+        mode: 'enhanced',
+        requestedStrategy: 'hybrid',
+        appliedStrategy: 'hybrid',
+        fallbackReason: null
+      },
+      freshness: {
+        lexicalGeneration: expect.any(Number),
+        semanticGeneration: expect.any(Number),
+        semanticCoverage: 1
+      },
+      hasMore: true,
+      continuationToken: expect.stringMatching(/^onmove-retrieval-v1\./u)
+    })
+    const firstContent = first.structuredContent as {
+      items: Array<{ reference: { id: number } }>
+      continuationToken: string
+    }
+    const second = await client.callTool({
+      name: 'onmove.continue_retrieval',
+      arguments: { continuationToken: firstContent.continuationToken }
+    })
+    expect(second.isError).not.toBe(true)
+    expect(second.structuredContent).toMatchObject({
+      retrieval: {
+        requestedStrategy: 'hybrid',
+        appliedStrategy: 'hybrid',
+        fallbackReason: null
+      }
+    })
+    const returnedIds = [
+      firstContent.items[0].reference.id,
+      ...(second.structuredContent as {
+        items: Array<{ reference: { id: number } }>
+      }).items.map(({ reference }) => reference.id)
+    ]
+    expect(new Set(returnedIds).size).toBe(returnedIds.length)
+    expect(expectedIds).toEqual(expect.arrayContaining(returnedIds))
+  })
+
+  it('bounds the complete retrieval tool result and continues after the last emitted item', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Retrieval budget owner',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    for (let index = 0; index < 12; index += 1) {
+      database.domain.updates.create({
+        parent: { type: 'thread', id: thread.id },
+        observation: `Retrievalbudgetneedle ${index} ${'long evidence '.repeat(100)}`
+      })
+    }
+
+    const compact = await client.callTool({
+      name: 'onmove.retrieve',
+      arguments: {
+        text: 'retrievalbudgetneedle',
+        context: {
+          boundary: { type: 'thread', focusId: focus.id, threadId: thread.id }
+        },
+        kinds: ['update'],
+        strategy: 'lexical',
+        page: { size: 25, maxBytes: 8192 }
+      }
+    })
+    expect(compact.isError).not.toBe(true)
+    expect(Buffer.byteLength(JSON.stringify(compact), 'utf8')).toBeLessThanOrEqual(8192)
+    expect(compact.structuredContent).toMatchObject({
+      hasMore: true,
+      continuationToken: expect.stringMatching(/^onmove-retrieval-v1\./u),
+      budget: {
+        maxBytes: 8192,
+        estimatedToolResultBytes: expect.any(Number),
+        recordsTruncated: true,
+        projectionTruncated: false
+      }
+    })
+    expect(JSON.stringify(compact.structuredContent)).not.toContain('richText')
+    expect((compact.structuredContent as { items: Array<Record<string, unknown>> }).items
+      .every((item) => !('rank' in item))).toBe(true)
   })
 
   it('separates exact hierarchy paths from durable ID reads for every addressable entity', async () => {

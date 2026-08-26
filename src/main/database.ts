@@ -18,6 +18,7 @@ import {
   OnMoveCommandService,
   OnMoveQueryService
 } from './application/services'
+import type { EmbeddingProvider } from './application/embedding-provider'
 
 interface CountRow {
   count: number
@@ -39,7 +40,10 @@ export class AppDatabase {
   readonly queries: OnMoveQueryService
   readonly commands: OnMoveCommandService
 
-  constructor(private readonly databasePath: string) {
+  constructor(
+    private readonly databasePath: string,
+    options: { embeddingProvider?: EmbeddingProvider } = {}
+  ) {
     mkdirSync(dirname(databasePath), { recursive: true })
     this.database = new SqliteAdapter(databasePath)
     try {
@@ -52,7 +56,12 @@ export class AppDatabase {
       this.sidebarFolders = new SidebarFolderRepository(this.database)
       this.mcpSettings = new McpSettingsRepository(this.database)
       const sensitivity = new EffectiveSensitivityRepository(this.database)
-      this.queries = new OnMoveQueryService(this.domain, sensitivity, this.database)
+      this.queries = new OnMoveQueryService(
+        this.domain,
+        sensitivity,
+        this.database,
+        options.embeddingProvider
+      )
       this.commands = new OnMoveCommandService(
         this.database,
         this.domain,
@@ -103,6 +112,7 @@ export class AppDatabase {
   }
 
   close(): void {
+    this.queries.dispose()
     this.database.close()
   }
 

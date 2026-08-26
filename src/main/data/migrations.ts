@@ -3878,6 +3878,37 @@ const migrations: readonly Migration[] = [
         END;
       `)
     }
+  },
+  {
+    version: 45,
+    name: 'mcp_retrieval_mode',
+    up(database) {
+      database.exec(`
+        ALTER TABLE mcp_settings
+        ADD COLUMN retrieval_mode TEXT NOT NULL DEFAULT 'classic'
+          CHECK (retrieval_mode IN ('classic', 'enhanced'));
+      `)
+    }
+  },
+  {
+    version: 46,
+    name: 'retrieval_embedding_cache',
+    up(database) {
+      database.exec(`
+        CREATE TABLE retrieval_embedding_cache (
+          source_key TEXT NOT NULL,
+          model_id TEXT NOT NULL,
+          content_hash TEXT NOT NULL,
+          dimensions INTEGER NOT NULL CHECK (dimensions > 0),
+          vector BLOB NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (source_key, model_id)
+        ) STRICT, WITHOUT ROWID;
+
+        CREATE INDEX retrieval_embedding_cache_content_index
+          ON retrieval_embedding_cache(model_id, content_hash);
+      `)
+    }
   }
 ]
 

@@ -6,12 +6,14 @@ import {
   type McpPermissionPolicySnapshot,
   type McpPermissionResource,
   type McpPermissionResourceSelector,
+  type McpRetrievalMode,
   type UpdateMcpPermissionInput
 } from '../../shared/contracts'
 
 export interface PersistedMcpSettings {
   serverEnabled: boolean
   serverPort: number
+  retrievalMode: McpRetrievalMode
   allowSensitive: boolean
   allowMutations: boolean
   updatedAt: string
@@ -70,6 +72,11 @@ function timestamp(now = new Date()): string {
   return now.toISOString()
 }
 
+function parseRetrievalMode(value: unknown): McpRetrievalMode {
+  if (value === 'classic' || value === 'enhanced') return value
+  throw new TypeError('retrievalMode must be classic or enhanced')
+}
+
 /** Persistent MCP permissions. They are read for every request, never cached by a session. */
 export class McpSettingsRepository {
   constructor(private readonly database: SqliteAdapter) {}
@@ -78,17 +85,20 @@ export class McpSettingsRepository {
     const row = this.database.get<{
       server_enabled: number
       server_port: number
+      retrieval_mode: string
       allow_sensitive: number
       allow_mutations: number
       updated_at: string
     }>(
-      `SELECT server_enabled, server_port, allow_sensitive, allow_mutations, updated_at
+      `SELECT server_enabled, server_port, retrieval_mode, allow_sensitive,
+              allow_mutations, updated_at
        FROM mcp_settings WHERE singleton = 1`
     )
     if (!row) throw new Error('MCP settings are unavailable')
     return {
       serverEnabled: Boolean(row.server_enabled),
       serverPort: Number(row.server_port),
+      retrievalMode: parseRetrievalMode(row.retrieval_mode),
       allowSensitive: Boolean(row.allow_sensitive),
       allowMutations: Boolean(row.allow_mutations),
       updatedAt: row.updated_at,
@@ -99,7 +109,7 @@ export class McpSettingsRepository {
   update(
     input: Partial<Pick<
       PersistedMcpSettings,
-      'serverEnabled' | 'serverPort' | 'allowSensitive' | 'allowMutations'
+      'serverEnabled' | 'serverPort' | 'retrievalMode' | 'allowSensitive' | 'allowMutations'
     >> & {
       permission?: UpdateMcpPermissionInput
       removePermissionTarget?: { type: 'focus' | 'thread'; id: number }
@@ -115,6 +125,7 @@ export class McpSettingsRepository {
     ) {
       throw new TypeError('serverPort must be an integer between 1024 and 65535')
     }
+    if (input.retrievalMode !== undefined) parseRetrievalMode(input.retrievalMode)
     if (input.allowSensitive !== undefined && typeof input.allowSensitive !== 'boolean') {
       throw new TypeError('allowSensitive must be a boolean')
     }
@@ -130,11 +141,13 @@ export class McpSettingsRepository {
     this.database.transaction(() => {
       this.database.run(
         `UPDATE mcp_settings
-         SET server_enabled = ?, server_port = ?, allow_sensitive = ?, allow_mutations = ?, updated_at = ?
+         SET server_enabled = ?, server_port = ?, retrieval_mode = ?, allow_sensitive = ?,
+             allow_mutations = ?, updated_at = ?
          WHERE singleton = 1`,
         [
           (input.serverEnabled ?? current.serverEnabled) ? 1 : 0,
           input.serverPort ?? current.serverPort,
+          input.retrievalMode ?? current.retrievalMode,
           (input.allowSensitive ?? current.allowSensitive) ? 1 : 0,
           (input.allowMutations ?? current.allowMutations) ? 1 : 0,
           changedAt

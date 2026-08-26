@@ -36,6 +36,18 @@ describe('hierarchical MCP permissions', () => {
     return { focusId: focus.id, threadId: thread.id, noteId: thread.notes[0].id }
   }
 
+  it('persists a validated MCP retrieval mode', () => {
+    expect(database.mcpSettings.get().retrievalMode).toBe('classic')
+
+    expect(database.mcpSettings.update({ retrievalMode: 'enhanced' })).toMatchObject({
+      retrievalMode: 'enhanced'
+    })
+    expect(database.mcpSettings.get().retrievalMode).toBe('enhanced')
+    expect(() => database.mcpSettings.update({
+      retrievalMode: 'unsupported' as never
+    })).toThrow('retrievalMode must be classic or enhanced')
+  })
+
   it('stores bounded defaults and only explicit hierarchy exceptions', () => {
     const first = hierarchy('First')
     const initial = database.mcpSettings.get()

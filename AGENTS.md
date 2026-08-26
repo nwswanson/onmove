@@ -827,6 +827,46 @@ foreground colors and do not rely on color alone to communicate selection or sta
   with the maintained FTS5 projection and readable rich-text extraction, not a collection of
   entity-specific `LIKE` queries. `get_thread_by_id` and other direct getters retrieve known entity ids;
   they are not substitutes for global search.
+- Keep MCP retrieval dual-path and provider-neutral. SQLite, the FTS5 `search_documents`
+  projection, live application services, and the live access policy remain authoritative for
+  identity, context validation, candidate visibility, hydration, pagination freshness, and every
+  write. Orama is only a disposable in-memory candidate index derived from that projection; it
+  must never authorize, hydrate, mutate, or become a second source of truth.
+- Require `onmove.retrieve` to name one explicit workspace, Focus, or asserted Focus + Thread
+  boundary, optionally intersected with one canonical Subject ID. Validate every asserted owner
+  relationship and Subject intersection in SQLite and enumerate authorized source keys before
+  lexical or semantic ranking. Never inherit current UI context, broaden on an empty boundary,
+  substitute a semantically similar sibling, or let similarity choose an identity or write target.
+- Preserve the persisted `classic | enhanced` MCP retrieval setting and re-read it for every
+  request. `classic` is the compatibility default and makes `auto` lexical; `enhanced` makes
+  eligible relevance-sorted text queries hybrid. An explicit `lexical` request and every queryless
+  structured listing stay on the SQLite path in either mode. Keep the public retrieval contract and
+  tool availability identical across modes so changing the setting does not require reconnecting.
+- Build enhanced retrieval from title/body content without prepending hierarchy labels to the
+  embedding text. Run Universal Sentence Encoder Lite locally in the Electron main process, but do
+  not claim that its weights are bundled or initially offline: TensorFlow.js downloads them on
+  first enhanced use. Never send OnMove source text to a hosted embedding or retrieval service.
+  Cache derived vectors durably in SQLite by stable source key, model id, content hash, and
+  dimensions; ignore mismatched entries and prune stale source keys so the cache remains disposable
+  and rebuildable.
+- Fuse lexical and semantic provider ranks through reciprocal-rank fusion rather than comparing or
+  adding their raw scores. Keep lexical influence primary and make operational-lineage
+  diversification the default so repeated corporate language, templates, and sibling Subjects do
+  not crowd a page. Return each result's contributing channels, lineage key, complete hierarchy,
+  and bounded snippet; never return lossless rich text from retrieval.
+- Treat enhanced retrieval as an optional quality improvement, not an availability dependency.
+  Model download, inference, cache, or semantic-index failures fall back to the authoritative
+  lexical path by default and report the requested/applied strategy, fallback reason, lexical and
+  semantic generations, and semantic coverage. Honor an explicit `onUnavailable=error` without
+  mutating or partially trusting the derived index.
+- Keep `onmove.retrieve` criteria separate from `onmove.continue_retrieval`, which accepts only the
+  exact returned opaque token. Sign retrieval continuations over the complete request, explicit
+  context, byte budget, access fingerprint, persisted retrieval mode, applied strategy, stable
+  cursor, and both index generations. Reject continuations after data, access, mode, or strategy
+  changes with `RETRIEVAL_CURSOR_STALE`; never silently restart or downgrade a continued page.
+- Retain `onmove.search`, its kind-specific variants, and `continue_search` as the deterministic
+  FTS5 compatibility/discovery surface. Enhanced retrieval is additive and must not alter their
+  schemas, lexical behavior, continuation format, or existing stopping and write-target guidance.
 - Index every Note title and content value, including current Lexical rich text, legacy Markdown,
   and legacy plain text. A migration must mark existing Note records for transactional backfill,
   Note table triggers must invalidate future projections, and the MCP mutation boundary must also

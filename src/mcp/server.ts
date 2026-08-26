@@ -26,7 +26,16 @@ import {
   type SearchSortDirection,
   type SearchSortField
 } from '../main/application/search-index'
-import type { McpUiContextSnapshot, RichTextDocumentSnapshot } from '../shared/contracts'
+import type {
+  RetrievalAppliedStrategy,
+  RetrievalPage,
+  RetrievalRequest
+} from '../main/application/retrieval-service'
+import type {
+  McpRetrievalMode,
+  McpUiContextSnapshot,
+  RichTextDocumentSnapshot
+} from '../shared/contracts'
 import {
   entityReference,
   parseEntityReference,
@@ -240,6 +249,77 @@ function decodeSearchContinuation(token: string): SearchContinuationPayload {
     return parsed as SearchContinuationPayload
   } catch {
     throw new TypeError('continuationToken is invalid or incompatible; start a new search')
+  }
+}
+
+type RetrievalCursor = NonNullable<RetrievalRequest['cursor']>
+type RetrievalContinuationRequest = Omit<RetrievalRequest, 'cursor' | 'limit'>
+
+interface RetrievalContinuationPayload {
+  version: 1
+  serverNonce: string
+  request: RetrievalContinuationRequest
+  cursor: RetrievalCursor
+  pageSize: number
+  maxBytes: number
+  lexicalGeneration: number
+  semanticGeneration: number | null
+  retrievalMode: McpRetrievalMode
+  appliedStrategy: RetrievalAppliedStrategy
+  fallbackReason: string | null
+  accessFingerprint: string
+}
+
+const RETRIEVAL_CONTINUATION_PREFIX = 'onmove-retrieval-v1.'
+
+function encodeRetrievalContinuation(payload: RetrievalContinuationPayload): string {
+  const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
+  const signature = createHmac('sha256', SEARCH_CONTINUATION_SECRET)
+    .update(`${RETRIEVAL_CONTINUATION_PREFIX}${encoded}`)
+    .digest('base64url')
+  return `${RETRIEVAL_CONTINUATION_PREFIX}${encoded}.${signature}`
+}
+
+function decodeRetrievalContinuation(
+  token: string,
+  expectedServerNonce: string
+): RetrievalContinuationPayload {
+  if (!token.startsWith(RETRIEVAL_CONTINUATION_PREFIX) || token.length > 8_192) {
+    throw new TypeError('continuationToken is not a valid OnMove retrieval continuation token')
+  }
+  try {
+    const signed = token.slice(RETRIEVAL_CONTINUATION_PREFIX.length)
+    const separator = signed.lastIndexOf('.')
+    if (separator <= 0) throw new Error('missing continuation signature')
+    const encoded = signed.slice(0, separator)
+    const received = Buffer.from(signed.slice(separator + 1), 'base64url')
+    const expected = createHmac('sha256', SEARCH_CONTINUATION_SECRET)
+      .update(`${RETRIEVAL_CONTINUATION_PREFIX}${encoded}`)
+      .digest()
+    if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
+      throw new Error('invalid continuation signature')
+    }
+    const parsed = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as
+      Partial<RetrievalContinuationPayload>
+    if (
+      parsed.version !== 1 || parsed.serverNonce !== expectedServerNonce ||
+      !parsed.request || typeof parsed.request !== 'object' ||
+      !parsed.cursor || typeof parsed.cursor !== 'object' ||
+      !Number.isSafeInteger(parsed.pageSize) || Number(parsed.pageSize) < 1 ||
+      Number(parsed.pageSize) > 25 || !Number.isSafeInteger(parsed.maxBytes) ||
+      Number(parsed.maxBytes) < 8_192 || Number(parsed.maxBytes) > 131_072 ||
+      !Number.isSafeInteger(parsed.lexicalGeneration) || Number(parsed.lexicalGeneration) < 0 ||
+      (parsed.semanticGeneration !== null && (
+        !Number.isSafeInteger(parsed.semanticGeneration) || Number(parsed.semanticGeneration) < 0
+      )) ||
+      !['classic', 'enhanced'].includes(parsed.retrievalMode as string) ||
+      !['structured', 'lexical', 'hybrid'].includes(parsed.appliedStrategy as string) ||
+      (parsed.fallbackReason !== null && typeof parsed.fallbackReason !== 'string') ||
+      typeof parsed.accessFingerprint !== 'string' || parsed.accessFingerprint.length === 0
+    ) throw new Error('invalid continuation payload')
+    return parsed as RetrievalContinuationPayload
+  } catch {
+    throw new TypeError('continuationToken is invalid or incompatible; start a new retrieval')
   }
 }
 
@@ -936,6 +1016,23 @@ function result(value: unknown, diagnostics: McpDiagnostics = diagnosticsScope()
     content: [{ type: 'text', text: JSON.stringify(structuredContent) }],
     structuredContent
   }
+}
+
+const RETRIEVAL_PRIVATE_FIELDS = new Set([
+  'rank',
+  'sourceKey',
+  'providerRank',
+  'providerScore'
+])
+
+/** Keeps retrieval provider internals and lossless documents out of the public MCP contract. */
+function retrievalSafeValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(retrievalSafeValue)
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(Object.entries(value).flatMap(([key, child]) => {
+    if (RETRIEVAL_PRIVATE_FIELDS.has(key) || key.toLocaleLowerCase().includes('richtext')) return []
+    return [[key, retrievalSafeValue(child)]]
+  }))
 }
 
 const ENTITY_REFERENCE_KINDS = new Set<EntityReferenceKind>([
@@ -1716,10 +1813,23 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Choose reads by intent. Every user-addressable entity returned by MCP has a canonical code such as #F2, #T4, or #U90. When the user supplies one, call onmove.get_entity_by_code directly and do not search. For a compact queryless inventory use list_focuses, list_threads, list_commitments, or list_routines; these return hierarchy and one explicit projection row per applicable Subject without child Updates, Notes, or rich-text documents. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Use onmove.search across all relevant kinds when the request asks for information "about" a Thread or Focus: the answer may be evidence inside a Note, Update, Todo, or other descendant, not an entity whose title matches the words. Each primary search match always reports its exact matched field, containing Thread, complete coded path, and recommendedWriteTarget; these are never optional or budget-truncated. hierarchyPaths is only an auxiliary Subject/Scope expansion and must not replace each match\'s own path. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Search never returns lossless rich text. Request includeRichText=true on one known entity only immediately before a full structural replacement. Use onmove.search only for initial cross-kind discovery, queryless structured listing, or Subject hierarchy projection. Send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility. Initial search tools never accept continuationToken. Natural-language wrappers retain meaningful entity terms. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Projection controls auxiliary Subject/Scope expansion, not required primary hierarchy. Inspect projections.*.complete before treating auxiliary paths or Subject uses as exhaustive. Never invent or alter a continuationToken. For another page call onmove.continue_search with only the exact non-null signed token; it preserves the originating search, complete query, and stable cursor. If SEARCH_CURSOR_STALE is returned, restart the original search tool with its criteria. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop global discovery and fetch returned IDs or continue only inside the returned boundary. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Delete only after the user explicitly asks for and confirms the exact target; onmove.delete_entity requires confirm=true and may cascade through owned descendants. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and independent View/Edit/Delete grants by resource, Focus, and Thread.'
+        'Choose reads by intent. Every user-addressable entity returned by MCP has a canonical code such as #F2, #T4, or #U90. When the user supplies one, call onmove.get_entity_by_code directly and do not search. For a compact queryless inventory use list_focuses, list_threads, list_commitments, or list_routines; these return hierarchy and one explicit projection row per applicable Subject without child Updates, Notes, or rich-text documents. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Use onmove.search across all relevant kinds when the request asks for information "about" a Thread or Focus: the answer may be evidence inside a Note, Update, Todo, or other descendant, not an entity whose title matches the words. Each primary search match always reports its exact matched field, containing Thread, complete coded path, and recommendedWriteTarget; these are never optional or budget-truncated. hierarchyPaths is only an auxiliary Subject/Scope expansion and must not replace each match\'s own path. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Search never returns lossless rich text. Request includeRichText=true on one known entity only immediately before a full structural replacement. Use onmove.retrieve after exact hierarchy IDs are known when evidence must stay inside an explicit workspace, Focus, asserted Focus/Thread, and optional canonical Subject intersection, or when provider-neutral enhanced retrieval is useful. Context IDs are operational identity boundaries: semantic relevance can rank evidence inside them but must never disambiguate an entity, select a sibling context, or choose a write target. The legacy onmove.search, onmove.continue_search, and every onmove.search_<kind> tool remain available for initial cross-kind discovery, exact lexical search, queryless structured listing, and Subject hierarchy projection. Send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility. Initial search tools never accept continuationToken. Natural-language wrappers retain meaningful entity terms. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Projection controls auxiliary Subject/Scope expansion, not required primary hierarchy. Inspect projections.*.complete before treating auxiliary paths or Subject uses as exhaustive. Never invent or alter a continuationToken. For another page call onmove.continue_search with only the exact non-null signed token; it preserves the originating search, complete query, and stable cursor. If SEARCH_CURSOR_STALE is returned, restart the original search tool with its criteria. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop global discovery and fetch returned IDs or continue only inside the returned boundary. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Delete only after the user explicitly asks for and confirms the exact target; onmove.delete_entity requires confirm=true and may cascade through owned descendants. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and independent View/Edit/Delete grants by resource, Focus, and Thread.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
+  const retrievalServerNonce = randomBytes(16).toString('base64url')
+  const retrievalEnvironment = () => {
+    const settings = database.mcpSettings.get()
+    const access = {
+      sensitiveContent: settings.allowSensitive ? 'allow' as const : 'deny' as const,
+      mutations: settings.allowMutations ? 'allow' as const : 'read-only' as const,
+      permissionPolicy: settings.permissionPolicy
+    }
+    const accessFingerprint = createHmac('sha256', SEARCH_CONTINUATION_SECRET)
+      .update(`onmove-retrieval-access-v1:${JSON.stringify(access)}`)
+      .digest('base64url')
+    return { access, accessFingerprint, retrievalMode: settings.retrievalMode }
+  }
   const notifyMutation = (): void => {
     // Source-table triggers already invalidate the projection. This explicit MCP boundary makes
     // that guarantee resilient if a future command writes through a new persistence path.
@@ -2527,7 +2637,101 @@ export function createOnMoveMcpServer(
     budget: searchBudgetOutputSchema,
     diagnostics: diagnosticsOutputSchema
   })
+  const retrievalBoundarySchema = z.discriminatedUnion('type', [
+    z.strictObject({
+      type: z.literal('workspace').describe(
+        'Search the complete visible workspace. This must be explicit; retrieval never inherits the current UI.'
+      )
+    }),
+    z.strictObject({
+      type: z.literal('focus'),
+      focusId: idSchema.describe('The exact Focus boundary returned by OnMove.')
+    }),
+    z.strictObject({
+      type: z.literal('thread'),
+      focusId: idSchema.describe(
+        'The asserted owning Focus. Retrieval rejects a Thread that is no longer inside this Focus.'
+      ),
+      threadId: idSchema.describe('The exact Thread boundary returned by OnMove.')
+    })
+  ])
+  const retrievalContextSchema = z.strictObject({
+    boundary: retrievalBoundarySchema,
+    subjectId: idSchema.optional().describe(
+      'Optional canonical Subject intersection. This selects durable attribution history inside the boundary; it is never treated as a fuzzy semantic label.'
+    )
+  }).describe(
+    'Required operational context. Every supplied hierarchy and Subject identifier is intersected; none is silently ignored.'
+  )
+  const retrievalInputSchema = z.strictObject({
+    text: z.string().min(1).max(1_000).nullable().optional().describe(
+      'Text to retrieve. Null or omission performs a structured listing inside the required context.'
+    ),
+    context: retrievalContextSchema,
+    kinds: z.array(z.enum(SEARCH_ENTITY_TYPES)).min(1).max(8).optional(),
+    date: localDateRangeSchema.optional(),
+    createdAt: localDateRangeSchema.optional(),
+    updatedAt: localDateRangeSchema.optional(),
+    timeZone: z.string().min(1).optional().describe(
+      'IANA timezone for createdAt and updatedAt local-calendar boundaries.'
+    ),
+    strategy: z.enum(['auto', 'lexical', 'hybrid']).optional().describe(
+      'Provider-neutral retrieval strategy. auto uses the best currently available safe strategy.'
+    ),
+    onUnavailable: z.enum(['fallback', 'error']).optional().describe(
+      'fallback uses a safe available strategy and reports why; error rejects an unavailable requested strategy.'
+    ),
+    diversifyBy: z.enum(['none', 'lineage']).optional().describe(
+      'lineage limits corporate-language crowding by diversifying across operational owner paths.'
+    ),
+    page: searchPageSchema
+  })
+  const retrievalMatchOutputSchema = z.strictObject({
+    channels: z.array(z.enum(['structured', 'lexical', 'semantic'])),
+    lexicalRank: z.number().int().positive().nullable(),
+    semanticRank: z.number().int().positive().nullable(),
+    semanticSimilarity: z.number().nullable(),
+    fusedScore: z.number().nullable(),
+    lineageKey: z.string().min(1)
+  })
+  const retrievalRecordOutputSchema = searchRecordOutputSchema
+    .omit({ rank: true })
+    .extend({ match: retrievalMatchOutputSchema })
+    .strict()
+  const retrievalAppliedQueryOutputSchema = z.strictObject({
+    text: z.string().nullable(),
+    context: retrievalContextSchema,
+    kinds: z.union([z.literal('all'), z.array(z.enum(SEARCH_ENTITY_TYPES))]),
+    date: appliedRangeOutputSchema,
+    createdAt: appliedRangeOutputSchema,
+    updatedAt: appliedRangeOutputSchema,
+    timeZone: z.string(),
+    strategy: z.enum(['auto', 'lexical', 'hybrid']),
+    onUnavailable: z.enum(['fallback', 'error']),
+    diversifyBy: z.enum(['none', 'lineage'])
+  })
+  const retrievalOutputSchema = z.object({
+    items: z.array(retrievalRecordOutputSchema),
+    retrieval: z.strictObject({
+      mode: z.enum(['classic', 'enhanced']),
+      requestedStrategy: z.enum(['auto', 'lexical', 'hybrid']),
+      appliedStrategy: z.enum(['structured', 'lexical', 'hybrid']),
+      fallbackReason: z.string().nullable()
+    }),
+    freshness: z.strictObject({
+      lexicalGeneration: z.number().int().nonnegative(),
+      semanticGeneration: z.number().int().nonnegative().nullable(),
+      semanticCoverage: z.number().min(0).max(1).nullable(),
+      semanticState: z.enum(['current', 'stale', 'unavailable'])
+    }),
+    hasMore: z.boolean(),
+    continuationToken: z.string().nullable(),
+    appliedQuery: retrievalAppliedQueryOutputSchema,
+    budget: searchBudgetOutputSchema,
+    diagnostics: diagnosticsOutputSchema
+  })
   type EntitySearchInput = z.infer<typeof entitySearchSchema>
+  type RetrievalInput = z.infer<typeof retrievalInputSchema>
   const runEntitySearch = (
     kind: SearchEntityType,
     input: EntitySearchInput,
@@ -3099,6 +3303,264 @@ export function createOnMoveMcpServer(
         continuation
       )
     }
+  )
+
+  const normalizeRetrievalRequest = (input: RetrievalInput): RetrievalContinuationRequest => ({
+    text: input.text ?? null,
+    context: input.context,
+    ...(input.kinds ? { kinds: input.kinds } : {}),
+    ...(input.date ? { date: input.date } : {}),
+    ...(input.createdAt ? { createdAt: input.createdAt } : {}),
+    ...(input.updatedAt ? { updatedAt: input.updatedAt } : {}),
+    timeZone: input.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC',
+    strategy: input.strategy ?? 'auto',
+    onUnavailable: input.onUnavailable ?? 'fallback',
+    diversifyBy: input.diversifyBy ?? 'lineage'
+  } as RetrievalContinuationRequest)
+
+  const retrievalDiagnosticsScope = (
+    context: RetrievalContinuationRequest['context']
+  ): AppliedSearchScope => {
+    const boundary = context.boundary
+    const subjectId = context.subjectId ?? null
+    if (boundary.type === 'focus') {
+      return {
+        requestedMode: 'focus', mode: 'focus', focusId: boundary.focusId,
+        threadId: null, subjectId, source: 'explicit',
+        description: `Retrieve inside Focus ${boundary.focusId}${subjectId === null ? '' : ` intersected with Subject ${subjectId}`}.`
+      }
+    }
+    if (boundary.type === 'thread') {
+      return {
+        requestedMode: 'thread', mode: 'thread', focusId: boundary.focusId,
+        threadId: boundary.threadId, subjectId, source: 'explicit',
+        description: `Retrieve inside Focus ${boundary.focusId}, Thread ${boundary.threadId}${subjectId === null ? '' : `, and Subject ${subjectId}`}.`
+      }
+    }
+    if (subjectId !== null) {
+      return {
+        requestedMode: 'subject', mode: 'subject', focusId: null,
+        threadId: null, subjectId, source: 'explicit',
+        description: `Retrieve Subject ${subjectId} attribution across the visible workspace.`
+      }
+    }
+    return { ...GLOBAL_SCOPE, source: 'explicit' }
+  }
+
+  const runRetrieval = async (
+    input: RetrievalInput | null,
+    continuation: RetrievalContinuationPayload | null = null
+  ): Promise<ReturnType<typeof result>> => {
+    if (!continuation && !input) throw new TypeError('retrieval input is required')
+    const request = continuation?.request ?? normalizeRetrievalRequest(input as RetrievalInput)
+    const pageSize = continuation?.pageSize ?? input?.page?.size ?? 10
+    const maxBytes = continuation?.maxBytes ?? input?.page?.maxBytes ?? 32_768
+    const environment = retrievalEnvironment()
+    if (continuation && (
+      continuation.retrievalMode !== environment.retrievalMode ||
+      continuation.accessFingerprint !== environment.accessFingerprint
+    )) {
+      throw new TypeError(
+        'RETRIEVAL_CURSOR_STALE: OnMove retrieval mode or access settings changed after this ' +
+        'page was created. Restart onmove.retrieve with the original criteria.'
+      )
+    }
+    const continuationStrategy = continuation?.appliedStrategy === 'hybrid'
+      ? 'hybrid'
+      : continuation?.appliedStrategy === 'lexical'
+        ? 'lexical'
+        : request.strategy
+    let retrieved: RetrievalPage
+    try {
+      retrieved = await database.queries.retrievePage({
+        ...request,
+        strategy: continuationStrategy,
+        ...(continuation?.appliedStrategy === 'hybrid'
+          ? { onUnavailable: 'error' as const }
+          : {}),
+        cursor: continuation?.cursor ?? null,
+        limit: pageSize
+      }, environment.access, environment.retrievalMode)
+    } catch (error) {
+      if (!continuation) throw error
+      throw new TypeError(
+        'RETRIEVAL_CURSOR_STALE: The retrieval context or applied strategy is no longer ' +
+        'available. Restart onmove.retrieve with the original criteria.',
+        { cause: error }
+      )
+    }
+    if (continuation && (
+      continuation.lexicalGeneration !== retrieved.lexicalGeneration ||
+      continuation.semanticGeneration !== retrieved.semanticGeneration ||
+      continuation.appliedStrategy !== retrieved.appliedStrategy ||
+      retrieved.retrievalMode !== environment.retrievalMode
+    )) {
+      throw new TypeError(
+        'RETRIEVAL_CURSOR_STALE: OnMove data or retrieval indexes changed after this page was ' +
+        'created. Restart onmove.retrieve with the original criteria.'
+      )
+    }
+
+    let items = retrieved.items.map((item) =>
+      retrievalSafeValue(item) as Record<string, unknown>)
+    const itemCursors = [...retrieved.itemCursors]
+    let recordsTruncated = false
+    const warnings = [
+      ...(continuation
+        ? ['The complete retrieval request and stable cursor were verified from continuationToken.']
+        : []),
+      ...(continuation?.fallbackReason
+        ? [continuation.fallbackReason]
+        : retrieved.fallbackReason ? [retrieved.fallbackReason] : [])
+    ]
+    const appliedScope = retrievalDiagnosticsScope(request.context)
+    const diagnostics = (): McpDiagnostics => ({
+      appliedScope,
+      warnings,
+      appliedKinds: request.kinds?.length ? [...request.kinds] : 'all',
+      resultCount: items.length
+    })
+    const continuationFor = (cursor: RetrievalCursor | null): string | null => cursor
+      ? encodeRetrievalContinuation({
+          version: 1,
+          serverNonce: retrievalServerNonce,
+          request,
+          cursor,
+          pageSize,
+          maxBytes,
+          lexicalGeneration: retrieved.lexicalGeneration,
+          semanticGeneration: retrieved.semanticGeneration,
+          retrievalMode: retrieved.retrievalMode,
+          appliedStrategy: retrieved.appliedStrategy,
+          fallbackReason: continuation?.fallbackReason ?? retrieved.fallbackReason,
+          accessFingerprint: environment.accessFingerprint
+        })
+      : null
+    const response = (): Record<string, unknown> => {
+      const hasMore = retrieved.hasMore || recordsTruncated
+      const lastCursor = itemCursors.at(-1) ?? null
+      if (hasMore && !lastCursor) {
+        throw new TypeError('Retrieval reported another page without a stable item cursor')
+      }
+      return {
+        items,
+        retrieval: {
+          mode: retrieved.retrievalMode,
+          requestedStrategy: request.strategy,
+          appliedStrategy: retrieved.appliedStrategy,
+          fallbackReason: continuation?.fallbackReason ?? retrieved.fallbackReason
+        },
+        freshness: {
+          lexicalGeneration: retrieved.lexicalGeneration,
+          semanticGeneration: retrieved.semanticGeneration,
+          semanticCoverage: retrieved.semanticCoverage,
+          semanticState: retrieved.semanticGeneration === null
+            ? 'unavailable'
+            : retrieved.semanticGeneration === retrieved.lexicalGeneration
+              ? 'current'
+              : 'stale'
+        },
+        hasMore,
+        continuationToken: hasMore ? continuationFor(lastCursor) : null,
+        appliedQuery: {
+          text: request.text,
+          context: request.context,
+          kinds: request.kinds?.length ? [...request.kinds] : 'all',
+          date: request.date ?? null,
+          createdAt: request.createdAt ?? null,
+          updatedAt: request.updatedAt ?? null,
+          timeZone: request.timeZone,
+          strategy: request.strategy,
+          onUnavailable: request.onUnavailable,
+          diversifyBy: request.diversifyBy
+        },
+        budget: {
+          maxBytes,
+          responseBytes: 0,
+          structuredBytes: 0,
+          estimatedToolResultBytes: 0,
+          recordsTruncated,
+          projectionTruncated: false
+        }
+      }
+    }
+    const payloadBytes = (): number => resultPayloadBytes(response(), diagnostics())
+    const exceedsBudget = (): boolean => payloadBytes() + 512 > maxBytes
+    if (exceedsBudget()) {
+      items = items.map((item) => ({
+        ...item,
+        ...(typeof item.snippet === 'string' && item.snippet.length > 80
+          ? { snippet: `${item.snippet.slice(0, 79)}…` }
+          : {})
+      }))
+    }
+    while (exceedsBudget() && items.length > 1) {
+      items.pop()
+      itemCursors.pop()
+      recordsTruncated = true
+    }
+    if (recordsTruncated) {
+      warnings.push(
+        'The retrieval page was shortened to honor page.maxBytes; continue with the signed token.'
+      )
+    }
+    const finalResponse = response()
+    const budget = finalResponse.budget as Record<string, unknown>
+    for (let pass = 0; pass < 4; pass += 1) {
+      budget.structuredBytes = Buffer.byteLength(JSON.stringify({
+        ...finalResponse,
+        diagnostics: diagnostics()
+      }), 'utf8')
+      budget.estimatedToolResultBytes = resultPayloadBytes(finalResponse, diagnostics())
+      budget.responseBytes = budget.estimatedToolResultBytes
+    }
+    if (Number(budget.estimatedToolResultBytes) > maxBytes) {
+      throw new TypeError(
+        `page.maxBytes=${maxBytes} is too small for one safe retrieval result and required diagnostics`
+      )
+    }
+    return result(finalResponse, diagnostics())
+  }
+
+  server.registerTool(
+    'onmove.retrieve',
+    {
+      title: 'Retrieve OnMove evidence in an exact operational context',
+      description:
+        'Retrieve visible records inside one explicit workspace, Focus, or asserted Focus/Thread ' +
+        'boundary, optionally intersected with one canonical Subject. IDs are operational identity: ' +
+        'resolve names or public codes first, and never substitute a semantically similar sibling. ' +
+        'The result is provider-neutral and reports the requested/applied strategy, fallback, index ' +
+        'freshness, complete hierarchy provenance, and a signed continuationToken. Retrieval returns ' +
+        'bounded excerpts only, never lossless rich text. Call onmove.continue_retrieval for another page.',
+      inputSchema: retrievalInputSchema,
+      outputSchema: retrievalOutputSchema,
+      annotations: { readOnlyHint: true }
+    },
+    async (input) => runRetrieval(input)
+  )
+
+  server.registerTool(
+    'onmove.continue_retrieval',
+    {
+      title: 'Continue an OnMove retrieval',
+      description:
+        'Fetch exactly one next retrieval page. Pass only the exact non-null signed token returned ' +
+        'by onmove.retrieve or this tool. The token preserves context, filters, strategy, byte ' +
+        'budget, access fingerprint, retrieval mode, index generations, and stable cursor. ' +
+        'Do not repeat or modify the retrieval request.',
+      inputSchema: z.strictObject({
+        continuationToken: z.string().min(1).describe(
+          'The exact opaque token returned by an OnMove retrieval response with hasMore=true.'
+        )
+      }),
+      outputSchema: retrievalOutputSchema,
+      annotations: { readOnlyHint: true }
+    },
+    async ({ continuationToken }) => runRetrieval(
+      null,
+      decodeRetrievalContinuation(continuationToken, retrievalServerNonce)
+    )
   )
 
   const entitySelectorSchema = (entity: string, example: string) => z.strictObject({

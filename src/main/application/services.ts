@@ -7,6 +7,7 @@ import type {
   DueOverviewSnapshot,
   FocusSnapshot,
   HealthState,
+  McpRetrievalMode,
   NoteParent,
   NoteSnapshot,
   RichTextDocumentReference,
@@ -50,6 +51,17 @@ import {
   type SearchQuery,
   type SearchResult
 } from './search-index'
+import {
+  UniversalSentenceEncoderEmbeddingProvider,
+  type EmbeddingProvider
+} from './embedding-provider'
+import { RetrievalProjectionRepository } from './retrieval-projection'
+import {
+  RetrievalContextNotVisibleError,
+  RetrievalService,
+  type RetrievalPage,
+  type RetrievalRequest
+} from './retrieval-service'
 
 export type ApplicationEntityReference =
   | { type: 'focus'; id: number }
@@ -834,13 +846,20 @@ export class McpMutationAuditRepository {
 /** Receiver-neutral read boundary shared by Electron IPC and the MCP adapter. */
 export class OnMoveQueryService {
   readonly searchIndex: SearchIndexRepository
+  readonly retrieval: RetrievalService
 
   constructor(
     private readonly domain: DomainStore,
     private readonly sensitivity: EffectiveSensitivityRepository,
-    database: SqliteAdapter
+    database: SqliteAdapter,
+    embeddingProvider: EmbeddingProvider = new UniversalSentenceEncoderEmbeddingProvider()
   ) {
     this.searchIndex = new SearchIndexRepository(database)
+    this.retrieval = new RetrievalService(
+      new RetrievalProjectionRepository(database, this.searchIndex),
+      database,
+      embeddingProvider
+    )
   }
 
   // Electron-facing projections preserve durable rich-text envelopes. MCP
@@ -1738,6 +1757,61 @@ export class OnMoveQueryService {
 
   searchPage(query: SearchQuery, access: OnMoveAccessPolicy): SearchPage {
     return this.searchIndex.searchPage(query, access)
+  }
+
+  async retrievePage(
+    request: RetrievalRequest,
+    access: OnMoveAccessPolicy,
+    retrievalMode: McpRetrievalMode
+  ): Promise<RetrievalPage> {
+    const boundary = request.context.boundary
+    const focusId = boundary.type === 'workspace' ? null : boundary.focusId
+    const threadId = boundary.type === 'thread' ? boundary.threadId : null
+    const focus = focusId === null ? null : this.domain.focuses.find(focusId)
+    const thread = threadId === null ? null : this.domain.threads.find(threadId)
+    const subjectId = request.context.subjectId ?? null
+    const subject = subjectId === null ? null : this.domain.subjects.find(subjectId)
+    const permissionContext = { focusId, threadId }
+    let invalid =
+      (focusId !== null && (!focus || !this.sensitivity.canRead('focus', focusId, access))) ||
+      (threadId !== null && (
+        !thread || thread.focusId !== focusId ||
+        !this.sensitivity.canRead('thread', threadId, access)
+      )) || (subjectId !== null && !subject)
+    if (!invalid && subjectId !== null) {
+      if (threadId !== null) {
+        invalid = !this.sensitivity.canReadInContext(
+          'subject', subjectId, access, permissionContext
+        )
+      } else if (!this.sensitivity.canReadInContext(
+        'subject', subjectId, access, permissionContext
+      )) {
+        // A Focus or workspace request may legitimately include records exposed by a
+        // more-specific Thread Subject grant. Treat the context as visible when any readable
+        // descendant grants it; the candidate query still enforces every record's exact grant.
+        const candidateFocuses = focus ? [focus] : this.domain.focuses.list()
+        invalid = !candidateFocuses.some((candidateFocus) =>
+          this.sensitivity.canRead('focus', candidateFocus.id, access) &&
+          this.domain.threads.listForFocus(candidateFocus.id).some((candidateThread) =>
+            this.sensitivity.canRead('thread', candidateThread.id, access) &&
+            this.sensitivity.canReadInContext('subject', subjectId, access, {
+              focusId: candidateFocus.id,
+              threadId: candidateThread.id
+            })))
+      }
+    }
+    if (invalid) throw new RetrievalContextNotVisibleError()
+
+    return this.retrieval.retrieve({
+      ...request,
+      focusId,
+      threadId,
+      subjectId
+    }, access, retrievalMode)
+  }
+
+  dispose(): void {
+    this.retrieval.dispose()
   }
 
   /**

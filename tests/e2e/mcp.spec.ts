@@ -86,6 +86,8 @@ test('serves MCP from the running app and immediately refreshes its open windows
     const tools = await client.listTools()
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.search')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.continue_search')
+    expect(tools.tools.map(({ name }) => name)).toContain('onmove.retrieve')
+    expect(tools.tools.map(({ name }) => name)).toContain('onmove.continue_retrieval')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.get_note_by_path')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.resolve_work_target')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.review_subject')
@@ -207,7 +209,7 @@ test('serves MCP from the running app and immediately refreshes its open windows
         reference: { type: 'note', id: threadNote.id },
         note: {
           revision: threadNote.revision + 1,
-          content: 'MCP content visible in open windows'
+          content: '**MCP content visible in open windows**'
         }
       }
     })
@@ -300,12 +302,14 @@ test('serves MCP from the running app and immediately refreshes its open windows
       name: 'onmove.search',
       arguments: {
         text: 'person y',
-        includeThreads: true,
-        includeCommitments: true,
-        includeSubjects: true,
-        includeScopes: true
+        projection: {
+          hierarchy: true,
+          subjects: true,
+          scopes: true
+        }
       }
     })
+    expect(hierarchySearch.isError).not.toBe(true)
     expect(hierarchySearch.structuredContent).toMatchObject({
       hierarchyPaths: expect.arrayContaining([
         expect.objectContaining({
@@ -445,7 +449,7 @@ test('serves MCP from the running app and immediately refreshes its open windows
     })
     expect(updatedThread.structuredContent).toMatchObject({
       updates: expect.arrayContaining([expect.objectContaining({
-        observation: 'Live recovery evidence',
+        observation: '**Live recovery evidence**',
         observationRichText: richText('Live recovery evidence'),
         scope: null
       })])
