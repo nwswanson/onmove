@@ -39,6 +39,8 @@ export type RetrievalAppliedStrategy = 'structured' | 'lexical' | 'hybrid'
 
 export const RETRIEVAL_FALLBACK_REASONS = {
   enhancedDisabled: 'Enhanced retrieval is disabled; lexical fallback was applied.',
+  semanticPreparing:
+    'The local semantic index is still preparing; lexical fallback was applied.',
   semanticUnavailable: 'The local semantic index is unavailable; lexical fallback was applied.'
 } as const
 
@@ -142,7 +144,20 @@ const MAX_BACKEND_PAGE = 1_000
 const MAX_SEMANTIC_BUILD_ATTEMPTS = 3
 const MAX_EMBEDDING_CHUNK_CHARACTERS = 480
 const MIN_EMBEDDING_BREAK_CHARACTERS = 240
+const MAX_EMBEDDING_REQUEST_INPUTS = 24
 const EMBEDDING_PIPELINE_VERSION = 'document-content-chunks:1'
+const DEFAULT_SEMANTIC_FOREGROUND_WAIT_MS = 2_000
+
+export interface RetrievalServiceOptions {
+  semanticForegroundWaitMs?: number
+}
+
+class SemanticPreparationTimeoutError extends Error {
+  constructor() {
+    super(RETRIEVAL_FALLBACK_REASONS.semanticPreparing)
+    this.name = 'SemanticPreparationTimeoutError'
+  }
+}
 
 function positiveLimit(value: number | undefined): number {
   const limit = value ?? 25
@@ -150,6 +165,10 @@ function positiveLimit(value: number | undefined): number {
     throw new TypeError('retrieval limit must be between 1 and 100')
   }
   return limit
+}
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
 }
 
 function rankedOffset(cursor: RetrievalPageCursor | null | undefined): number {
@@ -311,12 +330,14 @@ export class RetrievalService {
   private buildPromise: Promise<SemanticIndexState> | null = null
   private disposed = false
   private lifecycleRevision = 0
+  private readonly semanticForegroundWaitMs: number
 
   constructor(
     private readonly projection: RetrievalProjectionRepository,
     database: ConstructorParameters<typeof EmbeddingCacheRepository>[0],
     private readonly embeddings: EmbeddingProvider,
-    backend?: RetrievalBackend
+    backend?: RetrievalBackend,
+    options: RetrievalServiceOptions = {}
   ) {
     if (!Number.isSafeInteger(embeddings.dimensions) || embeddings.dimensions < 1) {
       throw new TypeError('embedding provider dimensions must be a positive integer')
@@ -326,6 +347,14 @@ export class RetrievalService {
     }
     this.backend = backend ?? new OramaRetrievalBackend(embeddings.dimensions)
     this.cache = new EmbeddingCacheRepository(database)
+    this.semanticForegroundWaitMs =
+      options.semanticForegroundWaitMs ?? DEFAULT_SEMANTIC_FOREGROUND_WAIT_MS
+    if (
+      !Number.isSafeInteger(this.semanticForegroundWaitMs) ||
+      this.semanticForegroundWaitMs < 1
+    ) {
+      throw new TypeError('semanticForegroundWaitMs must be a positive integer')
+    }
   }
 
   async retrieve(
@@ -386,14 +415,16 @@ export class RetrievalService {
     }
 
     try {
-      return await this.hybridPage(
-        request,
-        access,
-        retrievalMode,
-        requestedStrategy,
-        diversifyBy,
-        limit
-      )
+      return await this.withSemanticForegroundBudget((signal) =>
+        this.hybridPage(
+          request,
+          access,
+          retrievalMode,
+          requestedStrategy,
+          diversifyBy,
+          limit,
+          signal
+        ))
     } catch (error) {
       if (request.cursor !== null && request.cursor !== undefined) {
         if (error instanceof RetrievalStrategyUnavailableError) throw error
@@ -402,10 +433,13 @@ export class RetrievalService {
           error
         )
       }
+      const fallbackReason = error instanceof SemanticPreparationTimeoutError
+        ? RETRIEVAL_FALLBACK_REASONS.semanticPreparing
+        : RETRIEVAL_FALLBACK_REASONS.semanticUnavailable
       if (unavailable === 'error') {
         if (error instanceof RetrievalStrategyUnavailableError) throw error
         throw new RetrievalStrategyUnavailableError(
-          'The local semantic index could not be prepared.',
+          fallbackReason,
           error
         )
       }
@@ -415,7 +449,7 @@ export class RetrievalService {
         retrievalMode,
         requestedStrategy,
         'lexical',
-        RETRIEVAL_FALLBACK_REASONS.semanticUnavailable,
+        fallbackReason,
         limit
       )
     }
@@ -426,6 +460,7 @@ export class RetrievalService {
     this.disposed = true
     this.lifecycleRevision += 1
     this.backend.dispose()
+    this.embeddings.dispose?.()
     this.semanticState = null
     this.buildPromise = null
   }
@@ -479,7 +514,8 @@ export class RetrievalService {
     retrievalMode: McpRetrievalMode,
     requestedStrategy: RetrievalStrategy,
     diversifyBy: RetrievalDiversificationMode,
-    limit: number
+    limit: number,
+    signal: AbortSignal
   ): Promise<RetrievalPage> {
     if (typeof request.text !== 'string' || request.text.trim().length === 0) {
       throw new TypeError('hybrid retrieval requires non-empty text')
@@ -487,21 +523,39 @@ export class RetrievalService {
     const text = request.text
     const offset = rankedOffset(request.cursor)
     const lifecycleRevision = this.lifecycleRevision
-    // Query embedding can load a model and take much longer than a lookup. Complete it
-    // before aligning authorization and semantic generations.
-    const [queryVector] = await this.embeddings.embed([text])
-    this.assertActive(lifecycleRevision)
-    const normalizedQueryVector = normalizeVector(queryVector, this.embeddings.dimensions)
+    signal.throwIfAborted()
+    let normalizedQueryVector: number[] | null = null
     let authorized: AuthorizedRetrievalCandidates | null = null
     let semantic: SemanticIndexState | null = null
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      authorized = this.projection.authorizedCandidates(this.searchQuery(request), access)
       semantic = await this.ensureSemanticIndex()
+      this.assertActive(lifecycleRevision)
+      signal.throwIfAborted()
+      if (!normalizedQueryVector) {
+        const [queryVector] = await this.embeddings.embed([text])
+        this.assertActive(lifecycleRevision)
+        signal.throwIfAborted()
+        normalizedQueryVector = normalizeVector(queryVector, this.embeddings.dimensions)
+      }
+      // Query inference can be slow. Re-read authorization and generation after it
+      // so no stale context is ranked or hydrated.
+      authorized = await this.projection.authorizedCandidates(
+        this.searchQuery(request),
+        access,
+        signal
+      )
+      this.assertActive(lifecycleRevision)
+      signal.throwIfAborted()
       if (authorized.generation === semantic.generation) break
       authorized = null
       semantic = null
     }
-    if (!authorized || !semantic || authorized.generation !== semantic.generation) {
+    if (
+      !authorized ||
+      !semantic ||
+      !normalizedQueryVector ||
+      authorized.generation !== semantic.generation
+    ) {
       throw new Error('data changed while the semantic index was prepared')
     }
 
@@ -530,9 +584,11 @@ export class RetrievalService {
       ...(request.subjectId ? { subjectIds: [request.subjectId] } : {})
     }
     const [lexicalHits, semanticHits] = await Promise.all([
-      this.searchAll({ channel: 'lexical', text, filters }),
-      this.searchAll({ channel: 'vector', vector: normalizedQueryVector, filters })
+      this.searchAll({ channel: 'lexical', text, filters }, signal),
+      this.searchAll({ channel: 'vector', vector: normalizedQueryVector, filters }, signal)
     ])
+    this.assertActive(lifecycleRevision)
+    signal.throwIfAborted()
     const rankings = new Map<string, RankedCandidate>()
     const add = (hit: RetrievalBackendHit, channel: 'lexical' | 'semantic'): void => {
       const document = semantic?.documentsBySourceKey.get(hit.sourceKey)
@@ -620,12 +676,16 @@ export class RetrievalService {
   private async searchAll(
     input:
       | { channel: 'lexical'; text: string; filters: { sourceKeys: string[] } }
-      | { channel: 'vector'; vector: readonly number[]; filters: { sourceKeys: string[] } }
+      | { channel: 'vector'; vector: readonly number[]; filters: { sourceKeys: string[] } },
+    signal: AbortSignal
   ): Promise<RetrievalBackendHit[]> {
     const hits: RetrievalBackendHit[] = []
     let offset = 0
     let hasMore = true
     while (hasMore) {
+      signal.throwIfAborted()
+      await yieldToEventLoop()
+      signal.throwIfAborted()
       const page = await this.backend.search({
         ...input,
         offset,
@@ -642,41 +702,73 @@ export class RetrievalService {
   }
 
   private async ensureSemanticIndex(): Promise<SemanticIndexState> {
+    this.assertActive()
+    if (this.buildPromise) {
+      const state = await this.buildPromise
+      this.assertActive()
+      return state
+    }
+    const lifecycleRevision = this.lifecycleRevision
+    const build = this.prepareSemanticIndex(lifecycleRevision)
+    this.buildPromise = build
+    try {
+      const state = await build
+      this.assertActive(lifecycleRevision)
+      return state
+    } finally {
+      if (this.buildPromise === build) this.buildPromise = null
+    }
+  }
+
+  private async prepareSemanticIndex(
+    lifecycleRevision: number
+  ): Promise<SemanticIndexState> {
     let pendingSnapshot: RetrievalProjectionSnapshot | null = null
     let buildAttempts = 0
     for (;;) {
-      this.assertActive()
-      const snapshot = pendingSnapshot ?? this.projection.snapshotIfChanged(
+      this.assertActive(lifecycleRevision)
+      const snapshot = pendingSnapshot ?? await this.projection.snapshotIfChanged(
         this.semanticState?.generation ?? null
       )
-      pendingSnapshot = null
+      this.assertActive(lifecycleRevision)
       if (!snapshot && this.semanticState) return this.semanticState
 
-      if (this.buildPromise) {
-        await this.buildPromise
-        continue
-      }
-
-      const requiredSnapshot = snapshot ?? this.projection.snapshotIfChanged(null)
+      const requiredSnapshot = snapshot ?? await this.projection.snapshotIfChanged(null)
+      this.assertActive(lifecycleRevision)
       if (!requiredSnapshot) throw new Error('semantic projection snapshot is unavailable')
       buildAttempts += 1
       if (buildAttempts > MAX_SEMANTIC_BUILD_ATTEMPTS) {
         throw new Error('data continued changing while the semantic index was prepared')
       }
-      const lifecycleRevision = this.lifecycleRevision
-      const build = this.buildSemanticIndex(requiredSnapshot, lifecycleRevision)
-      this.buildPromise = build
-      try {
-        const state = await build
-        this.assertActive(lifecycleRevision)
-        this.semanticState = state
-        // Embedding and index replacement can be slow. Synchronize once more before
-        // serving this generation, and rebuild immediately if a write landed meanwhile.
-        pendingSnapshot = this.projection.snapshotIfChanged(state.generation)
-        if (!pendingSnapshot) return state
-      } finally {
-        if (this.buildPromise === build) this.buildPromise = null
-      }
+      const state = await this.buildSemanticIndex(requiredSnapshot, lifecycleRevision)
+      this.assertActive(lifecycleRevision)
+      this.semanticState = state
+      // Embedding and index replacement can be slow. Synchronize once more before
+      // serving this generation, and rebuild immediately if a write landed meanwhile.
+      pendingSnapshot = await this.projection.snapshotIfChanged(state.generation)
+      this.assertActive(lifecycleRevision)
+      if (!pendingSnapshot) return state
+    }
+  }
+
+  private async withSemanticForegroundBudget<T>(
+    operation: (signal: AbortSignal) => Promise<T>
+  ): Promise<T> {
+    const controller = new AbortController()
+    let timeout: ReturnType<typeof setTimeout> | null = null
+    const expired = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        const error = new SemanticPreparationTimeoutError()
+        controller.abort(error)
+        reject(error)
+      }, this.semanticForegroundWaitMs)
+    })
+    // Arm the deadline before beginning any synchronous snapshot/cache preparation.
+    const pending = Promise.resolve().then(() => operation(controller.signal))
+    try {
+      return await Promise.race([pending, expired])
+    } finally {
+      if (timeout) clearTimeout(timeout)
     }
   }
 
@@ -684,14 +776,16 @@ export class RetrievalService {
     snapshot: RetrievalProjectionSnapshot,
     lifecycleRevision: number
   ): Promise<SemanticIndexState> {
-    const cached = this.cache.list(this.embeddings.modelId, this.embeddings.dimensions)
+    const cached = await this.cache.list(this.embeddings.modelId, this.embeddings.dimensions)
+    this.assertActive(lifecycleRevision)
     const enriched: RetrievalDocument[] = []
     const missing: Array<{
       document: RetrievalDocument
       hash: string
       chunks: string[]
     }> = []
-    for (const document of snapshot.documents) {
+    for (let index = 0; index < snapshot.documents.length; index += 1) {
+      const document = snapshot.documents[index]
       const hash = contentHash(document)
       const cacheEntry = cached.get(document.sourceKey)
       if (cacheEntry?.contentHash === hash) {
@@ -702,33 +796,56 @@ export class RetrievalService {
       } else {
         missing.push({ document, hash, chunks: documentEmbeddingChunks(document) })
       }
+      if ((index + 1) % 100 === 0) {
+        await yieldToEventLoop()
+        this.assertActive(lifecycleRevision)
+      }
     }
 
-    const stored: CachedEmbedding[] = []
     if (missing.length > 0) {
-      const inputs = missing.flatMap(({ chunks }) => chunks)
-      const vectors = await this.embeddings.embed(inputs)
-      this.assertActive(lifecycleRevision)
-      if (vectors.length !== inputs.length) {
-        throw new Error('embedding provider returned the wrong number of vectors')
-      }
-      let vectorOffset = 0
-      for (let index = 0; index < missing.length; index += 1) {
-        const entry = missing[index]
-        const vector = meanVector(
-          vectors.slice(vectorOffset, vectorOffset + entry.chunks.length),
-          this.embeddings.dimensions
-        )
-        vectorOffset += entry.chunks.length
-        enriched.push({ ...entry.document, embedding: vector })
-        stored.push({
-          sourceKey: entry.document.sourceKey,
-          contentHash: entry.hash,
-          vector
+      const pendingChunks = missing.flatMap((entry, documentIndex) =>
+        entry.chunks.map((text) => ({ documentIndex, text })))
+      const vectorsByDocument = missing.map((): number[][] => [])
+      for (
+        let start = 0;
+        start < pendingChunks.length;
+        start += MAX_EMBEDDING_REQUEST_INPUTS
+      ) {
+        const batch = pendingChunks.slice(start, start + MAX_EMBEDDING_REQUEST_INPUTS)
+        const vectors = await this.embeddings.embed(batch.map(({ text }) => text))
+        this.assertActive(lifecycleRevision)
+        if (vectors.length !== batch.length) {
+          throw new Error('embedding provider returned the wrong number of vectors')
+        }
+        const completed = new Set<number>()
+        batch.forEach(({ documentIndex }, index) => {
+          const documentVectors = vectorsByDocument[documentIndex]
+          documentVectors.push(vectors[index])
+          if (documentVectors.length === missing[documentIndex].chunks.length) {
+            completed.add(documentIndex)
+          }
         })
+        const stored: CachedEmbedding[] = []
+        for (const documentIndex of completed) {
+          const entry = missing[documentIndex]
+          const vector = meanVector(
+            vectorsByDocument[documentIndex],
+            this.embeddings.dimensions
+          )
+          enriched.push({ ...entry.document, embedding: vector })
+          stored.push({
+            sourceKey: entry.document.sourceKey,
+            contentHash: entry.hash,
+            vector
+          })
+          vectorsByDocument[documentIndex] = []
+        }
+        // Persist completed work incrementally so quitting or a later provider failure
+        // does not force the next enhanced request to restart a large corpus at zero.
+        if (stored.length > 0) {
+          this.cache.store(this.embeddings.modelId, this.embeddings.dimensions, stored)
+        }
       }
-      this.assertActive(lifecycleRevision)
-      this.cache.store(this.embeddings.modelId, this.embeddings.dimensions, stored)
     }
     this.assertActive(lifecycleRevision)
     this.cache.prune(

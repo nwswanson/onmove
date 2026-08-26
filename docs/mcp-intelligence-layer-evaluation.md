@@ -43,11 +43,12 @@ evaluation below as design history and future guidance:
 - **Orama is a derived candidate index.** Enhanced retrieval rebuilds an in-memory Orama index from
   the durable `search_documents` projection. Orama neither authorizes nor hydrates a result and is
   never a write target.
-- **Embeddings and their cache remain local.** Universal Sentence Encoder Lite runs in the Electron
-  main process. TensorFlow.js downloads the model weights on first enhanced use; the weights are not
-  bundled and enhanced retrieval must not be described as initially offline. Generated vectors are
-  cached in SQLite by source key, model, content hash, and dimensions. OnMove text is not sent to a
-  hosted embedding or retrieval service.
+- **Embeddings and their cache remain local.** Universal Sentence Encoder Lite runs in a dedicated
+  worker owned by the Electron main process so TensorFlow model loading and CPU inference cannot
+  block the application event loop. TensorFlow.js downloads the model weights on first enhanced
+  use; the weights are not bundled and enhanced retrieval must not be described as initially
+  offline. Completed vector batches are cached incrementally in SQLite by source key, model,
+  content hash, and dimensions. OnMove text is not sent to a hosted embedding or retrieval service.
 - **Context is a hard filter.** `onmove.retrieve` requires an explicit workspace, Focus, or asserted
   Focus + Thread boundary and may intersect it with one canonical Subject. SQLite enumerates the
   visible source keys inside that complete context before Orama scores them. Hierarchy labels are
@@ -56,11 +57,14 @@ evaluation below as design history and future guidance:
   weighted reciprocal-rank fusion and, by default, interleaves results by operational lineage to
   limit sibling and template crowding. Results retain complete hierarchy provenance and report the
   channels that contributed to the rank.
-- **Fallback is explicit and safe.** Missing model weights, a download or inference failure, an
-  unavailable semantic index, classic mode, and non-relevance/structured queries retain the lexical
-  or structured SQLite path. Responses report the requested strategy, applied strategy, fallback
-  reason, index generations, and semantic coverage. A caller may request an error instead of the
-  default fallback.
+- **Fallback is explicit and safe.** A cold semantic build receives a bounded foreground wait, then
+  continues in the background while the request returns a `semanticPreparing` lexical fallback.
+  Timed-out request-specific query/ranking work is cancelled while the shared build remains alive,
+  and projection, cache, authorization, and Orama pages yield cooperatively. Missing model weights,
+  a download or inference failure, an unavailable semantic index, classic mode, and
+  non-relevance/structured queries also retain the lexical or structured SQLite path. Responses
+  report the requested strategy, applied strategy, fallback reason, index generations, and semantic
+  coverage. A caller may request an error instead of the default fallback.
 - **The MCP surface is additive.** `onmove.retrieve` and `onmove.continue_retrieval` provide the new
   context-first read path. Their signed continuations bind the access fingerprint, persisted
   `classic | enhanced` setting, applied strategy, request, byte budget, stable cursor, and lexical

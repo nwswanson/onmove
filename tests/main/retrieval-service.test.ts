@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { OnMoveAccessPolicy } from '../../src/main/application/access-policy'
 import type { EmbeddingProvider } from '../../src/main/application/embedding-provider'
 import { RetrievalProjectionRepository } from '../../src/main/application/retrieval-projection'
@@ -10,7 +10,8 @@ import {
   RetrievalService,
   RetrievalStrategyUnavailableError,
   type RetrievalPage,
-  type RetrievalPageCursor
+  type RetrievalPageCursor,
+  type RetrievalServiceOptions
 } from '../../src/main/application/retrieval-service'
 import { SearchIndexRepository } from '../../src/main/application/search-index'
 import { DomainStore } from '../../src/main/data/domain'
@@ -78,8 +79,11 @@ describe('RetrievalService', () => {
     rmSync(directory, { recursive: true, force: true })
   })
 
-  function createService(embeddings: EmbeddingProvider): RetrievalService {
-    const value = new RetrievalService(projection, database, embeddings)
+  function createService(
+    embeddings: EmbeddingProvider,
+    options: RetrievalServiceOptions = {}
+  ): RetrievalService {
+    const value = new RetrievalService(projection, database, embeddings, undefined, options)
     services.push(value)
     return value
   }
@@ -312,9 +316,9 @@ describe('RetrievalService', () => {
     domain.updates.delete(deleted.id)
     provider.calls.length = 0
     await service.retrieve(request, visible, 'enhanced')
-    expect(provider.calls[0]).toEqual(['cache query monitoring'])
-    expect(provider.calls.slice(1).flat()).toEqual([
-      'Telemetry replacement evidence after an edit'
+    expect(provider.calls.flat()).toEqual([
+      'Telemetry replacement evidence after an edit',
+      'cache query monitoring'
     ])
     const cachedKeys = database.all<{ source_key: string }>(
       `SELECT source_key FROM retrieval_embedding_cache
@@ -342,7 +346,7 @@ describe('RetrievalService', () => {
     expect(page.items.map(({ reference }) => reference)).toEqual([
       { type: 'update', id: update.id }
     ])
-    const embeddedDocumentInputs = provider.calls.slice(1).flat()
+    const embeddedDocumentInputs = provider.calls.flat()
     const updateChunks = embeddedDocumentInputs.filter((text) =>
       text.includes('Administrative planning context') || text.includes('Tailsemantic'))
     expect(updateChunks.length).toBeGreaterThan(1)
@@ -353,6 +357,66 @@ describe('RetrievalService', () => {
     expect(updateChunks.every((text) =>
       !text.includes(focus.title) && !text.includes(thread.title))).toBe(true)
     expect(page.items[0].match.channels).toContain('semantic')
+  })
+
+  it('falls back promptly while the semantic index prepares and uses it after completion', async () => {
+    service.dispose()
+    service = createService(provider, { semanticForegroundWaitMs: 10 })
+    const snapshotSpy = vi.spyOn(projection, 'snapshotIfChanged')
+    const { thread } = hierarchy('Background indexing')
+    const update = domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      observation: 'Foregroundneedle telemetry evidence'
+    }).toSnapshot()
+    let finishIndexing!: () => void
+    const indexingGate = new Promise<void>((resolve) => {
+      finishIndexing = resolve
+    })
+    provider.onEmbed = async (texts) => {
+      if (!texts.some((text) => text.includes('Foregroundneedle telemetry evidence'))) return
+      provider.onEmbed = null
+      await indexingGate
+    }
+    const request = {
+      text: 'Foregroundneedle telemetry',
+      kinds: ['update'] as const,
+      threadId: thread.id,
+      strategy: 'auto' as const,
+      diversifyBy: 'none' as const
+    }
+
+    const fallback = await service.retrieve(request, visible, 'enhanced')
+
+    expect(fallback).toMatchObject({
+      appliedStrategy: 'lexical',
+      fallbackReason: RETRIEVAL_FALLBACK_REASONS.semanticPreparing,
+      semanticGeneration: null
+    })
+    expect(fallback.items.map(({ reference }) => reference)).toEqual([
+      { type: 'update', id: update.id }
+    ])
+
+    const concurrentFallback = await service.retrieve(request, visible, 'enhanced')
+    expect(concurrentFallback.fallbackReason).toBe(
+      RETRIEVAL_FALLBACK_REASONS.semanticPreparing
+    )
+    expect(snapshotSpy).toHaveBeenCalledTimes(1)
+
+    finishIndexing()
+    const hybrid = await service.retrieve(request, visible, 'enhanced')
+    expect(hybrid).toMatchObject({
+      appliedStrategy: 'hybrid',
+      fallbackReason: null,
+      semanticCoverage: 1
+    })
+    expect(hybrid.semanticGeneration).toBe(hybrid.lexicalGeneration)
+    expect(hybrid.items).toEqual([
+      expect.objectContaining({
+        reference: { type: 'update', id: update.id },
+        match: expect.objectContaining({ channels: ['structured', 'lexical', 'semantic'] })
+      })
+    ])
+    expect(provider.calls.flat().filter((text) => text === request.text)).toHaveLength(1)
   })
 
   it('rebuilds a newer generation when content changes during a long embedding build', async () => {

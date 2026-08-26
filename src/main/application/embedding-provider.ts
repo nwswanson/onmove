@@ -1,77 +1,224 @@
+import type { Worker } from 'node:worker_threads'
+import type {
+  EmbeddingWorkerRequest,
+  EmbeddingWorkerResponse
+} from './embedding-worker-protocol'
+
 /** Provider-neutral local embedding boundary used by the derived retrieval index. */
 export interface EmbeddingProvider {
   readonly modelId: string
   readonly dimensions: number
   embed(texts: readonly string[]): Promise<number[][]>
+  dispose?(): void
 }
 
-function normalize(vector: readonly number[]): number[] {
-  const magnitude = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0))
-  if (!Number.isFinite(magnitude) || magnitude === 0) {
-    throw new Error('The embedding model returned an invalid zero-length vector')
-  }
-  return vector.map((value) => value / magnitude)
+export type EmbeddingWorkerLike = Pick<
+  Worker,
+  'postMessage' | 'on' | 'terminate' | 'ref' | 'unref'
+>
+
+export type EmbeddingWorkerFactory =
+  () => EmbeddingWorkerLike | Promise<EmbeddingWorkerLike>
+
+export interface UniversalSentenceEncoderEmbeddingProviderOptions {
+  workerFactory?: EmbeddingWorkerFactory
+  requestTimeoutMs?: number
+}
+
+interface PendingEmbedding {
+  worker: EmbeddingWorkerLike
+  expectedCount: number
+  resolve: (vectors: number[][]) => void
+  reject: (error: Error) => void
+  timeout: ReturnType<typeof setTimeout>
+}
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 5 * 60 * 1_000
+
+async function defaultWorkerFactory(): Promise<EmbeddingWorkerLike> {
+  const { default: createWorker } = await import('./embedding-worker?nodeWorker')
+  return createWorker({ name: 'onmove-local-embeddings' })
+}
+
+function workerError(value: unknown): Error {
+  if (value instanceof Error) return value
+  return new Error(String(value))
 }
 
 /**
- * Runs Google's Universal Sentence Encoder entirely in the Electron main process.
- * Model weights are downloaded by TensorFlow.js, but indexed OnMove text is never
- * sent to the model host or any retrieval service.
+ * Runs Google's Universal Sentence Encoder in a dedicated local worker thread.
+ * Model weights are downloaded by TensorFlow.js, but OnMove text is never sent
+ * to a hosted embedding or retrieval service.
  */
 export class UniversalSentenceEncoderEmbeddingProvider implements EmbeddingProvider {
   readonly modelId = 'universal-sentence-encoder-lite:1'
   readonly dimensions = 512
-  private modelPromise: Promise<{
-    embed: (inputs: string[] | string) => Promise<{
-      array: () => Promise<number[][]>
-      dispose: () => void
-    }>
-  }> | null = null
+  private readonly workerFactory: EmbeddingWorkerFactory
+  private readonly requestTimeoutMs: number
+  private readonly pending = new Map<number, PendingEmbedding>()
+  private worker: EmbeddingWorkerLike | null = null
+  private workerPromise: Promise<EmbeddingWorkerLike> | null = null
+  private nextRequestId = 1
+  private disposed = false
 
-  async embed(texts: readonly string[]): Promise<number[][]> {
-    if (texts.length === 0) return []
-    const model = await this.model()
-    const vectors: number[][] = []
-    // Keep tensor memory and event-loop stalls bounded while rebuilding a large workspace.
-    for (let start = 0; start < texts.length; start += 24) {
-      const tensor = await model.embed([...texts.slice(start, start + 24)])
-      try {
-        const batch = await tensor.array()
-        for (const vector of batch) {
-          if (vector.length !== this.dimensions || vector.some((value) => !Number.isFinite(value))) {
-            throw new Error(
-              `The embedding model returned ${vector.length} dimensions; expected ${this.dimensions}`
-            )
-          }
-          vectors.push(normalize(vector))
-        }
-      } finally {
-        tensor.dispose()
-      }
+  constructor(options: UniversalSentenceEncoderEmbeddingProviderOptions = {}) {
+    this.workerFactory = options.workerFactory ?? defaultWorkerFactory
+    this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
+    if (!Number.isSafeInteger(this.requestTimeoutMs) || this.requestTimeoutMs < 1) {
+      throw new TypeError('requestTimeoutMs must be a positive integer')
     }
-    return vectors
   }
 
-  private model(): Promise<{
-    embed: (inputs: string[] | string) => Promise<{
-      array: () => Promise<number[][]>
-      dispose: () => void
-    }>
-  }> {
-    this.modelPromise ??= (async () => {
-      await import('@tensorflow/tfjs-backend-cpu')
-      const tensorflow = await import('@tensorflow/tfjs-core')
-      if (tensorflow.getBackend() !== 'cpu') await tensorflow.setBackend('cpu')
-      await tensorflow.ready()
-      const encoder = await import('@tensorflow-models/universal-sentence-encoder')
-      return encoder.load()
-    })()
-    const modelPromise = this.modelPromise
-    return modelPromise.catch((error: unknown) => {
-      // A transient model-load failure should not poison every enhanced request until
-      // the application restarts. The service still decides whether to fall back.
-      if (this.modelPromise === modelPromise) this.modelPromise = null
-      throw error
+  async embed(texts: readonly string[]): Promise<number[][]> {
+    if (this.disposed) throw new Error('The embedding provider has been disposed')
+    if (texts.length === 0) return []
+    if (texts.some((text) => typeof text !== 'string')) {
+      throw new TypeError('embedding inputs must be strings')
+    }
+    const worker = await this.ensureWorker()
+    if (this.disposed) throw new Error('The embedding provider has been disposed')
+    const requestId = this.nextRequestId
+    this.nextRequestId += 1
+    if (!Number.isSafeInteger(this.nextRequestId)) this.nextRequestId = 1
+
+    return new Promise<number[][]>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.failWorker(worker, new Error('The local embedding worker timed out'), true)
+      }, this.requestTimeoutMs)
+      this.pending.set(requestId, {
+        worker,
+        expectedCount: texts.length,
+        resolve,
+        reject,
+        timeout
+      })
+      const request: EmbeddingWorkerRequest = {
+        type: 'embed',
+        requestId,
+        texts: [...texts]
+      }
+      try {
+        worker.ref()
+        worker.postMessage(request)
+      } catch (error) {
+        this.failWorker(worker, workerError(error), true)
+      }
     })
+  }
+
+  dispose(): void {
+    if (this.disposed) return
+    this.disposed = true
+    const error = new Error('The embedding provider has been disposed')
+    const worker = this.worker
+    if (worker) this.failWorker(worker, error, true)
+    const creating = this.workerPromise
+    this.worker = null
+    this.workerPromise = null
+    if (creating) {
+      void creating.then((created) => this.terminate(created)).catch(() => undefined)
+    }
+  }
+
+  private ensureWorker(): Promise<EmbeddingWorkerLike> {
+    if (this.worker) return Promise.resolve(this.worker)
+    if (this.workerPromise) return this.workerPromise
+    const creating = Promise.resolve().then(() => this.workerFactory()).then((worker) => {
+      if (this.disposed) {
+        this.terminate(worker)
+        throw new Error('The embedding provider has been disposed')
+      }
+      this.worker = worker
+      worker.on('message', (value: unknown) => this.handleMessage(worker, value))
+      worker.on('error', (error: Error) => this.failWorker(worker, error, true))
+      worker.on('exit', (code: number) => {
+        this.failWorker(
+          worker,
+          new Error(`The local embedding worker exited unexpectedly with code ${code}`),
+          false
+        )
+      })
+      this.unrefIfIdle(worker)
+      return worker
+    })
+    this.workerPromise = creating
+    return creating.catch((error: unknown) => {
+      if (this.workerPromise === creating) this.workerPromise = null
+      throw error
+    }).finally(() => {
+      if (this.workerPromise === creating) this.workerPromise = null
+    })
+  }
+
+  private handleMessage(worker: EmbeddingWorkerLike, value: unknown): void {
+    if (!value || typeof value !== 'object') return
+    const response = value as Partial<EmbeddingWorkerResponse>
+    if (!Number.isSafeInteger(response.requestId)) return
+    const pending = this.pending.get(Number(response.requestId))
+    if (!pending || pending.worker !== worker) return
+    this.pending.delete(Number(response.requestId))
+    clearTimeout(pending.timeout)
+    this.unrefIfIdle(worker)
+
+    if (response.type === 'error') {
+      const detail = response.error
+      const error = new Error(detail?.message ?? 'The local embedding worker failed')
+      error.name = detail?.name ?? 'Error'
+      pending.reject(error)
+      return
+    }
+    if (response.type !== 'result' || !Array.isArray(response.vectors)) {
+      pending.reject(new Error('The local embedding worker returned an invalid response'))
+      return
+    }
+    try {
+      if (response.vectors.length !== pending.expectedCount) {
+        throw new Error('The local embedding worker returned the wrong number of vectors')
+      }
+      const vectors = response.vectors.map((vector) => {
+        const values = Array.from(vector)
+        if (
+          values.length !== this.dimensions ||
+          values.some((entry) => !Number.isFinite(entry))
+        ) {
+          throw new Error(
+            `The embedding model returned ${values.length} dimensions; expected ${this.dimensions}`
+          )
+        }
+        return values
+      })
+      pending.resolve(vectors)
+    } catch (error) {
+      pending.reject(workerError(error))
+    }
+  }
+
+  private failWorker(worker: EmbeddingWorkerLike, error: Error, terminate: boolean): void {
+    if (this.worker === worker) this.worker = null
+    for (const [requestId, pending] of this.pending) {
+      if (pending.worker !== worker) continue
+      this.pending.delete(requestId)
+      clearTimeout(pending.timeout)
+      pending.reject(error)
+    }
+    if (terminate) this.terminate(worker)
+  }
+
+  private unrefIfIdle(worker: EmbeddingWorkerLike): void {
+    if ([...this.pending.values()].every((pending) => pending.worker !== worker)) {
+      try {
+        worker.unref()
+      } catch {
+        // Ref state is only a process-lifecycle optimization; request completion wins.
+      }
+    }
+  }
+
+  private terminate(worker: EmbeddingWorkerLike): void {
+    try {
+      void Promise.resolve(worker.terminate()).catch(() => undefined)
+    } catch {
+      // Shutdown and timeout cleanup are best-effort after all callers are rejected.
+    }
   }
 }

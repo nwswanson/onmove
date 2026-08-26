@@ -32,25 +32,33 @@ function decodeVector(bytes: Uint8Array, dimensions: number): number[] | null {
   return values.every(Number.isFinite) ? values : null
 }
 
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
+}
+
 /** Durable, rebuildable cache. SQLite remains authoritative for all source text and identity. */
 export class EmbeddingCacheRepository {
   constructor(private readonly database: SqliteAdapter) {}
 
-  list(modelId: string, dimensions: number): Map<string, CachedEmbedding> {
+  async list(modelId: string, dimensions: number): Promise<Map<string, CachedEmbedding>> {
     const result = new Map<string, CachedEmbedding>()
-    for (const row of this.database.all<EmbeddingCacheRow>(
+    const rows = this.database.all<EmbeddingCacheRow>(
       `SELECT source_key, content_hash, dimensions, vector
        FROM retrieval_embedding_cache
        WHERE model_id = ? AND dimensions = ?`,
       [modelId, dimensions]
-    )) {
+    )
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index]
       const vector = decodeVector(row.vector, dimensions)
-      if (!vector) continue
-      result.set(row.source_key, {
-        sourceKey: row.source_key,
-        contentHash: row.content_hash,
-        vector
-      })
+      if (vector) {
+        result.set(row.source_key, {
+          sourceKey: row.source_key,
+          contentHash: row.content_hash,
+          vector
+        })
+      }
+      if ((index + 1) % 100 === 0) await yieldToEventLoop()
     }
     return result
   }

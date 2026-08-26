@@ -33,6 +33,33 @@ function document(
 }
 
 describe('OramaRetrievalBackend', () => {
+  it('yields to the event loop while replacing a multi-batch index', async () => {
+    const backend = new OramaRetrievalBackend(3)
+    const documents = Array.from({ length: 501 }, (_, index) => document(
+      `update:${index + 1}:observation`,
+      {
+        entityId: index + 1,
+        body: `Telemetry evidence ${index + 1}`,
+        embedding: [1, 0, 0]
+      }
+    ))
+    let heartbeatRan = false
+    const heartbeat = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        heartbeatRan = true
+        resolve()
+      }, 0)
+    })
+
+    try {
+      await backend.replace({ generation: 1, documents })
+      expect(heartbeatRan).toBe(true)
+    } finally {
+      await heartbeat
+      backend.dispose()
+    }
+  })
+
   it('searches lexical content only inside the authorized source-key allowlist', async () => {
     const backend = new OramaRetrievalBackend(3)
     const projectA = document('update:1:observation', {

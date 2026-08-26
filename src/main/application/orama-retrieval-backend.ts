@@ -17,6 +17,11 @@ import type {
 
 /** Excludes orthogonal vector noise while retaining ordinary paraphrase matches. */
 export const ORAMA_MINIMUM_SEMANTIC_SIMILARITY = 0.25
+const ORAMA_INSERT_BATCH_SIZE = 250
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
+}
 
 function schemaFor(vectorDimension: number) {
   return {
@@ -166,15 +171,24 @@ export class OramaRetrievalBackend implements RetrievalBackend {
     nonnegativeInteger(snapshot.generation, 'snapshot.generation')
     const replacementRevision = ++this.replacementRevision
     const seen = new Set<string>()
-    const documents = snapshot.documents.map((document) => {
+    const documents: ReturnType<typeof oramaDocument>[] = []
+    for (let index = 0; index < snapshot.documents.length; index += 1) {
+      if (replacementRevision !== this.replacementRevision) return
+      const document = snapshot.documents[index]
       if (seen.has(document.sourceKey)) {
         throw new TypeError(`duplicate retrieval sourceKey: ${document.sourceKey}`)
       }
       seen.add(document.sourceKey)
-      return oramaDocument(document, this.vectorDimension)
-    })
+      documents.push(oramaDocument(document, this.vectorDimension))
+      if ((index + 1) % ORAMA_INSERT_BATCH_SIZE === 0) await yieldToEventLoop()
+    }
+    if (replacementRevision !== this.replacementRevision) return
     const next = create({ schema: schemaFor(this.vectorDimension) })
-    await insertMultiple(next, documents, 250)
+    for (let start = 0; start < documents.length; start += ORAMA_INSERT_BATCH_SIZE) {
+      if (replacementRevision !== this.replacementRevision) return
+      await insertMultiple(next, documents.slice(start, start + ORAMA_INSERT_BATCH_SIZE))
+      if (start + ORAMA_INSERT_BATCH_SIZE < documents.length) await yieldToEventLoop()
+    }
     if (replacementRevision !== this.replacementRevision) return
     this.index = next
     this.indexedGeneration = snapshot.generation

@@ -843,12 +843,17 @@ foreground colors and do not rely on color alone to communicate selection or sta
   structured listing stay on the SQLite path in either mode. Keep the public retrieval contract and
   tool availability identical across modes so changing the setting does not require reconnecting.
 - Build enhanced retrieval from title/body content without prepending hierarchy labels to the
-  embedding text. Run Universal Sentence Encoder Lite locally in the Electron main process, but do
-  not claim that its weights are bundled or initially offline: TensorFlow.js downloads them on
+  embedding text. Run Universal Sentence Encoder Lite locally in a dedicated worker owned by the
+  Electron main process; model loading and inference must never block Electron's main event loop.
+  Do not claim that its weights are bundled or initially offline: TensorFlow.js downloads them on
   first enhanced use. Never send OnMove source text to a hosted embedding or retrieval service.
   Cache derived vectors durably in SQLite by stable source key, model id, content hash, and
-  dimensions; ignore mismatched entries and prune stale source keys so the cache remains disposable
-  and rebuildable.
+  dimensions; persist completed batches incrementally, ignore mismatched entries, and prune stale
+  source keys so the cache remains disposable and rebuildable. Bound the foreground wait for a cold
+  semantic index and return an explicit lexical `semanticPreparing` fallback while its shared build
+  continues. Cancel the abandoned request's later query/ranking work without cancelling that shared
+  build. Cooperatively yield through projection mapping, cache decoding, authorization pages, and
+  Orama insertion/search pages so cached-index work also keeps the renderer responsive.
 - Fuse lexical and semantic provider ranks through reciprocal-rank fusion rather than comparing or
   adding their raw scores. Keep lexical influence primary and make operational-lineage
   diversification the default so repeated corporate language, templates, and sibling Subjects do

@@ -635,8 +635,8 @@ export function SettingsWorkspace({
                         <span className="block text-sm font-medium">Retrieval</span>
                         <span className="mt-0.5 block text-xs text-muted-foreground">
                           Enhanced retrieval adds local semantic ranking while preserving exact
-                          hierarchy boundaries. Its model downloads on first use; unavailable
-                          models fall back to classic search.
+                          hierarchy boundaries. Its model downloads on first use and prepares in
+                          the background; requests use classic retrieval while it warms.
                         </span>
                       </span>
                       <select

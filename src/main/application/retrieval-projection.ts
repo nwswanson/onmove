@@ -45,6 +45,10 @@ function idOrZero(value: number | null): number {
   return value === null ? 0 : Number(value)
 }
 
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
+}
+
 function projectionDocument(row: RetrievalProjectionRow): RetrievalDocument {
   if (!SEARCH_ENTITY_TYPES.includes(row.entity_type)) {
     throw new Error(`search projection contains unsupported entity type: ${row.entity_type}`)
@@ -86,15 +90,21 @@ export class RetrievalProjectionRepository {
     return this.legacy.searchPage(query, access)
   }
 
-  snapshotIfChanged(knownGeneration: number | null): RetrievalProjectionSnapshot | null {
+  async snapshotIfChanged(
+    knownGeneration: number | null
+  ): Promise<RetrievalProjectionSnapshot | null> {
     if (
       knownGeneration !== null &&
       (!Number.isSafeInteger(knownGeneration) || knownGeneration < 0)
     ) {
       throw new TypeError('knownGeneration must be null or a nonnegative integer')
     }
+    // Give an already-armed foreground deadline a turn before synchronizing. Keep
+    // synchronization and the state/row transaction adjacent so a write cannot mark
+    // the projection dirty in between them.
+    await yieldToEventLoop()
     this.legacy.synchronize()
-    return this.database.transaction(() => {
+    const snapshot = this.database.transaction(() => {
       const state = this.database.get<SearchIndexStateRow>(
         'SELECT dirty, generation FROM search_index_state WHERE singleton = 1'
       )
@@ -109,8 +119,15 @@ export class RetrievalProjectionRepository {
          FROM search_documents
          ORDER BY source_key`
       )
-      return { generation, documents: rows.map(projectionDocument) }
+      return { generation, rows }
     })
+    if (!snapshot) return null
+    const documents: RetrievalDocument[] = []
+    for (let index = 0; index < snapshot.rows.length; index += 1) {
+      documents.push(projectionDocument(snapshot.rows[index]))
+      if ((index + 1) % 250 === 0) await yieldToEventLoop()
+    }
+    return { generation: snapshot.generation, documents }
   }
 
   /**
@@ -118,14 +135,16 @@ export class RetrievalProjectionRepository {
    * path. Text, caller paging, and relevance sorting intentionally do not narrow
    * this security boundary.
    */
-  authorizedCandidates(
+  async authorizedCandidates(
     query: SearchQuery,
-    access: OnMoveAccessPolicy
-  ): AuthorizedRetrievalCandidates {
+    access: OnMoveAccessPolicy,
+    signal?: AbortSignal
+  ): Promise<AuthorizedRetrievalCandidates> {
     const resultsBySourceKey = new Map<string, SearchResult>()
     let cursor: SearchPageCursor | null = null
     let generation: number | null = null
     do {
+      signal?.throwIfAborted()
       const page = this.legacy.searchPage({
         ...query,
         text: null,
@@ -152,6 +171,7 @@ export class RetrievalProjectionRepository {
         throw new Error('legacy search omitted a required next cursor')
       }
       cursor = page.nextCursor
+      if (cursor !== null) await yieldToEventLoop()
     } while (cursor !== null)
 
     if (generation === null) throw new Error('legacy search returned no projection generation')

@@ -47,9 +47,9 @@ describe('RetrievalProjectionRepository', () => {
     return { focus, thread, update }
   }
 
-  it('reads complete durable search documents only when the generation changes', () => {
+  it('reads complete durable search documents only when the generation changes', async () => {
     const { focus, thread, update } = hierarchy('Project A')
-    const first = projection.snapshotIfChanged(null)
+    const first = await projection.snapshotIfChanged(null)
     expect(first).not.toBeNull()
     expect(first?.documents).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -62,10 +62,10 @@ describe('RetrievalProjectionRepository', () => {
         lineageKey: `focus:${focus.id}:thread:${thread.id}:commitment:0:subject:0`
       })
     ]))
-    expect(projection.snapshotIfChanged(first!.generation)).toBeNull()
+    await expect(projection.snapshotIfChanged(first!.generation)).resolves.toBeNull()
 
     domain.updates.requireModel(update.id).update({ observation: 'Changed operating evidence' })
-    const second = projection.snapshotIfChanged(first!.generation)
+    const second = await projection.snapshotIfChanged(first!.generation)
     expect(second?.generation).toBe(first!.generation + 1)
     expect(second?.documents).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -75,12 +75,12 @@ describe('RetrievalProjectionRepository', () => {
     ]))
   })
 
-  it('enumerates structured, access-filtered candidates through legacy queryless pages', () => {
+  it('enumerates structured, access-filtered candidates through legacy queryless pages', async () => {
     const projectA = hierarchy('Project A')
     const projectB = hierarchy('Project B')
     const hidden = hierarchy('Private Project', true)
 
-    const candidates = projection.authorizedCandidates({
+    const candidates = await projection.authorizedCandidates({
       text: 'this text is intentionally ignored',
       kinds: ['update'],
       threadId: projectA.thread.id,
@@ -98,11 +98,40 @@ describe('RetrievalProjectionRepository', () => {
       hierarchy: { thread: expect.objectContaining({ id: projectA.thread.id }) }
     })
 
-    const global = projection.authorizedCandidates({ text: null, kinds: ['update'] }, visible)
+    const global = await projection.authorizedCandidates(
+      { text: null, kinds: ['update'] },
+      visible
+    )
     expect([...global.resultsBySourceKey.keys()]).toEqual(expect.arrayContaining([
       `update:${projectA.update.id}:observation`,
       `update:${projectB.update.id}:observation`
     ]))
     expect(global.resultsBySourceKey.has(`update:${hidden.update.id}:observation`)).toBe(false)
+  })
+
+  it('yields while enumerating more than one authorization page', async () => {
+    const { thread } = hierarchy('Large authorization')
+    for (let index = 0; index < 101; index += 1) {
+      domain.updates.create({
+        parent: { type: 'thread', id: thread.id },
+        observation: `Authorized evidence ${index}`
+      })
+    }
+    let heartbeatRan = false
+    const heartbeat = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        heartbeatRan = true
+        resolve()
+      }, 0)
+    })
+
+    const candidates = await projection.authorizedCandidates(
+      { text: null, kinds: ['update'], threadId: thread.id },
+      visible
+    )
+
+    expect(candidates.resultsBySourceKey.size).toBe(102)
+    expect(heartbeatRan).toBe(true)
+    await heartbeat
   })
 })
