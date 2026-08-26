@@ -162,6 +162,43 @@ describe('UniversalSentenceEncoderEmbeddingProvider', () => {
     provider.dispose()
   })
 
+  it('passes one fixed bundled model directory to every worker request', async () => {
+    const worker = new FakeEmbeddingWorker()
+    const provider = new UniversalSentenceEncoderEmbeddingProvider({
+      workerFactory: factoryFor(worker).factory,
+      requestTimeoutMs: 1_000,
+      modelDirectory: '/Applications/OnMove.app/Contents/Resources/use-lite-v1'
+    })
+
+    const preparing = provider.prepare()
+    await waitForPosts(worker, 1)
+    expect(worker.posted[0]).toEqual({
+      type: 'prepare',
+      requestId: 1,
+      modelDirectory: '/Applications/OnMove.app/Contents/Resources/use-lite-v1'
+    })
+    worker.respond({ type: 'prepared', requestId: 1 })
+    await preparing
+
+    const embedding = provider.embed(['offline'])
+    await waitForPosts(worker, 2)
+    expect(worker.posted[1]).toEqual({
+      type: 'embed',
+      requestId: 2,
+      texts: ['offline'],
+      modelDirectory: '/Applications/OnMove.app/Contents/Resources/use-lite-v1'
+    })
+    worker.respond({ type: 'result', requestId: 2, vectors: [vector()] })
+    await expect(embedding).resolves.toHaveLength(1)
+    provider.dispose()
+  })
+
+  it('rejects an empty bundled model directory before creating a worker', () => {
+    expect(() => new UniversalSentenceEncoderEmbeddingProvider({
+      modelDirectory: '   '
+    })).toThrow('modelDirectory must be a non-empty path')
+  })
+
   it('surfaces an operation error and retries the next request on the same healthy worker', async () => {
     const worker = new FakeEmbeddingWorker()
     const workers = factoryFor(worker)

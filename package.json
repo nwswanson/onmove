@@ -86,6 +86,12 @@
       "out/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "resources/models/universal-sentence-encoder-lite-v1",
+        "to": "models/universal-sentence-encoder-lite-v1"
+      }
+    ],
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "build/icon.svg",

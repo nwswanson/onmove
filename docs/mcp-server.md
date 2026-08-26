@@ -322,13 +322,15 @@ in-memory Orama index, weighted reciprocal-rank fusion, and lineage diversificat
 semantic query.
 
 Universal Sentence Encoder Lite runs locally in a dedicated worker owned by the Electron main
-process, so model loading and inference do not block the application UI. Its model weights are not
-bundled: TensorFlow.js downloads them on first enhanced use. Completed vector batches are cached in
-the local SQLite database. A cold or changed semantic index receives a short foreground budget; if
+process, so model loading and inference do not block the application UI. The pinned Lite v1 model,
+vocabulary, and weights ship with OnMove and are available offline; enhanced retrieval never
+downloads model assets at runtime. The model still initializes from those application resources
+once per app session. Completed vector batches are cached separately in the local SQLite database.
+A cold or changed semantic index receives a short foreground budget; if
 it is still preparing, the request returns lexical results with an explicit `semanticPreparing`
 fallback while the shared background build continues. The abandoned request does not continue into
 duplicate query/ranking work, and projection, authorization, cache, and Orama batches yield to the
-application event loop. Model download, inference, or index failures also fall back and report their
+application event loop. Model initialization, inference, or index failures also fall back and report their
 reason. Set `onUnavailable: "error"` only when fallback is undesirable.
 
 Settings shows the live, process-local Enhanced retrieval state. Preparation is lazy and begins

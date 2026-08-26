@@ -62,7 +62,12 @@ test('serves MCP from the running app and immediately refreshes its open windows
   const teamScope = seeded.domain.threadScopes.addSubject(team.id, { name: 'Person Y' })
   const person = teamScope.subjects[0]
   const unrelatedSubject = seeded.domain.subjects.create({ name: 'Unrelated Subject' }).toSnapshot()
-  seeded.mcpSettings.update({ serverEnabled: true, serverPort, allowMutations: true })
+  seeded.mcpSettings.update({
+    serverEnabled: true,
+    serverPort,
+    retrievalMode: 'enhanced',
+    allowMutations: true
+  })
   seeded.close()
 
   let application: ElectronApplication | undefined
@@ -97,6 +102,51 @@ test('serves MCP from the running app and immediately refreshes its open windows
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.patch_rich_text')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.update_rich_text')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.reparent_update')
+
+    const warmingRetrieval = await client.callTool({
+      name: 'onmove.retrieve',
+      arguments: {
+        text: 'initial observation',
+        context: {
+          boundary: { type: 'thread', focusId: focus.id, threadId: thread.id }
+        },
+        kinds: ['update'],
+        strategy: 'hybrid',
+        onUnavailable: 'fallback'
+      }
+    })
+    expect(warmingRetrieval.isError).not.toBe(true)
+    await expect.poll(
+      () => window.evaluate(async () => (await window.onmove.mcp.getRetrievalStatus()).phase),
+      { timeout: 30_000, intervals: [100, 250, 500] }
+    ).toBe('ready')
+    const enhancedRetrieval = await client.callTool({
+      name: 'onmove.retrieve',
+      arguments: {
+        text: 'initial observation',
+        context: {
+          boundary: { type: 'thread', focusId: focus.id, threadId: thread.id }
+        },
+        kinds: ['update'],
+        strategy: 'hybrid',
+        onUnavailable: 'error'
+      }
+    })
+    expect(enhancedRetrieval.isError).not.toBe(true)
+    expect(enhancedRetrieval.structuredContent).toMatchObject({
+      items: [expect.objectContaining({
+        reference: { type: 'update', id: threadUpdate.id },
+        match: expect.objectContaining({
+          channels: expect.arrayContaining(['semantic'])
+        })
+      })],
+      retrieval: {
+        mode: 'enhanced',
+        requestedStrategy: 'hybrid',
+        appliedStrategy: 'hybrid',
+        fallbackReason: null
+      }
+    })
 
     await window.evaluate(async ({ threadId }) => {
       await window.onmove.mcp.update({

@@ -2,9 +2,10 @@ import { join } from 'node:path'
 import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell } from 'electron'
 import { AppDatabase } from './database'
+import { UniversalSentenceEncoderEmbeddingProvider } from './application/embedding-provider'
 import { registerAppIpc } from './ipc'
 import { createMenuTemplate } from './menu'
-import { resolveDatabasePath } from './paths'
+import { resolveBundledSemanticModelPath, resolveDatabasePath } from './paths'
 import { isAllowedExternalLink } from './external-links'
 import { installTextContextMenu } from './text-context-menu'
 import { OnMoveMcpRuntime } from '../mcp/live-server'
@@ -354,7 +355,16 @@ function setSensitiveContentHidden(hidden: boolean): void {
 }
 
 app.whenReady().then(async () => {
-  database = new AppDatabase(resolveDatabasePath(app.getPath('userData')))
+  const semanticModelPath = resolveBundledSemanticModelPath(
+    app.getAppPath(),
+    process.resourcesPath,
+    app.isPackaged
+  )
+  database = new AppDatabase(resolveDatabasePath(app.getPath('userData')), {
+    embeddingProvider: new UniversalSentenceEncoderEmbeddingProvider({
+      modelDirectory: semanticModelPath
+    })
+  })
   database.recordLaunch()
   maintainRollingBackup()
   backupMaintenanceTimer = setInterval(maintainRollingBackup, BACKUP_MAINTENANCE_CHECK_MS)

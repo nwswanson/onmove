@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "modelId": "universal-sentence-encoder-lite:1",
+  "displayName": "Universal Sentence Encoder Lite v1",
+  "source": "https://www.kaggle.com/models/google/universal-sentence-encoder/tfJs/lite",
+  "sourceArchive": "https://www.kaggle.com/api/v1/models/tensorflow/universal-sentence-encoder/tfJs/lite/1/download",
+  "sourceArchiveSha256": "be8bb4dfd51fbfdd1c964665e877e2c2cc52cf421f056f2d5c570774d0fbdeb7",
+  "license": "Apache-2.0",
+  "files": [
+    {
+      "name": "model.json",
+      "size": 247026,
+      "sha256": "507d11df18b070f99e0ad650b9a4e6534a4cfb05040127e8ce579f00c8fa3b53"
+    },
+    {
+      "name": "vocab.json",
+      "size": 218327,
+      "sha256": "1ad860b9720c16cd48e666d664a556b2515c04f5a26a4b53c0372427913b1b8e"
+    },
+    {
+      "name": "group1-shard1of7",
+      "size": 4194304,
+      "sha256": "8775e61b6a4235ea230a62a0d81f1ff00f5213ce86baa5d89c29e611f8cd7412"
+    },
+    {
+      "name": "group1-shard2of7",
+      "size": 4194304,
+      "sha256": "deaf897e5eea5be6c71ea62876a092034560b6f6fbc99c87a768076385a465bd"
+    },
+    {
+      "name": "group1-shard3of7",
+      "size": 4194304,
+      "sha256": "50ee49b0daf620cf0cacda2f5fcc0da5929f4a3e520034844b6f8d9f3f4ec936"
+    },
+    {
+      "name": "group1-shard4of7",
+      "size": 4194304,
+      "sha256": "c1a50daae51e7c6e1e904f5d8d638a8658a0a1d310b9345cd7a368866304d596"
+    },
+    {
+      "name": "group1-shard5of7",
+      "size": 4194304,
+      "sha256": "410cde3029282e5f601c782985cbb5caa96977f6705dec981c98dd02e93fec6b"
+    },
+    {
+      "name": "group1-shard6of7",
+      "size": 4194304,
+      "sha256": "83ef116b2b98dc98e03547280ca0166142fbf6b4547bf1d9e6d13a8f518c088b"
+    },
+    {
+      "name": "group1-shard7of7",
+      "size": 2737832,
+      "sha256": "a29a5e08ee3afd839250b9187b89f1d3163749b5b1807bb175341a16c6012689"
+    }
+  ]
+}

@@ -104,7 +104,7 @@ function statusDescription(
     return `OnMove is building its local Orama index. CPU use is expected; Classic retrieval remains available.${classicModeNote}`
   }
   if (status.phase === 'loading-model') {
-    return `The model may be downloading or initializing. Classic retrieval remains available.${classicModeNote}`
+    return `OnMove is initializing its bundled model locally. Classic retrieval remains available.${classicModeNote}`
   }
   return `OnMove is preparing local retrieval data. Classic retrieval remains available.${classicModeNote}`
 }

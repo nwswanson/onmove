@@ -33,6 +33,8 @@ export type EmbeddingWorkerFactory =
 export interface UniversalSentenceEncoderEmbeddingProviderOptions {
   workerFactory?: EmbeddingWorkerFactory
   requestTimeoutMs?: number
+  /** Fixed directory containing the bundled USE Lite v1 model artifacts. */
+  modelDirectory?: string
 }
 
 interface PendingEmbeddingBase {
@@ -69,14 +71,15 @@ function workerError(value: unknown): Error {
 
 /**
  * Runs Google's Universal Sentence Encoder in a dedicated local worker thread.
- * Model weights are downloaded by TensorFlow.js, but OnMove text is never sent
- * to a hosted embedding or retrieval service.
+ * Production supplies model weights from OnMove's immutable bundled resources;
+ * OnMove text is never sent to a hosted embedding or retrieval service.
  */
 export class UniversalSentenceEncoderEmbeddingProvider implements EmbeddingProvider {
   readonly modelId = 'universal-sentence-encoder-lite:1'
   readonly dimensions = 512
   private readonly workerFactory: EmbeddingWorkerFactory
   private readonly requestTimeoutMs: number
+  private readonly modelDirectory: string | undefined
   private readonly pending = new Map<number, PendingOperation>()
   private worker: EmbeddingWorkerLike | null = null
   private workerPromise: Promise<EmbeddingWorkerLike> | null = null
@@ -86,8 +89,12 @@ export class UniversalSentenceEncoderEmbeddingProvider implements EmbeddingProvi
   constructor(options: UniversalSentenceEncoderEmbeddingProviderOptions = {}) {
     this.workerFactory = options.workerFactory ?? defaultWorkerFactory
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
+    this.modelDirectory = options.modelDirectory
     if (!Number.isSafeInteger(this.requestTimeoutMs) || this.requestTimeoutMs < 1) {
       throw new TypeError('requestTimeoutMs must be a positive integer')
+    }
+    if (this.modelDirectory !== undefined && this.modelDirectory.trim().length === 0) {
+      throw new TypeError('modelDirectory must be a non-empty path')
     }
   }
 
@@ -112,7 +119,13 @@ export class UniversalSentenceEncoderEmbeddingProvider implements EmbeddingProvi
         onProgress,
         timeout
       })
-      const request: EmbeddingWorkerRequest = { type: 'prepare', requestId }
+      const request: EmbeddingWorkerRequest = {
+        type: 'prepare',
+        requestId,
+        ...(this.modelDirectory === undefined
+          ? {}
+          : { modelDirectory: this.modelDirectory })
+      }
       try {
         worker.ref()
         worker.postMessage(request)
@@ -151,7 +164,10 @@ export class UniversalSentenceEncoderEmbeddingProvider implements EmbeddingProvi
       const request: EmbeddingWorkerRequest = {
         type: 'embed',
         requestId,
-        texts: [...texts]
+        texts: [...texts],
+        ...(this.modelDirectory === undefined
+          ? {}
+          : { modelDirectory: this.modelDirectory })
       }
       try {
         worker.ref()

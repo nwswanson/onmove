@@ -2907,6 +2907,16 @@ test('creates and exposes verified rolling backups in Settings', async () => {
     })
     await expect(retrievalStatus.getByText('Not prepared')).toBeVisible()
     await expect(retrievalStatus.getByRole('progressbar')).toHaveCount(0)
+    const semanticModel = window.getByRole('region', {
+      name: 'Semantic model availability'
+    })
+    await expect(semanticModel.getByText('Universal Sentence Encoder Lite v1')).toBeVisible()
+    await expect(semanticModel.getByText('Included with OnMove')).toBeVisible()
+    await expect(semanticModel.getByText('27.1 MiB')).toBeVisible()
+    await expect(semanticModel.getByText('Available offline')).toBeVisible()
+    await expect(semanticModel.getByText('Updated with the app')).toBeVisible()
+    await expect(semanticModel.getByText(/never download at runtime/)).toBeVisible()
+    await expect(semanticModel.getByRole('button')).toHaveCount(0)
     await window.getByRole('combobox', { name: 'MCP retrieval mode' })
       .selectOption('enhanced')
     await expect(retrievalStatus.getByText(/Start the MCP server/)).toBeVisible()

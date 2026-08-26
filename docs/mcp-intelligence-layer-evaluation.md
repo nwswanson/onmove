@@ -45,9 +45,9 @@ evaluation below as design history and future guidance:
   never a write target.
 - **Embeddings and their cache remain local.** Universal Sentence Encoder Lite runs in a dedicated
   worker owned by the Electron main process so TensorFlow model loading and CPU inference cannot
-  block the application event loop. TensorFlow.js downloads the model weights on first enhanced
-  use; the weights are not bundled and enhanced retrieval must not be described as initially
-  offline. Completed vector batches are cached incrementally in SQLite by source key, model,
+  block the application event loop. The pinned Lite v1 model, vocabulary, and weight shards ship as
+  immutable application resources, so they are available offline and never download at runtime.
+  Completed vector batches are cached incrementally in SQLite by source key, model,
   content hash, and dimensions. OnMove text is not sent to a hosted embedding or retrieval service.
 - **Context is a hard filter.** `onmove.retrieve` requires an explicit workspace, Focus, or asserted
   Focus + Thread boundary and may intersect it with one canonical Subject. SQLite enumerates the

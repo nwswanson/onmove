@@ -845,8 +845,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - Build enhanced retrieval from title/body content without prepending hierarchy labels to the
   embedding text. Run Universal Sentence Encoder Lite locally in a dedicated worker owned by the
   Electron main process; model loading and inference must never block Electron's main event loop.
-  Do not claim that its weights are bundled or initially offline: TensorFlow.js downloads them on
-  first enhanced use. Never send OnMove source text to a hosted embedding or retrieval service.
+  Ship the pinned Lite v1 graph, vocabulary, and weight shards as immutable application resources;
+  enhanced retrieval must never download model assets at runtime. Record their source, license,
+  sizes, and SHA-256 digests, and keep the packaged resource outside writable user data. Never send
+  OnMove source text to a hosted embedding or retrieval service.
   Cache derived vectors durably in SQLite by stable source key, model id, content hash, and
   dimensions; persist completed batches incrementally, ignore mismatched entries, and prune stale
   source keys so the cache remains disposable and rebuildable. Bound the foreground wait for a cold
@@ -869,7 +871,7 @@ foreground colors and do not rely on color alone to communicate selection or sta
   not crowd a page. Return each result's contributing channels, lineage key, complete hierarchy,
   and bounded snippet; never return lossless rich text from retrieval.
 - Treat enhanced retrieval as an optional quality improvement, not an availability dependency.
-  Model download, inference, cache, or semantic-index failures fall back to the authoritative
+  Model initialization, inference, cache, or semantic-index failures fall back to the authoritative
   lexical path by default and report the requested/applied strategy, fallback reason, lexical and
   semantic generations, and semantic coverage. Honor an explicit `onUnavailable=error` without
   mutating or partially trusting the derived index.

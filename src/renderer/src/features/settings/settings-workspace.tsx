@@ -15,6 +15,7 @@ import {
 } from '../../../../shared/contracts'
 import { useMcpSettingsModel, type McpSettingsModel } from './use-mcp-settings-model'
 import { EnhancedRetrievalStatus } from './enhanced-retrieval-status'
+import { SemanticModelInfo } from './semantic-model-info'
 
 function formatDate(value: string | null): string {
   if (value === null) return 'Not yet created'
@@ -637,9 +638,9 @@ export function SettingsWorkspace({
                           <span className="block text-sm font-medium">Retrieval</span>
                           <span className="mt-0.5 block text-xs text-muted-foreground">
                             Enhanced retrieval adds local semantic ranking while preserving exact
-                            hierarchy boundaries. Its model loads on the first use of each app
-                            session and prepares in the background; requests use classic retrieval
-                            while it warms.
+                            hierarchy boundaries. Its included model initializes on the first use
+                            of each app session and prepares in the background; requests use classic
+                            retrieval while it warms.
                           </span>
                         </span>
                         <select
@@ -665,6 +666,7 @@ export function SettingsWorkspace({
                         loadError={mcp.retrievalStatusError}
                         status={mcp.retrievalStatus}
                       />
+                      <SemanticModelInfo />
                     </div>
                     <label className="flex cursor-pointer items-start gap-3 py-3">
                       <input

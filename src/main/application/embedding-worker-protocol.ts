@@ -2,11 +2,13 @@ export type EmbeddingWorkerRequest =
   | {
       type: 'prepare'
       requestId: number
+      modelDirectory?: string
     }
   | {
       type: 'embed'
       requestId: number
       texts: string[]
+      modelDirectory?: string
     }
 
 export type EmbeddingWorkerResponse =
