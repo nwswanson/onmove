@@ -1294,6 +1294,297 @@ describe('OnMove MCP protocol adapter', () => {
     expect(JSON.stringify(stale)).toContain('SEARCH_CURSOR_STALE')
   })
 
+  it.each([
+    ['focus', 'onmove.search_focuses', 'title'],
+    ['thread', 'onmove.search_threads', 'title'],
+    ['commitment', 'onmove.search_commitments', 'title'],
+    ['routine', 'onmove.search_routines', 'name'],
+    ['note', 'onmove.search_notes', 'title'],
+    ['todo', 'onmove.search_todos', 'name'],
+    ['subject', 'onmove.search_subjects', 'name']
+  ] as const)(
+    'ranks an exact Project A %s name ahead of competing B/C names in specialized and generic search',
+    async (kind, specializedTool, expectedField) => {
+      // Establish a clean projection first so this also verifies incremental dirty-index handling.
+      database.queries.search({ text: null }, database.mcpSettings.accessPolicy())
+      const ownerFocus = database.domain.focuses.requireModel(1).toSnapshot()
+      const ownerThread = database.domain.threads.create({
+        focusId: ownerFocus.id,
+        title: 'Exact-name search owner',
+        reviewFrequencyDays: 7
+      }).snapshot()
+      const suffixes = ['B', 'C', 'A'] as const
+      const ids = suffixes.map((suffix) => {
+        if (kind === 'focus') {
+          return database.domain.focuses.create({
+            title: `Project ${suffix}`,
+            description: `Portfolio description ${suffix}`
+          }).id
+        }
+        if (kind === 'thread') {
+          return database.domain.threads.create({
+            focusId: ownerFocus.id,
+            title: `Project ${suffix}`,
+            reviewFrequencyDays: 7
+          }).id
+        }
+        if (kind === 'commitment') {
+          return database.domain.commitments.create({
+            type: 'tracking',
+            parent: { type: 'thread', id: ownerThread.id },
+            title: `Project ${suffix}`
+          }).id
+        }
+        if (kind === 'routine') {
+          return database.domain.routines.create({
+            parent: { type: 'thread', id: ownerThread.id },
+            name: `Project ${suffix}`,
+            scheduleWeekdays: [],
+            checklist: [{ inspection: `Inspect routine ${suffix}.` }]
+          }).id
+        }
+        if (kind === 'todo') {
+          return database.domain.todos.create({
+            parent: { type: 'thread', id: ownerThread.id },
+            name: `Project ${suffix}`
+          }).id
+        }
+        if (kind === 'subject') {
+          return database.domain.subjects.create({
+            name: `Project ${suffix}`,
+            description: `Subject description ${suffix}`
+          }).id
+        }
+        const noteOwner = database.domain.focuses.create({ title: `Note owner ${suffix}` })
+        return database.domain.notes.list({ type: 'focus', id: noteOwner.id })[0].id
+      })
+      if (kind === 'note') {
+        const raw = new DatabaseSync(join(directory, 'onmove.sqlite3'))
+        const rename = raw.prepare('UPDATE notes SET title = ? WHERE id = ?')
+        ids.forEach((id, index) => rename.run(`Project ${suffixes[index]}`, id))
+        raw.close()
+      }
+      const targetId = ids[2]
+
+      const specialized = await client.callTool({
+        name: specializedTool,
+        arguments: { text: 'Project A', page: { size: 1 } }
+      })
+      expect(specialized.isError).not.toBe(true)
+      const specializedContent = specialized.structuredContent as {
+        records: Array<{
+          reference: { type: string; id: number }
+          field: string
+          title: string
+        }>
+        hasMore: boolean
+        continuationToken: string | null
+      }
+      expect.soft(specializedContent.records).toEqual([
+        expect.objectContaining({
+          reference: { type: kind, id: targetId },
+          field: expectedField,
+          title: 'Project A'
+        })
+      ])
+
+      const generic = await client.callTool({
+        name: 'onmove.search',
+        arguments: { text: 'Project A', kinds: [kind], page: { size: 1 } }
+      })
+      expect(generic.isError).not.toBe(true)
+      const genericContent = generic.structuredContent as {
+        items: Array<{
+          reference: { type: string; id: number }
+          field: string
+          title: string
+        }>
+      }
+      expect.soft(genericContent.items).toEqual([
+        expect.objectContaining({
+          reference: { type: kind, id: targetId },
+          field: expectedField,
+          title: 'Project A'
+        })
+      ])
+
+      if (kind === 'commitment') {
+        const wrappedSpecialized = await client.callTool({
+          name: 'onmove.search_commitments',
+          arguments: { text: "what's going on with Project A", page: { size: 1 } }
+        })
+        expect(wrappedSpecialized.isError).not.toBe(true)
+        expect(wrappedSpecialized.structuredContent).toMatchObject({
+          records: [expect.objectContaining({
+            reference: { type: 'commitment', id: targetId },
+            field: 'title',
+            title: 'Project A'
+          })]
+        })
+
+        const wrappedGeneric = await client.callTool({
+          name: 'onmove.search',
+          arguments: {
+            text: 'find the Project A commitment',
+            kinds: ['commitment'],
+            page: { size: 1 }
+          }
+        })
+        expect(wrappedGeneric.isError).not.toBe(true)
+        expect(wrappedGeneric.structuredContent).toMatchObject({
+          items: [expect.objectContaining({
+            reference: { type: 'commitment', id: targetId },
+            field: 'title',
+            title: 'Project A'
+          })]
+        })
+
+        expect(specializedContent).toMatchObject({
+          hasMore: true,
+          continuationToken: expect.any(String)
+        })
+        const continued = await client.callTool({
+          name: 'onmove.continue_search',
+          arguments: { continuationToken: specializedContent.continuationToken }
+        })
+        expect(continued.isError).not.toBe(true)
+        const next = continued.structuredContent as {
+          records: Array<{ reference: { type: string; id: number } }>
+        }
+        expect(next.records).toHaveLength(1)
+        expect(next.records[0].reference).toMatchObject({ type: 'commitment' })
+        expect(ids.slice(0, 2)).toContain(next.records[0].reference.id)
+        expect(next.records[0].reference.id).not.toBe(targetId)
+      }
+    }
+  )
+
+  it('keeps specialized and generic Update observation search in parity', async () => {
+    database.queries.search({ text: null }, database.mcpSettings.accessPolicy())
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Update search parity owner',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const update = database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id },
+      observation: 'Telemetry parity observation needle'
+    }).toSnapshot()
+
+    const specialized = await client.callTool({
+      name: 'onmove.search_updates',
+      arguments: { text: 'telemetry parity observation needle', page: { size: 1 } }
+    })
+    expect(specialized.isError).not.toBe(true)
+    expect(specialized.structuredContent).toMatchObject({
+      records: [expect.objectContaining({
+        reference: { type: 'update', id: update.id },
+        field: 'observation'
+      })]
+    })
+
+    const generic = await client.callTool({
+      name: 'onmove.search',
+      arguments: {
+        text: 'telemetry parity observation needle',
+        kinds: ['update'],
+        page: { size: 1 }
+      }
+    })
+    expect(generic.isError).not.toBe(true)
+    expect(generic.structuredContent).toMatchObject({
+      items: [expect.objectContaining({
+        reference: { type: 'update', id: update.id },
+        field: 'observation'
+      })]
+    })
+  })
+
+  it('searches a symbol-only Commitment title through both MCP search surfaces', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Symbol title owner',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const commitment = database.domain.commitments.create({
+      type: 'tracking',
+      parent: { type: 'thread', id: thread.id },
+      title: '⚠️'
+    }).snapshot()
+
+    const specialized = await client.callTool({
+      name: 'onmove.search_commitments',
+      arguments: { text: '⚠️', page: { size: 1 } }
+    })
+    expect(specialized.isError).not.toBe(true)
+    expect(specialized.structuredContent).toMatchObject({
+      records: [expect.objectContaining({
+        reference: { type: 'commitment', id: commitment.id },
+        field: 'title',
+        title: '⚠️'
+      })]
+    })
+
+    const generic = await client.callTool({
+      name: 'onmove.search',
+      arguments: { text: '⚠️', kinds: ['commitment'], page: { size: 1 } }
+    })
+    expect(generic.isError).not.toBe(true)
+    expect(generic.structuredContent).toMatchObject({
+      items: [expect.objectContaining({
+        reference: { type: 'commitment', id: commitment.id },
+        field: 'title',
+        title: '⚠️'
+      })]
+    })
+  })
+
+  it('keeps zero-result entity and generic searches open for corrected discovery', async () => {
+    const specialized = await client.callTool({
+      name: 'onmove.search_commitments',
+      arguments: { text: 'zerohitneedle98231' }
+    })
+    expect(specialized.isError).not.toBe(true)
+    expect(specialized.structuredContent).toMatchObject({
+      records: [],
+      hasMore: false,
+      continuationToken: null,
+      searchStatus: {
+        sufficient: false,
+        doNotBroaden: false,
+        targetSelectionReady: false,
+        reason: expect.stringContaining('No visible commitment records matched'),
+        nextAction: expect.stringContaining('Adjust the text or applied filters')
+      }
+    })
+    expect(JSON.stringify(specialized.structuredContent)).not.toContain(
+      'use the returned record IDs'
+    )
+
+    const generic = await client.callTool({
+      name: 'onmove.search',
+      arguments: { text: 'zerohitneedle98231', kinds: ['commitment'] }
+    })
+    expect(generic.isError).not.toBe(true)
+    expect(generic.structuredContent).toMatchObject({
+      items: [],
+      hasMore: false,
+      continuationToken: null,
+      searchStatus: {
+        sufficient: false,
+        doNotBroaden: false,
+        targetSelectionReady: false,
+        reason: expect.stringContaining('No visible records matched'),
+        nextAction: expect.stringContaining('Adjust the text or applied filters')
+      }
+    })
+    expect(JSON.stringify(generic.structuredContent)).not.toContain(
+      'use the returned record IDs'
+    )
+  })
+
   it('searches every Note text format with complete actionable hierarchy and reindexes MCP writes', async () => {
     const focus = database.domain.focuses.requireModel(1).toSnapshot()
     const thread = database.domain.threads.create({

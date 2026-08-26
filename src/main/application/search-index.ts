@@ -192,9 +192,9 @@ function resourceUri(type: SearchEntityType, id: number): string {
 const SEARCH_STOP_WORDS = new Set([
   'a', 'about', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'being', 'by',
   'did', 'do', 'does', 'doing', 'for', 'from', 'had', 'has', 'have', 'how',
-  'i', 'in', 'is', 'it', 'its', 'locate', 'me', 'my', 'of', 'on', 'or', 'our',
+  'going', 'i', 'in', 'is', 'it', 'its', 'locate', 'me', 'my', 'of', 'on', 'or', 'our',
   'find', 'search', 'show',
-  'the', 'their', 'them', 'they', 'this', 'to', 'was', 'we', 'were', 'what',
+  's', 'the', 'their', 'them', 'they', 'this', 'to', 'was', 'we', 'were', 'what',
   'when', 'where', 'which', 'who', 'why', 'with', 'you', 'your'
 ])
 
@@ -204,9 +204,13 @@ const SEARCH_CONTAINER_WORDS = new Set([
   'subject', 'subjects'
 ])
 
-function ftsExpression(text: string): string {
-  const tokens = text.normalize('NFKC').match(/[\p{L}\p{N}_]+/gu) ?? []
-  const normalized = [...new Set(tokens.map((token) => token.toLocaleLowerCase()))]
+function ftsExpression(text: string): string | null {
+  const tokens = (text.normalize('NFKC').match(/[\p{L}\p{N}_]+/gu) ?? [])
+    // unicode61 does not index punctuation-only tokens such as "___". Route those searches to
+    // the literal fallback instead of issuing a valid-looking MATCH expression that cannot hit.
+    .filter((token) => /[\p{L}\p{N}]/u.test(token))
+  const literalTokens = tokens.map((token) => token.toLocaleLowerCase()).slice(0, 24)
+  const normalized = [...new Set(literalTokens)]
   // Natural-language discovery requests commonly wrap the useful entity name in generic prose
   // ("what has Michael been doing"). Removing only a conservative stop-word set retains that
   // name as the primary FTS term without introducing opaque semantic ranking.
@@ -218,8 +222,30 @@ function ftsExpression(text: string): string {
   const unique = (evidenceTerms.length > 0
     ? evidenceTerms
     : meaningful.length > 0 ? meaningful : normalized).slice(0, 24)
-  if (unique.length === 0) throw new TypeError('search text must contain letters or numbers')
-  return unique.map((token) => `"${token.replaceAll('"', '""')}"*`).join(' OR ')
+  if (unique.length === 0) return null
+  const discovery = unique
+    .map((token) => `"${token.replaceAll('"', '""')}"*`)
+    .join(' OR ')
+  if (literalTokens.length < 2) return discovery
+
+  // Preserve literal title adjacency before applying natural-language stop-word reduction. Short
+  // identity suffixes are meaningful in names such as Project A, including wrapper requests such
+  // as "what's going on with Project A". Only pairs containing a retained discovery term become
+  // candidates, so generic stop-word pairs do not broaden the result set on their own.
+  const identityTerms = new Set(unique)
+  const titlePhrases = literalTokens.slice(0, -1).flatMap((token, index) => {
+    const pair = [token, literalTokens[index + 1]]
+    return pair.some((entry) => identityTerms.has(entry))
+      ? [`title : "${pair.join(' ')}"`]
+      : []
+  })
+  const literalPhrase = `"${literalTokens.join(' ')}"`
+  const literalBranches = [
+    `title : ${literalPhrase}`,
+    `body : ${literalPhrase}`,
+    ...titlePhrases
+  ]
+  return [...new Set([...literalBranches, discovery])].join(' OR ')
 }
 
 const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/u
@@ -355,11 +381,20 @@ export class SearchIndexRepository {
     this.synchronize()
 
     const textSearch = query.text !== null
+    const ftsQuery = textSearch ? ftsExpression(query.text as string) : null
+    const ftsSearch = ftsQuery !== null
+    const literalSearch = textSearch && !ftsSearch
+    const fromParameters: SqlValue[] = literalSearch ? [(query.text as string).trim()] : []
     const conditions: string[] = []
     const parameters: SqlValue[] = []
-    if (textSearch) {
+    if (ftsSearch) {
       conditions.push('search_documents_fts MATCH ?')
-      parameters.push(ftsExpression(query.text as string))
+      parameters.push(ftsQuery)
+    } else if (literalSearch) {
+      conditions.push(`(
+        instr(document.title, search_input.literal) > 0 OR
+        instr(document.body, search_input.literal) > 0
+      )`)
     }
     if (query.focusId !== undefined && query.focusId !== null) {
       conditions.push('document.focus_id = ?')
@@ -455,7 +490,15 @@ export class SearchIndexRepository {
         ) = 1
       )`)
     }
-    const relevance = textSearch ? 'bm25(search_documents_fts, 4.0, 1.0)' : '0'
+    const relevance = ftsSearch
+      ? 'bm25(search_documents_fts, 4.0, 1.0)'
+      : literalSearch
+        ? `CASE
+             WHEN document.title = search_input.literal THEN -3.0
+             WHEN instr(document.title, search_input.literal) > 0 THEN -2.0
+             ELSE -1.0
+           END`
+        : '0'
     const sortExpression = sort.field === 'relevance'
       ? relevance
       : sort.field === 'date'
@@ -479,18 +522,27 @@ export class SearchIndexRepository {
       )
     }
     parameters.push(limit + 1, offset)
-    const snippet = textSearch
+    const snippet = ftsSearch
       // Let FTS choose the matching title/body column so the excerpt is evidence for the hit.
       ? "snippet(search_documents_fts, -1, '', '', ' … ', 24)"
+      : literalSearch
+        ? `CASE
+             WHEN instr(document.title, search_input.literal) > 0 THEN document.title
+             WHEN length(document.body) > 200 THEN substr(document.body, 1, 199) || '…'
+             ELSE document.body
+           END`
       : `CASE
            WHEN length(document.body) > 200 THEN substr(document.body, 1, 199) || '…'
            ELSE document.body
          END`
-    const from = textSearch
+    const from = ftsSearch
       ? `search_documents_fts
          JOIN search_documents document ON document.id = search_documents_fts.rowid`
+      : literalSearch
+        ? `search_documents document
+           CROSS JOIN (SELECT ? AS literal) search_input`
       : 'search_documents document'
-    const matchedField = textSearch
+    const matchedField = ftsSearch
       ? `CASE
            WHEN highlight(search_documents_fts, 0, char(1), char(2)) <> document.title
              THEN CASE document.entity_type
@@ -501,6 +553,17 @@ export class SearchIndexRepository {
              END
            ELSE document.field_name
          END`
+      : literalSearch
+        ? `CASE
+             WHEN instr(document.title, search_input.literal) > 0
+               THEN CASE document.entity_type
+                 WHEN 'todo' THEN 'name'
+                 WHEN 'routine' THEN 'name'
+                 WHEN 'subject' THEN 'name'
+                 ELSE 'title'
+               END
+             ELSE document.field_name
+           END`
       : 'document.field_name'
     const rows = this.database.all<SearchRow>(
       `SELECT document.entity_type, document.entity_id, ${matchedField} AS field_name,
@@ -527,7 +590,7 @@ export class SearchIndexRepository {
        ${conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''}
        ORDER BY ${sortExpression} ${sort.direction.toUpperCase()}, document.source_key ASC
        LIMIT ? OFFSET ?`,
-      parameters
+      [...fromParameters, ...parameters]
     )
     const hasMore = rows.length > limit
     const pageRows = rows.slice(0, limit)

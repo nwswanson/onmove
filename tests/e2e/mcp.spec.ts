@@ -59,6 +59,26 @@ test('serves MCP from the running app and immediately refreshes its open windows
     parent: { type: 'thread', id: team.id },
     title: '1:1'
   }).snapshot()
+  const titleSearchThread = seeded.domain.threads.create({
+    focusId: focus.id,
+    title: 'Title search ranking',
+    reviewFrequencyDays: 7
+  }).snapshot()
+  seeded.domain.commitments.create({
+    type: 'tracking',
+    parent: { type: 'thread', id: titleSearchThread.id },
+    title: 'Project B'
+  })
+  seeded.domain.commitments.create({
+    type: 'tracking',
+    parent: { type: 'thread', id: titleSearchThread.id },
+    title: 'Project C'
+  })
+  const projectA = seeded.domain.commitments.create({
+    type: 'tracking',
+    parent: { type: 'thread', id: titleSearchThread.id },
+    title: 'Project A'
+  }).snapshot()
   const teamScope = seeded.domain.threadScopes.addSubject(team.id, { name: 'Person Y' })
   const person = teamScope.subjects[0]
   const unrelatedSubject = seeded.domain.subjects.create({ name: 'Unrelated Subject' }).toSnapshot()
@@ -90,6 +110,7 @@ test('serves MCP from the running app and immediately refreshes its open windows
 
     const tools = await client.listTools()
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.search')
+    expect(tools.tools.map(({ name }) => name)).toContain('onmove.search_commitments')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.continue_search')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.retrieve')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.continue_retrieval')
@@ -102,6 +123,31 @@ test('serves MCP from the running app and immediately refreshes its open windows
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.patch_rich_text')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.update_rich_text')
     expect(tools.tools.map(({ name }) => name)).toContain('onmove.reparent_update')
+
+    const commitmentTitleSearch = await client.callTool({
+      name: 'onmove.search_commitments',
+      arguments: { text: 'Project A', page: { size: 1 } }
+    })
+    expect(commitmentTitleSearch.isError).not.toBe(true)
+    expect(commitmentTitleSearch.structuredContent).toMatchObject({
+      records: [{
+        reference: { type: 'commitment', id: projectA.id },
+        field: 'title',
+        title: 'Project A'
+      }]
+    })
+    const genericCommitmentTitleSearch = await client.callTool({
+      name: 'onmove.search',
+      arguments: { text: 'Project A', kinds: ['commitment'], page: { size: 1 } }
+    })
+    expect(genericCommitmentTitleSearch.isError).not.toBe(true)
+    expect(genericCommitmentTitleSearch.structuredContent).toMatchObject({
+      items: [{
+        reference: { type: 'commitment', id: projectA.id },
+        field: 'title',
+        title: 'Project A'
+      }]
+    })
 
     const warmingRetrieval = await client.callTool({
       name: 'onmove.retrieve',

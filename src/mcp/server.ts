@@ -2817,21 +2817,26 @@ export function createOnMoveMcpServer(
       : null
     const response = (): Record<string, unknown> => {
       const hasMore = searched.hasMore || recordsTruncated
+      const hasMatches = records.length > 0
       return {
         records,
         hasMore,
         continuationToken: hasMore ? continuationFor(cursors.at(-1) ?? null) : null,
         searchStatus: {
-          sufficient: !hasMore,
-          doNotBroaden: !hasMore,
-          targetSelectionReady: records.length > 0 && records.every((record) =>
+          sufficient: hasMatches && !hasMore,
+          doNotBroaden: hasMatches && !hasMore,
+          targetSelectionReady: hasMatches && records.every((record) =>
             record.path && (record.path as { complete?: unknown }).complete === true),
           reason: hasMore
             ? 'Another stable page remains for this entity-specific search.'
-            : `The complete visible ${kind} search was returned.`,
+            : hasMatches
+              ? `The complete visible ${kind} search was returned.`
+              : `No visible ${kind} records matched the search criteria.`,
           nextAction: hasMore
             ? 'Call onmove.continue_search with only this continuationToken.'
-            : 'Stop discovery and use the returned record IDs.'
+            : hasMatches
+              ? 'Stop discovery and use the returned record IDs.'
+              : 'Adjust the text or applied filters, use a compact list tool when available, or resolve a known code, ID, or exact path.'
         },
         appliedQuery: {
           text,
@@ -3103,7 +3108,8 @@ export function createOnMoveMcpServer(
         const hasMore = searched.hasMore || recordsTruncatedByBudget
         const lastCursor = itemCursors.at(-1) ?? null
         const globalComplete = resolved.diagnostics.appliedScope.mode === 'all' && !hasMore
-        const doNotBroaden = authoritativeSubjectResult || globalComplete
+        const hasMatches = items.length > 0 || authoritativeSubjectResult
+        const doNotBroaden = authoritativeSubjectResult || (globalComplete && items.length > 0)
         const hierarchyComplete = !hierarchyRequested || hierarchyPaths.length === hierarchy.total
         const subjectUsesRequested = projection.subjects && matchedSubjects.length > 0
         const subjectUsesComplete = !subjectUsesRequested || (
@@ -3112,11 +3118,13 @@ export function createOnMoveMcpServer(
         const auxiliaryComplete = hierarchyComplete && subjectUsesComplete
         const foundSubjectNames = [...new Set(matchedSubjects.map(({ name }) => name))]
         const searchStatus = {
-          sufficient: doNotBroaden && auxiliaryComplete,
+          sufficient: hasMatches && doNotBroaden && auxiliaryComplete,
           doNotBroaden,
           targetSelectionReady: items.length > 0 && items.every((item) =>
             item.path && (item.path as { complete?: unknown }).complete === true),
-          reason: !auxiliaryComplete
+          reason: !hasMatches
+            ? 'No visible records matched the applied text, kind, date, and scope criteria.'
+            : !auxiliaryComplete
             ? 'Relevant discovery may be present, but at least one requested auxiliary projection is incomplete. Do not broaden globally; continue within the returned Subject/Focus/Thread boundary or use the matching list/review tool.'
             : authoritativeSubjectResult
             ? relevantSubjectUpdates.length > 0
@@ -3125,7 +3133,9 @@ export function createOnMoveMcpServer(
             : globalComplete
               ? 'The global structured query is complete; every matching visible record was returned.'
               : 'Another bounded page remains; continue with the exact signed continuationToken.',
-          nextAction: !auxiliaryComplete
+          nextAction: !hasMatches
+            ? 'Adjust the text or applied filters, use a compact list tool for inventory, or resolve a known code, ID, or exact path.'
+            : !auxiliaryComplete
             ? 'Use scope.mode=subject/focus/thread with the returned ID, onmove.review_subject, or a compact list tool; do not infer completeness from the truncated projection.'
             : doNotBroaden
             ? 'Stop discovery and use the returned record IDs directly.'

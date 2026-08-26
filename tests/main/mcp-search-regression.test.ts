@@ -264,6 +264,120 @@ describe('OnMove MCP full-workspace search regressions', () => {
     ])
   })
 
+  it('ranks an exact sibling title before shared corporate vocabulary', () => {
+    const { thread } = hierarchy('Sibling identity')
+    database.domain.commitments.create({
+      type: 'tracking', parent: { type: 'thread', id: thread.id }, title: 'Project B'
+    })
+    database.domain.commitments.create({
+      type: 'tracking', parent: { type: 'thread', id: thread.id }, title: 'Project C'
+    })
+    const projectA = database.domain.commitments.create({
+      type: 'tracking', parent: { type: 'thread', id: thread.id }, title: 'Project A'
+    }).snapshot()
+
+    for (const text of [
+      'Project A',
+      "what's going on with Project A",
+      'find the Project A commitment'
+    ]) {
+      expect(database.queries.search({
+        text, kinds: ['commitment'], limit: 1
+      }, visible)).toEqual([
+        expect.objectContaining({
+          reference: { type: 'commitment', id: projectA.id },
+          field: 'title',
+          title: 'Project A',
+          snippet: 'Project A'
+        })
+      ])
+    }
+  })
+
+  it('rebuilds exact-title ranking after a clean-index create and rename', () => {
+    const { thread } = hierarchy('Live title changes')
+    database.domain.commitments.create({
+      type: 'tracking', parent: { type: 'thread', id: thread.id }, title: 'Release B'
+    })
+    expect(database.queries.search({
+      text: 'Release B', kinds: ['commitment']
+    }, visible)).toHaveLength(1)
+
+    const renamed = database.domain.commitments.create({
+      type: 'tracking', parent: { type: 'thread', id: thread.id }, title: 'Oldcinder Zeta'
+    })
+    expect(database.queries.search({
+      text: 'Oldcinder Zeta', kinds: ['commitment'], limit: 1
+    }, visible)[0]?.reference).toEqual({ type: 'commitment', id: renamed.id })
+
+    renamed.update({ title: 'Release A' })
+    expect(database.queries.search({
+      text: 'Oldcinder Zeta', kinds: ['commitment']
+    }, visible)).toEqual([])
+    expect(database.queries.search({
+      text: 'Release A', kinds: ['commitment'], limit: 1
+    }, visible)[0]).toMatchObject({
+      reference: { type: 'commitment', id: renamed.id },
+      field: 'title',
+      title: 'Release A'
+    })
+  })
+
+  it('searches symbol-only text literally with filters, security, and stable pagination', () => {
+    const { focus, thread } = hierarchy('Literal symbols')
+    const first = database.domain.commitments.create({
+      type: 'tracking', parent: { type: 'thread', id: thread.id }, title: '⚠️'
+    }).snapshot()
+    const second = database.domain.commitments.create({
+      type: 'tracking', parent: { type: 'thread', id: thread.id }, title: '⚠️'
+    }).snapshot()
+    const todo = database.domain.todos.create({
+      parent: { type: 'thread', id: thread.id }, name: '___'
+    }).toSnapshot()
+    const update = database.domain.updates.create({
+      parent: { type: 'thread', id: thread.id }, observation: 'Operational marker ⚠️'
+    }).toSnapshot()
+    const hiddenFocus = database.domain.focuses.create({
+      title: 'Hidden literal owner', sensitive: true
+    }).toSnapshot()
+    const hiddenThread = database.domain.threads.create({
+      focusId: hiddenFocus.id, title: 'Hidden literal thread', reviewFrequencyDays: 7
+    }).snapshot()
+    database.domain.commitments.create({
+      type: 'tracking', parent: { type: 'thread', id: hiddenThread.id }, title: '⚠️'
+    })
+
+    const firstPage = database.queries.searchPage({
+      text: '⚠️', kinds: ['commitment'], focusId: focus.id, limit: 1
+    }, visible)
+    expect(firstPage.items).toEqual([
+      expect.objectContaining({ field: 'title', title: '⚠️', snippet: '⚠️' })
+    ])
+    expect(firstPage).toMatchObject({ hasMore: true, nextCursor: expect.any(Object) })
+
+    const secondPage = database.queries.searchPage({
+      text: '⚠️', kinds: ['commitment'], focusId: focus.id, limit: 1,
+      cursor: firstPage.nextCursor
+    }, visible)
+    expect(secondPage).toMatchObject({ hasMore: false, nextCursor: null })
+    expect([
+      firstPage.items[0].reference.id,
+      secondPage.items[0].reference.id
+    ].sort((left, right) => left - right)).toEqual([first.id, second.id].sort((a, b) => a - b))
+
+    expect(database.queries.search({ text: '___', kinds: ['todo'] }, visible)).toEqual([
+      expect.objectContaining({ reference: { type: 'todo', id: todo.id }, field: 'name' })
+    ])
+    expect(database.queries.search({ text: '⚠️', kinds: ['update'] }, visible)).toEqual([
+      expect.objectContaining({
+        reference: { type: 'update', id: update.id }, field: 'observation'
+      })
+    ])
+    expect(database.queries.search({
+      text: '⚠️', kinds: ['commitment'], focusId: hiddenFocus.id
+    }, visible)).toEqual([])
+  })
+
   it('bounds queryless previews instead of returning entire indexed documents', () => {
     const { thread } = hierarchy('Compact list')
     database.domain.updates.create({
