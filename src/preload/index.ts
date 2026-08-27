@@ -4,8 +4,25 @@ import {
   IPC_EVENTS,
   IPC_SYNC_CHANNELS,
   type OnMoveApi,
+  type OnMoveEntityLinkTarget,
   type RichTextDocumentSnapshot
 } from '../shared/contracts'
+
+const entityLinkListeners = new Set<(target: OnMoveEntityLinkTarget) => void>()
+const pendingEntityLinks: OnMoveEntityLinkTarget[] = []
+
+// Install this before React boots so a cold-start URL delivered immediately
+// after the document loads cannot be lost between preload and the first effect.
+ipcRenderer.on(
+  IPC_EVENTS.openEntityLink,
+  (_event: Electron.IpcRendererEvent, target: OnMoveEntityLinkTarget) => {
+    if (entityLinkListeners.size === 0) {
+      pendingEntityLinks.push(target)
+      return
+    }
+    for (const listener of entityLinkListeners) listener(target)
+  }
+)
 
 const api: OnMoveApi = {
   getAppState: () => ipcRenderer.invoke(IPC_CHANNELS.getAppState),
@@ -29,6 +46,14 @@ const api: OnMoveApi = {
     const handler = (): void => listener()
     ipcRenderer.on(IPC_EVENTS.domainChanged, handler)
     return () => ipcRenderer.removeListener(IPC_EVENTS.domainChanged, handler)
+  },
+  onOpenEntityLink: (listener) => {
+    entityLinkListeners.add(listener)
+    while (pendingEntityLinks.length > 0) {
+      const target = pendingEntityLinks.shift()
+      if (target) listener(target)
+    }
+    return () => entityLinkListeners.delete(listener)
   },
   recordGreeting: () => ipcRenderer.invoke(IPC_CHANNELS.recordGreeting),
   showDataFolder: () => ipcRenderer.invoke(IPC_CHANNELS.showDataFolder),

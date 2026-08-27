@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { AlertTriangle, Info, Search, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -359,6 +359,10 @@ export function App(): React.JSX.Element {
   const tagsDestinationRequest = useRef(0)
   const [activeFocusThreadId, setActiveFocusThreadId] = useState<number | null>(null)
   const selectedFocus = application.selectedFocus
+  const selectFocus = application.selectFocus
+  const applicationEnabled = application.enabled
+  const pendingEntityLink = application.pendingEntityLink
+  const consumeEntityLink = application.consumeEntityLink
   const reportMcpUiContext = application.reportMcpUiContext
   const selectedSubjectId = selectedFocus
     ? (focusSubjectSelections[selectedFocus.id] ?? null)
@@ -374,6 +378,21 @@ export function App(): React.JSX.Element {
     application.sensitiveContentHidden,
     application.pinnedFocusIds
   )
+  const openWorkContext = useCallback((
+    destination: FocusWorkspaceDestinationTarget,
+    includeClosed = false
+  ): void => {
+    if (!selectFocus(destination.focusId, { includeClosed })) return
+    setTagsDestination(null)
+    setFocusSubjectSelections((current) => ({
+      ...current,
+      [destination.focusId]: destination.subjectId
+    }))
+    setFocusDestination({
+      ...destination,
+      requestId: ++focusDestinationRequest.current
+    })
+  }, [selectFocus])
   const focusItems = baseFocusItems.map((item) => ({
     ...item,
     transfer: {
@@ -470,26 +489,27 @@ export function App(): React.JSX.Element {
     })
   }, [reportMcpUiContext, selectedFocus?.id, selectedSubjectId])
 
+  useEffect(() => {
+    if (!pendingEntityLink || !applicationEnabled) return
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      openWorkContext({
+        focusId: pendingEntityLink.focusId,
+        threadId: pendingEntityLink.threadId,
+        commitmentId: pendingEntityLink.commitmentId,
+        routineId: pendingEntityLink.routineId,
+        subjectId: pendingEntityLink.subjectId
+      }, true)
+      consumeEntityLink(pendingEntityLink)
+    })
+    return () => { cancelled = true }
+  }, [applicationEnabled, consumeEntityLink, openWorkContext, pendingEntityLink])
+
   async function deleteFocus(focusId: number): Promise<void> {
     await application.deleteFocus(focusId)
     await application.refreshSidebarFolders()
     contextDrawer.onInvalidate([`focus:${focusId}`])
-  }
-
-  function openWorkContext(
-    destination: FocusWorkspaceDestinationTarget,
-    includeClosed = false
-  ): void {
-    if (!application.selectFocus(destination.focusId, { includeClosed })) return
-    setTagsDestination(null)
-    setFocusSubjectSelections((current) => ({
-      ...current,
-      [destination.focusId]: destination.subjectId
-    }))
-    setFocusDestination({
-      ...destination,
-      requestId: ++focusDestinationRequest.current
-    })
   }
 
   function openCommandPaletteDestination(destination: CommandPaletteDestination): void {

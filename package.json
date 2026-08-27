@@ -86,6 +86,14 @@
       "out/**/*",
       "package.json"
     ],
+    "protocols": [
+      {
+        "name": "OnMove entity link",
+        "schemes": [
+          "onmove"
+        ]
+      }
+    ],
     "extraResources": [
       {
         "from": "resources/models/universal-sentence-encoder-lite-v1",

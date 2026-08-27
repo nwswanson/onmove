@@ -1028,6 +1028,7 @@ export function FocusWorkspace({
       destination.focusId !== focus.id ||
       appliedDestinationRequest.current === destination.requestId
     ) return
+    const destinationRoutineId = destination.routineId ?? null
 
     const thread = destination.threadId === null
       ? null
@@ -1036,7 +1037,10 @@ export function FocusWorkspace({
       destination.threadId !== null &&
       (!thread || (hideSensitiveContent && (focus.sensitive || thread.sensitive)))
     ) return
-    if (destination.threadId === null && destination.commitmentId !== null) return
+    if (
+      destination.commitmentId !== null && destinationRoutineId !== null ||
+      destination.threadId === null && destination.commitmentId !== null
+    ) return
 
     const parent: CommitmentParent = thread
       ? { type: 'thread', id: thread.id }
@@ -1050,6 +1054,12 @@ export function FocusWorkspace({
       )
       if (!commitment) return
     }
+    if (destinationRoutineId !== null) {
+      const routine = (routinesByContextItemId[
+        contextItemIdForCommitmentParent(parent)
+      ] ?? []).find(({ id }) => id === destinationRoutineId)
+      if (!routine) return
+    }
 
     const threadIsInSidebar = thread
       ? visibleThreadRecords.some(({ id }) => id === thread.id)
@@ -1058,6 +1068,7 @@ export function FocusWorkspace({
       thread &&
       threadIsInSidebar &&
       destination.commitmentId === null &&
+      destinationRoutineId === null &&
       destination.contextualMode === 'children'
     ) {
       const level = pinnedThreadChildLevelFor(thread)
@@ -1093,7 +1104,13 @@ export function FocusWorkspace({
     }
     queueMicrotask(() => setStandaloneThreadRoute(null))
     const parentItemId = contextItemIdForCommitmentParent(parent)
-    if (destination.commitmentId === null) {
+    if (destinationRoutineId !== null) {
+      navigation.selectChild(
+        parentItemId,
+        'commitments',
+        `routine:${destinationRoutineId}`
+      )
+    } else if (destination.commitmentId === null) {
       navigation.select(parentItemId)
     } else {
       const destinationCommitmentId = destination.commitmentId
@@ -1134,6 +1151,7 @@ export function FocusWorkspace({
     onSelectedSubjectChange,
     pinnedThreadChildLevelFor,
     pinnedThreadIds,
+    routinesByContextItemId,
     visibleFocusCommitments,
     visibleThreadCommitments,
     visibleThreadRecords

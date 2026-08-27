@@ -504,6 +504,7 @@ function installApi(
     onNavigationBadgesInvalidated: vi.fn(() => () => undefined),
     onRoutinesChanged: vi.fn(() => () => undefined),
     onDomainChanged: vi.fn(() => () => undefined),
+    onOpenEntityLink: vi.fn(() => () => undefined),
     recordGreeting: vi.fn().mockResolvedValue(initialState),
     showDataFolder: vi.fn().mockResolvedValue(undefined),
     navigationPins: {
@@ -828,6 +829,46 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'New focus' })).toBeEnabled()
     expect(screen.queryByText('Placeholder')).not.toBeInTheDocument()
     expect(screen.queryByText('Overview')).not.toBeInTheDocument()
+  })
+
+  it('atomically opens a custom-protocol entity destination after startup', async () => {
+    const currentFocus = focus({ id: 5, title: 'Linked Focus' })
+    const currentThread = thread({ id: 15, focusId: 5, title: 'Linked Thread' })
+    const currentCommitment = commitment({
+      id: 25,
+      parent: { type: 'thread', id: 15 },
+      title: 'Linked Commitment'
+    })
+    let openEntityLink: Parameters<OnMoveApi['onOpenEntityLink']>[0] | undefined
+    installApi(
+      {
+        listFocuses: vi.fn().mockResolvedValue([currentFocus]),
+        listThreads: vi.fn().mockResolvedValue([currentThread]),
+        listCommitments: vi.fn().mockResolvedValue([currentCommitment])
+      },
+      {
+        onOpenEntityLink: vi.fn((listener) => {
+          openEntityLink = listener
+          return () => undefined
+        })
+      }
+    )
+    render(<App />)
+
+    await screen.findByRole('button', { name: 'Linked Focus' })
+    act(() => openEntityLink?.({
+      reference: { type: 'commitment', id: currentCommitment.id },
+      focusId: currentFocus.id,
+      threadId: currentThread.id,
+      commitmentId: currentCommitment.id,
+      routineId: null,
+      subjectId: null
+    }))
+
+    expect(await screen.findByRole('heading', { name: 'Linked Commitment' })).toBeVisible()
+    expect(within(screen.getByLabelText('Contextual sidebar')).getByRole('button', {
+      name: 'Open Linked Thread commitment Linked Commitment'
+    })).toHaveAttribute('aria-current', 'page')
   })
 
   it('pins and unpins a Focus through checked primary-sidebar context menus', async () => {

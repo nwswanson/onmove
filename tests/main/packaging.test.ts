@@ -7,11 +7,23 @@ interface PackageManifest {
   build?: {
     directories?: { buildResources?: string }
     extraResources?: Array<{ from?: string; to?: string }>
+    protocols?: Array<{ name?: string; schemes?: string[] }>
     mac?: { icon?: string }
   }
 }
 
 describe('macOS packaging assets', () => {
+  it('registers canonical OnMove entity links with the packaged app', () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')
+    ) as PackageManifest
+
+    expect(manifest.build?.protocols).toContainEqual({
+      name: 'OnMove entity link',
+      schemes: ['onmove']
+    })
+  })
+
   it('uses the tracked scalable icon source from the build-resources directory', () => {
     const projectRoot = process.cwd()
     const manifest = JSON.parse(

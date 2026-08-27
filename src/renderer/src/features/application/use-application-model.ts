@@ -7,6 +7,7 @@ import type {
   McpUiContextSnapshot,
   NavigationPinSnapshot,
   NavigationPinTarget,
+  OnMoveEntityLinkTarget,
   SidebarFolderSnapshot,
   SidebarFolderTarget,
   UpdateFocusInput
@@ -39,6 +40,8 @@ export interface ApplicationModel {
   selectedView: 'todos' | 'tags' | 'review' | 'routines' | 'due' | 'archive' | 'focus' | 'settings'
   sensitiveContentHidden: boolean
   enabled: boolean
+  pendingEntityLink: OnMoveEntityLinkTarget | null
+  consumeEntityLink: (target: OnMoveEntityLinkTarget) => void
   goTodos: () => void
   goTags: () => void
   goReview: () => void
@@ -88,6 +91,7 @@ export function useApplicationModel(): ApplicationModel {
     'todos' | 'tags' | 'review' | 'routines' | 'due' | 'archive' | 'focus' | 'settings'
   >('todos')
   const [sensitiveContentHidden, setSensitiveContentHidden] = useState(false)
+  const [pendingEntityLink, setPendingEntityLink] = useState<OnMoveEntityLinkTarget | null>(null)
   const navigationBadges = useNavigationBadges(sensitiveContentHidden)
 
   function applyNavigationPins(nextPins: NavigationPinSnapshot[]): void {
@@ -159,6 +163,7 @@ export function useApplicationModel(): ApplicationModel {
         ] as const)).then((entries) => setFocusStatusSummaries(Object.fromEntries(entries)))
       }).catch(() => undefined)
     })
+    const unsubscribeEntityLinks = window.onmove.onOpenEntityLink(setPendingEntityLink)
     const unsubscribeNavigationPins = window.onmove.navigationPins.onChanged((nextPins) => {
       if (active) applyNavigationPins(nextPins)
     })
@@ -207,6 +212,7 @@ export function useApplicationModel(): ApplicationModel {
       unsubscribe()
       unsubscribeRichText()
       unsubscribeDomain()
+      unsubscribeEntityLinks()
       unsubscribeNavigationPins()
       unsubscribeSidebarFolders()
     }
@@ -266,6 +272,10 @@ export function useApplicationModel(): ApplicationModel {
 
   const reportMcpUiContext = useCallback((context: McpUiContextSnapshot): void => {
     void window.onmove.mcp.setUiContext(context)
+  }, [])
+
+  const consumeEntityLink = useCallback((target: OnMoveEntityLinkTarget): void => {
+    setPendingEntityLink((current) => current === target ? null : current)
   }, [])
 
   function selectFocus(focusId: number, options: { includeClosed?: boolean } = {}): boolean {
@@ -437,6 +447,8 @@ export function useApplicationModel(): ApplicationModel {
     selectedView,
     sensitiveContentHidden,
     enabled: Boolean(state),
+    pendingEntityLink,
+    consumeEntityLink,
     goTodos,
     goTags,
     goReview,

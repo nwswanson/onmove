@@ -1,5 +1,6 @@
 import { richTextPlainText } from '../../shared/rich-text-value'
 import { entityReference } from '../../shared/entity-reference'
+import { onMoveEntityUrl } from '../../shared/onmove-url'
 import type { OnMoveAccessPolicy } from './access-policy'
 import type { SqlValue, SqliteAdapter } from '../data/sqlite-adapter'
 
@@ -245,8 +246,7 @@ function sourceKey(type: SearchEntityType, id: number, field: string): string {
 }
 
 function resourceUri(type: SearchEntityType, id: number): string {
-  if (type === 'update' || type === 'todo' || type === 'note') return `onmove://${type}/${id}`
-  return `onmove://${type}/${id}`
+  return onMoveEntityUrl(type, id)
 }
 
 const SEARCH_STOP_WORDS = new Set([

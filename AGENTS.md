@@ -64,6 +64,14 @@
   `N` Note, and `S` Subject. Do not persist the formatted code or expose internal Scope overlays,
   memberships, Routine Runs, and cells as user-addressable records. MCP responses own the same
   canonical codes even when the compact UI list intentionally omits them.
+- Keep one canonical clickable entity URL in `onmove://<kind>/<id>` form, backed by the same kind
+  and positive SQLite id as its public code. Register the scheme in the packaged macOS app, queue
+  cold-start URL events until preload and domain state are ready, resolve the current hierarchy in
+  the main process, and hand the renderer one typed atomic destination. Route links into an existing
+  main window when possible; detached rich-text windows are never navigation targets. MCP textual
+  single-entity reads and mutation results must expose a ready Markdown link in textual content
+  without inflating bounded collection/search payloads,
+  and built-in client guidance must prefer that link over reporting an unlinked `#T4`-style code.
 - Show unobtrusive, receiver-owned sidebar indicators for Sensitive and Excluded from reviews on
   Focus, Thread, Commitment, and Routine destinations. Apply them to primary, contextual, and
   nested contextual rows as applicable; do not repeat the Focus indicators on its Overall row.

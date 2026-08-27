@@ -83,6 +83,7 @@ describe('OnMove MCP protocol adapter', () => {
     const instructions = client.getInstructions()
 
     expect(instructions).toContain('Choose reads by intent.')
+    expect(instructions).toContain('Updated [Delivery #T24](onmove://thread/24)')
     expect(instructions).toContain('OnMove Settings controls sensitive access')
     expect(instructions).not.toContain('BEGIN USER-CONFIGURED ONMOVE INSTRUCTIONS')
     expect(instructions).not.toContain('permissions enforced by OnMove')
@@ -280,11 +281,17 @@ describe('OnMove MCP protocol adapter', () => {
         name: 'onmove.get_entity_by_code',
         arguments: { code: code.toLowerCase().replace('#', '') }
       })
-      expect(response.isError).not.toBe(true)
+      expect(response.isError, JSON.stringify(response)).not.toBe(true)
       expect(response.structuredContent).toMatchObject({
         code,
         reference: { type, id }
       })
+      expect(response.content).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'text',
+          text: expect.stringContaining(`](onmove://${type}/${id})`)
+        })
+      ]))
     }
 
     const list = await client.callTool({
@@ -4923,6 +4930,14 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: { id: thread.id, title: 'Renamed through MCP', dueDate: '2026-09-01' }
     })
     expect(allowedThreadEdit.isError).not.toBe(true)
+    expect(allowedThreadEdit.content).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'text',
+        text: expect.stringContaining(
+          `[Renamed through MCP #T${thread.id}](onmove://thread/${thread.id})`
+        )
+      })
+    ]))
     expect(database.domain.threads.find(thread.id)).toMatchObject({
       title: 'Renamed through MCP',
       dueDate: '2026-09-01'
@@ -5615,7 +5630,7 @@ describe('OnMove MCP protocol adapter', () => {
       }
     })
     for (;;) {
-      expect(response.isError).not.toBe(true)
+      expect(response.isError, JSON.stringify(response)).not.toBe(true)
       const page = response.structuredContent as {
         items: Array<{ reference: { id: number } }>
         hasMore: boolean

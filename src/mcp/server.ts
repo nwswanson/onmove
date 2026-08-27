@@ -46,6 +46,7 @@ import {
   parseEntityReference,
   type EntityReferenceKind
 } from '../shared/entity-reference'
+import { onMoveMarkdownEntityLink } from '../shared/onmove-url'
 import {
   ONMOVE_RICH_TEXT_MARKS,
   OnMoveRichTextPatchError,
@@ -1126,10 +1127,11 @@ function result(value: unknown, diagnostics: McpDiagnostics = diagnosticsScope()
       !Array.isArray(decoratedValue)
     ? { ...(decoratedValue as Record<string, unknown>), diagnostics }
     : { items: decoratedValue, diagnostics }
+  const textContent = withEntityMarkdownLinks(structuredContent)
   return {
     // MCP clients commonly retain both content and structuredContent. Compact JSON avoids
     // needlessly doubling whitespace in the model context while preserving identical data.
-    content: [{ type: 'text', text: JSON.stringify(structuredContent) }],
+    content: [{ type: 'text', text: JSON.stringify(textContent) }],
     structuredContent
   }
 }
@@ -1161,7 +1163,32 @@ function entityKind(value: unknown): EntityReferenceKind | null {
     : null
 }
 
-/** Adds public codes at the MCP serialization boundary without changing domain snapshots. */
+function entityDisplayName(
+  current: Record<string, unknown>,
+  explicitEntity: Record<string, unknown> | null,
+  discoverySubject: Record<string, unknown> | null,
+  kind: EntityReferenceKind
+): string {
+  const entity = record(current.entity)
+  const note = record(current.note)
+  const candidates = [
+    current.title,
+    current.name,
+    entity?.title,
+    entity?.name,
+    explicitEntity?.title,
+    explicitEntity?.name,
+    discoverySubject?.name,
+    note?.title
+  ]
+  const name = candidates.find((candidate) =>
+    typeof candidate === 'string' && candidate.trim().length > 0)
+  return typeof name === 'string'
+    ? name
+    : kind === 'todo' ? 'Todo' : `${kind.slice(0, 1).toUpperCase()}${kind.slice(1)}`
+}
+
+/** Adds public codes at the schema-validated MCP structured-content boundary. */
 function withEntityCodes(value: unknown, key: string | null = null): unknown {
   if (Array.isArray(value)) return value.map((item) => withEntityCodes(item, key))
   const current = record(value)
@@ -1194,6 +1221,32 @@ function withEntityCodes(value: unknown, key: string | null = null): unknown {
   if (inferredKind && Number.isSafeInteger(id) && id > 0) {
     decorated.code = entityReference(inferredKind, id)
   }
+  return decorated
+}
+
+/**
+ * Enriches only the model-facing text copy. Tool output schemas remain stable
+ * while a single primary coded result still supplies a ready clickable link.
+ */
+function withEntityMarkdownLinks(value: unknown, eligible = true): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => withEntityMarkdownLinks(item, false))
+  }
+  const current = record(value)
+  if (!current) return value
+  const decorated = Object.fromEntries(
+    Object.entries(current).map(([key, child]) => [key, withEntityMarkdownLinks(child, false)])
+  )
+  if (!eligible) return decorated
+  const parsed = typeof current.code === 'string' ? parseEntityReference(current.code) : null
+  if (!parsed) return decorated
+  const explicitEntity = record(current.entity)
+  const discoverySubject = record(current.subject)
+  decorated.markdownLink = onMoveMarkdownEntityLink(
+    parsed.kind,
+    parsed.id,
+    entityDisplayName(current, explicitEntity, discoverySubject, parsed.kind)
+  )
   return decorated
 }
 
@@ -1996,7 +2049,7 @@ export function createOnMoveMcpServer(
     {
       instructions: composeOnMoveMcpInstructions(
         database.mcpSettings.get().clientInstructions,
-        'Choose reads by intent. Every user-addressable entity returned by MCP has a canonical code such as #F2, #T4, or #U90. When the user supplies one, call onmove.get_entity_by_code directly and do not search. For current action queues use onmove.get_reviews and onmove.get_todos. get_todos includes open Todos and the bounded recent-completion window only while their complete Focus/Thread/Commitment hierarchy is active or paused; use search_todos with lifecycle.mode=closed or all when the user intentionally asks for historical Todos. For a compact queryless inventory use list_focuses, list_threads, list_commitments, or list_routines; these return hierarchy and one explicit projection row per applicable Subject without child Updates, Notes, or rich-text documents. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Use onmove.search across all relevant kinds when the request asks for information "about" a Thread or Focus: the answer may be evidence inside a Note, Update, Todo, or other descendant, not an entity whose title matches the words. Each primary search match always reports its exact matched field, containing Thread, complete coded path, lifecycle provenance, and recommendedWriteTarget; these are never optional or budget-truncated. hierarchyPaths is only an auxiliary Subject/Scope expansion and must not replace each match\'s own path. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Search never returns lossless rich text. Request includeRichText=true on one known entity only immediately before a full structural replacement. Use onmove.retrieve after exact hierarchy IDs are known when evidence must stay inside an explicit workspace, Focus, asserted Focus/Thread, and optional canonical Subject intersection, or when provider-neutral enhanced retrieval is useful. Context IDs are operational identity boundaries: semantic relevance can rank evidence inside them but must never disambiguate an entity, select a sibling context, or choose a write target. Search and retrieve resolve an omitted lifecycle from OnMove Settings: current active/paused lineage by default, or all current and closed work when Include closed work in MCP results is enabled. Explicit lifecycle.mode=current, closed, or all always overrides that preference. Every hit reports direct status, effective lifecycle, complete lineage, and explicit closure provenance identifying direct versus parent-inherited closure. Never silently treat excluded history as current; when lifecycleCoverage.wideningRecommended is true, repeat the same initial request exactly as directed by lifecycleCoverage.nextAction. The legacy onmove.search, onmove.continue_search, and every onmove.search_<kind> tool remain available for initial cross-kind discovery, exact lexical search, queryless structured listing, and Subject hierarchy projection. Send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility. Initial search tools never accept continuationToken. Natural-language wrappers retain meaningful entity terms. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Projection controls auxiliary Subject/Scope expansion, not required primary hierarchy. Inspect projections.*.complete before treating auxiliary paths or Subject uses as exhaustive. Never invent or alter a continuationToken. For another page call onmove.continue_search with only the exact non-null signed token; it preserves the originating search, complete query, lifecycle policy, and stable cursor. If SEARCH_CURSOR_STALE is returned, restart the original search tool with its criteria. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop global discovery and fetch returned IDs or continue only inside the returned boundary. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong Update placement. To move a Thread between Focuses, call onmove.plan_thread_reparent first, inspect its Scope effects, then copy its exact nextAction arguments into onmove.reparent_thread. Delete only after the user explicitly asks for and confirms the exact target; onmove.delete_entity requires confirm=true and may cascade through owned descendants. Inspect diagnostics and warnings. OnMove Settings controls sensitive access, the omitted lifecycle default, and independent View/Edit/Delete grants by resource, Focus, and Thread.'
+        'Choose reads by intent. Every user-addressable entity returned by MCP has a canonical code such as #F2, #T4, or #U90 and a canonical onmove:// URI. Single-entity reads and mutation results also return a ready-to-use markdownLink in textual content without expanding collection results. In user-facing mutation summaries, use that returned link exactly—for example, Updated [Delivery #T24](onmove://thread/24)—instead of reporting an unlinked code. When the user supplies a code, call onmove.get_entity_by_code directly and do not search. For current action queues use onmove.get_reviews and onmove.get_todos. get_todos includes open Todos and the bounded recent-completion window only while their complete Focus/Thread/Commitment hierarchy is active or paused; use search_todos with lifecycle.mode=closed or all when the user intentionally asks for historical Todos. For a compact queryless inventory use list_focuses, list_threads, list_commitments, or list_routines; these return hierarchy and one explicit projection row per applicable Subject without child Updates, Notes, or rich-text documents. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Use onmove.search across all relevant kinds when the request asks for information "about" a Thread or Focus: the answer may be evidence inside a Note, Update, Todo, or other descendant, not an entity whose title matches the words. Each primary search match always reports its exact matched field, containing Thread, complete coded path, lifecycle provenance, and recommendedWriteTarget; these are never optional or budget-truncated. hierarchyPaths is only an auxiliary Subject/Scope expansion and must not replace each match\'s own path. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Search never returns lossless rich text. Request includeRichText=true on one known entity only immediately before a full structural replacement. Use onmove.retrieve after exact hierarchy IDs are known when evidence must stay inside an explicit workspace, Focus, asserted Focus/Thread, and optional canonical Subject intersection, or when provider-neutral enhanced retrieval is useful. Context IDs are operational identity boundaries: semantic relevance can rank evidence inside them but must never disambiguate an entity, select a sibling context, or choose a write target. Search and retrieve resolve an omitted lifecycle from OnMove Settings: current active/paused lineage by default, or all current and closed work when Include closed work in MCP results is enabled. Explicit lifecycle.mode=current, closed, or all always overrides that preference. Every hit reports direct status, effective lifecycle, complete lineage, and explicit closure provenance identifying direct versus parent-inherited closure. Never silently treat excluded history as current; when lifecycleCoverage.wideningRecommended is true, repeat the same initial request exactly as directed by lifecycleCoverage.nextAction. The legacy onmove.search, onmove.continue_search, and every onmove.search_<kind> tool remain available for initial cross-kind discovery, exact lexical search, queryless structured listing, and Subject hierarchy projection. Send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility. Initial search tools never accept continuationToken. Natural-language wrappers retain meaningful entity terms. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Projection controls auxiliary Subject/Scope expansion, not required primary hierarchy. Inspect projections.*.complete before treating auxiliary paths or Subject uses as exhaustive. Never invent or alter a continuationToken. For another page call onmove.continue_search with only the exact non-null signed token; it preserves the originating search, complete query, lifecycle policy, and stable cursor. If SEARCH_CURSOR_STALE is returned, restart the original search tool with its criteria. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop global discovery and fetch returned IDs or continue only inside the returned boundary. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong Update placement. To move a Thread between Focuses, call onmove.plan_thread_reparent first, inspect its Scope effects, then copy its exact nextAction arguments into onmove.reparent_thread. Delete only after the user explicitly asks for and confirms the exact target; onmove.delete_entity requires confirm=true and may cascade through owned descendants. Inspect diagnostics and warnings. OnMove Settings controls sensitive access, the omitted lifecycle default, and independent View/Edit/Delete grants by resource, Focus, and Thread.'
       )
     }
   )

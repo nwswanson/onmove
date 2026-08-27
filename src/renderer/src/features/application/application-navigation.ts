@@ -8,6 +8,8 @@ export interface FocusWorkspaceDestination {
   focusId: number
   threadId: number | null
   commitmentId: number | null
+  /** Selects a Routine child while preserving its owning Thread hierarchy. */
+  routineId?: number | null
   subjectId: number | null
   /**
    * `children` currently enters the receiver-owned Commitment level. It is a

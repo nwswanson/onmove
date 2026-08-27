@@ -8,7 +8,9 @@ import { createMenuTemplate } from './menu'
 import { resolveBundledSemanticModelPath, resolveDatabasePath } from './paths'
 import { isAllowedExternalLink } from './external-links'
 import { installTextContextMenu } from './text-context-menu'
+import { resolveOnMoveEntityLink } from './entity-links'
 import { OnMoveMcpRuntime } from '../mcp/live-server'
+import { parseOnMoveEntityUrl, ONMOVE_URL_SCHEME } from '../shared/onmove-url'
 import {
   IPC_EVENTS,
   type EnhancedRetrievalStatusSnapshot,
@@ -43,6 +45,75 @@ const WINDOW_SIZE_SAVE_DELAY_MS = 150
 let pendingMainWindowSize: { width: number; height: number } | undefined
 let windowSizeSaveTimer: NodeJS.Timeout | undefined
 let shutdownInProgress = false
+const pendingEntityLinks: ReturnType<typeof parseOnMoveEntityUrl>[] = []
+
+function mainWindows(): BrowserWindow[] {
+  return BrowserWindow.getAllWindows().filter(
+    (window) => !richTextWindowTargets.has(window.webContents.id)
+  )
+}
+
+function deliverEntityLink(parsed: NonNullable<ReturnType<typeof parseOnMoveEntityUrl>>): void {
+  if (!database || shutdownInProgress) {
+    pendingEntityLinks.push(parsed)
+    return
+  }
+  const destination = resolveOnMoveEntityLink(database.domain, parsed)
+  if (!destination) return
+  const focused = BrowserWindow.getFocusedWindow()
+  let window: BrowserWindow | null | undefined =
+    focused && !richTextWindowTargets.has(focused.webContents.id)
+    ? focused
+    : mainWindows()[0]
+  window ??= createWindow()
+  if (!window) return
+  const send = (): void => {
+    if (window?.isDestroyed()) return
+    window.webContents.send(IPC_EVENTS.openEntityLink, destination)
+    if (window.isMinimized()) window.restore()
+    window.show()
+    window.focus()
+  }
+  if (window.webContents.isLoading()) window.webContents.once('did-finish-load', send)
+  else send()
+}
+
+function receiveEntityLink(rawUrl: string): void {
+  const parsed = parseOnMoveEntityUrl(rawUrl)
+  if (parsed) deliverEntityLink(parsed)
+}
+
+function flushPendingEntityLinks(): void {
+  const pending = pendingEntityLinks.splice(0)
+  for (const parsed of pending) {
+    if (parsed) deliverEntityLink(parsed)
+  }
+}
+
+// Register URL reception before ready: macOS may deliver open-url while the
+// database and first renderer are still starting.
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  receiveEntityLink(url)
+})
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', (_event, argv) => {
+    const url = argv.find((argument) => parseOnMoveEntityUrl(argument) !== null)
+    if (url) receiveEntityLink(url)
+    else {
+      const window = mainWindows()[0]
+      if (window) {
+        if (window.isMinimized()) window.restore()
+        window.show()
+        window.focus()
+      }
+    }
+  })
+}
 
 function flushMainWindowSize(): void {
   if (windowSizeSaveTimer) clearTimeout(windowSizeSaveTimer)
@@ -365,6 +436,10 @@ function setSensitiveContentHidden(hidden: boolean): void {
 }
 
 app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) return
+  if (!app.isDefaultProtocolClient(ONMOVE_URL_SCHEME)) {
+    app.setAsDefaultProtocolClient(ONMOVE_URL_SCHEME)
+  }
   const semanticModelPath = resolveBundledSemanticModelPath(
     app.getAppPath(),
     process.resourcesPath,
@@ -428,6 +503,9 @@ app.whenReady().then(async () => {
   )
 
   createWindow()
+  const launchUrl = process.argv.find((argument) => parseOnMoveEntityUrl(argument) !== null)
+  if (launchUrl) receiveEntityLink(launchUrl)
+  flushPendingEntityLinks()
 
   app.on('activate', () => {
     if (shutdownInProgress) return

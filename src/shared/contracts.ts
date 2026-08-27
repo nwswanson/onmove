@@ -1,3 +1,5 @@
+import type { EntityReferenceKind } from './entity-reference'
+
 export const IPC_CHANNELS = {
   getAppState: 'app:get-state',
   getSensitiveContentHidden: 'app:get-sensitive-content-hidden',
@@ -98,6 +100,7 @@ export const IPC_SYNC_CHANNELS = {
 } as const
 
 export const IPC_EVENTS = {
+  openEntityLink: 'app:open-entity-link',
   sensitiveContentVisibilityChanged: 'app:sensitive-content-visibility-changed',
   navigationBadgesInvalidated: 'app:navigation-badges-invalidated',
   routinesChanged: 'app:routines-changed',
@@ -108,6 +111,19 @@ export const IPC_EVENTS = {
   enhancedRetrievalStatusChanged: 'app:enhanced-retrieval-status-changed',
   richTextDocumentChanged: 'rich-text:document-changed'
 } as const
+
+/**
+ * A resolved custom-protocol destination. The main process owns database
+ * hierarchy resolution; the renderer owns how that destination is displayed.
+ */
+export interface OnMoveEntityLinkTarget {
+  reference: { type: EntityReferenceKind; id: number }
+  focusId: number
+  threadId: number | null
+  commitmentId: number | null
+  routineId: number | null
+  subjectId: number | null
+}
 
 export type JsonPrimitive = string | number | boolean | null
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[]
@@ -1594,6 +1610,7 @@ export interface OnMoveApi {
   onNavigationBadgesInvalidated: (listener: () => void) => () => void
   onRoutinesChanged: (listener: () => void) => () => void
   onDomainChanged: (listener: () => void) => () => void
+  onOpenEntityLink: (listener: (target: OnMoveEntityLinkTarget) => void) => () => void
   recordGreeting: () => Promise<AppState>
   showDataFolder: () => Promise<void>
   navigationPins: NavigationPinApi

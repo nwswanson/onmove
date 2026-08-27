@@ -72,6 +72,7 @@ import {
   type RetrievalPage,
   type RetrievalRequest
 } from './retrieval-service'
+import { onMoveEntityUrl } from '../../shared/onmove-url'
 
 export type ApplicationEntityReference =
   | { type: 'focus'; id: number }
@@ -837,7 +838,7 @@ function compactListSort(
 }
 
 function uri(reference: ApplicationEntityReference): string {
-  return `onmove://${reference.type}/${reference.id}`
+  return onMoveEntityUrl(reference.type, reference.id)
 }
 
 function trackingCommitment(record: { type: string }): boolean {
@@ -1459,7 +1460,7 @@ export class OnMoveQueryService {
     if (!todo || !this.sensitivity.canRead('todo', id, access)) return null
     return {
       reference: { type: 'todo', id },
-      uri: `onmove://todo/${id}`,
+      uri: onMoveEntityUrl('todo', id),
       effectiveSensitive: Boolean(this.sensitivity.isSensitive('todo', id)),
       entity: plainProjection(todo)
     }
@@ -1471,7 +1472,7 @@ export class OnMoveQueryService {
     if (!subject || !this.sensitivity.canRead('subject', id, access)) return null
     return {
       reference: { type: 'subject', id },
-      uri: `onmove://subject/${id}`,
+      uri: onMoveEntityUrl('subject', id),
       effectiveSensitive: Boolean(this.sensitivity.isSensitive('subject', id)),
       entity: plainProjection(subject)
     }
@@ -1603,7 +1604,7 @@ export class OnMoveQueryService {
     }
     const base = {
       reference: { type: 'update', id },
-      uri: `onmove://update/${id}`,
+      uri: onMoveEntityUrl('update', id),
       contextPath,
       effectiveSensitive: Boolean(this.sensitivity.isSensitive('update', id))
     } as const
@@ -1675,7 +1676,7 @@ export class OnMoveQueryService {
     }
     return {
       reference: { type: 'note', id },
-      uri: `onmove://note/${id}`,
+      uri: onMoveEntityUrl('note', id),
       contextPath,
       effectiveSensitive: Boolean(this.sensitivity.isSensitive('note', id)),
       note: {
@@ -2462,7 +2463,7 @@ export class OnMoveQueryService {
       .slice(0, page.limit)
       .map(({ update, commitment }) => ({
         id: update.id,
-        uri: `onmove://update/${update.id}`,
+        uri: onMoveEntityUrl('update', update.id),
         parent: update.parent,
         hierarchy: { ...hierarchy, commitment },
         subject,
@@ -2494,7 +2495,7 @@ export class OnMoveQueryService {
       .slice(0, page.limit)
       .map((todo) => ({
         id: todo.id,
-        uri: `onmove://todo/${todo.id}`,
+        uri: onMoveEntityUrl('todo', todo.id),
         name: todo.name,
         parent: todo.parent,
         subject,
@@ -2509,7 +2510,7 @@ export class OnMoveQueryService {
       .slice(0, page.limit)
       .map(({ commitment, cell }) => ({
         id: commitment.id,
-        uri: `onmove://commitment/${commitment.id}`,
+        uri: onMoveEntityUrl('commitment', commitment.id),
         title: commitment.title,
         status: commitment.status,
         state: cell.state,
@@ -2533,7 +2534,7 @@ export class OnMoveQueryService {
         displayPath: target.displayPath,
         thread: {
           id: thread.id,
-          uri: `onmove://thread/${thread.id}`,
+          uri: onMoveEntityUrl('thread', thread.id),
           title: thread.title,
           status: thread.status,
           state: threadCell?.state ?? 'none',
