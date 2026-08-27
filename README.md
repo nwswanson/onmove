@@ -77,6 +77,17 @@ source, so clean clones produce the same Finder and Dock icon without a machine-
 
 Keep OnMove open while using MCP. The server, sensitive-content access, and **Include closed work
 in MCP results** setting are off by default.
+
+Use **Custom instructions for MCP clients** to save up to 8,000 characters of plain-text guidance
+for models that use OnMove. For example, you can describe how Updates for particular Threads should
+be formatted or when the model should ask before creating one. OnMove advertises this text through
+the standard MCP server-instructions field alongside its built-in operating guidance. The MCP host
+decides whether and how to place server instructions in the model's context, so this is advisory
+guidance rather than a way to replace the caller's system prompt. It cannot expand OnMove
+permissions, bypass tool schemas or confirmation gates, or override the current user request.
+After saving a change, reconnect the MCP server or refresh server discovery in an already-connected
+client so it receives the new instructions.
+
 Under **Default access**, grant View, Edit, and Delete independently for Focuses, Threads,
 Commitments, Routines, Updates, Todos, Notes, and Subjects. Edit and Delete also require View;
 Delete defaults to denied. Add a Focus override only

@@ -112,6 +112,39 @@ describe('database migrations', () => {
     raw.close()
   })
 
+  it('adds bounded client instructions to legacy MCP settings', () => {
+    const current = new AppDatabase(databasePath)
+    current.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      ALTER TABLE mcp_settings DROP COLUMN client_instructions;
+      DELETE FROM schema_migrations WHERE version = 49;
+    `)
+    legacy.close()
+
+    let migrated = new AppDatabase(databasePath)
+    expect(migrated.mcpSettings.get().clientInstructions).toBe('')
+    const instructions = 'Use the launch runbook.\nAsk before writing updates with no next step. 🚀'
+    expect(migrated.mcpSettings.update({ clientInstructions: instructions })).toMatchObject({
+      clientInstructions: instructions
+    })
+    migrated.close()
+
+    migrated = new AppDatabase(databasePath)
+    expect(migrated.mcpSettings.get().clientInstructions).toBe(instructions)
+    migrated.close()
+
+    const raw = new DatabaseSync(databasePath)
+    expect(raw.prepare(
+      'SELECT version FROM schema_migrations WHERE version = 49'
+    ).get()).toEqual({ version: 49 })
+    expect(() => raw.prepare(
+      'UPDATE mcp_settings SET client_instructions = ? WHERE singleton = 1'
+    ).run('x'.repeat(8_001))).toThrow(/CHECK constraint failed/)
+    raw.close()
+  })
+
   it('creates the rebuildable embedding cache without changing authoritative search data', () => {
     const database = new AppDatabase(databasePath)
     const focus = database.domain.focuses.create({ title: 'Durable source record' })

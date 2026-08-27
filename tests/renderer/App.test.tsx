@@ -474,6 +474,7 @@ function installApi(
     serverPort: 47_832,
     retrievalMode: 'classic',
     includeClosedByDefault: false,
+    clientInstructions: '',
     allowSensitive: false,
     allowMutations: false,
     updatedAt: '2026-08-10T12:00:00.000Z',
@@ -626,6 +627,9 @@ function installApi(
           ...(input.includeClosedByDefault === undefined
             ? {}
             : { includeClosedByDefault: input.includeClosedByDefault }),
+          ...(input.clientInstructions === undefined
+            ? {}
+            : { clientInstructions: input.clientInstructions }),
           ...(input.allowSensitive === undefined ? {} : { allowSensitive: input.allowSensitive }),
           ...(input.allowMutations === undefined ? {} : { allowMutations: input.allowMutations }),
           serverEnabled,
@@ -5955,6 +5959,63 @@ describe('App', () => {
     })))
     expect(within(panel).getByText('Generating local embeddings')).toBeVisible()
     expect(within(panel).queryByText('Loading cached embeddings')).not.toBeInTheDocument()
+  })
+
+  it('saves custom MCP client instructions explicitly and preserves a dirty draft', async () => {
+    const api = installApi()
+    let listener: ((settings: McpSettingsSnapshot) => void) | undefined
+    vi.mocked(api.mcp.onChanged).mockImplementation((next) => {
+      listener = next
+      return () => undefined
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: 'Settings' }))
+    const instructions = screen.getByRole('textbox', {
+      name: 'Custom instructions for MCP clients'
+    })
+    const save = screen.getByRole('button', { name: 'Save instructions' })
+    expect(instructions).toHaveAttribute('maxlength', '8000')
+    expect(screen.getByText('0 / 8,000 characters')).toBeVisible()
+    expect(screen.getByText(/clients next connect or rediscover this server/)).toBeVisible()
+    expect(save).toBeDisabled()
+
+    const firstDraft = [
+      'For Project A updates, include clear next steps.',
+      '<ask me> before writing when no next step is available.'
+    ].join('\n')
+    fireEvent.change(instructions, { target: { value: firstDraft } })
+    expect(api.mcp.update).not.toHaveBeenCalledWith({ clientInstructions: firstDraft })
+    expect(save).toBeEnabled()
+
+    await user.click(save)
+    expect(api.mcp.update).toHaveBeenCalledWith({ clientInstructions: firstDraft })
+    await waitFor(() => expect(save).toBeDisabled())
+
+    const saved = await api.mcp.get()
+    act(() => listener?.({
+      ...saved,
+      clientInstructions: 'A newer saved instruction from another window.',
+      updatedAt: '2026-08-10T12:02:00.000Z'
+    }))
+    await waitFor(() => expect(instructions).toHaveValue(
+      'A newer saved instruction from another window.'
+    ))
+
+    fireEvent.change(instructions, { target: { value: 'My unsaved local draft.' } })
+    act(() => listener?.({
+      ...saved,
+      clientInstructions: 'A newer saved instruction from another window.',
+      allowSensitive: true,
+      updatedAt: '2026-08-10T12:03:00.000Z'
+    }))
+    expect(instructions).toHaveValue('My unsaved local draft.')
+
+    await user.click(screen.getByRole('button', { name: 'Clear' }))
+    expect(instructions).toHaveValue('')
+    await user.click(screen.getByRole('button', { name: 'Save instructions' }))
+    expect(api.mcp.update).toHaveBeenCalledWith({ clientInstructions: '' })
   })
 
   it('shows a terminal retrieval telemetry error and recovers on a live event', async () => {

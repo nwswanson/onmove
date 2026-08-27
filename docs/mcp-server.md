@@ -18,6 +18,33 @@ Configure an MCP client with that URL as a Streamable HTTP server. OnMove must r
 the setting off or quitting OnMove closes the endpoint. The port is configurable in Settings if the
 default is already in use.
 
+## Custom client instructions
+
+**Custom instructions for MCP clients** is a persisted plain-text field in the Model Context
+Protocol settings. It accepts up to 8,000 characters of organization- or workflow-specific guidance,
+such as requiring a consistent Update structure for selected Threads or asking before an Update is
+created when no next step is known.
+
+OnMove's primary delivery mechanism is the standard MCP server-instructions field. When a client
+initializes or discovers the server, OnMove advertises the saved text alongside its stable built-in
+guide to choosing tools and handling results. Keeping global guidance there avoids repeating it in
+every tool description, while individual tool schemas continue to describe and validate their own
+operations.
+
+The exact user-authored text is also available as the read-only
+`onmove://client-instructions` resource for inspection. Reading that resource does not itself cause
+a host to apply the guidance; negotiated server instructions remain the automatic delivery path.
+
+Server instructions are advisory: the MCP host decides whether and how to add them to the calling
+model's context. OnMove cannot turn this text into the host's actual system prompt or guarantee that
+a client follows it. The text also cannot grant access, bypass View/Edit/Delete or sensitive-content
+policy, change a tool schema, skip a confirmation gate, or override the current user request. A
+natural-language rule that must be enforced needs a separate structured, server-side policy rather
+than custom instructions.
+
+Clients commonly cache server instructions for the life of a connection. After saving or clearing
+the field, reconnect OnMove in the client or refresh server discovery before relying on the change.
+
 ## Permissions
 
 The server itself and sensitive access default to off. Ordinary records default to View allowed,

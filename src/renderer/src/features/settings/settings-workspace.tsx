@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Bot, Clock3, DatabaseBackup, FolderOpen, Plus, ShieldCheck, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
 import {
   ContextDrawerOutlet,
   type ContextDrawerControl
@@ -8,6 +9,7 @@ import {
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
 import { useBackupSettingsModel } from './use-backup-settings-model'
 import {
+  MCP_CLIENT_INSTRUCTIONS_MAX_LENGTH,
   MCP_PERMISSION_RESOURCES,
   type McpPermissionOverrideSnapshot,
   type McpPermissionResource,
@@ -47,6 +49,86 @@ const permissionLabels: Record<McpPermissionResource, string> = {
 }
 
 type OverrideTarget = McpPermissionOverrideSnapshot['target']
+
+function McpClientInstructions({ model }: { model: McpSettingsModel }): React.JSX.Element {
+  const persisted = model.state?.clientInstructions ?? ''
+  const previousPersisted = useRef('')
+  const [draft, setDraft] = useState('')
+  const [savingInstructions, setSavingInstructions] = useState(false)
+
+  useEffect(() => {
+    const previous = previousPersisted.current
+    setDraft((current) => current === previous ? persisted : current)
+    previousPersisted.current = persisted
+  }, [persisted])
+
+  const dirty = draft !== persisted
+
+  async function save(): Promise<void> {
+    setSavingInstructions(true)
+    try {
+      await model.update({ clientInstructions: draft })
+    } finally {
+      setSavingInstructions(false)
+    }
+  }
+
+  return (
+    <div className="py-4">
+      <label htmlFor="mcp-client-instructions" className="block text-sm font-medium">
+        Custom instructions for MCP clients
+      </label>
+      <p id="mcp-client-instructions-help" className="mt-0.5 text-xs leading-5 text-muted-foreground">
+        Plain-text guidance sent through the standard MCP server instructions when a client
+        connects. Clients decide how to apply it. It cannot expand OnMove permissions, expose
+        hidden content, or bypass tool schemas and confirmation requirements.
+      </p>
+      <Textarea
+        id="mcp-client-instructions"
+        className="mt-3 min-h-40 resize-y text-sm"
+        value={draft}
+        maxLength={MCP_CLIENT_INSTRUCTIONS_MAX_LENGTH}
+        spellCheck
+        disabled={model.loading || model.saving}
+        aria-describedby="mcp-client-instructions-help mcp-client-instructions-count mcp-client-instructions-reconnect"
+        placeholder="For example: Before creating an Update for Project A, state clear next steps. If none are available, ask me before creating it."
+        onChange={(event) => setDraft(event.target.value)}
+      />
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+        <span
+          id="mcp-client-instructions-count"
+          className="text-xs tabular-nums text-muted-foreground"
+        >
+          {draft.length.toLocaleString()} / {MCP_CLIENT_INSTRUCTIONS_MAX_LENGTH.toLocaleString()}
+          {' '}characters
+        </span>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={model.loading || model.saving || draft.length === 0}
+            onClick={() => setDraft('')}
+          >
+            Clear
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={model.loading || model.saving || !dirty}
+            onClick={() => void save()}
+          >
+            {savingInstructions ? 'Saving…' : 'Save instructions'}
+          </Button>
+        </div>
+      </div>
+      <p id="mcp-client-instructions-reconnect" className="mt-2 text-xs leading-5 text-muted-foreground">
+        Saved changes apply when MCP clients next connect or rediscover this server. Reconnect an
+        active client if it keeps using earlier instructions.
+      </p>
+    </div>
+  )
+}
 
 function updateTarget(target: OverrideTarget): { type: 'focus' | 'thread'; id: number } {
   return { type: target.type, id: target.id }
@@ -686,6 +768,7 @@ export function SettingsWorkspace({
                         </span>
                       </span>
                     </label>
+                    <McpClientInstructions model={mcp} />
                     <label className="flex cursor-pointer items-start gap-3 py-3">
                       <input
                         type="checkbox"

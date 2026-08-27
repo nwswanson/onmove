@@ -785,6 +785,14 @@ foreground colors and do not rely on color alone to communicate selection or sta
   localhost Host and Origin headers, expose the configured `/mcp` endpoint only while OnMove is
   running, and stop the listener before closing the shared database. Successful MCP mutations must
   broadcast the generic in-process domain-change event to every open renderer window.
+- Keep global user-authored MCP client guidance as a bounded, persisted plain-text setting. Advertise
+  it alongside the stable built-in guide through the standard MCP server `instructions` field; do
+  not duplicate global guidance in every tool description or present an opt-in MCP prompt as though
+  it were automatically applied. Preserve the user's text inside a clearly delimited section and
+  treat it as advisory because the MCP host controls whether and how server instructions enter the
+  model context. It must never grant access, bypass schemas or confirmation gates, weaken enforced
+  server policy, or override the current user request. Existing clients may cache instructions, so
+  Settings and documentation must direct users to reconnect or rediscover the server after edits.
 
 ### MCP API design lessons and regression constraints
 

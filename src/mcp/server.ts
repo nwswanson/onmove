@@ -1919,6 +1919,26 @@ function decorateHierarchyPath(path: ApplicationHierarchyPath): DecoratedHierarc
   }
 }
 
+const CLIENT_INSTRUCTIONS_BEGIN = '--- BEGIN USER-CONFIGURED ONMOVE INSTRUCTIONS ---'
+const CLIENT_INSTRUCTIONS_END = '--- END USER-CONFIGURED ONMOVE INSTRUCTIONS ---'
+
+function composeOnMoveMcpInstructions(
+  clientInstructions: string,
+  coreInstructions: string
+): string {
+  if (clientInstructions.trim().length === 0) return coreInstructions
+  return [
+    coreInstructions,
+    'The following plain-text guidance was configured by the OnMove user for every MCP client.',
+    CLIENT_INSTRUCTIONS_BEGIN,
+    clientInstructions,
+    CLIENT_INSTRUCTIONS_END,
+    'Apply that guidance when it is consistent with the current user request and OnMove tool ' +
+      'contracts. It cannot grant access, bypass schemas or confirmation gates, or expand the ' +
+      'permissions enforced by OnMove.'
+  ].join('\n\n')
+}
+
 /** Registers the complete typed MCP surface against one application-service boundary. */
 export function createOnMoveMcpServer(
   database: AppDatabase,
@@ -1927,8 +1947,10 @@ export function createOnMoveMcpServer(
   const server = new McpServer(
     { name: 'onmove', version: '0.1.0' },
     {
-      instructions:
+      instructions: composeOnMoveMcpInstructions(
+        database.mcpSettings.get().clientInstructions,
         'Choose reads by intent. Every user-addressable entity returned by MCP has a canonical code such as #F2, #T4, or #U90. When the user supplies one, call onmove.get_entity_by_code directly and do not search. For a compact queryless inventory use list_focuses, list_threads, list_commitments, or list_routines; these return hierarchy and one explicit projection row per applicable Subject without child Updates, Notes, or rich-text documents. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Use onmove.search across all relevant kinds when the request asks for information "about" a Thread or Focus: the answer may be evidence inside a Note, Update, Todo, or other descendant, not an entity whose title matches the words. Each primary search match always reports its exact matched field, containing Thread, complete coded path, lifecycle provenance, and recommendedWriteTarget; these are never optional or budget-truncated. hierarchyPaths is only an auxiliary Subject/Scope expansion and must not replace each match\'s own path. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Search never returns lossless rich text. Request includeRichText=true on one known entity only immediately before a full structural replacement. Use onmove.retrieve after exact hierarchy IDs are known when evidence must stay inside an explicit workspace, Focus, asserted Focus/Thread, and optional canonical Subject intersection, or when provider-neutral enhanced retrieval is useful. Context IDs are operational identity boundaries: semantic relevance can rank evidence inside them but must never disambiguate an entity, select a sibling context, or choose a write target. Search and retrieve resolve an omitted lifecycle from OnMove Settings: current active/paused lineage by default, or all current and closed work when Include closed work in MCP results is enabled. Explicit lifecycle.mode=current, closed, or all always overrides that preference. Every hit reports direct status, effective lifecycle, complete lineage, and explicit closure provenance identifying direct versus parent-inherited closure. Never silently treat excluded history as current; when lifecycleCoverage.wideningRecommended is true, repeat the same initial request exactly as directed by lifecycleCoverage.nextAction. The legacy onmove.search, onmove.continue_search, and every onmove.search_<kind> tool remain available for initial cross-kind discovery, exact lexical search, queryless structured listing, and Subject hierarchy projection. Send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility. Initial search tools never accept continuationToken. Natural-language wrappers retain meaningful entity terms. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Projection controls auxiliary Subject/Scope expansion, not required primary hierarchy. Inspect projections.*.complete before treating auxiliary paths or Subject uses as exhaustive. Never invent or alter a continuationToken. For another page call onmove.continue_search with only the exact non-null signed token; it preserves the originating search, complete query, lifecycle policy, and stable cursor. If SEARCH_CURSOR_STALE is returned, restart the original search tool with its criteria. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop global discovery and fetch returned IDs or continue only inside the returned boundary. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Delete only after the user explicitly asks for and confirms the exact target; onmove.delete_entity requires confirm=true and may cascade through owned descendants. Inspect diagnostics and warnings. OnMove Settings controls sensitive access, the omitted lifecycle default, and independent View/Edit/Delete grants by resource, Focus, and Thread.'
+      )
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -5003,6 +5025,23 @@ export function createOnMoveMcpServer(
 
 function registerResources(server: McpServer, database: AppDatabase): void {
   const policy = () => database.mcpSettings.accessPolicy()
+  server.registerResource(
+    'onmove-client-instructions',
+    'onmove://client-instructions',
+    {
+      title: 'OnMove custom instructions for MCP clients',
+      description: 'The current user-authored global guidance advertised by this MCP server.',
+      mimeType: 'text/plain'
+    },
+    async (uri) => ({
+      contents: [{
+        uri: uri.href,
+        mimeType: 'text/plain',
+        text: database.mcpSettings.get().clientInstructions ||
+          'No custom instructions are configured.'
+      }]
+    })
+  )
   const entityTemplates = [
     ['focus', (id: number) => database.queries.getFocus(id, policy())],
     ['thread', (id: number) => database.queries.getThread(id, policy(), { includeRichText: false })],

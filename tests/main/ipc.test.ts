@@ -4,6 +4,11 @@ import { registerAppIpc } from '../../src/main/ipc'
 
 describe('registerAppIpc', () => {
   it('registers typed application handlers and removes them during cleanup', async () => {
+    const clientInstructions = [
+      'For launch updates:',
+      '- include a clear next step',
+      '- ask before writing when none is available'
+    ].join('\n')
     const handlers = new Map<string, (...arguments_: unknown[]) => unknown>()
     const listeners = new Map<string, (...arguments_: unknown[]) => unknown>()
     const ipcMain = {
@@ -29,12 +34,16 @@ describe('registerAppIpc', () => {
       mcpSettings: {
         get: vi.fn(() => ({
           includeClosedByDefault: false,
+          clientInstructions: '',
           allowSensitive: false,
           allowMutations: false
         })),
         update: vi.fn((input) => ({
           includeClosedByDefault: Boolean(
             (input as { includeClosedByDefault?: boolean }).includeClosedByDefault
+          ),
+          clientInstructions: String(
+            (input as { clientInstructions?: string }).clientInstructions ?? ''
           ),
           allowSensitive: Boolean((input as { allowSensitive?: boolean }).allowSensitive),
           allowMutations: Boolean((input as { allowMutations?: boolean }).allowMutations)
@@ -501,6 +510,7 @@ describe('registerAppIpc', () => {
         serverPort: 47_832,
         retrievalMode: 'classic' as const,
         includeClosedByDefault: false,
+        clientInstructions: '',
         allowSensitive: false,
         allowMutations: false,
         updatedAt: '2026-08-10T12:00:00.000Z',
@@ -526,6 +536,7 @@ describe('registerAppIpc', () => {
         serverPort: 47_832,
         retrievalMode: 'enhanced' as const,
         includeClosedByDefault: true,
+        clientInstructions,
         allowSensitive: false,
         allowMutations: true,
         updatedAt: '2026-08-10T12:01:00.000Z',
@@ -607,6 +618,7 @@ describe('registerAppIpc', () => {
     expect(await handlers.get(IPC_CHANNELS.getMcpSettings)?.()).toMatchObject({
       retrievalMode: 'classic',
       includeClosedByDefault: false,
+      clientInstructions: '',
       allowSensitive: false,
       allowMutations: false
     })
@@ -621,24 +633,28 @@ describe('registerAppIpc', () => {
         serverEnabled: true,
         retrievalMode: 'enhanced',
         includeClosedByDefault: true,
+        clientInstructions,
         allowMutations: true
       }
     )).toMatchObject({
       status: 'running',
       retrievalMode: 'enhanced',
       includeClosedByDefault: true,
+      clientInstructions,
       allowMutations: true
     })
     expect(mcpRuntime.update).toHaveBeenCalledWith({
       serverEnabled: true,
       retrievalMode: 'enhanced',
       includeClosedByDefault: true,
+      clientInstructions,
       allowMutations: true
     })
     expect(notifyMcpSettingsChanged).toHaveBeenCalledWith(expect.objectContaining({
       status: 'running',
       retrievalMode: 'enhanced',
       includeClosedByDefault: true,
+      clientInstructions,
       allowMutations: true
     }))
     expect(startEnhancedRetrievalWarmup).toHaveBeenCalledOnce()

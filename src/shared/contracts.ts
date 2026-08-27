@@ -1486,12 +1486,17 @@ export interface EnhancedRetrievalStatusSnapshot {
   error: string | null
 }
 
+/** Keeps user-authored MCP guidance useful without overwhelming client context windows. */
+export const MCP_CLIENT_INSTRUCTIONS_MAX_LENGTH = 8_000
+
 export interface McpSettingsSnapshot {
   serverEnabled: boolean
   serverPort: number
   retrievalMode: McpRetrievalMode
   /** Default omitted search/retrieval lifecycle to all instead of current. */
   includeClosedByDefault: boolean
+  /** Plain-text guidance advertised through MCP server instructions. */
+  clientInstructions: string
   allowSensitive: boolean
   /** @deprecated Compatibility summary; use permissionPolicy defaults instead. */
   allowMutations: boolean
@@ -1557,6 +1562,7 @@ export interface UpdateMcpSettingsInput {
   serverPort?: number
   retrievalMode?: McpRetrievalMode
   includeClosedByDefault?: boolean
+  clientInstructions?: string
   allowSensitive?: boolean
   /** @deprecated Compatibility master update; changes every default edit grant. */
   allowMutations?: boolean

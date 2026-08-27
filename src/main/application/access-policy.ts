@@ -1,5 +1,6 @@
 import type { SqliteAdapter } from '../data/sqlite-adapter'
 import {
+  MCP_CLIENT_INSTRUCTIONS_MAX_LENGTH,
   MCP_PERMISSION_RESOURCES,
   type McpPermissionGrant,
   type McpPermissionOverrideSnapshot,
@@ -15,6 +16,7 @@ export interface PersistedMcpSettings {
   serverPort: number
   retrievalMode: McpRetrievalMode
   includeClosedByDefault: boolean
+  clientInstructions: string
   allowSensitive: boolean
   allowMutations: boolean
   updatedAt: string
@@ -88,12 +90,13 @@ export class McpSettingsRepository {
       server_port: number
       retrieval_mode: string
       include_closed_by_default: number
+      client_instructions: string
       allow_sensitive: number
       allow_mutations: number
       updated_at: string
     }>(
-      `SELECT server_enabled, server_port, retrieval_mode, include_closed_by_default, allow_sensitive,
-              allow_mutations, updated_at
+      `SELECT server_enabled, server_port, retrieval_mode, include_closed_by_default,
+              client_instructions, allow_sensitive, allow_mutations, updated_at
        FROM mcp_settings WHERE singleton = 1`
     )
     if (!row) throw new Error('MCP settings are unavailable')
@@ -102,6 +105,7 @@ export class McpSettingsRepository {
       serverPort: Number(row.server_port),
       retrievalMode: parseRetrievalMode(row.retrieval_mode),
       includeClosedByDefault: Boolean(row.include_closed_by_default),
+      clientInstructions: row.client_instructions,
       allowSensitive: Boolean(row.allow_sensitive),
       allowMutations: Boolean(row.allow_mutations),
       updatedAt: row.updated_at,
@@ -113,7 +117,7 @@ export class McpSettingsRepository {
     input: Partial<Pick<
       PersistedMcpSettings,
       'serverEnabled' | 'serverPort' | 'retrievalMode' | 'includeClosedByDefault' |
-      'allowSensitive' | 'allowMutations'
+      'clientInstructions' | 'allowSensitive' | 'allowMutations'
     >> & {
       permission?: UpdateMcpPermissionInput
       removePermissionTarget?: { type: 'focus' | 'thread'; id: number }
@@ -136,6 +140,15 @@ export class McpSettingsRepository {
     ) {
       throw new TypeError('includeClosedByDefault must be a boolean')
     }
+    if (
+      input.clientInstructions !== undefined &&
+      (typeof input.clientInstructions !== 'string' ||
+        input.clientInstructions.length > MCP_CLIENT_INSTRUCTIONS_MAX_LENGTH)
+    ) {
+      throw new TypeError(
+        `clientInstructions must be a string of at most ${MCP_CLIENT_INSTRUCTIONS_MAX_LENGTH} characters`
+      )
+    }
     if (input.allowSensitive !== undefined && typeof input.allowSensitive !== 'boolean') {
       throw new TypeError('allowSensitive must be a boolean')
     }
@@ -152,13 +165,15 @@ export class McpSettingsRepository {
       this.database.run(
         `UPDATE mcp_settings
          SET server_enabled = ?, server_port = ?, retrieval_mode = ?,
-             include_closed_by_default = ?, allow_sensitive = ?, allow_mutations = ?, updated_at = ?
+             include_closed_by_default = ?, client_instructions = ?, allow_sensitive = ?,
+             allow_mutations = ?, updated_at = ?
          WHERE singleton = 1`,
         [
           (input.serverEnabled ?? current.serverEnabled) ? 1 : 0,
           input.serverPort ?? current.serverPort,
           input.retrievalMode ?? current.retrievalMode,
           (input.includeClosedByDefault ?? current.includeClosedByDefault) ? 1 : 0,
+          input.clientInstructions ?? current.clientInstructions,
           (input.allowSensitive ?? current.allowSensitive) ? 1 : 0,
           (input.allowMutations ?? current.allowMutations) ? 1 : 0,
           changedAt

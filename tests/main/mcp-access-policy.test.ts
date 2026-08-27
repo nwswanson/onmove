@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AppDatabase } from '../../src/main/database'
+import { MCP_CLIENT_INSTRUCTIONS_MAX_LENGTH } from '../../src/shared/contracts'
 import type { OnMoveRichTextDocument } from '../../src/shared/rich-text-document'
 
 function richText(text: string): OnMoveRichTextDocument {
@@ -61,6 +62,43 @@ describe('hierarchical MCP permissions', () => {
     expect(() => database.mcpSettings.update({
       includeClosedByDefault: 'yes' as never
     })).toThrow('includeClosedByDefault must be a boolean')
+  })
+
+  it('persists, clears, and validates bounded MCP client instructions', () => {
+    expect(database.mcpSettings.get().clientInstructions).toBe('')
+
+    const instructions = [
+      'When updating Project Δ:',
+      '- State the next step clearly.',
+      '- Ask before writing when no next step is available. 🤝'
+    ].join('\n')
+    expect(database.mcpSettings.update({ clientInstructions: instructions })).toMatchObject({
+      clientInstructions: instructions
+    })
+
+    database.close()
+    database = new AppDatabase(join(directory, 'onmove.sqlite3'))
+    expect(database.mcpSettings.get().clientInstructions).toBe(instructions)
+
+    const maximum = 'λ'.repeat(MCP_CLIENT_INSTRUCTIONS_MAX_LENGTH)
+    expect(database.mcpSettings.update({ clientInstructions: maximum }).clientInstructions)
+      .toBe(maximum)
+    expect(() => database.mcpSettings.update({
+      clientInstructions: `${maximum}x`
+    })).toThrow(
+      `clientInstructions must be a string of at most ${MCP_CLIENT_INSTRUCTIONS_MAX_LENGTH} characters`
+    )
+    expect(() => database.mcpSettings.update({
+      clientInstructions: 42 as never
+    })).toThrow(
+      `clientInstructions must be a string of at most ${MCP_CLIENT_INSTRUCTIONS_MAX_LENGTH} characters`
+    )
+    expect(database.mcpSettings.get().clientInstructions).toBe(maximum)
+
+    expect(database.mcpSettings.update({ clientInstructions: '' }).clientInstructions).toBe('')
+    database.close()
+    database = new AppDatabase(join(directory, 'onmove.sqlite3'))
+    expect(database.mcpSettings.get().clientInstructions).toBe('')
   })
 
   it('stores bounded defaults and only explicit hierarchy exceptions', () => {

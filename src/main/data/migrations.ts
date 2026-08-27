@@ -3935,6 +3935,17 @@ const migrations: readonly Migration[] = [
           CHECK (include_closed_by_default IN (0, 1));
       `)
     }
+  },
+  {
+    version: 49,
+    name: 'mcp_client_instructions',
+    up(database) {
+      database.exec(`
+        ALTER TABLE mcp_settings
+        ADD COLUMN client_instructions TEXT NOT NULL DEFAULT ''
+          CHECK (length(client_instructions) <= 8000);
+      `)
+    }
   }
 ]
 

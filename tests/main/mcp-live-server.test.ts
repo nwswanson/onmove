@@ -222,4 +222,34 @@ describe('running-application MCP server', () => {
       await runtime.close()
     }
   })
+
+  it('serves saved client instructions to new connections without restarting the listener', async () => {
+    const port = await availablePort()
+    const runtime = new OnMoveMcpRuntime(database, vi.fn())
+    const firstClient = new Client({ name: 'instructions-a', version: '1.0.0' })
+    const secondClient = new Client({ name: 'instructions-b', version: '1.0.0' })
+
+    try {
+      const running = await runtime.update({ serverEnabled: true, serverPort: port })
+      const endpoint = running.endpoint as string
+      await firstClient.connect(new StreamableHTTPClientTransport(new URL(endpoint)))
+      const originalInstructions = firstClient.getInstructions()
+      const clientInstructions = [
+        'For Project A updates, include a clear next step.',
+        'Ask before writing if no next step is available.'
+      ].join('\n')
+
+      const updated = await runtime.update({ clientInstructions })
+      expect(updated).toMatchObject({ status: 'running', endpoint })
+      expect(firstClient.getInstructions()).toBe(originalInstructions)
+
+      await secondClient.connect(new StreamableHTTPClientTransport(new URL(endpoint)))
+      expect(secondClient.getInstructions()).toContain(clientInstructions)
+      expect(secondClient.getInstructions()).toMatch(/permissions enforced by OnMove\.$/u)
+    } finally {
+      await firstClient.close().catch(() => undefined)
+      await secondClient.close().catch(() => undefined)
+      await runtime.close()
+    }
+  })
 })
