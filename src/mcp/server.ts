@@ -14,7 +14,8 @@ import {
   type ApplicationHierarchyPath,
   type ApplicationRichTextReference,
   type ApplicationResolvedTargetCandidate,
-  type ApplicationSemanticTargetPath
+  type ApplicationSemanticTargetPath,
+  type ApplicationThreadReparentPlan
 } from '../main/application/services'
 import {
   SEARCH_ENTITY_TYPES,
@@ -1310,6 +1311,52 @@ interface CreateUpdateToolInput {
   sensitive?: boolean
 }
 
+interface ReparentThreadToolInput {
+  id: number
+  destinationFocusId: number
+  plannedFromFocusId: number
+  confirmedScopeSubjectIds: number[]
+}
+
+function threadReparentPlanErrorResult(
+  input: ReparentThreadToolInput,
+  plan: ApplicationThreadReparentPlan,
+  code: 'THREAD_REPARENT_PLAN_STALE' | 'THREAD_REPARENT_CONFIRMATION_REQUIRED'
+): McpErrorResult {
+  const stale = code === 'THREAD_REPARENT_PLAN_STALE'
+  const message = stale
+    ? 'The Thread owner changed after the supplied plan. Do not guess the current source Focus.'
+    : 'The supplied Scope Subject confirmation does not exactly match the current move plan.'
+  const structuredContent = {
+    error: {
+      code,
+      message,
+      received: input,
+      currentStatus: plan.status
+    },
+    currentPlan: withEntityCodes(plan),
+    recovery: {
+      inspect: {
+        tool: 'onmove.plan_thread_reparent',
+        arguments: { id: input.id, destinationFocusId: input.destinationFocusId }
+      },
+      retry: plan.nextAction,
+      instruction: plan.status === 'confirmation-required'
+        ? 'Review and confirm the listed destination Focus Scope additions with the user, then copy retry.arguments exactly.'
+        : 'Copy retry.arguments exactly. Do not reuse the rejected source Focus or Subject IDs.'
+    },
+    diagnostics: diagnosticsScope()
+  }
+  return {
+    isError: true,
+    content: [{
+      type: 'text',
+      text: `${code}: ${message}\nSafe recovery: ${JSON.stringify(plan.nextAction)}`
+    }],
+    structuredContent
+  }
+}
+
 function semanticTargetErrorResult(
   error: SemanticTargetValidationError,
   tool: 'onmove.create_update' | 'onmove.reparent_update',
@@ -1949,7 +1996,7 @@ export function createOnMoveMcpServer(
     {
       instructions: composeOnMoveMcpInstructions(
         database.mcpSettings.get().clientInstructions,
-        'Choose reads by intent. Every user-addressable entity returned by MCP has a canonical code such as #F2, #T4, or #U90. When the user supplies one, call onmove.get_entity_by_code directly and do not search. For current action queues use onmove.get_reviews and onmove.get_todos. get_todos includes open Todos and the bounded recent-completion window only while their complete Focus/Thread/Commitment hierarchy is active or paused; use search_todos with lifecycle.mode=closed or all when the user intentionally asks for historical Todos. For a compact queryless inventory use list_focuses, list_threads, list_commitments, or list_routines; these return hierarchy and one explicit projection row per applicable Subject without child Updates, Notes, or rich-text documents. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Use onmove.search across all relevant kinds when the request asks for information "about" a Thread or Focus: the answer may be evidence inside a Note, Update, Todo, or other descendant, not an entity whose title matches the words. Each primary search match always reports its exact matched field, containing Thread, complete coded path, lifecycle provenance, and recommendedWriteTarget; these are never optional or budget-truncated. hierarchyPaths is only an auxiliary Subject/Scope expansion and must not replace each match\'s own path. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Search never returns lossless rich text. Request includeRichText=true on one known entity only immediately before a full structural replacement. Use onmove.retrieve after exact hierarchy IDs are known when evidence must stay inside an explicit workspace, Focus, asserted Focus/Thread, and optional canonical Subject intersection, or when provider-neutral enhanced retrieval is useful. Context IDs are operational identity boundaries: semantic relevance can rank evidence inside them but must never disambiguate an entity, select a sibling context, or choose a write target. Search and retrieve resolve an omitted lifecycle from OnMove Settings: current active/paused lineage by default, or all current and closed work when Include closed work in MCP results is enabled. Explicit lifecycle.mode=current, closed, or all always overrides that preference. Every hit reports direct status, effective lifecycle, complete lineage, and explicit closure provenance identifying direct versus parent-inherited closure. Never silently treat excluded history as current; when lifecycleCoverage.wideningRecommended is true, repeat the same initial request exactly as directed by lifecycleCoverage.nextAction. The legacy onmove.search, onmove.continue_search, and every onmove.search_<kind> tool remain available for initial cross-kind discovery, exact lexical search, queryless structured listing, and Subject hierarchy projection. Send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility. Initial search tools never accept continuationToken. Natural-language wrappers retain meaningful entity terms. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Projection controls auxiliary Subject/Scope expansion, not required primary hierarchy. Inspect projections.*.complete before treating auxiliary paths or Subject uses as exhaustive. Never invent or alter a continuationToken. For another page call onmove.continue_search with only the exact non-null signed token; it preserves the originating search, complete query, lifecycle policy, and stable cursor. If SEARCH_CURSOR_STALE is returned, restart the original search tool with its criteria. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop global discovery and fetch returned IDs or continue only inside the returned boundary. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Delete only after the user explicitly asks for and confirms the exact target; onmove.delete_entity requires confirm=true and may cascade through owned descendants. Inspect diagnostics and warnings. OnMove Settings controls sensitive access, the omitted lifecycle default, and independent View/Edit/Delete grants by resource, Focus, and Thread.'
+        'Choose reads by intent. Every user-addressable entity returned by MCP has a canonical code such as #F2, #T4, or #U90. When the user supplies one, call onmove.get_entity_by_code directly and do not search. For current action queues use onmove.get_reviews and onmove.get_todos. get_todos includes open Todos and the bounded recent-completion window only while their complete Focus/Thread/Commitment hierarchy is active or paused; use search_todos with lifecycle.mode=closed or all when the user intentionally asks for historical Todos. For a compact queryless inventory use list_focuses, list_threads, list_commitments, or list_routines; these return hierarchy and one explicit projection row per applicable Subject without child Updates, Notes, or rich-text documents. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Use onmove.search across all relevant kinds when the request asks for information "about" a Thread or Focus: the answer may be evidence inside a Note, Update, Todo, or other descendant, not an entity whose title matches the words. Each primary search match always reports its exact matched field, containing Thread, complete coded path, lifecycle provenance, and recommendedWriteTarget; these are never optional or budget-truncated. hierarchyPaths is only an auxiliary Subject/Scope expansion and must not replace each match\'s own path. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Search never returns lossless rich text. Request includeRichText=true on one known entity only immediately before a full structural replacement. Use onmove.retrieve after exact hierarchy IDs are known when evidence must stay inside an explicit workspace, Focus, asserted Focus/Thread, and optional canonical Subject intersection, or when provider-neutral enhanced retrieval is useful. Context IDs are operational identity boundaries: semantic relevance can rank evidence inside them but must never disambiguate an entity, select a sibling context, or choose a write target. Search and retrieve resolve an omitted lifecycle from OnMove Settings: current active/paused lineage by default, or all current and closed work when Include closed work in MCP results is enabled. Explicit lifecycle.mode=current, closed, or all always overrides that preference. Every hit reports direct status, effective lifecycle, complete lineage, and explicit closure provenance identifying direct versus parent-inherited closure. Never silently treat excluded history as current; when lifecycleCoverage.wideningRecommended is true, repeat the same initial request exactly as directed by lifecycleCoverage.nextAction. The legacy onmove.search, onmove.continue_search, and every onmove.search_<kind> tool remain available for initial cross-kind discovery, exact lexical search, queryless structured listing, and Subject hierarchy projection. Send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility. Initial search tools never accept continuationToken. Natural-language wrappers retain meaningful entity terms. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Projection controls auxiliary Subject/Scope expansion, not required primary hierarchy. Inspect projections.*.complete before treating auxiliary paths or Subject uses as exhaustive. Never invent or alter a continuationToken. For another page call onmove.continue_search with only the exact non-null signed token; it preserves the originating search, complete query, lifecycle policy, and stable cursor. If SEARCH_CURSOR_STALE is returned, restart the original search tool with its criteria. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop global discovery and fetch returned IDs or continue only inside the returned boundary. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong Update placement. To move a Thread between Focuses, call onmove.plan_thread_reparent first, inspect its Scope effects, then copy its exact nextAction arguments into onmove.reparent_thread. Delete only after the user explicitly asks for and confirms the exact target; onmove.delete_entity requires confirm=true and may cascade through owned descendants. Inspect diagnostics and warnings. OnMove Settings controls sensitive access, the omitted lifecycle default, and independent View/Edit/Delete grants by resource, Focus, and Thread.'
       )
     }
   )
@@ -4124,7 +4171,9 @@ export function createOnMoveMcpServer(
         ),
         status: lifecycleStatusSchema.optional(),
         dueDate: optionalDueDateSchema,
-        needsReview: z.boolean().optional(),
+        needsReview: z.boolean().default(true).describe(
+          'Whether this Focus permits descendant review tracking. Defaults to true.'
+        ),
         sensitive: z.boolean().optional()
       }),
       annotations: { readOnlyHint: false, destructiveHint: false }
@@ -4143,7 +4192,7 @@ export function createOnMoveMcpServer(
           descriptionRichText: richText,
           status: input.status,
           dueDate: input.dueDate,
-          needsReview: input.needsReview,
+          needsReview: input.needsReview ?? true,
           sensitive: input.sensitive
         }, policy(), server.server.getClientVersion()?.name).id,
         policy(),
@@ -4184,14 +4233,18 @@ export function createOnMoveMcpServer(
         status: lifecycleStatusSchema.optional(),
         dueDate: optionalDueDateSchema,
         reviewFrequencyDays: z.number().int().positive().default(7),
-        needsReview: z.boolean().optional(),
+        needsReview: z.boolean().default(true).describe(
+          'Whether this Thread participates in review. Defaults to true.'
+        ),
         sensitive: z.boolean().optional()
       }),
       annotations: { readOnlyHint: false, destructiveHint: false }
     },
     async (input) => mutationResult(() => {
       const created = database.commands.createThread(
-        input, policy(), server.server.getClientVersion()?.name
+        { ...input, needsReview: input.needsReview ?? true },
+        policy(),
+        server.server.getClientVersion()?.name
       ) as { id: number }
       return withWriteGuide(found(database.queries.getThread(
         created.id, policy(), { includeRichText: false }
@@ -4224,6 +4277,105 @@ export function createOnMoveMcpServer(
   )
 
   server.registerTool(
+    'onmove.plan_thread_reparent',
+    {
+      title: 'Plan moving an OnMove Thread to another Focus',
+      description: 'Read the complete stale-safe plan before moving a Thread between Focuses. The plan confirms that all owned records move with the Thread without leaking hidden child counts, reports inherited-versus-custom Scope behavior and any Subjects that must be added to the destination Focus, and returns exact arguments for onmove.reparent_thread. This tool never mutates data.',
+      inputSchema: z.strictObject({
+        id: idSchema.describe('The existing Thread ID returned by discovery or a Thread read.'),
+        destinationFocusId: idSchema.describe(
+          'The destination Focus ID. A Focus is the top-level workspace that will own the Thread.'
+        )
+      }),
+      annotations: { readOnlyHint: true, destructiveHint: false }
+    },
+    async ({ id, destinationFocusId }) => result(found(
+      database.queries.planThreadReparent(id, destinationFocusId, policy())
+    ))
+  )
+
+  server.registerTool(
+    'onmove.reparent_thread',
+    {
+      title: 'Move an OnMove Thread to another Focus',
+      description: 'Move one Thread and all of its Commitments, Routines, Updates, Todos, Notes, review evidence, and Scope history to another Focus without recreating them. Call onmove.plan_thread_reparent immediately first and copy its nextAction arguments exactly. The stale source guard and exact Subject confirmation prevent an outdated plan from widening the destination Focus.',
+      inputSchema: z.strictObject({
+        id: idSchema.describe('The existing Thread ID returned by discovery or the move plan.'),
+        destinationFocusId: idSchema.describe(
+          'The destination Focus ID returned in the move plan.'
+        ),
+        plannedFromFocusId: idSchema.describe(
+          'The source Focus ID from plan.nextAction.arguments. It rejects a stale move if ownership changed after planning.'
+        ),
+        confirmedScopeSubjectIds: z.array(idSchema).max(500).default([]).describe(
+          'Copy the exact Subject ID array from plan.nextAction.arguments. An empty array is correct only when the plan requires no destination Focus Scope additions.'
+        )
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false }
+    },
+    async (input) => {
+      const currentPlan = found(database.queries.planThreadReparent(
+        input.id, input.destinationFocusId, policy()
+      ))
+      if (input.plannedFromFocusId !== currentPlan.plan.fromFocusId) {
+        return rejected(
+          'onmove.reparent_thread',
+          input,
+          'THREAD_REPARENT_PLAN_STALE',
+          threadReparentPlanErrorResult(input, currentPlan, 'THREAD_REPARENT_PLAN_STALE')
+        )
+      }
+      const expectedSubjectIds = [...currentPlan.nextAction.arguments.confirmedScopeSubjectIds]
+        .sort((left, right) => left - right)
+      const receivedSubjectIds = [...new Set(input.confirmedScopeSubjectIds)]
+        .sort((left, right) => left - right)
+      if (
+        expectedSubjectIds.length !== receivedSubjectIds.length ||
+        expectedSubjectIds.some((subjectId, index) => subjectId !== receivedSubjectIds[index])
+      ) {
+        return rejected(
+          'onmove.reparent_thread',
+          input,
+          'THREAD_REPARENT_CONFIRMATION_REQUIRED',
+          threadReparentPlanErrorResult(
+            input,
+            currentPlan,
+            'THREAD_REPARENT_CONFIRMATION_REQUIRED'
+          )
+        )
+      }
+      const moved = database.commands.reparentThread({
+        id: input.id,
+        focusId: input.destinationFocusId,
+        plannedFromFocusId: input.plannedFromFocusId,
+        confirmedScopeSubjectIds: input.confirmedScopeSubjectIds
+      }, policy(), server.server.getClientVersion()?.name)
+      if (moved.changed) notifyMutation()
+      const context = withWriteGuide(found(database.queries.getThread(
+        input.id, policy(), { includeRichText: false }
+      )))
+      return result({
+        ...record(context),
+        reparenting: {
+          changed: moved.changed,
+          previousFocusId: moved.previousFocusId,
+          destinationFocusId: input.destinationFocusId,
+          undo: moved.changed
+            ? {
+                planTool: 'onmove.plan_thread_reparent',
+                arguments: {
+                  id: input.id,
+                  destinationFocusId: moved.previousFocusId
+                },
+                instruction: 'Plan the reverse move against current Scope state before undoing.'
+              }
+            : null
+        }
+      })
+    }
+  )
+
+  server.registerTool(
     'onmove.create_commitment',
     {
       title: 'Create an OnMove commitment',
@@ -4235,7 +4387,9 @@ export function createOnMoveMcpServer(
         dueDate: optionalDueDateSchema,
         cadenceDays: z.number().int().positive().nullable().optional(),
         reviewFrequencyDays: z.number().int().positive().optional(),
-        needsReview: z.boolean().optional(),
+        needsReview: z.boolean().default(true).describe(
+          'Whether this Commitment participates in review. Defaults to true.'
+        ),
         sensitive: z.boolean().optional()
       }),
       annotations: { readOnlyHint: false, destructiveHint: false }
@@ -4243,6 +4397,7 @@ export function createOnMoveMcpServer(
     async (input) => mutationResult(() => {
       const created = database.commands.createCommitment({
         ...input,
+        needsReview: input.needsReview ?? true,
         type: 'tracking'
       }, policy(), server.server.getClientVersion()?.name) as { id: number }
       return withWriteGuide(found(database.queries.getCommitment(

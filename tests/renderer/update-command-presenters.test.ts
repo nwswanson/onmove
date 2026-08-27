@@ -254,6 +254,29 @@ describe('update command presenters', () => {
       'thread:10',
       'commitment:20'
     ])
+
+    const withClosed = updateCommandGroups(graph({
+      focuses: [publicFocus, privateFocus],
+      threads: [openThread, privateThread],
+      commitments: [openCommitment, closedCommitment, privateCommitment],
+      threadScopes: new Map([
+        [openThread.id, openScope],
+        [privateThread.id, { ...openScope, threadId: privateThread.id }]
+      ]),
+      commitmentContexts: new Map([
+        [openCommitment.id, openContext(openCommitment.id)],
+        [closedCommitment.id, openContext(closedCommitment.id)],
+        [privateCommitment.id, openContext(privateCommitment.id)]
+      ])
+    }), true, true)
+    const includedClosed = withClosed.flatMap(({ items }) => items)
+    expect(includedClosed.map(({ id }) => id)).toEqual([
+      'thread:10',
+      'commitment:21',
+      'commitment:20'
+    ])
+    expect(includedClosed.find(({ id }) => id === 'commitment:21')?.status)
+      .toMatchObject({ label: 'Done', tone: 'success' })
   })
 
   it('removes sensitive Subject cells only when sensitive content is hidden', () => {

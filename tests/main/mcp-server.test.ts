@@ -41,14 +41,17 @@ describe('OnMove MCP protocol adapter', () => {
   let client: Client
   let server: ReturnType<typeof createOnMoveMcpServer>
   let currentUiContext: McpUiContextSnapshot
+  let mutationNotifications: number
 
   beforeEach(async () => {
     directory = mkdtempSync(join(tmpdir(), 'onmove-mcp-protocol-'))
     database = new AppDatabase(join(directory, 'onmove.sqlite3'), { embeddingProvider: fakeEmbeddingProvider })
     database.domain.focuses.create({ title: 'Launch readiness' })
     currentUiContext = { focusId: null, subjectId: null }
+    mutationNotifications = 0
     server = createOnMoveMcpServer(database, {
-      getCurrentUiContext: () => currentUiContext
+      getCurrentUiContext: () => currentUiContext,
+      onMutation: () => { mutationNotifications += 1 }
     })
     client = new Client({ name: 'vitest-mcp-client', version: '1.0.0' })
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -60,7 +63,8 @@ describe('OnMove MCP protocol adapter', () => {
     await client.close()
     await server.close()
     server = createOnMoveMcpServer(database, {
-      getCurrentUiContext: () => currentUiContext
+      getCurrentUiContext: () => currentUiContext,
+      onMutation: () => { mutationNotifications += 1 }
     })
     client = new Client({ name: 'vitest-mcp-client', version: '1.0.0' })
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -162,6 +166,8 @@ describe('OnMove MCP protocol adapter', () => {
       'onmove.update_focus',
       'onmove.create_thread',
       'onmove.update_thread',
+      'onmove.plan_thread_reparent',
+      'onmove.reparent_thread',
       'onmove.create_commitment',
       'onmove.update_commitment',
       'onmove.create_routine',
@@ -176,7 +182,7 @@ describe('OnMove MCP protocol adapter', () => {
       'onmove.delete_entity',
       'onmove.poke_review'
     ]))
-    expect(listed.tools).toHaveLength(56)
+    expect(listed.tools).toHaveLength(58)
     expect(listed.tools.map(({ name }) => name)).not.toEqual(expect.arrayContaining([
       'onmove.get_focus',
       'onmove.get_thread',
@@ -4538,6 +4544,319 @@ describe('OnMove MCP protocol adapter', () => {
     expect(database.domain.updates.listForThread(thread.id)).toEqual([
       expect.objectContaining({ observation: expect.stringContaining('First evidence'), state: 'green' })
     ])
+  })
+
+  it('defaults MCP-created Focuses, Threads, and Commitments into review participation', async () => {
+    database.mcpSettings.update({ allowMutations: true })
+
+    const createdFocus = await client.callTool({
+      name: 'onmove.create_focus',
+      arguments: { title: 'Reviewed Focus' }
+    })
+    expect(createdFocus.isError).not.toBe(true)
+    const focus = database.domain.focuses.list().find(({ title }) => title === 'Reviewed Focus')
+    expect(focus?.needsReview).toBe(true)
+
+    const createdThread = await client.callTool({
+      name: 'onmove.create_thread',
+      arguments: { focusId: focus?.id, title: 'Reviewed Thread' }
+    })
+    expect(createdThread.isError).not.toBe(true)
+    const reviewedThread = database.domain.threads.listForFocus(focus?.id as number)
+      .find(({ title }) => title === 'Reviewed Thread')
+    expect(reviewedThread?.needsReview).toBe(true)
+
+    const createdCommitment = await client.callTool({
+      name: 'onmove.create_commitment',
+      arguments: {
+        parent: { type: 'thread', id: reviewedThread?.id },
+        title: 'Reviewed Commitment'
+      }
+    })
+    expect(createdCommitment.isError).not.toBe(true)
+    const reviewedCommitment = database.domain.commitments.listForThread(
+      reviewedThread?.id as number
+    ).find(({ title }) => title === 'Reviewed Commitment')
+    expect(reviewedCommitment?.needsReview).toBe(true)
+
+    await client.callTool({
+      name: 'onmove.create_thread',
+      arguments: {
+        focusId: focus?.id,
+        title: 'Explicitly excluded Thread',
+        needsReview: false
+      }
+    })
+    expect(database.domain.threads.listForFocus(focus?.id as number)
+      .find(({ title }) => title === 'Explicitly excluded Thread')?.needsReview).toBe(false)
+
+    const listed = await client.listTools()
+    for (const name of [
+      'onmove.create_focus',
+      'onmove.create_thread',
+      'onmove.create_commitment'
+    ]) {
+      const schema = listed.tools.find((tool) => tool.name === name)?.inputSchema as {
+        properties?: Record<string, { default?: unknown }>
+      }
+      expect(schema.properties?.needsReview?.default, name).toBe(true)
+    }
+  })
+
+  it('plans and reparents a Thread with exact Scope confirmation and preserved owned work', async () => {
+    const sourceFocus = database.domain.focuses.requireModel(1).toSnapshot()
+    const targetFocus = database.domain.focuses.create({ title: 'Target portfolio' }).toSnapshot()
+    const sourceScope = database.domain.focusScopes.addSubject(
+      sourceFocus.id,
+      { name: 'Partner Team' },
+      new Date('2026-08-20T12:00:00.000Z')
+    )
+    const partner = sourceScope.subjects[0]
+    const thread = database.domain.threads.create({
+      focusId: sourceFocus.id,
+      title: 'Move through MCP',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const commitment = database.domain.commitments.create({
+      type: 'tracking',
+      parent: { type: 'thread', id: thread.id },
+      title: 'Preserve the child'
+    }).snapshot()
+    const update = database.domain.updates.create({
+      parent: { type: 'commitment', id: commitment.id },
+      observation: 'Preserve scoped evidence',
+      scope: { scopeId: sourceScope.scopeId as number, subjectId: partner.id }
+    }).toSnapshot()
+    const todo = database.domain.todos.create({
+      parent: {
+        type: 'thread-scope',
+        id: thread.id,
+        scope: { scopeId: sourceScope.scopeId as number, subjectId: partner.id }
+      },
+      name: 'Preserve scoped action'
+    }).toSnapshot()
+    const routine = database.domain.routines.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Preserve routine',
+      scheduleWeekdays: ['friday'],
+      checklist: [{ inspection: 'Verify the move retained this Routine.' }]
+    }).snapshot()
+    const note = database.domain.notes.list({ type: 'thread', id: thread.id })[0]
+
+    const planned = await client.callTool({
+      name: 'onmove.plan_thread_reparent',
+      arguments: { id: thread.id, destinationFocusId: targetFocus.id }
+    })
+    expect(planned.isError).not.toBe(true)
+    expect(planned.structuredContent).toMatchObject({
+      reference: { type: 'thread', id: thread.id },
+      code: `#T${thread.id}`,
+      thread: { id: thread.id, title: thread.title, code: `#T${thread.id}` },
+      sourceFocus: {
+        id: sourceFocus.id,
+        title: sourceFocus.title,
+        code: `#F${sourceFocus.id}`
+      },
+      destinationFocus: {
+        id: targetFocus.id,
+        title: targetFocus.title,
+        code: `#F${targetFocus.id}`
+      },
+      status: 'confirmation-required',
+      plan: {
+        fromFocusId: sourceFocus.id,
+        toFocusId: targetFocus.id,
+        scopeStrategy: 'follow-destination',
+        scopeSubjectAdditions: [{
+          id: partner.id,
+          name: partner.name,
+          code: `#S${partner.id}`
+        }],
+        ownedRecords: {
+          moveWithThread: true,
+          kinds: [
+            'commitments', 'routines', 'updates', 'todos', 'notes', 'review-evidence'
+          ]
+        },
+        requiresConfirmation: true
+      },
+      nextAction: {
+        tool: 'onmove.reparent_thread',
+        arguments: {
+          id: thread.id,
+          destinationFocusId: targetFocus.id,
+          plannedFromFocusId: sourceFocus.id,
+          confirmedScopeSubjectIds: [partner.id]
+        }
+      }
+    })
+
+    database.mcpSettings.update({ allowMutations: true })
+    const notificationsBeforeMove = mutationNotifications
+    const unconfirmed = await client.callTool({
+      name: 'onmove.reparent_thread',
+      arguments: {
+        id: thread.id,
+        destinationFocusId: targetFocus.id,
+        plannedFromFocusId: sourceFocus.id
+      }
+    })
+    expect(unconfirmed.isError).toBe(true)
+    expect(unconfirmed.structuredContent).toMatchObject({
+      error: { code: 'THREAD_REPARENT_CONFIRMATION_REQUIRED' },
+      recovery: {
+        inspect: {
+          tool: 'onmove.plan_thread_reparent',
+          arguments: { id: thread.id, destinationFocusId: targetFocus.id }
+        },
+        retry: {
+          tool: 'onmove.reparent_thread',
+          arguments: { confirmedScopeSubjectIds: [partner.id] }
+        }
+      }
+    })
+    expect(database.domain.threads.find(thread.id)?.focusId).toBe(sourceFocus.id)
+    expect(mutationNotifications).toBe(notificationsBeforeMove)
+
+    const moved = await client.callTool({
+      name: 'onmove.reparent_thread',
+      arguments: {
+        id: thread.id,
+        destinationFocusId: targetFocus.id,
+        plannedFromFocusId: sourceFocus.id,
+        confirmedScopeSubjectIds: [partner.id]
+      }
+    })
+    expect(moved.isError).not.toBe(true)
+    expect(mutationNotifications).toBe(notificationsBeforeMove + 1)
+    expect(moved.structuredContent).toMatchObject({
+      reference: { type: 'thread', id: thread.id },
+      entity: { id: thread.id, focusId: targetFocus.id },
+      reparenting: {
+        changed: true,
+        previousFocusId: sourceFocus.id,
+        destinationFocusId: targetFocus.id,
+        undo: {
+          planTool: 'onmove.plan_thread_reparent',
+          arguments: { id: thread.id, destinationFocusId: sourceFocus.id }
+        }
+      }
+    })
+
+    expect(database.domain.commitments.find(commitment.id)?.parent)
+      .toEqual({ type: 'thread', id: thread.id })
+    expect(database.domain.updates.find(update.id)?.parent)
+      .toEqual({ type: 'commitment', id: commitment.id })
+    expect(database.domain.todos.find(todo.id)).not.toBeNull()
+    expect(database.domain.routines.find(routine.id)?.parent)
+      .toEqual({ type: 'thread', id: thread.id })
+    expect(database.domain.notes.find(note.id)?.parent)
+      .toEqual({ type: 'thread', id: thread.id })
+    expect(database.domain.focusScopes.get(targetFocus.id).subjects)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: partner.id })]))
+
+    const noChangePlan = await client.callTool({
+      name: 'onmove.plan_thread_reparent',
+      arguments: { id: thread.id, destinationFocusId: targetFocus.id }
+    })
+    expect(noChangePlan.structuredContent).toMatchObject({ status: 'no-change' })
+    const laterTarget = database.domain.focuses.create({ title: 'Later target' }).toSnapshot()
+    const stale = await client.callTool({
+      name: 'onmove.reparent_thread',
+      arguments: {
+        id: thread.id,
+        destinationFocusId: laterTarget.id,
+        plannedFromFocusId: sourceFocus.id,
+        confirmedScopeSubjectIds: [partner.id]
+      }
+    })
+    expect(stale.isError).toBe(true)
+    expect(stale.structuredContent).toMatchObject({
+      error: { code: 'THREAD_REPARENT_PLAN_STALE' },
+      recovery: {
+        retry: {
+          tool: 'onmove.reparent_thread',
+          arguments: { plannedFromFocusId: targetFocus.id }
+        }
+      }
+    })
+    expect(mutationNotifications).toBe(notificationsBeforeMove + 1)
+    const raw = new DatabaseSync(join(directory, 'onmove.sqlite3'), { readOnly: true })
+    const audits = raw.prepare(
+      `SELECT tool_name, entity_type, entity_id, category
+       FROM mcp_mutation_audit WHERE tool_name = 'onmove.reparent_thread'`
+    ).all()
+    raw.close()
+    expect(audits).toEqual([{
+      tool_name: 'onmove.reparent_thread',
+      entity_type: 'thread',
+      entity_id: thread.id,
+      category: 'reparent'
+    }])
+  })
+
+  it('requires Thread edit access at both the source record and destination Focus', async () => {
+    const sourceFocus = database.domain.focuses.requireModel(1).toSnapshot()
+    const targetFocus = database.domain.focuses.create({ title: 'Restricted target' }).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: sourceFocus.id,
+      title: 'Permissioned move',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const argumentsValue = {
+      id: thread.id,
+      destinationFocusId: targetFocus.id,
+      plannedFromFocusId: sourceFocus.id,
+      confirmedScopeSubjectIds: []
+    }
+
+    database.mcpSettings.update({
+      permission: {
+        target: { type: 'focus', id: targetFocus.id },
+        resource: 'thread',
+        view: true,
+        edit: true
+      }
+    })
+    const sourceDenied = await client.callTool({
+      name: 'onmove.reparent_thread', arguments: argumentsValue
+    })
+    expect(sourceDenied.isError).toBe(true)
+    expect(database.domain.threads.find(thread.id)?.focusId).toBe(sourceFocus.id)
+
+    database.mcpSettings.update({
+      permission: {
+        target: { type: 'focus', id: targetFocus.id },
+        resource: 'thread',
+        edit: false
+      }
+    })
+    database.mcpSettings.update({
+      permission: {
+        target: { type: 'thread', id: thread.id },
+        resource: 'thread',
+        view: true,
+        edit: true
+      }
+    })
+    const destinationDenied = await client.callTool({
+      name: 'onmove.reparent_thread', arguments: argumentsValue
+    })
+    expect(destinationDenied.isError).toBe(true)
+    expect(database.domain.threads.find(thread.id)?.focusId).toBe(sourceFocus.id)
+
+    database.mcpSettings.update({
+      permission: {
+        target: { type: 'focus', id: targetFocus.id },
+        resource: 'thread',
+        edit: true
+      }
+    })
+    const allowed = await client.callTool({
+      name: 'onmove.reparent_thread', arguments: argumentsValue
+    })
+    expect(allowed.isError).not.toBe(true)
+    expect(database.domain.threads.find(thread.id)?.focusId).toBe(targetFocus.id)
   })
 
   it('applies sparse Focus and Thread edit rules to the expanded mutation surface', async () => {

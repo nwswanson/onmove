@@ -205,6 +205,13 @@ return attributed records plus currently applicable hierarchy paths. `createdAt`
 accept the same inclusive local-date range along with an IANA `timeZone`. If an Update was
 created in the wrong place, `onmove.reparent_update` moves that existing record without replacing
 its rich text, revision, date, state, or sensitivity. Its response also supplies an undo request.
+To move a whole Thread between Focuses, call `onmove.plan_thread_reparent` first. It returns the
+owned-record preservation policy without leaking hidden child counts, the Scope strategy, any
+Subjects that would be added to the destination Focus, and the exact stale-safe arguments for
+`onmove.reparent_thread`. The move preserves the Thread ID and
+all Commitments, Routines, Updates, Todos, Notes, review evidence, and scoped history. Scope widening
+requires copying the planner's exact confirmed Subject IDs; the mutation checks Thread Edit access
+at both the source record and destination Focus.
 Search pages default to ten records, return explicit `hasMore`, and provide a signed continuation
 token only when another primary page exists. `page.maxBytes` budgets the complete MCP result—not
 just its structured half—and has an 8 KiB minimum. The `projections` metadata separately reports

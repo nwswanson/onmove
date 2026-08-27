@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Bot, Clock3, DatabaseBackup, FolderOpen, Plus, ShieldCheck, Trash2 } from 'lucide-react'
+import {
+  Bot,
+  Clock3,
+  DatabaseBackup,
+  FolderOpen,
+  Plus,
+  Search,
+  ShieldCheck,
+  Trash2
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import {
@@ -35,6 +44,8 @@ function formatBytes(value: number): string {
 
 interface SettingsWorkspaceProps {
   contextDrawer: ContextDrawerControl
+  commandPagerIncludeClosed: boolean
+  onCommandPagerIncludeClosedChange: (includeClosed: boolean) => void
 }
 
 const permissionLabels: Record<McpPermissionResource, string> = {
@@ -556,7 +567,9 @@ function FocusPermissionGroup({
 }
 
 export function SettingsWorkspace({
-  contextDrawer
+  contextDrawer,
+  commandPagerIncludeClosed,
+  onCommandPagerIncludeClosedChange
 }: SettingsWorkspaceProps): React.JSX.Element {
   const backups = useBackupSettingsModel()
   const mcp = useMcpSettingsModel()
@@ -644,6 +657,39 @@ export function SettingsWorkspace({
                   </dd>
                 </div>
               </dl>
+            </div>
+
+            <div className="mt-7 overflow-hidden rounded-xl border border-border/80 bg-card/55 shadow-xs">
+              <div className="flex items-start gap-4 p-5">
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/20 text-foreground">
+                  <Search className="size-5" aria-hidden="true" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-sm font-semibold">Command menus</h2>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    Control which work appears when choosing a destination with Command-K or
+                    Command-P.
+                  </p>
+                  <label className="mt-4 flex cursor-pointer items-start gap-3 border-t border-border/65 pt-4">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 size-4 accent-primary"
+                      checked={commandPagerIncludeClosed}
+                      onChange={(event) =>
+                        onCommandPagerIncludeClosedChange(event.target.checked)}
+                    />
+                    <span>
+                      <span className="block text-sm font-medium">
+                        Show done and cancelled work
+                      </span>
+                      <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+                        Off by default. When off, command menus show only Active and Paused
+                        Focuses, Threads, and Commitments.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              </div>
             </div>
 
             <div className="mt-7 overflow-hidden rounded-xl border border-border/80 bg-card/55 shadow-xs">

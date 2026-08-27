@@ -11,6 +11,7 @@ interface ApplicationCommandPaletteProps {
   open: boolean
   focuses: readonly FocusSnapshot[]
   hideSensitiveContent: boolean
+  includeClosedWork: boolean
   onOpenChange: (open: boolean) => void
   onSelect: (destination: CommandPaletteDestination) => void
 }
@@ -19,15 +20,16 @@ export function ApplicationCommandPalette({
   open,
   focuses,
   hideSensitiveContent,
+  includeClosedWork,
   onOpenChange,
   onSelect
 }: ApplicationCommandPaletteProps): React.JSX.Element {
   const model = useCommandPaletteModel({ open, focuses })
   const groups = useMemo(
     () => model.snapshot
-      ? commandPaletteGroups(model.snapshot, hideSensitiveContent)
+      ? commandPaletteGroups(model.snapshot, hideSensitiveContent, includeClosedWork)
       : [],
-    [hideSensitiveContent, model.snapshot]
+    [hideSensitiveContent, includeClosedWork, model.snapshot]
   )
   const destinations = useMemo(
     () => new Map(groups.flatMap(({ items }) =>

@@ -259,19 +259,25 @@ Add writes only after concurrency, invalidation, and audit work is complete:
 
 - `onmove.create_update`
 - `onmove.reparent_update`
+- `onmove.plan_thread_reparent` (read-only move plan)
+- `onmove.reparent_thread`
 - `onmove.create_todo`
 - `onmove.update_todo`
 - `onmove.complete_todo`
 - `onmove.poke_review`
 - `onmove.delete_entity` (independent Delete grant plus explicit confirmation)
 
-The server omits import, archive-clear, and arbitrary move/status tools. Its single typed
+The server omits import, archive-clear, and arbitrary status tools. Its single typed
 `delete_entity` boundary accepts only public entity kinds, requires `confirm=true`, resolves an
 independent hierarchical Delete grant, audits the mutation, and delegates to existing repositories
 so cascade-deleted Updates are archived. The narrow
 `reparent_update` correction is an explicit exception: it changes only an existing Update's typed
 parent and exact current Subject cell, preserves the record and rich-text revision, validates both
 source and destination permissions, audits the move, and returns the previous destination for undo.
+Thread ownership changes use a separate plan/apply pair. The planner exposes the existing domain
+move's Scope strategy and stale guard without mutation; the apply tool requires its exact source
+Focus and Subject confirmation, checks Thread Edit permission at both hierarchy locations, preserves
+all owned records and evidence, and audits only a real move.
 
 ### Resources
 

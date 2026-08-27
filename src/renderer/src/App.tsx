@@ -28,6 +28,11 @@ import { Toolbar, ToolbarGroup } from '@/components/ui/toolbar'
 import { ApplicationShell, WorkspaceShell } from '@/components/ui/workspace-shell'
 import { useApplicationModel } from '@/features/application/use-application-model'
 import { ApplicationCommandPalette } from '@/features/application/command-palette'
+import {
+  commandPagerPreferenceStorage,
+  loadCommandPagerIncludeClosed,
+  saveCommandPagerIncludeClosed
+} from '@/features/application/command-pager-preference'
 import type {
   CommandPaletteDestination
 } from '@/features/application/command-palette-presenters'
@@ -333,6 +338,10 @@ export function App(): React.JSX.Element {
   const [newFocusOpen, setNewFocusOpen] = useState(false)
   const [newFocusFolderOpen, setNewFocusFolderOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+  const [commandPagerStorage] = useState(commandPagerPreferenceStorage)
+  const [commandPagerIncludeClosed, setCommandPagerIncludeClosed] = useState(
+    () => loadCommandPagerIncludeClosed(commandPagerStorage)
+  )
   const [contextDrawerState, dispatchContextDrawer] = useReducer(
     contextDrawerReducer,
     initialContextDrawerState
@@ -354,6 +363,10 @@ export function App(): React.JSX.Element {
   const selectedSubjectId = selectedFocus
     ? (focusSubjectSelections[selectedFocus.id] ?? null)
     : null
+  const commandPagerFocuses = commandPagerIncludeClosed
+    ? application.focuses.filter((focus) =>
+        !application.sensitiveContentHidden || !focus.sensitive)
+    : application.navigableFocuses
   const baseFocusItems = focusPrimaryNavigationItems(
     application.navigableFocuses.filter((focus) =>
       !application.pinnedFocusIds.has(focus.id)),
@@ -481,7 +494,7 @@ export function App(): React.JSX.Element {
 
   function openCommandPaletteDestination(destination: CommandPaletteDestination): void {
     if (destination.type === 'focus') {
-      openWorkContext(destination.target)
+      openWorkContext(destination.target, commandPagerIncludeClosed)
       return
     }
     setFocusDestination(null)
@@ -524,8 +537,9 @@ export function App(): React.JSX.Element {
   return (
     <UpdateComposerProvider
       enabled={application.enabled && application.selectedView !== 'settings'}
-      focuses={application.navigableFocuses}
+      focuses={commandPagerFocuses}
       hideSensitiveContent={application.sensitiveContentHidden}
+      includeClosedWork={commandPagerIncludeClosed}
       onCreated={async (target) => {
         await application.refreshFocus(target.focusId)
       }}
@@ -660,7 +674,14 @@ export function App(): React.JSX.Element {
 
         {application.state ? (
           application.selectedView === 'settings' ? (
-            <SettingsWorkspace contextDrawer={contextDrawer} />
+            <SettingsWorkspace
+              contextDrawer={contextDrawer}
+              commandPagerIncludeClosed={commandPagerIncludeClosed}
+              onCommandPagerIncludeClosedChange={(includeClosed) => {
+                saveCommandPagerIncludeClosed(commandPagerStorage, includeClosed)
+                setCommandPagerIncludeClosed(includeClosed)
+              }}
+            />
           ) : application.selectedView === 'tags' ? (
             <TagsWorkspace
               contextDrawer={contextDrawer}
@@ -799,8 +820,9 @@ export function App(): React.JSX.Element {
 
       <ApplicationCommandPalette
         open={commandPaletteOpen}
-        focuses={application.navigableFocuses}
+        focuses={commandPagerFocuses}
         hideSensitiveContent={application.sensitiveContentHidden}
+        includeClosedWork={commandPagerIncludeClosed}
         onOpenChange={setCommandPaletteOpen}
         onSelect={openCommandPaletteDestination}
       />

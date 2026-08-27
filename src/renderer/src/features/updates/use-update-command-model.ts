@@ -50,11 +50,13 @@ async function loadUpdateCommandGraph(
 export function useUpdateCommandModel({
   open,
   focuses,
-  hideSensitiveContent
+  hideSensitiveContent,
+  includeClosedWork
 }: {
   open: boolean
   focuses: readonly FocusSnapshot[]
   hideSensitiveContent: boolean
+  includeClosedWork: boolean
 }): UpdateCommandModel {
   const [graph, setGraph] = useState<UpdateCommandGraph | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -81,7 +83,9 @@ export function useUpdateCommandModel({
   }, [focuses, open])
 
   return {
-    groups: graph ? updateCommandGroups(graph, hideSensitiveContent) : [],
+    groups: graph
+      ? updateCommandGroups(graph, hideSensitiveContent, includeClosedWork)
+      : [],
     loading: open && graph === null && error === null,
     error
   }

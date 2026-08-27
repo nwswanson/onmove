@@ -73,6 +73,21 @@ Update, is rescued into the bounded 30-day Archive. Subject deletion is rejected
 Update, or Todo history still references that Subject. There are no MCP import or archive-clear
 tools.
 
+### Moving Threads
+
+Call `onmove.plan_thread_reparent` with the Thread ID and destination Focus ID before moving it. The
+read-only response reports whether the Thread follows its Focus Scope or owns a custom Scope, the
+fact that every owned record moves with it without leaking hidden child counts, and any canonical
+Subjects that must be added to the destination Focus. It also returns the exact
+`onmove.reparent_thread` arguments.
+
+`onmove.reparent_thread` preserves the Thread ID and all Commitments, Routines, Updates, Todos,
+Notes, review evidence, and Scope history. Inherited Scope is reconciled against the destination;
+custom Scope is copied without widening the destination Focus. The supplied source Focus ID rejects
+stale plans, and the confirmed Subject IDs must exactly match the planner before destination Scope
+can be widened. The caller needs Thread View/Edit at the source and Thread View/Edit in the
+destination Focus. Successful moves are audited and returned with a safe reverse-plan request.
+
 ### Creating Updates
 
 `onmove.create_update` creates an Update record beneath a Thread or Commitment; it does not edit the

@@ -306,4 +306,56 @@ describe('command palette presenters', () => {
       { id: 'thread:10' }
     ])
   })
+
+  it('hides closed hierarchy branches by default and labels included lifecycle and health states', () => {
+    const closedFocus = focus({ id: 2, title: 'Closed Focus', status: 'done' })
+    const pausedThread = thread({ health: 'yellow', status: 'paused' })
+    const closedThread = thread({ id: 11, title: 'Closed Thread', status: 'cancelled' })
+    const closedCommitment = commitment({
+      id: 21,
+      title: 'Finished work',
+      status: 'done',
+      state: 'green'
+    })
+    const currentSnapshot = snapshot({
+      focuses: [focus(), closedFocus],
+      threads: [pausedThread, closedThread],
+      threadScopes: [],
+      commitments: [commitment({ state: 'red' }), closedCommitment],
+      commitmentWorkingContexts: [],
+      todos: [],
+      tags: []
+    })
+
+    const currentItems = commandPaletteGroups(currentSnapshot, false)
+      .flatMap(({ items }) => items)
+    expect(currentItems.map(({ id }) => id)).toEqual([
+      'focus:1',
+      'thread:10',
+      'commitment:20'
+    ])
+    expect(currentItems.find(({ id }) => id === 'thread:10')).toMatchObject({
+      status: { label: 'Paused', tone: 'neutral' },
+      state: { label: 'Yellow', tone: 'warning' }
+    })
+    expect(currentItems.find(({ id }) => id === 'commitment:20')).toMatchObject({
+      status: { label: 'Active', tone: 'primary' },
+      state: { label: 'Red', tone: 'danger' }
+    })
+
+    const allItems = commandPaletteGroups(currentSnapshot, false, true)
+      .flatMap(({ items }) => items)
+    expect(allItems.map(({ id }) => id)).toEqual([
+      'focus:2',
+      'focus:1',
+      'thread:11',
+      'thread:10',
+      'commitment:21',
+      'commitment:20'
+    ])
+    expect(allItems.find(({ id }) => id === 'focus:2')?.status)
+      .toMatchObject({ label: 'Done', tone: 'success' })
+    expect(allItems.find(({ id }) => id === 'thread:11')?.status)
+      .toMatchObject({ label: 'Cancelled', tone: 'danger' })
+  })
 })

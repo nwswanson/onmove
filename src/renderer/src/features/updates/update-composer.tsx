@@ -28,12 +28,14 @@ export function UpdateComposerProvider({
   enabled,
   focuses,
   hideSensitiveContent,
+  includeClosedWork,
   onCreated,
   children
 }: {
   enabled: boolean
   focuses: readonly FocusSnapshot[]
   hideSensitiveContent: boolean
+  includeClosedWork: boolean
   onCreated?: (target: UpdateCommandTarget) => void | Promise<void>
   children: React.ReactNode
 }): React.JSX.Element {
@@ -49,7 +51,8 @@ export function UpdateComposerProvider({
   const model = useUpdateCommandModel({
     open: chooserOpen,
     focuses,
-    hideSensitiveContent
+    hideSensitiveContent,
+    includeClosedWork
   })
   const targets = useMemo(
     () => new Map(model.groups.flatMap(({ items }) =>

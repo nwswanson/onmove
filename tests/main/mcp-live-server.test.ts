@@ -53,7 +53,12 @@ describe('running-application MCP server', () => {
 
     try {
       await client.connect(new StreamableHTTPClientTransport(new URL(endpoint)))
-      expect((await client.listTools()).tools).toHaveLength(56)
+      const tools = (await client.listTools()).tools
+      expect(tools).toHaveLength(58)
+      expect(tools.map(({ name }) => name)).toEqual(expect.arrayContaining([
+        'onmove.plan_thread_reparent',
+        'onmove.reparent_thread'
+      ]))
       const created = await client.callTool({
         name: 'onmove.create_todo',
         arguments: { parent: { type: 'thread', id: thread.id }, name: 'Same process Todo' }

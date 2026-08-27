@@ -8,6 +8,7 @@ import type {
   FocusSnapshot,
   HealthState,
   McpRetrievalMode,
+  MoveThreadInput,
   NoteParent,
   NoteSnapshot,
   RichTextDocumentReference,
@@ -17,6 +18,8 @@ import type {
   SubjectSnapshot,
   TagSummarySnapshot,
   TagUseSnapshot,
+  ThreadMovePlanSnapshot,
+  ThreadSnapshot,
   TodoOverviewSnapshot,
   TodoParent,
   TodoSnapshot,
@@ -283,6 +286,40 @@ export type UpdateApplicationFocus = Omit<UpdateFocusInput, 'description'>
 export type CreateApplicationThread = CreateThreadInput
 
 export type UpdateApplicationThread = UpdateThreadInput
+
+export interface ApplicationThreadReparentPlan {
+  reference: { type: 'thread'; id: number }
+  thread: { reference: { type: 'thread'; id: number }; id: number; title: string }
+  sourceFocus: { reference: { type: 'focus'; id: number }; id: number; title: string }
+  destinationFocus: { reference: { type: 'focus'; id: number }; id: number; title: string }
+  plan: Omit<ThreadMovePlanSnapshot, 'ownedRecords'> & {
+    ownedRecords: {
+      moveWithThread: true
+      kinds: readonly ['commitments', 'routines', 'updates', 'todos', 'notes', 'review-evidence']
+    }
+  }
+  status: 'ready' | 'confirmation-required' | 'no-change'
+  nextAction: {
+    tool: 'onmove.reparent_thread'
+    arguments: {
+      id: number
+      destinationFocusId: number
+      plannedFromFocusId: number
+      confirmedScopeSubjectIds: number[]
+    }
+    instruction: string
+  }
+}
+
+export interface ReparentApplicationThread extends MoveThreadInput {
+  id: number
+}
+
+export interface ReparentApplicationThreadResult {
+  thread: ThreadSnapshot
+  previousFocusId: number
+  changed: boolean
+}
 
 export type CreateApplicationCommitment = CreateTrackingCommitmentInput
 
@@ -1271,6 +1308,92 @@ export class OnMoveQueryService {
       routines: routines.map((routine) => plainProjection(routine)),
       threads: [],
       ...(warnings.length > 0 ? { warnings } : {})
+    }
+  }
+
+  /**
+   * Produces the exact stale-safe move input without mutating. Scope additions
+   * are exposed only when every affected Subject is visible to this caller.
+   */
+  planThreadReparent(
+    id: number,
+    destinationFocusId: number,
+    access: OnMoveAccessPolicy
+  ): ApplicationThreadReparentPlan | null {
+    assertPositiveId(id, 'thread id')
+    assertPositiveId(destinationFocusId, 'destination focus id')
+    const thread = this.domain.threads.find(id)
+    const destinationFocus = this.domain.focuses.find(destinationFocusId)
+    if (!thread || !destinationFocus ||
+        !this.sensitivity.canRead('thread', id, access) ||
+        !this.sensitivity.canRead('focus', destinationFocusId, {
+          ...access,
+          permissionPolicy: undefined
+        }) ||
+        !this.sensitivity.canViewResource('thread', access, {
+          focusId: destinationFocusId,
+          threadId: null
+        })) return null
+    const sourceFocus = this.domain.focuses.find(thread.focusId)
+    if (!sourceFocus) return null
+    const plan = this.domain.threads.planMove(id, destinationFocusId)
+    if (plan.scopeSubjectAdditions.some((subject) =>
+      !this.sensitivity.canReadInContext('subject', subject.id, access, {
+        focusId: sourceFocus.id,
+        threadId: id
+      }))) return null
+    const status = plan.fromFocusId === plan.toFocusId
+      ? 'no-change' as const
+      : plan.requiresConfirmation ? 'confirmation-required' as const : 'ready' as const
+    const confirmedScopeSubjectIds = plan.scopeSubjectAdditions.map(({ id: subjectId }) => subjectId)
+    return {
+      reference: { type: 'thread', id },
+      thread: { reference: { type: 'thread', id }, id, title: thread.title },
+      sourceFocus: {
+        reference: { type: 'focus', id: sourceFocus.id },
+        id: sourceFocus.id,
+        title: sourceFocus.title
+      },
+      destinationFocus: {
+        reference: { type: 'focus', id: destinationFocus.id },
+        id: destinationFocus.id,
+        title: destinationFocus.title
+      },
+      plan: {
+        threadId: plan.threadId,
+        fromFocusId: plan.fromFocusId,
+        toFocusId: plan.toFocusId,
+        sourceScopeMode: plan.sourceScopeMode,
+        sourceScopeId: plan.sourceScopeId,
+        targetScopeId: plan.targetScopeId,
+        scopeStrategy: plan.scopeStrategy,
+        scopeSubjectAdditions: plan.scopeSubjectAdditions.map((subject) => ({
+          ...subject,
+          reference: { type: 'subject' as const, id: subject.id }
+        })),
+        requiresConfirmation: plan.requiresConfirmation,
+        ownedRecords: {
+          moveWithThread: true,
+          kinds: [
+            'commitments', 'routines', 'updates', 'todos', 'notes', 'review-evidence'
+          ]
+        }
+      },
+      status,
+      nextAction: {
+        tool: 'onmove.reparent_thread',
+        arguments: {
+          id,
+          destinationFocusId,
+          plannedFromFocusId: plan.fromFocusId,
+          confirmedScopeSubjectIds
+        },
+        instruction: status === 'confirmation-required'
+          ? 'Confirm the listed destination Focus Scope additions with the user, then copy these arguments exactly.'
+          : status === 'no-change'
+            ? 'No mutation is needed because this Thread already belongs to the destination Focus.'
+            : 'Copy these arguments exactly to reparent the Thread.'
+      }
     }
   }
 
@@ -2765,6 +2888,55 @@ export class OnMoveCommandService {
       const updated = this.domain.threads.requireModel(id).update(input).snapshot()
       this.auditMutation('onmove.update_thread', 'thread', id, 'update', access, clientName)
       return updated
+    })
+  }
+
+  reparentThread(
+    input: ReparentApplicationThread,
+    access: OnMoveAccessPolicy,
+    clientName?: string
+  ): ReparentApplicationThreadResult {
+    this.assertEditPermission('thread', input.id, access)
+    assertPositiveId(input.focusId, 'destination focus id')
+    const destinationFocus = this.domain.focuses.find(input.focusId)
+    if (!destinationFocus || !this.sensitivity.canRead('focus', destinationFocus.id, {
+      ...access,
+      permissionPolicy: undefined
+    })) {
+      throw new ModelNotFoundError('Focus', input.focusId)
+    }
+    this.assertCreateAt('thread', { focusId: destinationFocus.id, threadId: null }, access)
+    const plan = this.domain.threads.planMove(input.id, input.focusId)
+    if (plan.scopeSubjectAdditions.some((subject) =>
+      !this.sensitivity.canReadInContext('subject', subject.id, access, {
+        focusId: plan.fromFocusId,
+        threadId: input.id
+      }))) {
+      throw new ModelValidationError(
+        'Thread reparenting requires Scope changes that are not visible under current MCP access'
+      )
+    }
+    if (plan.fromFocusId === plan.toFocusId) {
+      return {
+        thread: this.domain.threads.requireModel(input.id).snapshot(),
+        previousFocusId: plan.fromFocusId,
+        changed: false
+      }
+    }
+    return this.database.transaction(() => {
+      const moved = this.domain.threads.move(input.id, {
+        focusId: input.focusId,
+        plannedFromFocusId: input.plannedFromFocusId,
+        confirmedScopeSubjectIds: input.confirmedScopeSubjectIds
+      })
+      this.auditMutation(
+        'onmove.reparent_thread', 'thread', input.id, 'reparent', access, clientName
+      )
+      return {
+        thread: moved,
+        previousFocusId: plan.fromFocusId,
+        changed: true
+      }
     })
   }
 

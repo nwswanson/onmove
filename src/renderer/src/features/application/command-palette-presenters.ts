@@ -11,9 +11,12 @@ import type {
   CommandMenuGroupModel,
   CommandMenuItemModel
 } from '@/components/ui/command-menu'
+import type { LifecycleStatusOptionModel } from '@/components/ui/lifecycle-status'
 import type {
   CommandPaletteSnapshot
 } from '@/features/application/use-command-palette-model'
+import { healthStateLabel } from '@/features/shared/state-presenters'
+import { workStatusLabel } from '@/features/shared/work-status'
 
 export type CommandPaletteDestination =
   | { type: 'focus'; target: FocusWorkspaceDestinationTarget }
@@ -33,6 +36,16 @@ function sorted(items: CommandPaletteItemModel[]): CommandPaletteItemModel[] {
   return items.sort((left, right) =>
     collator.compare(left.label, right.label) || collator.compare(left.description, right.description)
   )
+}
+
+function currentStatus(status: FocusSnapshot['status']): boolean {
+  return status === 'active' || status === 'paused'
+}
+
+function todoStatus(todo: TodoSnapshot): LifecycleStatusOptionModel {
+  return todo.done
+    ? { value: 'done', label: 'Done', tone: 'success' }
+    : { value: 'open', label: 'Open', tone: 'primary' }
 }
 
 function focusTarget(
@@ -82,14 +95,17 @@ function todoContext(
 /** Translates domain snapshots into the command receiver's data-only result contract. */
 export function commandPaletteGroups(
   snapshot: CommandPaletteSnapshot,
-  hideSensitiveContent: boolean
+  hideSensitiveContent: boolean,
+  includeClosedWork = false
 ): CommandPaletteGroupModel[] {
   const focuses = snapshot.focuses.filter((focus) =>
-    !hideSensitiveContent || !focus.sensitive)
+    (includeClosedWork || currentStatus(focus.status)) &&
+    (!hideSensitiveContent || !focus.sensitive))
   const focusById = new Map(focuses.map((focus) => [focus.id, focus]))
   const threads = snapshot.threads.filter((thread) => {
     const focus = focusById.get(thread.focusId)
-    return Boolean(focus) && (!hideSensitiveContent || !thread.sensitive)
+    return Boolean(focus) && (includeClosedWork || currentStatus(thread.status)) &&
+      (!hideSensitiveContent || !thread.sensitive)
   })
   const threadById = new Map(threads.map((thread) => [thread.id, thread]))
   const threadScopeById = new Map(
@@ -97,7 +113,8 @@ export function commandPaletteGroups(
   )
   const commitments = snapshot.commitments.filter((commitment) => {
     const context = commitmentContext(commitment, focusById, threadById)
-    return Boolean(context) && (!hideSensitiveContent || !commitment.sensitive)
+    return Boolean(context) && (includeClosedWork || currentStatus(commitment.status)) &&
+      (!hideSensitiveContent || !commitment.sensitive)
   })
   const commitmentById = new Map(commitments.map((commitment) => [commitment.id, commitment]))
   const commitmentContextById = new Map(
@@ -113,7 +130,8 @@ export function commandPaletteGroups(
         icon: 'folder' as const,
         label: focus.title,
         description: 'Focus · Overall',
-        keywords: ['focus', 'overall', focus.title],
+        keywords: ['focus', 'overall', focus.title, focus.status],
+        status: workStatusLabel(focus.status),
         destination: { type: 'focus' as const, target: focusTarget(focus.id) }
       })))
     },
@@ -131,7 +149,12 @@ export function commandPaletteGroups(
           icon: 'branch' as const,
           label: thread.title,
           description: `${focus.title} › ${ordinaryContextLabel}`,
-          keywords: ['thread', 'scope', thread.title, focus.title, ordinaryContextLabel],
+          keywords: [
+            'thread', 'scope', thread.title, focus.title, ordinaryContextLabel,
+            thread.status, thread.health
+          ],
+          status: workStatusLabel(thread.status),
+          ...(thread.health === 'none' ? {} : { state: healthStateLabel(thread.health) }),
           destination: {
             type: 'focus' as const,
             target: focusTarget(focus.id, thread.id)
@@ -150,8 +173,12 @@ export function commandPaletteGroups(
               'subject',
               thread.title,
               focus.title,
-              subject.name
+              subject.name,
+              thread.status,
+              thread.health
             ],
+            status: workStatusLabel(thread.status),
+            ...(thread.health === 'none' ? {} : { state: healthStateLabel(thread.health) }),
             destination: {
               type: 'focus',
               target: focusTarget(focus.id, thread.id, null, subject.id)
@@ -182,8 +209,14 @@ export function commandPaletteGroups(
             commitment.title,
             context.focus.title,
             parent,
-            ordinaryContextLabel
+            ordinaryContextLabel,
+            commitment.status,
+            commitment.state
           ],
+          status: workStatusLabel(commitment.status),
+          ...(commitment.state === 'none'
+            ? {}
+            : { state: healthStateLabel(commitment.state) }),
           destination: {
             type: 'focus' as const,
             target: focusTarget(context.focus.id, context.thread?.id ?? null, commitment.id)
@@ -203,8 +236,12 @@ export function commandPaletteGroups(
               commitment.title,
               context.focus.title,
               parent,
-              cell.subject.name
+              cell.subject.name,
+              commitment.status,
+              cell.state
             ],
+            status: workStatusLabel(commitment.status),
+            ...(cell.state === 'none' ? {} : { state: healthStateLabel(cell.state) }),
             destination: {
               type: 'focus',
               target: focusTarget(
@@ -236,7 +273,8 @@ export function commandPaletteGroups(
           icon: 'check' as const,
           label: todo.name,
           description: path.join(' › '),
-          keywords: ['todo', todo.name, ...path],
+          keywords: ['todo', todo.name, todo.done ? 'done' : 'open', ...path],
+          status: todoStatus(todo),
           destination: {
             type: 'focus' as const,
             target: focusTarget(

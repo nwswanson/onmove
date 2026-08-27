@@ -9,6 +9,11 @@ import {
   CommandLoading,
   CommandShortcut
 } from '@/components/ui/command'
+import {
+  LifecycleStatusLabel,
+  type LifecycleStatusOptionModel
+} from '@/components/ui/lifecycle-status'
+import { StateLabel, type StateLabelModel } from '@/components/ui/state-label'
 
 export type CommandMenuIcon = 'folder' | 'branch' | 'item' | 'check' | 'tag'
 
@@ -18,6 +23,8 @@ export interface CommandMenuItemModel {
   label: string
   description: string
   keywords: readonly string[]
+  status?: LifecycleStatusOptionModel
+  state?: StateLabelModel
 }
 
 export interface CommandMenuGroupModel {
@@ -90,8 +97,14 @@ export function CommandMenu({
                     onSelect={() => onSelect(item.id)}
                   >
                     <ResultIcon icon={item.icon} />
-                    <span className="min-w-0 flex-1 truncate font-medium">{item.label}</span>
-                    <span className="max-w-[45%] truncate text-xs text-muted-foreground">
+                    <span className="min-w-0 flex flex-1 items-center gap-1.5">
+                      <span className="min-w-0 truncate font-medium">{item.label}</span>
+                      {item.status && (
+                        <LifecycleStatusLabel model={item.status} size="compact" />
+                      )}
+                      {item.state && <StateLabel model={item.state} size="compact" />}
+                    </span>
+                    <span className="max-w-[38%] truncate text-xs text-muted-foreground">
                       {item.description}
                     </span>
                   </CommandItem>

@@ -182,6 +182,13 @@
   apply the same hierarchy-cascading sensitive visibility used by ordinary collections, including
   sensitive Subjects. Result selection must emit a typed destination and reuse atomic Focus or Tag
   deep-link navigation rather than coordinating sidebar state in the palette.
+- Share one presentation-only, safely persisted closed-work preference between the `Cmd-K` command
+  palette and `Cmd-P` Update target picker. It defaults off, so both menus project only Active and
+  Paused Focus, Thread, and Commitment hierarchy; enabling it admits Done and Cancelled hierarchy
+  and lets atomic navigation explicitly open those otherwise non-navigable records. Keep this
+  independent from MCP's closed-work setting. Command rows own compact lifecycle labels and any
+  meaningful derived red/yellow/green state through the domain-free receiver contract so users can
+  distinguish identically named targets without opening them.
 - Describe contextual inspectors with the shared `ContextDrawerModel` contract and render them only
   through `ContextDrawerOutlet`. The receiver guarantees a visible close button and requires a
   descriptive accessible label; feature code must not compose the low-level drawer shell directly.
@@ -792,6 +799,16 @@ foreground colors and do not rely on color alone to communicate selection or sta
   resource has a different Delete grant. Always reuse domain repositories so every deleted Update,
   including cascades, enters the bounded archive. Subject deletion remains referentially protected
   while Scope, Update, or Todo history exists.
+- MCP creation schemas for Focus, Thread, and tracking Commitment must advertise and apply
+  `needsReview: true` when the caller omits it. Preserve an explicit `false`; updates must never
+  silently reset the existing review-participation value.
+- Expose cross-Focus Thread ownership changes through the read-only
+  `onmove.plan_thread_reparent` and audited `onmove.reparent_thread` pair. The planner owns the exact
+  stale source Focus and required destination-Scope Subject confirmation. The mutation must reuse
+  `ThreadRepository.move`, preserve every child and scoped evidence record, require Thread Edit at
+  both the source record and destination Focus, reject stale or incomplete confirmation, emit live
+  invalidation only for a real move, and return a reverse-plan request rather than guessing undo
+  arguments against potentially changed Scope state.
 - Start and stop MCP through the persisted Settings toggle. Bind only to `127.0.0.1`, validate
   localhost Host and Origin headers, expose the configured `/mcp` endpoint only while OnMove is
   running, and stop the listener before closing the shared database. Successful MCP mutations must

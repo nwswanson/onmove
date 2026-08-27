@@ -13,6 +13,10 @@ import type {
   CommandMenuIcon,
   CommandMenuItemModel
 } from '@/components/ui/command-menu'
+import type { LifecycleStatusOptionModel } from '@/components/ui/lifecycle-status'
+import type { StateLabelModel } from '@/components/ui/state-label'
+import { healthStateLabel } from '@/features/shared/state-presenters'
+import { workStatusLabel } from '@/features/shared/work-status'
 
 export interface UpdateCommandTarget {
   id: string
@@ -105,9 +109,11 @@ function currentStatus(status: string): boolean {
 
 function item(
   target: UpdateCommandTarget,
-  icon: CommandMenuIcon
+  icon: CommandMenuIcon,
+  status: LifecycleStatusOptionModel,
+  state?: StateLabelModel
 ): UpdateCommandItemModel {
-  return { ...target, icon, target }
+  return { ...target, icon, status, ...(state ? { state } : {}), target }
 }
 
 function sorted(items: UpdateCommandItemModel[]): UpdateCommandItemModel[] {
@@ -135,8 +141,12 @@ function threadTargets(
       id: `thread:${thread.id}`,
       scope: null,
       description: `${focus.title} › Thread-wide`,
-      keywords: ['thread', 'thread-wide', focus.title, thread.title]
-    }, 'branch')]
+      keywords: [
+        'thread', 'thread-wide', focus.title, thread.title, thread.status, thread.health
+      ]
+    }, 'branch', workStatusLabel(thread.status), thread.health === 'none'
+      ? undefined
+      : healthStateLabel(thread.health))]
   }
   return scope.subjects.flatMap((subject) => hideSensitiveContent && subject.sensitive
     ? []
@@ -145,8 +155,13 @@ function threadTargets(
         id: `thread:${thread.id}:scope:${scope.scopeId}:subject:${subject.id}`,
         scope: { scopeId: scope.scopeId as number, subjectId: subject.id },
         description: `${focus.title} › ${subject.name}`,
-        keywords: ['thread', 'subject', focus.title, thread.title, subject.name]
-      }, 'branch')])
+        keywords: [
+          'thread', 'subject', focus.title, thread.title, subject.name,
+          thread.status, thread.health
+        ]
+      }, 'branch', workStatusLabel(thread.status), thread.health === 'none'
+        ? undefined
+        : healthStateLabel(thread.health))])
 }
 
 function commitmentContext(
@@ -183,8 +198,13 @@ function commitmentTargets(
       id: `commitment:${commitment.id}`,
       scope: null,
       description: parentPath,
-      keywords: ['commitment', focus.title, thread?.title ?? 'overall', commitment.title]
-    }, 'item')]
+      keywords: [
+        'commitment', focus.title, thread?.title ?? 'overall', commitment.title,
+        commitment.status, commitment.state
+      ]
+    }, 'item', workStatusLabel(commitment.status), commitment.state === 'none'
+      ? undefined
+      : healthStateLabel(commitment.state))]
   }
   if (context.cells.length === 0) return []
   return context.cells.flatMap((cell) => hideSensitiveContent && cell.subject.sensitive
@@ -196,28 +216,32 @@ function commitmentTargets(
         description: `${parentPath} › ${cell.subject.name}`,
         keywords: [
           'commitment', 'subject', focus.title, thread?.title ?? 'overall',
-          commitment.title, cell.subject.name
+          commitment.title, cell.subject.name, commitment.status, cell.state
         ]
-      }, 'item')])
+      }, 'item', workStatusLabel(commitment.status), cell.state === 'none'
+        ? undefined
+        : healthStateLabel(cell.state))])
 }
 
 /** Receiver-ready update targets; exact Subject cells remain domain data. */
 export function updateCommandGroups(
   graph: UpdateCommandGraph,
-  hideSensitiveContent: boolean
+  hideSensitiveContent: boolean,
+  includeClosedWork = false
 ): UpdateCommandGroupModel[] {
   const focuses = graph.focuses.filter((focus) =>
-    currentStatus(focus.status) && (!hideSensitiveContent || !focus.sensitive))
+    (includeClosedWork || currentStatus(focus.status)) &&
+    (!hideSensitiveContent || !focus.sensitive))
   const focusById = new Map(focuses.map((focus) => [focus.id, focus]))
   const threads = graph.threads.filter((thread) => {
     const focus = focusById.get(thread.focusId)
-    return Boolean(focus) && currentStatus(thread.status) &&
+    return Boolean(focus) && (includeClosedWork || currentStatus(thread.status)) &&
       (!hideSensitiveContent || !thread.sensitive)
   })
   const threadById = new Map(threads.map((thread) => [thread.id, thread]))
   const commitments = graph.commitments.filter((commitment) => {
     const context = commitmentContext(commitment, focusById, threadById)
-    return Boolean(context) && currentStatus(commitment.status) &&
+    return Boolean(context) && (includeClosedWork || currentStatus(commitment.status)) &&
       (!hideSensitiveContent || !commitment.sensitive)
   })
 

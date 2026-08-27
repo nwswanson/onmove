@@ -34,6 +34,7 @@ import {
 import { clearReviewPrimaryPanePreference } from '../../src/renderer/src/features/review/review-split-preference'
 import { clearDueHidePausedPreference } from '../../src/renderer/src/features/due/due-filter-preference'
 import { clearNoteSplitPreference } from '../../src/renderer/src/features/notes/note-split-preference'
+import { clearCommandPagerIncludeClosed } from '../../src/renderer/src/features/application/command-pager-preference'
 
 const initialState: AppState = {
   greeting: 'Hello, world.',
@@ -682,6 +683,7 @@ describe('App', () => {
     clearNoteSplitPreference('focus')
     clearNoteSplitPreference('thread')
     clearNoteSplitPreference('commitment')
+    clearCommandPagerIncludeClosed()
   })
 
   it('shows the toolbar and sidebar while SQLite and focuses load', () => {
@@ -1879,18 +1881,20 @@ describe('App', () => {
 
     fireEvent.keyDown(document, { key: 'k', metaKey: true })
     const dialog = await screen.findByRole('dialog', { name: 'Jump to anything' })
-    expect(within(dialog).getByRole('option', { name: /^Project Atlas Focus/ })).toBeVisible()
     expect(within(dialog).getByRole('option', {
-      name: /Sprint execution Project Atlas › All subjects/
+      name: /^Project Atlas Active Focus/
     })).toBeVisible()
     expect(within(dialog).getByRole('option', {
-      name: /Sprint execution Project Atlas › Customer Operations/
+      name: /Sprint execution Active Project Atlas › All subjects/
     })).toBeVisible()
     expect(within(dialog).getByRole('option', {
-      name: /Improve ticket quality Project Atlas › Sprint execution › All subjects/
+      name: /Sprint execution Active Project Atlas › Customer Operations/
     })).toBeVisible()
     expect(within(dialog).getByRole('option', {
-      name: /Improve ticket quality Project Atlas › Sprint execution › Customer Operations/
+      name: /Improve ticket quality Active Project Atlas › Sprint execution › All subjects/
+    })).toBeVisible()
+    expect(within(dialog).getByRole('option', {
+      name: /Improve ticket quality Active Green Project Atlas › Sprint execution › Customer Operations/
     })).toBeVisible()
     expect(within(dialog).getByRole('option', { name: /^Confirm launch owner/ })).toBeVisible()
     expect(within(dialog).getByRole('option', { name: /^@launch/ })).toBeVisible()
@@ -1900,7 +1904,7 @@ describe('App', () => {
       'sprint customer operations'
     )
     await user.click(within(dialog).getByRole('option', {
-      name: /Sprint execution Project Atlas › Customer Operations/
+      name: /Sprint execution Active Project Atlas › Customer Operations/
     }))
     expect(await screen.findByRole('heading', { name: 'Sprint execution' })).toBeVisible()
     expect(await screen.findByRole('tab', { name: 'Work in Customer Operations' }))
@@ -1913,7 +1917,7 @@ describe('App', () => {
       'ticket quality'
     )
     await user.click(within(commitmentSearch).getByRole('option', {
-      name: /Improve ticket quality Project Atlas › Sprint execution › All subjects/
+      name: /Improve ticket quality Active Project Atlas › Sprint execution › All subjects/
     }))
     expect(await screen.findByRole('heading', {
       name: 'Improve ticket quality'
@@ -1929,7 +1933,7 @@ describe('App', () => {
       'customer operations'
     )
     await user.click(within(reopened).getByRole('option', {
-      name: /Improve ticket quality Project Atlas › Sprint execution › Customer Operations/
+      name: /Improve ticket quality Active Green Project Atlas › Sprint execution › Customer Operations/
     }))
 
     expect(await screen.findByRole('tab', { name: 'Work in Customer Operations' }))
@@ -5733,6 +5737,13 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: 'Settings' })).toBeVisible()
     expect(settings).toHaveAttribute('aria-current', 'page')
     expect(screen.getByText('Automatic database backups')).toBeVisible()
+    expect(screen.getByText('Command menus')).toBeVisible()
+    const showClosedCommands = screen.getByRole('checkbox', {
+      name: /Show done and cancelled work/i
+    })
+    expect(showClosedCommands).not.toBeChecked()
+    await user.click(showClosedCommands)
+    expect(showClosedCommands).toBeChecked()
     expect(screen.getByText('Model Context Protocol')).toBeVisible()
     expect(screen.getByText(/initialize automatically at app launch/)).toBeVisible()
     const retrievalStatusPanel = screen.getByRole('region', {
