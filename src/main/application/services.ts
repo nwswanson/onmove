@@ -47,7 +47,13 @@ import {
 } from './access-policy'
 import {
   SearchIndexRepository,
+  SEARCH_TERMINAL_STATUSES,
   type SearchPage,
+  type SearchLifecycleMode,
+  type SearchLifecycleQuery,
+  type SearchLifecycleStatus,
+  type SearchResultLifecycle,
+  type SearchTerminalStatus,
   type SearchQuery,
   type SearchResult
 } from './search-index'
@@ -432,6 +438,8 @@ export interface BrowseApplicationHierarchyQuery {
   includeCommitments?: boolean
   includeSubjects?: boolean
   includeScopes?: boolean
+  /** Omission browses current work. Closed paths must be requested intentionally. */
+  lifecycle?: SearchLifecycleQuery
   limit?: number
   offset?: number
 }
@@ -459,6 +467,8 @@ export interface ApplicationHierarchyPath {
     dimension: string
     applicationMode: string
   } | null
+  /** Lifecycle of this exact path, including terminal owner ancestry. */
+  lifecycle: SearchResultLifecycle
   /** Exact typed destination for a safe create_update call, or null when a Subject choice is required. */
   updateTarget: {
     parent: { type: 'thread' | 'commitment'; id: number }
@@ -627,6 +637,80 @@ function boundedPage(limit = 50, offset = 0): { limit: number; offset: number } 
     throw new ModelValidationError('offset must be between 0 and 10000')
   }
   return { limit, offset }
+}
+
+function normalizedHierarchyLifecycle(query: SearchLifecycleQuery | undefined): {
+  mode: SearchLifecycleMode
+  terminalStatuses: SearchTerminalStatus[]
+} {
+  const mode = query?.mode ?? 'current'
+  if (!(['current', 'closed', 'all'] as const).includes(mode)) {
+    throw new TypeError('hierarchy lifecycle.mode must be current, closed, or all')
+  }
+  const requested = query?.terminalStatuses ?? SEARCH_TERMINAL_STATUSES
+  if (!Array.isArray(requested) || requested.length === 0) {
+    throw new TypeError('hierarchy lifecycle.terminalStatuses must contain done or cancelled')
+  }
+  if (requested.some((status) => !SEARCH_TERMINAL_STATUSES.includes(status))) {
+    throw new TypeError(
+      'hierarchy lifecycle.terminalStatuses must contain only done or cancelled'
+    )
+  }
+  const selected = new Set(requested)
+  return {
+    mode,
+    terminalStatuses: SEARCH_TERMINAL_STATUSES.filter((status) => selected.has(status))
+  }
+}
+
+type HierarchyLifecycleOwner = { id: number; status: SearchLifecycleStatus }
+
+function terminalLifecycleStatus(
+  status: SearchLifecycleStatus | undefined
+): status is SearchTerminalStatus {
+  return status === 'done' || status === 'cancelled'
+}
+
+function hierarchyPathLifecycle(
+  kind: ApplicationHierarchyPath['kind'],
+  focus: HierarchyLifecycleOwner,
+  thread: HierarchyLifecycleOwner | null,
+  commitment: HierarchyLifecycleOwner | null
+): SearchResultLifecycle {
+  const lineage = {
+    focus: { id: focus.id, status: focus.status },
+    thread: thread ? { id: thread.id, status: thread.status } : null,
+    commitment: commitment ? { id: commitment.id, status: commitment.status } : null
+  }
+  const statuses = [focus.status, thread?.status, commitment?.status]
+  const effective = statuses.some(terminalLifecycleStatus)
+    ? 'closed' as const
+    : 'current' as const
+  const directStatus = kind === 'focus'
+    ? focus.status
+    : kind === 'thread'
+      ? thread?.status ?? null
+      : kind === 'commitment'
+        ? commitment?.status ?? null
+        : null
+  return { directStatus, effective, lineage }
+}
+
+function hierarchyPathSelected(
+  lifecycle: SearchResultLifecycle,
+  selection: ReturnType<typeof normalizedHierarchyLifecycle>
+): boolean {
+  const statuses = [
+    lifecycle.lineage.focus?.status,
+    lifecycle.lineage.thread?.status,
+    lifecycle.lineage.commitment?.status
+  ]
+  const anyTerminal = statuses.some(terminalLifecycleStatus)
+  const selectedTerminal = statuses.some((status) =>
+    terminalLifecycleStatus(status) && selection.terminalStatuses.includes(status))
+  if (selection.mode === 'current') return !anyTerminal
+  if (selection.mode === 'closed') return selectedTerminal
+  return !anyTerminal || selectedTerminal
 }
 
 function plainProjection(value: unknown, key = ''): unknown {
@@ -1825,6 +1909,7 @@ export class OnMoveQueryService {
     access: OnMoveAccessPolicy
   ): ApplicationHierarchyBrowseResult {
     const page = boundedPage(query.limit, query.offset)
+    const lifecycleSelection = normalizedHierarchyLifecycle(query.lifecycle)
     const structuralBrowse = query.text === null
     const requestedFocusId = query.focusId ?? null
     const requestedThreadId = query.threadId ?? null
@@ -1858,6 +1943,7 @@ export class OnMoveQueryService {
     const paths: ApplicationHierarchyPath[] = []
     const seen = new Set<string>()
     const append = (path: ApplicationHierarchyPath): void => {
+      if (!hierarchyPathSelected(path.lifecycle, lifecycleSelection)) return
       const key = [
         path.kind,
         path.hierarchy.focus.id,
@@ -1876,7 +1962,8 @@ export class OnMoveQueryService {
       commitment: { id: number; title: string } | null,
       subject: { id: number; name: string } | null,
       scope: ApplicationHierarchyPath['scope'],
-      updateTarget: ApplicationHierarchyPath['updateTarget']
+      updateTarget: ApplicationHierarchyPath['updateTarget'],
+      lifecycle: SearchResultLifecycle
     ): ApplicationHierarchyPath => {
       const notation: ApplicationHierarchyPath['notation'] = { focus: focus.title }
       if (thread) notation.thread = thread.title
@@ -1902,6 +1989,7 @@ export class OnMoveQueryService {
         displayPath: labels.join(' > '),
         relativePath: relativeLabels.join(' > ') || labels.join(' > '),
         ...(query.includeScopes ? { scope } : {}),
+        lifecycle,
         updateTarget
       }
     }
@@ -1909,6 +1997,7 @@ export class OnMoveQueryService {
     for (const focusRecord of this.domain.focuses.list()) {
       if (requestedFocusId !== null && focusRecord.id !== requestedFocusId) continue
       const focus = { id: focusRecord.id, title: focusRecord.title }
+      const focusLifecycle = { id: focusRecord.id, status: focusRecord.status }
       const threadRecords = this.domain.threads.listForFocus(focus.id)
         .filter((thread) => this.sensitivity.canRead('thread', thread.id, access))
       const focusScope = this.domain.focusScopes.get(focus.id)
@@ -1946,7 +2035,10 @@ export class OnMoveQueryService {
         (query.includeThreads || query.includeCommitments || query.includeSubjects ||
           query.includeScopes)
       ) {
-        append(makePath('focus', focus, null, null, null, focusScopeSummary, null))
+        append(makePath(
+          'focus', focus, null, null, null, focusScopeSummary, null,
+          hierarchyPathLifecycle('focus', focusLifecycle, null, null)
+        ))
       }
       const focusSubjectMatched = focusSubjects.some((subject) => matchedSubjectIds.has(subject.id))
       if (requestedThreadId === null && (
@@ -1957,7 +2049,8 @@ export class OnMoveQueryService {
           if (!structuralBrowse && !focusMatched && !matchedSubjectIds.has(subject.id)) continue
           append(makePath(
             'subject', focus, null, null, { id: subject.id, name: subject.name },
-            focusScopeSummary, null
+            focusScopeSummary, null,
+            hierarchyPathLifecycle('subject', focusLifecycle, null, null)
           ))
         }
       }
@@ -1965,6 +2058,7 @@ export class OnMoveQueryService {
       for (const threadRecord of threadRecords) {
         if (requestedThreadId !== null && threadRecord.id !== requestedThreadId) continue
         const thread = { id: threadRecord.id, title: threadRecord.title }
+        const threadLifecycle = { id: threadRecord.id, status: threadRecord.status }
         const threadScope = this.domain.threadScopes.get(thread.id)
         const scopeRecord = threadScope.scopeId === null
           ? null
@@ -2016,7 +2110,8 @@ export class OnMoveQueryService {
           : null
         if (query.includeThreads) {
           append(makePath(
-            'thread', focus, thread, null, null, threadScopeSummary, threadUnscopedTarget
+            'thread', focus, thread, null, null, threadScopeSummary, threadUnscopedTarget,
+            hierarchyPathLifecycle('thread', focusLifecycle, threadLifecycle, null)
           ))
         }
         if (query.includeSubjects || subjectMatched || requestedSubjectId !== null) {
@@ -2031,13 +2126,18 @@ export class OnMoveQueryService {
               {
                 parent: { type: 'thread', id: thread.id },
                 attribution: { mode: 'subject', subjectId: subject.id }
-              }
+              },
+              hierarchyPathLifecycle('subject', focusLifecycle, threadLifecycle, null)
             ))
           }
         }
 
         for (const commitmentRecord of commitments) {
           const commitment = { id: commitmentRecord.id, title: commitmentRecord.title }
+          const commitmentLifecycle = {
+            id: commitmentRecord.id,
+            status: commitmentRecord.status
+          }
           const ownMatch = matchedCommitmentIds.has(commitment.id)
           const commitmentSeeded = structuralBrowse || focusMatched ||
             matchedThreadIds.has(thread.id) || ownMatch || subjectMatched
@@ -2086,7 +2186,10 @@ export class OnMoveQueryService {
           if (query.includeCommitments) {
             append(makePath(
               'commitment', focus, thread, commitment, null,
-              commitmentScopeSummary, commitmentUnscopedTarget
+              commitmentScopeSummary, commitmentUnscopedTarget,
+              hierarchyPathLifecycle(
+                'commitment', focusLifecycle, threadLifecycle, commitmentLifecycle
+              )
             ))
           }
           if (query.includeSubjects || subjectMatched || requestedSubjectId !== null) {
@@ -2101,7 +2204,10 @@ export class OnMoveQueryService {
                 {
                   parent: { type: 'commitment', id: commitment.id },
                   attribution: { mode: 'subject', subjectId: subject.id }
-                }
+                },
+                hierarchyPathLifecycle(
+                  'subject', focusLifecycle, threadLifecycle, commitmentLifecycle
+                )
               ))
             }
           }

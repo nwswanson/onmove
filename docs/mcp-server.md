@@ -348,10 +348,77 @@ SQLite resolves permissions and the complete context before Orama ranks any cand
 report match channels, complete hierarchy provenance, requested/applied strategy, fallback reason,
 lexical and semantic generations, and semantic coverage. They return bounded excerpts, never
 lossless rich text. When `hasMore=true`, call `onmove.continue_retrieval` with only the exact signed
-token; changing access, mode, strategy, or either index generation makes that continuation stale.
+token. The token binds the normalized lifecycle policy as well as the complete request; changing
+access, retrieval mode, strategy, or either index generation makes that continuation stale.
 
 The established `onmove.search` and kind-specific search tools remain the deterministic lexical
 compatibility/discovery surface described below.
+
+## Search and retrieval lifecycle
+
+Every initial cross-kind search, kind-specific search, and context-aware retrieval accepts the same
+optional `lifecycle` object. Omitting it is equivalent to the normalized policy returned under
+`appliedQuery.lifecycle`:
+
+```json
+{
+  "lifecycle": {
+    "mode": "current",
+    "terminalStatuses": ["done", "cancelled"]
+  }
+}
+```
+
+Lifecycle is a structural eligibility boundary applied before lexical or semantic ranking:
+
+| `lifecycle.mode` | Eligible records |
+| --- | --- |
+| `current` | Current operational lineage only. Active and paused work remains eligible; anything done/cancelled itself or beneath done/cancelled work is excluded. This is the default. |
+| `closed` | Only records that are done/cancelled themselves or inherit a selected terminal status from an owning Focus, Thread, or Commitment. |
+| `all` | Current records plus the selected closed partition, for an intentional comparison of live work and history. |
+
+`terminalStatuses` is an optional nonempty subset of `done` and `cancelled`; omission selects both.
+It narrows the closed portion of `closed` and `all`. With `current`, it does not alter the records
+returned, though it selects which excluded terminal statuses can contribute lifecycle-coverage
+hints. A terminal ancestor closes its complete searchable lineage: for example, an Update or Note
+under a done Thread is closed even if the evidence has no direct status, and a descendant beneath a
+cancelled Focus is closed regardless of the descendant's own active/paused status. The same policy
+applies to auxiliary hierarchy paths, so Subject/Scope projections cannot reintroduce excluded
+history.
+
+Every primary search or retrieval item exposes provenance under `lifecycle`:
+
+- `directStatus` is the record's own `active`, `paused`, `done`, or `cancelled` status, or `null`
+  when that kind has no direct lifecycle. Routine health remains separate and Routines therefore
+  use `null` here.
+- `effective` is `current`, `closed`, or `not_applicable`; `closed` includes inherited closure and
+  `not_applicable` identifies records without an operational lineage.
+- `lineage.focus`, `lineage.thread`, and `lineage.commitment` each contain the ancestor ID and
+  status when that owner exists. Auxiliary hierarchy paths expose the same provenance.
+
+Responses also return `lifecycleCoverage`, computed only from otherwise-matching records that the
+current access policy permits:
+
+- `closedMatchesAvailable` says authorized closed matches were excluded from a `current` request.
+- `closedExactTitleMatchAvailable` says those excluded matches contain an exact NFKC-normalized,
+  Unicode-lowercased indexed-title match for the supplied text. Exact-current availability is
+  evaluated across the complete selected partition, so this guidance remains stable across pages.
+- `wideningRecommended` becomes true only for `current` when no record was returned but closed
+  matches exist, or when an excluded exact-title match exists and the returned current records do
+  not contain that exact title.
+- `nextAction` is the explicit fresh-request instruction when widening is recommended; otherwise it
+  is `null`.
+
+These fields are hints, not an automatic fallback. OnMove never merges closed records into a
+current result page and never uses inaccessible or sensitivity-hidden history to disclose that a
+closed match exists. To inspect history, repeat the same initial request with
+`lifecycle.mode: "closed"`, or use `"all"` to compare partitions. Do not modify or reuse a
+continuation token for that widening.
+
+Search and retrieval continuation tokens bind the normalized lifecycle mode and terminal-status
+selection. `continue_search` and `continue_retrieval` accept only the exact returned token, so every
+subsequent page retains the originating lifecycle boundary. Any intentional lifecycle change is a
+new initial request.
 
 ## Search
 
@@ -436,18 +503,19 @@ hierarchy lookup. If
 `searchStatus.sufficient` or `searchStatus.doNotBroaden` is true, stop discovery and fetch those IDs
 directly; do not search globally for a generic parent label. A paged search response includes an
 opaque `continuationToken` only when another page exists. The token is signed and preserves the complete
-request: text, all local-date filters, timezone, scope, sort, kinds, projection, page size, byte
-budget, stable cursor, durable search-index generation, and the originating search response shape.
+request: text, all local-date filters, timezone, scope, lifecycle, sort, kinds, projection, page
+size, byte budget, stable cursor, durable search-index generation, and the originating search response shape.
 Send only that token to `onmove.continue_search`; never repeat criteria beside it. Changing the
-query or scope starts a new call to the original search tool. A live write between pages returns
+query, scope, or lifecycle starts a new call to the original search tool. A live write between pages returns
 `SEARCH_CURSOR_STALE`; restart the original search with its criteria. Broaden only when the user
 requests all people or all records.
 
 Search always returns records. Compact responses default to ten records and cap pages at 25. Every
 primary match always includes the exact `reference`, the `field` that matched, `containingThread`
-when applicable, a complete root-to-record `path` whose every segment has a canonical code, and a
-`recommendedWriteTarget`. `searchStatus.targetSelectionReady` is true only when every returned
-primary match has that complete path. This metadata is mandatory: byte-budget enforcement may
+when applicable, a complete root-to-record `path` whose every segment has a canonical code, a
+`recommendedWriteTarget`, and the record's `lifecycle` provenance.
+`searchStatus.targetSelectionReady` is true only when every returned primary match has that complete
+path. This metadata is mandatory: byte-budget enforcement may
 shorten snippets, remove auxiliary projections, or shorten the primary page and provide a
 continuation token, but it never removes a primary match's hierarchy.
 

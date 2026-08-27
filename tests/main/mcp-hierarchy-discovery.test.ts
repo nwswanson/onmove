@@ -204,4 +204,155 @@ describe('OnMove MCP hierarchy discovery', () => {
       reference.type === 'update' && reference.id === update.id)).toBe(false)
     expect(browse.paths.some(({ hierarchy }) => hierarchy.thread?.id === thread.id)).toBe(false)
   })
+
+  it('defaults hierarchy browsing to current paths and exposes inherited lifecycle provenance', () => {
+    const focus = database.domain.focuses.create({ title: 'Lifecycle hierarchy' }).toSnapshot()
+    const makeThread = (
+      title: string,
+      status: 'paused' | 'done' | 'cancelled',
+      subjectName: string
+    ) => {
+      const thread = database.domain.threads.create({
+        focusId: focus.id,
+        title,
+        status,
+        reviewFrequencyDays: 7
+      }).snapshot()
+      const commitment = database.domain.commitments.create({
+        type: 'tracking',
+        parent: { type: 'thread', id: thread.id },
+        title: `${title} commitment`
+      }).snapshot()
+      const scope = database.domain.threadScopes.addSubject(thread.id, { name: subjectName })
+      return { thread, commitment, subject: scope.subjects[0] }
+    }
+    const current = makeThread('Paused lane', 'paused', 'Current subject')
+    const done = makeThread('Done lane', 'done', 'Done subject')
+    const cancelled = makeThread('Cancelled lane', 'cancelled', 'Cancelled subject')
+    const browse = database.queries.browseHierarchy({
+      text: null,
+      includeThreads: true,
+      includeCommitments: true,
+      includeSubjects: true
+    }, [], visible)
+
+    expect(browse.paths.some(({ hierarchy }) => hierarchy.thread?.id === done.thread.id)).toBe(false)
+    expect(browse.paths.some(({ hierarchy }) =>
+      hierarchy.thread?.id === cancelled.thread.id)).toBe(false)
+    expect(browse.paths).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'thread',
+        hierarchy: expect.objectContaining({
+          thread: { id: current.thread.id, title: 'Paused lane' }
+        }),
+        lifecycle: {
+          directStatus: 'paused',
+          effective: 'current',
+          lineage: {
+            focus: { id: focus.id, status: 'active' },
+            thread: { id: current.thread.id, status: 'paused' },
+            commitment: null
+          }
+        }
+      }),
+      expect.objectContaining({
+        kind: 'subject',
+        hierarchy: expect.objectContaining({
+          commitment: { id: current.commitment.id, title: 'Paused lane commitment' }
+        }),
+        subject: { id: current.subject.id, name: 'Current subject' },
+        lifecycle: {
+          directStatus: null,
+          effective: 'current',
+          lineage: {
+            focus: { id: focus.id, status: 'active' },
+            thread: { id: current.thread.id, status: 'paused' },
+            commitment: { id: current.commitment.id, status: 'active' }
+          }
+        }
+      })
+    ]))
+  })
+
+  it('widens hierarchy paths consistently for closed/all modes and terminal subsets', () => {
+    const focus = database.domain.focuses.create({ title: 'Historical hierarchy' }).toSnapshot()
+    const makeThread = (title: string, status: 'active' | 'done' | 'cancelled') => {
+      const thread = database.domain.threads.create({
+        focusId: focus.id,
+        title,
+        status,
+        reviewFrequencyDays: 7
+      }).snapshot()
+      const commitment = database.domain.commitments.create({
+        type: 'tracking',
+        parent: { type: 'thread', id: thread.id },
+        title: `${title} commitment`
+      }).snapshot()
+      const scope = database.domain.threadScopes.addSubject(thread.id, {
+        name: `${title} subject`
+      })
+      return { thread, commitment, subject: scope.subjects[0] }
+    }
+    const current = makeThread('Current', 'active')
+    const done = makeThread('Done', 'done')
+    const cancelled = makeThread('Cancelled', 'cancelled')
+    const base = {
+      text: null,
+      includeThreads: true,
+      includeCommitments: true,
+      includeSubjects: true
+    } as const
+
+    const onlyDone = database.queries.browseHierarchy({
+      ...base,
+      lifecycle: { mode: 'closed', terminalStatuses: ['done'] }
+    }, [], visible)
+    expect(onlyDone.paths.length).toBeGreaterThan(0)
+    expect(onlyDone.paths.every(({ hierarchy }) => hierarchy.thread?.id === done.thread.id))
+      .toBe(true)
+    expect(onlyDone.paths).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'commitment',
+        hierarchy: expect.objectContaining({
+          commitment: { id: done.commitment.id, title: 'Done commitment' }
+        }),
+        lifecycle: {
+          directStatus: 'active',
+          effective: 'closed',
+          lineage: {
+            focus: { id: focus.id, status: 'active' },
+            thread: { id: done.thread.id, status: 'done' },
+            commitment: { id: done.commitment.id, status: 'active' }
+          }
+        }
+      }),
+      expect.objectContaining({
+        kind: 'subject',
+        subject: { id: done.subject.id, name: 'Done subject' },
+        lifecycle: expect.objectContaining({ directStatus: null, effective: 'closed' })
+      })
+    ]))
+
+    const currentAndCancelled = database.queries.browseHierarchy({
+      ...base,
+      lifecycle: { mode: 'all', terminalStatuses: ['cancelled'] }
+    }, [], visible)
+    expect(currentAndCancelled.paths.some(({ hierarchy }) =>
+      hierarchy.thread?.id === current.thread.id)).toBe(true)
+    expect(currentAndCancelled.paths.some(({ hierarchy }) =>
+      hierarchy.thread?.id === cancelled.thread.id)).toBe(true)
+    expect(currentAndCancelled.paths.some(({ hierarchy }) =>
+      hierarchy.thread?.id === done.thread.id)).toBe(false)
+    expect(currentAndCancelled.paths.find(({ hierarchy, subject }) =>
+      hierarchy.commitment?.id === cancelled.commitment.id &&
+      subject?.id === cancelled.subject.id)?.lifecycle).toEqual({
+      directStatus: null,
+      effective: 'closed',
+      lineage: {
+        focus: { id: focus.id, status: 'active' },
+        thread: { id: cancelled.thread.id, status: 'cancelled' },
+        commitment: { id: cancelled.commitment.id, status: 'active' }
+      }
+    })
+  })
 })

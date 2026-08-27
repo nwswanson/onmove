@@ -148,8 +148,9 @@ export class RetrievalProjectionRepository {
 
   /**
    * Enumerates every authorized structured candidate through the legacy queryless
-   * path. Text, caller paging, and relevance sorting intentionally do not narrow
-   * this security boundary.
+   * path. Text, caller paging, requested current/closed mode, and relevance sorting
+   * intentionally do not narrow this security boundary. A requested terminal-status
+   * subset still applies so an excluded closed state cannot influence widening hints.
    */
   async authorizedCandidates(
     query: SearchQuery,
@@ -164,6 +165,12 @@ export class RetrievalProjectionRepository {
       const page = this.legacy.searchPage({
         ...query,
         text: null,
+        lifecycle: {
+          mode: 'all',
+          ...(query.lifecycle?.terminalStatuses
+            ? { terminalStatuses: query.lifecycle.terminalStatuses }
+            : {})
+        },
         sort: { field: 'updatedAt', direction: 'asc' },
         cursor,
         offset: 0,

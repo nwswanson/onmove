@@ -53,6 +53,11 @@ evaluation below as design history and future guidance:
   Focus + Thread boundary and may intersect it with one canonical Subject. SQLite enumerates the
   visible source keys inside that complete context before Orama scores them. Hierarchy labels are
   not prepended to embedding text, so repeated corporate vocabulary cannot become identity.
+- **Lifecycle is a hard filter.** Search and retrieval default to current active/paused lineage.
+  Records that are done/cancelled themselves or inherit closure from a Focus, Thread, or Commitment
+  are excluded before either ranker runs unless the caller explicitly requests `closed` or `all`.
+  Results retain direct and inherited lifecycle provenance. Authorized excluded history is reported
+  through bounded availability, exact-title, and widening hints, but is never merged silently.
 - **Ranking is provider-neutral.** Enhanced text retrieval fuses lexical and semantic rank with
   weighted reciprocal-rank fusion and, by default, interleaves results by operational lineage to
   limit sibling and template crowding. Results retain complete hierarchy provenance and report the
@@ -68,9 +73,10 @@ evaluation below as design history and future guidance:
   coverage. A caller may request an error instead of the default fallback.
 - **The MCP surface is additive.** `onmove.retrieve` and `onmove.continue_retrieval` provide the new
   context-first read path. Their signed continuations bind the access fingerprint, persisted
-  `classic | enhanced` setting, applied strategy, request, byte budget, stable cursor, and lexical
-  and semantic generations. Existing search, direct-read, specialized review, and mutation tools
-  remain compatible.
+  `classic | enhanced` setting, applied strategy, lifecycle policy, request, byte budget, stable
+  cursor, and lexical and semantic generations. Search continuations likewise retain their original
+  lifecycle boundary. Existing direct-read, specialized review, and mutation tools remain
+  compatible.
 
 The broader `resolve_context`, `expand_context`, mixed hydration, briefing, and comparison surface
 described later remains a proposal rather than an implemented claim.

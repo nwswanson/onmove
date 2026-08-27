@@ -20,13 +20,17 @@ import {
 } from './retrieval-projection'
 import type {
   SearchEntityType,
+  SearchLifecycleMode,
+  SearchLifecycleQuery,
   SearchLocalDateRange,
   SearchPageCursor,
   SearchQuery,
   SearchResult,
   SearchSortDirection,
-  SearchSortField
+  SearchSortField,
+  SearchTerminalStatus
 } from './search-index'
+import { normalizeSearchTitle, SEARCH_TERMINAL_STATUSES } from './search-index'
 
 export const RETRIEVAL_STRATEGIES = ['auto', 'lexical', 'hybrid'] as const
 export type RetrievalStrategy = (typeof RETRIEVAL_STRATEGIES)[number]
@@ -71,6 +75,8 @@ export interface RetrievalRequest {
   createdAt?: SearchLocalDateRange
   updatedAt?: SearchLocalDateRange
   timeZone?: string
+  /** Omission retrieves current work. Closed work must be requested intentionally. */
+  lifecycle?: SearchLifecycleQuery
   sort?: { field: SearchSortField; direction: SearchSortDirection }
   strategy?: RetrievalStrategy
   onUnavailable?: RetrievalUnavailableBehavior
@@ -104,6 +110,13 @@ export interface RetrievalPage {
   appliedStrategy: RetrievalAppliedStrategy
   fallbackReason: string | null
   retrievalMode: McpRetrievalMode
+  lifecycle: {
+    mode: SearchLifecycleMode
+    terminalStatuses: SearchTerminalStatus[]
+    closedMatchesAvailable: boolean
+    closedExactTitleMatchAvailable: boolean
+    currentExactTitleMatchAvailable: boolean
+  }
 }
 
 export class RetrievalStrategyUnavailableError extends Error {
@@ -200,6 +213,40 @@ function positiveLimit(value: number | undefined): number {
     throw new TypeError('retrieval limit must be between 1 and 100')
   }
   return limit
+}
+
+function normalizedLifecycle(query: SearchLifecycleQuery | undefined): {
+  mode: SearchLifecycleMode
+  terminalStatuses: SearchTerminalStatus[]
+} {
+  const mode = query?.mode ?? 'current'
+  if (!['current', 'closed', 'all'].includes(mode)) {
+    throw new TypeError('retrieval lifecycle.mode must be current, closed, or all')
+  }
+  const requested = query?.terminalStatuses ?? SEARCH_TERMINAL_STATUSES
+  if (!Array.isArray(requested) || requested.length === 0) {
+    throw new TypeError('retrieval lifecycle.terminalStatuses must contain done or cancelled')
+  }
+  if (requested.some((status) => !SEARCH_TERMINAL_STATUSES.includes(status))) {
+    throw new TypeError(
+      'retrieval lifecycle.terminalStatuses must contain only done or cancelled'
+    )
+  }
+  const selected = new Set(requested)
+  return {
+    mode,
+    terminalStatuses: SEARCH_TERMINAL_STATUSES.filter((status) => selected.has(status))
+  }
+}
+
+function selectedByLifecycle(
+  result: SearchResult,
+  mode: SearchLifecycleMode
+): boolean {
+  if (mode === 'all') return true
+  return mode === 'closed'
+    ? result.lifecycle.effective === 'closed'
+    : result.lifecycle.effective !== 'closed'
 }
 
 function yieldToEventLoop(): Promise<void> {
@@ -430,6 +477,7 @@ export class RetrievalService {
   ): Promise<RetrievalPage> {
     this.assertActive()
     const limit = positiveLimit(request.limit)
+    normalizedLifecycle(request.lifecycle)
     const requestedStrategy = request.strategy ?? 'auto'
     const unavailable = request.onUnavailable ?? 'fallback'
     const diversifyBy = request.diversifyBy ?? 'lineage'
@@ -571,7 +619,8 @@ export class RetrievalService {
       requestedStrategy,
       appliedStrategy,
       fallbackReason,
-      retrievalMode
+      retrievalMode,
+      lifecycle: page.lifecycle
     }
   }
 
@@ -589,6 +638,7 @@ export class RetrievalService {
     }
     const text = request.text
     const offset = rankedOffset(request.cursor)
+    const lifecycle = normalizedLifecycle(request.lifecycle)
     const lifecycleRevision = this.lifecycleRevision
     signal.throwIfAborted()
     let normalizedQueryVector: number[] | null = null
@@ -637,22 +687,19 @@ export class RetrievalService {
       throw new Error('data changed while the semantic index was prepared')
     }
 
-    const sourceKeys = [...authorized.resultsBySourceKey.keys()]
-    if (sourceKeys.length === 0) {
-      return {
-        items: [],
-        itemCursors: [],
-        hasMore: false,
-        nextCursor: null,
-        lexicalGeneration: authorized.generation,
-        semanticGeneration: semantic.generation,
-        semanticCoverage: semantic.coverage,
-        requestedStrategy,
-        appliedStrategy: 'hybrid',
-        fallbackReason: null,
-        retrievalMode
-      }
-    }
+    // Authorization is enumerated across both lifecycle partitions. Reduce that
+    // allowlist before either ranking channel runs so closed corporate lookalikes
+    // cannot consume current-result ranks or page slots.
+    const selectedResults = new Map(
+      [...authorized.resultsBySourceKey].filter(([, result]) =>
+        selectedByLifecycle(result, lifecycle.mode))
+    )
+    const excludedClosedResults = lifecycle.mode === 'current'
+      ? new Map([...authorized.resultsBySourceKey].filter(([, result]) =>
+          result.lifecycle.effective === 'closed'))
+      : new Map<string, SearchResult>()
+    const sourceKeys = [...selectedResults.keys()]
+    const excludedClosedSourceKeys = [...excludedClosedResults.keys()]
 
     const filters = {
       sourceKeys,
@@ -661,16 +708,33 @@ export class RetrievalService {
       ...(request.threadId ? { threadIds: [request.threadId] } : {}),
       ...(request.subjectId ? { subjectIds: [request.subjectId] } : {})
     }
-    const [lexicalHits, semanticHits] = await Promise.all([
+    const excludedClosedFilters = {
+      ...filters,
+      sourceKeys: excludedClosedSourceKeys
+    }
+    // Probe only the excluded, already-authorized allowlist. These hits are never
+    // merged into ranking; they only tell a client that an explicit widening may help.
+    const noHits = Promise.resolve<RetrievalBackendHit[]>([])
+    const [lexicalHits, semanticHits, closedLexicalHits, closedSemanticHits] = await Promise.all([
       this.searchAll({ channel: 'lexical', text, filters }, signal),
-      this.searchAll({ channel: 'vector', vector: normalizedQueryVector, filters }, signal)
+      this.searchAll({ channel: 'vector', vector: normalizedQueryVector, filters }, signal),
+      excludedClosedSourceKeys.length === 0
+        ? noHits
+        : this.searchFirst({ channel: 'lexical', text, filters: excludedClosedFilters }, signal),
+      excludedClosedSourceKeys.length === 0
+        ? noHits
+        : this.searchFirst({
+            channel: 'vector',
+            vector: normalizedQueryVector,
+            filters: excludedClosedFilters
+          }, signal)
     ])
     this.assertActive(lifecycleRevision)
     signal.throwIfAborted()
     const rankings = new Map<string, RankedCandidate>()
     const add = (hit: RetrievalBackendHit, channel: 'lexical' | 'semantic'): void => {
       const document = semantic?.documentsBySourceKey.get(hit.sourceKey)
-      if (!document || !authorized?.resultsBySourceKey.has(hit.sourceKey)) return
+      if (!document || !selectedResults.has(hit.sourceKey)) return
       const existing = rankings.get(hit.sourceKey) ?? {
         sourceKey: hit.sourceKey,
         lexicalRank: null,
@@ -698,7 +762,7 @@ export class RetrievalService {
       : relevanceOrdered
     const pageCandidates = ordered.slice(offset, offset + limit)
     const items = pageCandidates.flatMap((candidate) => {
-      const record = authorized?.resultsBySourceKey.get(candidate.sourceKey)
+      const record = selectedResults.get(candidate.sourceKey)
       if (!record) return []
       // Structural eligibility is an explicit stage of hybrid retrieval, not an
       // inference from semantic similarity.
@@ -719,6 +783,16 @@ export class RetrievalService {
       offset: offset + index + 1
     }))
     const hasMore = offset + items.length < ordered.length
+    const exactTitle = normalizeSearchTitle(text)
+    const currentExactTitleMatchAvailable = lifecycle.mode === 'current' &&
+      sourceKeys.some((sourceKey) => {
+        const title = semantic?.documentsBySourceKey.get(sourceKey)?.title
+        return title !== undefined && normalizeSearchTitle(title) === exactTitle
+      })
+    const closedExactTitleMatchAvailable = excludedClosedSourceKeys.some((sourceKey) => {
+      const title = semantic?.documentsBySourceKey.get(sourceKey)?.title
+      return title !== undefined && normalizeSearchTitle(title) === exactTitle
+    })
     return {
       items,
       itemCursors,
@@ -730,7 +804,16 @@ export class RetrievalService {
       requestedStrategy,
       appliedStrategy: 'hybrid',
       fallbackReason: null,
-      retrievalMode
+      retrievalMode,
+      lifecycle: {
+        ...lifecycle,
+        closedMatchesAvailable:
+          closedExactTitleMatchAvailable ||
+          closedLexicalHits.length > 0 ||
+          closedSemanticHits.length > 0,
+        closedExactTitleMatchAvailable,
+        currentExactTitleMatchAvailable
+      }
     }
   }
 
@@ -747,6 +830,7 @@ export class RetrievalService {
       ...(request.createdAt ? { createdAt: request.createdAt } : {}),
       ...(request.updatedAt ? { updatedAt: request.updatedAt } : {}),
       ...(request.timeZone ? { timeZone: request.timeZone } : {}),
+      ...(request.lifecycle ? { lifecycle: request.lifecycle } : {}),
       ...(request.sort ? { sort: request.sort } : {})
     }
   }
@@ -777,6 +861,19 @@ export class RetrievalService {
       }
     }
     return hits
+  }
+
+  private async searchFirst(
+    input:
+      | { channel: 'lexical'; text: string; filters: { sourceKeys: string[] } }
+      | { channel: 'vector'; vector: readonly number[]; filters: { sourceKeys: string[] } },
+    signal: AbortSignal
+  ): Promise<RetrievalBackendHit[]> {
+    signal.throwIfAborted()
+    await yieldToEventLoop()
+    signal.throwIfAborted()
+    const page = await this.backend.search({ ...input, offset: 0, limit: 1 })
+    return page.hits
   }
 
   private async ensureSemanticIndex(): Promise<SemanticIndexState> {

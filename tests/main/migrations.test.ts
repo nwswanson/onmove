@@ -112,6 +112,58 @@ describe('database migrations', () => {
     expect(Number(sourceCount.count)).toBe(1)
   })
 
+  it('rebuilds existing search rows with normalized Unicode title identities', () => {
+    const current = new AppDatabase(databasePath)
+    const historical = current.domain.focuses.create({
+      title: 'Über historical identity',
+      status: 'done'
+    }).toSnapshot()
+    current.queries.searchPage({
+      text: 'Über historical identity',
+      kinds: ['focus'],
+      lifecycle: { mode: 'closed' }
+    }, current.mcpSettings.accessPolicy())
+    current.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      DROP INDEX search_documents_normalized_title_index;
+      ALTER TABLE search_documents DROP COLUMN normalized_title;
+      DELETE FROM schema_migrations WHERE version = 47;
+    `)
+    legacy.close()
+
+    const migrated = new AppDatabase(databasePath)
+    const currentPage = migrated.queries.searchPage({
+      text: 'über historical identity',
+      kinds: ['focus']
+    }, migrated.mcpSettings.accessPolicy())
+    expect(currentPage.items).toEqual([])
+    expect(currentPage.lifecycle).toMatchObject({
+      closedMatchesAvailable: true,
+      closedExactTitleMatchAvailable: true,
+      currentExactTitleMatchAvailable: false
+    })
+    const historicalPage = migrated.queries.searchPage({
+      text: 'über historical identity',
+      kinds: ['focus'],
+      lifecycle: { mode: 'closed' }
+    }, migrated.mcpSettings.accessPolicy())
+    expect(historicalPage.items).toEqual([
+      expect.objectContaining({ reference: { type: 'focus', id: historical.id } })
+    ])
+    migrated.close()
+
+    const raw = new DatabaseSync(databasePath)
+    expect(raw.prepare(
+      'SELECT normalized_title FROM search_documents WHERE entity_type = ? AND entity_id = ?'
+    ).get('focus', historical.id)).toEqual({ normalized_title: 'über historical identity' })
+    expect(raw.prepare(
+      'SELECT version FROM schema_migrations WHERE version = 47'
+    ).get()).toEqual({ version: 47 })
+    raw.close()
+  })
+
   it('migrates the legacy MCP write switch into bounded per-resource defaults', () => {
     const current = new AppDatabase(databasePath)
     current.close()

@@ -17,6 +17,16 @@ export type SearchEntityType = (typeof SEARCH_ENTITY_TYPES)[number]
 
 export type SearchSortField = 'relevance' | 'date' | 'createdAt' | 'updatedAt'
 export type SearchSortDirection = 'asc' | 'desc'
+export type SearchLifecycleMode = 'current' | 'closed' | 'all'
+export type SearchTerminalStatus = 'done' | 'cancelled'
+export type SearchLifecycleStatus = 'active' | 'paused' | SearchTerminalStatus
+export type SearchEffectiveLifecycle = 'current' | 'closed' | 'not_applicable'
+
+export interface SearchLifecycleQuery {
+  mode: SearchLifecycleMode
+  /** Narrows the closed portion of the search; omitted means both terminal statuses. */
+  terminalStatuses?: readonly SearchTerminalStatus[]
+}
 
 export interface SearchLocalDateRange {
   from?: string
@@ -44,6 +54,8 @@ export interface SearchQuery {
   updatedAt?: SearchLocalDateRange
   /** IANA timezone used to turn createdAt/updatedAt local dates into UTC boundaries. */
   timeZone?: string
+  /** Omission searches current work. Closed work must be requested intentionally. */
+  lifecycle?: SearchLifecycleQuery
   sort?: { field: SearchSortField; direction: SearchSortDirection }
   cursor?: SearchPageCursor | null
   limit?: number
@@ -58,6 +70,16 @@ export interface SearchPage {
   nextCursor: SearchPageCursor | null
   /** Increments whenever the durable search projection is rebuilt. */
   generation: number
+  lifecycle: {
+    mode: SearchLifecycleMode
+    terminalStatuses: SearchTerminalStatus[]
+    /** True only when otherwise-matching, authorized closed records were excluded. */
+    closedMatchesAvailable: boolean
+    /** Exact indexed-title match among the excluded closed records. */
+    closedExactTitleMatchAvailable: boolean
+    /** Exact indexed-title match anywhere in the selected current partition. */
+    currentExactTitleMatchAvailable: boolean
+  }
 }
 
 export interface SearchHierarchyReference {
@@ -81,6 +103,22 @@ export interface SearchRecommendedWriteTarget {
   requiresReadBeforeWrite: boolean
 }
 
+export interface SearchLifecycleLineageReference {
+  id: number
+  status: SearchLifecycleStatus
+}
+
+export interface SearchResultLifecycle {
+  /** Routine health is separate; Routine results therefore have no direct lifecycle status. */
+  directStatus: SearchLifecycleStatus | null
+  effective: SearchEffectiveLifecycle
+  lineage: {
+    focus: SearchLifecycleLineageReference | null
+    thread: SearchLifecycleLineageReference | null
+    commitment: SearchLifecycleLineageReference | null
+  }
+}
+
 export interface SearchResult {
   reference: { type: SearchEntityType; id: number }
   uri: string
@@ -93,6 +131,7 @@ export interface SearchResult {
   subject: { id: number; code: string; name: string } | null
   path: { display: string; complete: true; segments: SearchPathSegment[] }
   recommendedWriteTarget: SearchRecommendedWriteTarget
+  lifecycle: SearchResultLifecycle
   snippet: string
   rank: number
   effectiveSensitive: boolean
@@ -131,6 +170,10 @@ interface SearchRow {
   commitment_id: number | null
   commitment_title: string | null
   commitment_behavior_type: string | null
+  document_status: string | null
+  focus_status: string | null
+  thread_status: string | null
+  commitment_status: string | null
   subject_id: number | null
   subject_name: string | null
   snippet: string
@@ -249,6 +292,69 @@ function ftsExpression(text: string): string | null {
 }
 
 const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/u
+const SEARCH_LIFECYCLE_MODES = ['current', 'closed', 'all'] as const
+export const SEARCH_TERMINAL_STATUSES = ['done', 'cancelled'] as const
+
+/** Stable Unicode identity used only for exact-title comparison, never fuzzy ranking. */
+export function normalizeSearchTitle(value: string): string {
+  return value.normalize('NFKC').trim().toLowerCase()
+}
+
+function normalizedLifecycle(query: SearchLifecycleQuery | undefined): {
+  mode: SearchLifecycleMode
+  terminalStatuses: SearchTerminalStatus[]
+} {
+  const mode = query?.mode ?? 'current'
+  if (!SEARCH_LIFECYCLE_MODES.includes(mode)) {
+    throw new TypeError('search lifecycle.mode must be current, closed, or all')
+  }
+  const requested = query?.terminalStatuses ?? SEARCH_TERMINAL_STATUSES
+  if (!Array.isArray(requested) || requested.length === 0) {
+    throw new TypeError('search lifecycle.terminalStatuses must contain done or cancelled')
+  }
+  if (requested.some((status) => !SEARCH_TERMINAL_STATUSES.includes(status))) {
+    throw new TypeError('search lifecycle.terminalStatuses must contain only done or cancelled')
+  }
+  const selected = new Set(requested)
+  return {
+    mode,
+    terminalStatuses: SEARCH_TERMINAL_STATUSES.filter((status) => selected.has(status))
+  }
+}
+
+function closedLifecycleExpression(statuses: readonly SearchTerminalStatus[]): {
+  sql: string
+  parameters: SqlValue[]
+} {
+  const columns = ['document.status', 'focus.status', 'thread.status', 'commitment.status']
+  const placeholders = statuses.map(() => '?').join(', ')
+  return {
+    sql: `(${columns.map((column) =>
+      `COALESCE(${column}, '') IN (${placeholders})`).join(' OR ')})`,
+    parameters: columns.flatMap(() => statuses)
+  }
+}
+
+const ANY_CLOSED_LIFECYCLE = `(
+  COALESCE(document.status, '') IN ('done', 'cancelled') OR
+  COALESCE(focus.status, '') IN ('done', 'cancelled') OR
+  COALESCE(thread.status, '') IN ('done', 'cancelled') OR
+  COALESCE(commitment.status, '') IN ('done', 'cancelled')
+)`
+
+function lifecycleStatus(value: string | null): SearchLifecycleStatus | null {
+  return value !== null && (
+    value === 'active' || value === 'paused' || value === 'done' || value === 'cancelled'
+  ) ? value : null
+}
+
+function lifecycleLineage(
+  id: number | null,
+  status: string | null
+): SearchLifecycleLineageReference | null {
+  const normalized = lifecycleStatus(status)
+  return id === null || normalized === null ? null : { id: Number(id), status: normalized }
+}
 
 function assertLocalDate(value: string, field: string): void {
   if (!LOCAL_DATE_PATTERN.test(value)) throw new TypeError(`${field} must use YYYY-MM-DD`)
@@ -363,6 +469,7 @@ export class SearchIndexRepository {
     if (kinds.some((kind) => !SEARCH_ENTITY_TYPES.includes(kind))) {
       throw new TypeError('search kinds contain an unsupported entity type')
     }
+    const lifecycle = normalizedLifecycle(query.lifecycle)
     validateRange(query.date, 'date')
     validateRange(query.createdAt, 'createdAt')
     validateRange(query.updatedAt, 'updatedAt')
@@ -490,6 +597,20 @@ export class SearchIndexRepository {
         ) = 1
       )`)
     }
+    // Lifecycle is a structural candidate boundary. Apply it in SQL before relevance is computed
+    // or result slots are allocated, so similarly named closed work cannot crowd current work.
+    const nonLifecycleConditions = [...conditions]
+    const nonLifecycleParameters = [...parameters]
+    const selectedClosed = closedLifecycleExpression(lifecycle.terminalStatuses)
+    if (lifecycle.mode === 'current') {
+      conditions.push(`NOT ${ANY_CLOSED_LIFECYCLE}`)
+    } else if (lifecycle.mode === 'closed') {
+      conditions.push(selectedClosed.sql)
+      parameters.push(...selectedClosed.parameters)
+    } else if (lifecycle.terminalStatuses.length < SEARCH_TERMINAL_STATUSES.length) {
+      conditions.push(`(NOT ${ANY_CLOSED_LIFECYCLE} OR ${selectedClosed.sql})`)
+      parameters.push(...selectedClosed.parameters)
+    }
     const relevance = ftsSearch
       ? 'bm25(search_documents_fts, 4.0, 1.0)'
       : literalSearch
@@ -565,6 +686,50 @@ export class SearchIndexRepository {
              ELSE document.field_name
            END`
       : 'document.field_name'
+    let closedMatchesAvailable = false
+    let closedExactTitleMatchAvailable = false
+    let currentExactTitleMatchAvailable = false
+    if (lifecycle.mode === 'current') {
+      const availabilityFrom = `FROM ${from}
+        LEFT JOIN focuses focus ON focus.id = document.focus_id
+        LEFT JOIN threads thread ON thread.id = document.thread_id
+        LEFT JOIN commitments commitment ON commitment.id = document.commitment_id
+        LEFT JOIN subjects subject ON subject.id = document.subject_id
+        LEFT JOIN scopes scope ON scope.id = document.scope_id
+        ${permissionJoins}`
+      const availabilityConditions = [...nonLifecycleConditions, selectedClosed.sql]
+      const availabilityParameters = [
+        ...fromParameters,
+        ...nonLifecycleParameters,
+        ...selectedClosed.parameters
+      ]
+      closedMatchesAvailable = Boolean(this.database.get<{ found: number }>(
+        `SELECT 1 AS found ${availabilityFrom}
+         WHERE ${availabilityConditions.join(' AND ')} LIMIT 1`,
+        availabilityParameters
+      ))
+      if (closedMatchesAvailable && query.text !== null) {
+        closedExactTitleMatchAvailable = Boolean(this.database.get<{ found: number }>(
+          `SELECT 1 AS found ${availabilityFrom}
+           WHERE ${[...availabilityConditions,
+             'document.normalized_title = ?'].join(' AND ')} LIMIT 1`,
+          [...availabilityParameters, normalizeSearchTitle(query.text)]
+        ))
+      }
+      if (query.text !== null) {
+        currentExactTitleMatchAvailable = Boolean(this.database.get<{ found: number }>(
+          `SELECT 1 AS found ${availabilityFrom}
+           WHERE ${[...nonLifecycleConditions,
+             `NOT ${ANY_CLOSED_LIFECYCLE}`,
+             'document.normalized_title = ?'].join(' AND ')} LIMIT 1`,
+          [
+            ...fromParameters,
+            ...nonLifecycleParameters,
+            normalizeSearchTitle(query.text)
+          ]
+        ))
+      }
+    }
     const rows = this.database.all<SearchRow>(
       `SELECT document.entity_type, document.entity_id, ${matchedField} AS field_name,
               CASE WHEN document.entity_type = 'update'
@@ -575,6 +740,8 @@ export class SearchIndexRepository {
               document.thread_id, thread.title AS thread_title,
               document.commitment_id, commitment.title AS commitment_title,
               commitment.behavior_type AS commitment_behavior_type,
+              document.status AS document_status, focus.status AS focus_status,
+              thread.status AS thread_status, commitment.status AS commitment_status,
               document.subject_id, subject.name AS subject_name,
               ${snippet} AS snippet, ${relevance} AS rank,
               ${sensitivity} AS effective_sensitive,
@@ -609,7 +776,14 @@ export class SearchIndexRepository {
       nextCursor: hasMore && last
         ? { sortValue: last.sort_value, sourceKey: last.source_key }
         : null,
-      generation: Number(state.generation)
+      generation: Number(state.generation),
+      lifecycle: {
+        mode: lifecycle.mode,
+        terminalStatuses: lifecycle.terminalStatuses,
+        closedMatchesAvailable,
+        closedExactTitleMatchAvailable,
+        currentExactTitleMatchAvailable
+      }
     }
   }
 
@@ -672,6 +846,25 @@ export class SearchIndexRepository {
         : [...ancestors, { type, id, code, title: entityTitle }]
       const writable = writeTool(type, field)
       const writableField = type === 'note' ? 'content' : field
+      const lineage = {
+        focus: lifecycleLineage(row.focus_id, row.focus_status),
+        thread: lifecycleLineage(row.thread_id, row.thread_status),
+        commitment: lifecycleLineage(row.commitment_id, row.commitment_status)
+      }
+      // Routines deliberately keep operational health separate from lifecycle. Their backing
+      // Commitment can still make the effective result closed through the structural lineage.
+      const directStatus = type === 'routine' ? null : lifecycleStatus(row.document_status)
+      const lineageStatuses = [
+        lineage.focus?.status,
+        lineage.thread?.status,
+        lineage.commitment?.status
+      ]
+      const effective: SearchEffectiveLifecycle = [directStatus, ...lineageStatuses]
+        .some((status) => status === 'done' || status === 'cancelled')
+        ? 'closed'
+        : directStatus === null && Object.values(lineage).every((entry) => entry === null)
+          ? 'not_applicable'
+          : 'current'
       return {
         reference: { type, id },
         uri: resourceUri(type, id),
@@ -693,6 +886,7 @@ export class SearchIndexRepository {
           field: writableField,
           ...writable
         },
+        lifecycle: { directStatus, effective, lineage },
         snippet: compactSnippet(row.snippet),
         rank: Number(row.rank),
         effectiveSensitive: Boolean(row.effective_sensitive),
@@ -726,13 +920,14 @@ export class SearchIndexRepository {
       const field = row.field_name === 'routine' ? 'template' : row.field_name
       this.database.run(
         `INSERT INTO search_documents (
-           source_key, entity_type, entity_id, field_name, title, body,
+           source_key, entity_type, entity_id, field_name, title, normalized_title, body,
            focus_id, thread_id, commitment_id, subject_id, scope_id,
            direct_sensitive, status, state, due_on, review_due, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
         [
           sourceKey(type, Number(row.id), field), type, Number(row.id), field,
-          type === 'update' ? '' : row.title, plainText(row.body),
+          type === 'update' ? '' : row.title,
+          normalizeSearchTitle(type === 'update' ? '' : row.title), plainText(row.body),
           row.focus_id, row.thread_id,
           row.commitment_id, row.subject_id, row.scope_id,
           row.direct_sensitive, row.status, row.state, row.due_on,

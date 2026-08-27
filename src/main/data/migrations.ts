@@ -3909,6 +3909,21 @@ const migrations: readonly Migration[] = [
           ON retrieval_embedding_cache(model_id, content_hash);
       `)
     }
+  },
+  {
+    version: 47,
+    name: 'search_document_normalized_titles',
+    up(database) {
+      database.exec(`
+        ALTER TABLE search_documents
+        ADD COLUMN normalized_title TEXT NOT NULL DEFAULT '';
+
+        CREATE INDEX search_documents_normalized_title_index
+          ON search_documents(normalized_title, entity_type);
+
+        UPDATE search_index_state SET dirty = 1 WHERE singleton = 1;
+      `)
+    }
   }
 ]
 

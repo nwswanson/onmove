@@ -109,6 +109,61 @@ describe('RetrievalProjectionRepository', () => {
     expect(global.resultsBySourceKey.has(`update:${hidden.update.id}:observation`)).toBe(false)
   })
 
+  it('enumerates authorized closed candidates for lifecycle-aware ranking without selecting them', async () => {
+    const focus = domain.focuses.create({ title: 'Lifecycle authorization' }).toSnapshot()
+    const currentThread = domain.threads.create({
+      focusId: focus.id,
+      title: 'Current owner',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const cancelledThread = domain.threads.create({
+      focusId: focus.id,
+      title: 'Cancelled owner',
+      status: 'cancelled',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const currentUpdate = domain.updates.create({
+      parent: { type: 'thread', id: currentThread.id },
+      observation: 'lifecycle authorization evidence'
+    }).toSnapshot()
+    const cancelledUpdate = domain.updates.create({
+      parent: { type: 'thread', id: cancelledThread.id },
+      observation: 'lifecycle authorization evidence'
+    }).toSnapshot()
+
+    const selected = projection.searchPage({
+      text: null,
+      kinds: ['update'],
+      focusId: focus.id,
+      lifecycle: { mode: 'current' }
+    }, visible)
+    expect(selected.items.map(({ reference }) => reference)).toEqual([
+      { type: 'update', id: currentUpdate.id }
+    ])
+
+    const authorized = await projection.authorizedCandidates({
+      text: 'ignored while authorizing',
+      kinds: ['update'],
+      focusId: focus.id,
+      lifecycle: { mode: 'current' }
+    }, visible)
+    expect([...authorized.resultsBySourceKey.keys()]).toEqual(expect.arrayContaining([
+      `update:${currentUpdate.id}:observation`,
+      `update:${cancelledUpdate.id}:observation`
+    ]))
+    expect(authorized.resultsBySourceKey.get(
+      `update:${cancelledUpdate.id}:observation`
+    )?.lifecycle).toEqual({
+      directStatus: null,
+      effective: 'closed',
+      lineage: {
+        focus: { id: focus.id, status: 'active' },
+        thread: { id: cancelledThread.id, status: 'cancelled' },
+        commitment: null
+      }
+    })
+  })
+
   it('yields while enumerating more than one authorization page', async () => {
     const { thread } = hierarchy('Large authorization')
     for (let index = 0; index < 101; index += 1) {

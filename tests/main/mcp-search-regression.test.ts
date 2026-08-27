@@ -395,4 +395,250 @@ describe('OnMove MCP full-workspace search regressions', () => {
     expect(result.snippet.length).toBeLessThanOrEqual(200)
     expect(result.snippet.endsWith('…')).toBe(true)
   })
+
+  it('defaults to current work, reports excluded closed title matches, and widens explicitly', () => {
+    const title = 'Lifecycle exact launch'
+    const active = database.domain.focuses.create({ title }).toSnapshot()
+    const done = database.domain.focuses.create({ title, status: 'done' }).toSnapshot()
+    const cancelled = database.domain.focuses.create({ title, status: 'cancelled' }).toSnapshot()
+
+    const current = database.queries.searchPage({ text: title, kinds: ['focus'] }, visible)
+    expect(current.items).toEqual([
+      expect.objectContaining({
+        reference: { type: 'focus', id: active.id },
+        lifecycle: {
+          directStatus: 'active',
+          effective: 'current',
+          lineage: {
+            focus: { id: active.id, status: 'active' },
+            thread: null,
+            commitment: null
+          }
+        }
+      })
+    ])
+    expect(current.lifecycle).toEqual({
+      mode: 'current',
+      terminalStatuses: ['done', 'cancelled'],
+      closedMatchesAvailable: true,
+      closedExactTitleMatchAvailable: true,
+      currentExactTitleMatchAvailable: true
+    })
+
+    const onlyDone = database.queries.searchPage({
+      text: title,
+      kinds: ['focus'],
+      lifecycle: { mode: 'closed', terminalStatuses: ['done'] }
+    }, visible)
+    expect(onlyDone.items).toEqual([
+      expect.objectContaining({
+        reference: { type: 'focus', id: done.id },
+        lifecycle: expect.objectContaining({ directStatus: 'done', effective: 'closed' })
+      })
+    ])
+    expect(onlyDone.lifecycle).toEqual({
+      mode: 'closed',
+      terminalStatuses: ['done'],
+      closedMatchesAvailable: false,
+      closedExactTitleMatchAvailable: false,
+      currentExactTitleMatchAvailable: false
+    })
+
+    const currentAndCancelled = database.queries.search({
+      text: title,
+      kinds: ['focus'],
+      lifecycle: { mode: 'all', terminalStatuses: ['cancelled'] }
+    }, visible)
+    expect(currentAndCancelled.map(({ reference }) => reference)).toEqual(expect.arrayContaining([
+      { type: 'focus', id: active.id },
+      { type: 'focus', id: cancelled.id }
+    ]))
+    expect(currentAndCancelled.map(({ reference }) => reference)).not.toContainEqual(
+      { type: 'focus', id: done.id }
+    )
+  })
+
+  it('inherits effective closure through owners for descendant Updates and Notes', () => {
+    const focus = database.domain.focuses.create({ title: 'Lifecycle descendants' }).toSnapshot()
+    const cancelledThread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Cancelled evidence owner',
+      status: 'cancelled',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const threadUpdate = database.domain.updates.create({
+      parent: { type: 'thread', id: cancelledThread.id },
+      observation: 'inheritedcancelledtoken'
+    }).toSnapshot()
+    const [threadNote] = database.domain.notes.list({ type: 'thread', id: cancelledThread.id })
+    database.domain.richTextDocuments.save(
+      { type: 'note', id: threadNote.id, field: 'content' },
+      'inheritedcancelledtoken'
+    )
+
+    const activeThread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Active evidence owner',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const doneCommitment = database.domain.commitments.create({
+      type: 'tracking',
+      parent: { type: 'thread', id: activeThread.id },
+      title: 'Done evidence owner',
+      status: 'done'
+    }).snapshot()
+    const commitmentUpdate = database.domain.updates.create({
+      parent: { type: 'commitment', id: doneCommitment.id },
+      observation: 'inheriteddonetoken'
+    }).toSnapshot()
+    const [commitmentNote] = database.domain.notes.list({
+      type: 'commitment', id: doneCommitment.id
+    })
+    database.domain.richTextDocuments.save(
+      { type: 'note', id: commitmentNote.id, field: 'content' },
+      'inheriteddonetoken'
+    )
+
+    for (const [token, expected, expectedLineage] of [
+      [
+        'inheritedcancelledtoken',
+        [{ type: 'update', id: threadUpdate.id }, { type: 'note', id: threadNote.id }],
+        { focus: { id: focus.id, status: 'active' },
+          thread: { id: cancelledThread.id, status: 'cancelled' }, commitment: null }
+      ],
+      [
+        'inheriteddonetoken',
+        [{ type: 'update', id: commitmentUpdate.id }, { type: 'note', id: commitmentNote.id }],
+        { focus: { id: focus.id, status: 'active' },
+          thread: { id: activeThread.id, status: 'active' },
+          commitment: { id: doneCommitment.id, status: 'done' } }
+      ]
+    ] as const) {
+      const current = database.queries.searchPage({
+        text: token, kinds: ['update', 'note']
+      }, visible)
+      expect(current.items).toEqual([])
+      expect(current.lifecycle).toMatchObject({
+        closedMatchesAvailable: true,
+        closedExactTitleMatchAvailable: false
+      })
+
+      const closed = database.queries.search({
+        text: token,
+        kinds: ['update', 'note'],
+        lifecycle: { mode: 'closed' }
+      }, visible)
+      expect(closed.map(({ reference }) => reference)).toEqual(
+        expect.arrayContaining([...expected])
+      )
+      expect(closed).toHaveLength(2)
+      for (const result of closed) {
+        expect(result.lifecycle).toEqual({
+          directStatus: null,
+          effective: 'closed',
+          lineage: expectedLineage
+        })
+      }
+    }
+  })
+
+  it('does not disclose excluded closed matches through lifecycle availability', () => {
+    const title = 'Sensitive closed identity'
+    database.domain.focuses.create({
+      title,
+      status: 'done',
+      sensitive: true
+    })
+
+    expect(database.queries.searchPage({ text: title, kinds: ['focus'] }, visible).lifecycle)
+      .toMatchObject({
+        closedMatchesAvailable: false,
+        closedExactTitleMatchAvailable: false
+      })
+    expect(database.queries.searchPage(
+      { text: title, kinds: ['focus'] },
+      { sensitiveContent: 'allow', mutations: 'read-only' }
+    ).lifecycle).toMatchObject({
+      closedMatchesAvailable: true,
+      closedExactTitleMatchAvailable: true
+    })
+  })
+
+  it('keeps paused work current, normalizes completed Todos, and marks Subjects not applicable', () => {
+    const focus = database.domain.focuses.create({ title: 'Lifecycle variants' }).toSnapshot()
+    const pausedThread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'pausedlifecycletoken',
+      status: 'paused',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const todo = database.domain.todos.create({
+      parent: { type: 'thread', id: pausedThread.id },
+      name: 'completedtodotoken',
+      done: true
+    }).toSnapshot()
+    const subject = database.domain.subjects.create({ name: 'subjectlifecycletoken' })
+
+    expect(database.queries.search({
+      text: 'pausedlifecycletoken', kinds: ['thread']
+    }, visible)[0]).toMatchObject({
+      reference: { type: 'thread', id: pausedThread.id },
+      lifecycle: {
+        directStatus: 'paused',
+        effective: 'current',
+        lineage: {
+          focus: { id: focus.id, status: 'active' },
+          thread: { id: pausedThread.id, status: 'paused' },
+          commitment: null
+        }
+      }
+    })
+    expect(database.queries.search({
+      text: 'completedtodotoken', kinds: ['todo']
+    }, visible)).toEqual([])
+    expect(database.queries.search({
+      text: 'completedtodotoken',
+      kinds: ['todo'],
+      lifecycle: { mode: 'closed' }
+    }, visible)[0]).toMatchObject({
+      reference: { type: 'todo', id: todo.id },
+      lifecycle: expect.objectContaining({ directStatus: 'done', effective: 'closed' })
+    })
+    expect(database.queries.search({
+      text: 'subjectlifecycletoken', kinds: ['subject']
+    }, visible)[0]).toMatchObject({
+      reference: { type: 'subject', id: subject.id },
+      lifecycle: {
+        directStatus: null,
+        effective: 'not_applicable',
+        lineage: { focus: null, thread: null, commitment: null }
+      }
+    })
+  })
+
+  it('keeps Routine health separate from lifecycle provenance', () => {
+    const { thread } = hierarchy('Routine lifecycle')
+    const routine = database.domain.routines.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Routine lifecycle identity',
+      scheduleWeekdays: [],
+      checklist: [{ inspection: 'routinehealthtoken' }]
+    })
+
+    const [result] = database.queries.search({
+      text: 'routinehealthtoken', kinds: ['routine']
+    }, visible)
+    expect(result).toMatchObject({
+      reference: { type: 'routine', id: routine.id },
+      lifecycle: {
+        directStatus: null,
+        effective: 'current',
+        lineage: {
+          focus: expect.objectContaining({ status: 'active' }),
+          thread: expect.objectContaining({ status: 'active' }),
+          commitment: { id: routine.id, status: 'active' }
+        }
+      }
+    })
+  })
 })

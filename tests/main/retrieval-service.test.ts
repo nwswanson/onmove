@@ -365,6 +365,204 @@ describe('RetrievalService', () => {
     expect(page.items[0].match.semanticSimilarity).toBeGreaterThanOrEqual(0.25)
   })
 
+  it('keeps closed descendants out of default hybrid ranking and supports explicit widening', async () => {
+    const focus = domain.focuses.create({ title: 'Lifecycle portfolio' }).toSnapshot()
+    const currentThread = domain.threads.create({
+      focusId: focus.id,
+      title: 'Current lifecycle lane',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const cancelledThread = domain.threads.create({
+      focusId: focus.id,
+      title: 'Historical ÜBER exact lane',
+      status: 'cancelled',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const currentUpdate = domain.updates.create({
+      parent: { type: 'thread', id: currentThread.id },
+      observation: 'Monitoring blind spots remain in the current lane'
+    }).toSnapshot()
+    const cancelledUpdate = domain.updates.create({
+      parent: { type: 'thread', id: cancelledThread.id },
+      observation: 'Telemetry coverage has material gaps'
+    }).toSnapshot()
+    const request = {
+      text: 'monitoring blind spots',
+      kinds: ['update'] as const,
+      focusId: focus.id,
+      strategy: 'hybrid' as const,
+      diversifyBy: 'none' as const
+    }
+
+    const current = await service.retrieve(request, visible, 'enhanced')
+    expect(current.items.map(({ reference }) => reference)).toEqual([
+      { type: 'update', id: currentUpdate.id }
+    ])
+    expect(current.items[0].lifecycle).toMatchObject({ effective: 'current' })
+    expect(current.lifecycle).toEqual({
+      mode: 'current',
+      terminalStatuses: ['done', 'cancelled'],
+      closedMatchesAvailable: true,
+      closedExactTitleMatchAvailable: false,
+      currentExactTitleMatchAvailable: false
+    })
+
+    const closed = await service.retrieve({
+      ...request,
+      lifecycle: { mode: 'closed' }
+    }, visible, 'enhanced')
+    expect(closed.items.map(({ reference }) => reference)).toEqual([
+      { type: 'update', id: cancelledUpdate.id }
+    ])
+    expect(closed.items[0].lifecycle).toEqual({
+      directStatus: null,
+      effective: 'closed',
+      lineage: {
+        focus: { id: focus.id, status: 'active' },
+        thread: { id: cancelledThread.id, status: 'cancelled' },
+        commitment: null
+      }
+    })
+    expect(closed.lifecycle).toEqual({
+      mode: 'closed',
+      terminalStatuses: ['done', 'cancelled'],
+      closedMatchesAvailable: false,
+      closedExactTitleMatchAvailable: false,
+      currentExactTitleMatchAvailable: false
+    })
+
+    const all = await service.retrieve({
+      ...request,
+      lifecycle: { mode: 'all' }
+    }, visible, 'enhanced')
+    expect(new Set(all.items.map(({ reference }) => reference.id))).toEqual(
+      new Set([currentUpdate.id, cancelledUpdate.id])
+    )
+
+    const currentExactThread = domain.threads.create({
+      focusId: focus.id,
+      title: 'Historical ÜBER exact lane',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const exactTitle = await service.retrieve({
+      text: 'historical über exact lane',
+      kinds: ['thread'],
+      focusId: focus.id,
+      strategy: 'hybrid',
+      diversifyBy: 'none'
+    }, visible, 'enhanced')
+    expect(exactTitle.items.map(({ reference }) => reference)).toContainEqual(
+      { type: 'thread', id: currentExactThread.id }
+    )
+    expect(exactTitle.items.map(({ reference }) => reference)).not.toContainEqual(
+      { type: 'thread', id: cancelledThread.id }
+    )
+    expect(exactTitle.lifecycle).toMatchObject({
+      closedMatchesAvailable: true,
+      closedExactTitleMatchAvailable: true,
+      currentExactTitleMatchAvailable: true
+    })
+  })
+
+  it('honors terminal-status subsets and lifecycle mode across ranked pages', async () => {
+    const focus = domain.focuses.create({ title: 'Lifecycle paging' }).toSnapshot()
+    const thread = domain.threads.create({
+      focusId: focus.id,
+      title: 'Lifecycle paging owner',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const doneCommitment = domain.commitments.create({
+      type: 'tracking',
+      parent: { type: 'thread', id: thread.id },
+      title: 'Done evidence owner',
+      status: 'done'
+    }).snapshot()
+    const doneIds = Array.from({ length: 3 }, (_, index) => domain.updates.create({
+      parent: { type: 'commitment', id: doneCommitment.id },
+      observation: `pagingneedle telemetry done evidence ${index}`
+    }).toSnapshot().id)
+    const cancelledCommitment = domain.commitments.create({
+      type: 'tracking',
+      parent: { type: 'thread', id: thread.id },
+      title: 'Cancelled evidence owner',
+      status: 'cancelled'
+    }).snapshot()
+    const cancelledUpdate = domain.updates.create({
+      parent: { type: 'commitment', id: cancelledCommitment.id },
+      observation: 'pagingneedle telemetry cancelled evidence'
+    }).toSnapshot()
+    let cursor: RetrievalPageCursor | null = null
+    const seen: number[] = []
+
+    do {
+      const page = await service.retrieve({
+        text: 'pagingneedle telemetry',
+        kinds: ['update'],
+        focusId: focus.id,
+        lifecycle: { mode: 'closed', terminalStatuses: ['done'] },
+        strategy: 'hybrid',
+        diversifyBy: 'none',
+        limit: 1,
+        cursor
+      }, visible, 'enhanced')
+      expect(page.lifecycle).toEqual({
+        mode: 'closed',
+        terminalStatuses: ['done'],
+        closedMatchesAvailable: false,
+        closedExactTitleMatchAvailable: false,
+        currentExactTitleMatchAvailable: false
+      })
+      expect(page.items.every(({ lifecycle }) =>
+        lifecycle.effective === 'closed' &&
+        lifecycle.lineage.commitment?.status === 'done')).toBe(true)
+      seen.push(...page.items.map(({ reference }) => reference.id))
+      cursor = page.nextCursor
+    } while (cursor !== null)
+
+    expect(new Set(seen)).toEqual(new Set(doneIds))
+    expect(seen).not.toContain(cancelledUpdate.id)
+  })
+
+  it('does not disclose inaccessible closed semantic matches through widening hints', async () => {
+    const focus = domain.focuses.create({ title: 'Private lifecycle hints' }).toSnapshot()
+    const currentThread = domain.threads.create({
+      focusId: focus.id,
+      title: 'Visible current owner',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const hiddenThread = domain.threads.create({
+      focusId: focus.id,
+      title: 'Hidden historical owner',
+      status: 'cancelled',
+      sensitive: true,
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const currentUpdate = domain.updates.create({
+      parent: { type: 'thread', id: currentThread.id },
+      observation: 'Monitoring blind spots in visible current evidence'
+    }).toSnapshot()
+    domain.updates.create({
+      parent: { type: 'thread', id: hiddenThread.id },
+      observation: 'Telemetry coverage has material gaps in private history'
+    })
+
+    const page = await service.retrieve({
+      text: 'monitoring blind spots',
+      kinds: ['update'],
+      focusId: focus.id,
+      strategy: 'hybrid',
+      diversifyBy: 'none'
+    }, visible, 'enhanced')
+
+    expect(page.items.map(({ reference }) => reference)).toEqual([
+      { type: 'update', id: currentUpdate.id }
+    ])
+    expect(page.lifecycle).toMatchObject({
+      closedMatchesAvailable: false,
+      closedExactTitleMatchAvailable: false
+    })
+  })
+
   it('strictly intersects Thread and Subject identity despite identical corporate language', async () => {
     const focus = domain.focuses.create({ title: 'Projects' }).toSnapshot()
     const projectA = domain.threads.create({

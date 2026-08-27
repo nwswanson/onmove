@@ -837,6 +837,18 @@ foreground colors and do not rely on color alone to communicate selection or sta
   relationship and Subject intersection in SQLite and enumerate authorized source keys before
   lexical or semantic ranking. Never inherit current UI context, broaden on an empty boundary,
   substitute a semantically similar sibling, or let similarity choose an identity or write target.
+- Keep `onmove.search`, every kind-specific search, and `onmove.retrieve` on one structural lifecycle
+  contract applied before lexical or semantic ranking. Omission means `current`: retain active/paused
+  lineage and exclude a record that is done/cancelled itself or inherits a terminal Focus, Thread,
+  or Commitment. Accept only explicit `current | closed | all` modes and a nonempty subset of
+  `done | cancelled` terminal statuses; the subset narrows only the closed partition. Return every
+  result and auxiliary hierarchy path with direct status, effective lifecycle, and complete
+  Focus/Thread/Commitment lifecycle lineage. Report authorized excluded history through
+  `lifecycleCoverage` availability, exact-title, widening, and fresh-request hints without leaking
+  inaccessible history or silently widening results. Normalize exact-title identity consistently
+  across lexical and enhanced paths and keep widening guidance stable across continuation pages.
+  Bind the normalized lifecycle policy into
+  both search and retrieval continuations; changing it always requires a new initial request.
 - Preserve the persisted `classic | enhanced` MCP retrieval setting and re-read it for every
   request. `classic` is the compatibility default and makes `auto` lexical; `enhanced` makes
   eligible relevance-sorted text queries hybrid. An explicit `lexical` request and every queryless
@@ -882,8 +894,8 @@ foreground colors and do not rely on color alone to communicate selection or sta
   mutating or partially trusting the derived index.
 - Keep `onmove.retrieve` criteria separate from `onmove.continue_retrieval`, which accepts only the
   exact returned opaque token. Sign retrieval continuations over the complete request, explicit
-  context, byte budget, access fingerprint, persisted retrieval mode, applied strategy, stable
-  cursor, and both index generations. Reject continuations after data, access, mode, or strategy
+  context, lifecycle policy, byte budget, access fingerprint, persisted retrieval mode, applied
+  strategy, stable cursor, and both index generations. Reject continuations after data, access, mode, or strategy
   changes with `RETRIEVAL_CURSOR_STALE`; never silently restart or downgrade a continued page.
 - Retain `onmove.search`, its kind-specific variants, and `continue_search` as the deterministic
   FTS5 compatibility/discovery surface. Enhanced retrieval is additive and must not alter their

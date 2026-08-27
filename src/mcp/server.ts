@@ -18,13 +18,17 @@ import {
 } from '../main/application/services'
 import {
   SEARCH_ENTITY_TYPES,
+  SEARCH_TERMINAL_STATUSES,
   type SearchLocalDateRange,
+  type SearchLifecycleMode,
+  type SearchLifecycleQuery,
   type SearchPageCursor,
   type SearchEntityType,
   type SearchQuery,
   type SearchResult,
   type SearchSortDirection,
-  type SearchSortField
+  type SearchSortField,
+  type SearchTerminalStatus
 } from '../main/application/search-index'
 import type {
   RetrievalAppliedStrategy,
@@ -156,8 +160,96 @@ interface SearchProjectionInput {
   scopes: boolean
 }
 
+type AppliedSearchLifecycle = Required<{
+  mode: SearchLifecycleMode
+  terminalStatuses: SearchTerminalStatus[]
+}>
+
+const DEFAULT_SEARCH_LIFECYCLE: AppliedSearchLifecycle = {
+  mode: 'current',
+  terminalStatuses: [...SEARCH_TERMINAL_STATUSES]
+}
+
+function normalizeSearchLifecycle(
+  lifecycle: SearchLifecycleQuery | undefined
+): AppliedSearchLifecycle {
+  const selected = new Set(
+    lifecycle?.terminalStatuses ?? DEFAULT_SEARCH_LIFECYCLE.terminalStatuses
+  )
+  return {
+    mode: lifecycle?.mode ?? DEFAULT_SEARCH_LIFECYCLE.mode,
+    terminalStatuses: SEARCH_TERMINAL_STATUSES.filter((status) => selected.has(status))
+  }
+}
+
+function validAppliedSearchLifecycle(value: unknown): value is AppliedSearchLifecycle {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Partial<AppliedSearchLifecycle>
+  return (
+    ['current', 'closed', 'all'].includes(candidate.mode as string) &&
+    Array.isArray(candidate.terminalStatuses) &&
+    candidate.terminalStatuses.length > 0 &&
+    candidate.terminalStatuses.every((status) => SEARCH_TERMINAL_STATUSES.includes(status)) &&
+    new Set(candidate.terminalStatuses).size === candidate.terminalStatuses.length
+  )
+}
+
+function encodeLifecycleToken(lifecycle: AppliedSearchLifecycle): string {
+  const mode = lifecycle.mode === 'current' ? 'u' : lifecycle.mode === 'closed' ? 'h' : 'a'
+  const statuses = [
+    lifecycle.terminalStatuses.includes('done') ? 'd' : '',
+    lifecycle.terminalStatuses.includes('cancelled') ? 'x' : ''
+  ].join('')
+  return `${mode}:${statuses}`
+}
+
+function decodeLifecycleToken(value: unknown): AppliedSearchLifecycle | null {
+  if (typeof value !== 'string') return null
+  const [modeCode, statusCodes, extra] = value.split(':')
+  if (extra !== undefined || !modeCode || !['d', 'x', 'dx'].includes(statusCodes)) return null
+  const terminalStatuses: SearchTerminalStatus[] = [
+    ...(statusCodes.includes('d') ? ['done' as const] : []),
+    ...(statusCodes.includes('x') ? ['cancelled' as const] : [])
+  ]
+  const mode = modeCode === 'u' ? 'current' : modeCode === 'h' ? 'closed' :
+    modeCode === 'a' ? 'all' : null
+  return mode === null ? null : { mode, terminalStatuses }
+}
+
+interface SearchLifecycleAvailability extends AppliedSearchLifecycle {
+  closedMatchesAvailable: boolean
+  closedExactTitleMatchAvailable: boolean
+  currentExactTitleMatchAvailable: boolean
+}
+
+interface SearchLifecycleCoverage {
+  closedMatchesAvailable: boolean
+  closedExactTitleMatchAvailable: boolean
+  wideningRecommended: boolean
+  nextAction: string | null
+}
+
+function lifecycleCoverage(
+  availability: SearchLifecycleAvailability,
+  recordCount: number
+): SearchLifecycleCoverage {
+  const wideningRecommended = availability.mode === 'current' && (
+    (recordCount === 0 && availability.closedMatchesAvailable) ||
+    (availability.closedExactTitleMatchAvailable &&
+      !availability.currentExactTitleMatchAvailable)
+  )
+  return {
+    closedMatchesAvailable: availability.closedMatchesAvailable,
+    closedExactTitleMatchAvailable: availability.closedExactTitleMatchAvailable,
+    wideningRecommended,
+    nextAction: wideningRecommended
+      ? 'Repeat the same initial tool request with lifecycle.mode=closed to inspect history, or lifecycle.mode=all to compare current and closed work. Do not modify or reuse a continuation token.'
+      : null
+  }
+}
+
 interface SearchContinuationPayload {
-  version: 4
+  version: 5
   origin:
     | { type: 'global' }
     | { type: 'entity'; kind: SearchEntityType }
@@ -170,6 +262,7 @@ interface SearchContinuationPayload {
   updatedAt?: SearchLocalDateRange
   timeZone: string
   sort: { field: SearchSortField; direction: SearchSortDirection }
+  lifecycle: AppliedSearchLifecycle
   projection: SearchProjectionInput
   pageSize: number
   maxBytes: number
@@ -178,11 +271,15 @@ interface SearchContinuationPayload {
   cursor: SearchPageCursor | null
 }
 
-const SEARCH_CONTINUATION_PREFIX = 'onmove-search-v4.'
+const SEARCH_CONTINUATION_PREFIX = 'onmove-search-v5.'
 const SEARCH_CONTINUATION_SECRET = randomBytes(32)
 
 function encodeSearchContinuation(payload: SearchContinuationPayload): string {
-  const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
+  const { lifecycle, ...rest } = payload
+  const encoded = Buffer.from(JSON.stringify({
+    ...rest,
+    l: encodeLifecycleToken(lifecycle)
+  }), 'utf8').toString('base64url')
   const signature = createHmac('sha256', SEARCH_CONTINUATION_SECRET)
     .update(encoded)
     .digest('base64url')
@@ -205,15 +302,18 @@ function decodeSearchContinuation(token: string): SearchContinuationPayload {
     if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
       throw new Error('invalid continuation signature')
     }
-    const parsed = JSON.parse(Buffer.from(
+    const raw = JSON.parse(Buffer.from(
       encoded,
       'base64url'
-    ).toString('utf8')) as Partial<SearchContinuationPayload>
+    ).toString('utf8')) as Partial<SearchContinuationPayload> & { l?: unknown }
+    const lifecycle = decodeLifecycleToken(raw.l)
+    const parsed = { ...raw, lifecycle } as Partial<SearchContinuationPayload>
     const query = parsed.query
     const appliedScope = parsed.appliedScope
     if (
-      parsed.version !== 4 || !parsed.origin || !query || !appliedScope || !parsed.projection ||
+      parsed.version !== 5 || !parsed.origin || !query || !appliedScope || !parsed.projection ||
       !parsed.sort || parsed.cursor === undefined ||
+      !validAppliedSearchLifecycle(lifecycle) ||
       (typeof parsed.text !== 'string' && parsed.text !== null) ||
       !['all', 'focus', 'thread', 'subject', 'current'].includes(appliedScope.mode) ||
       !['relevance', 'date', 'createdAt', 'updatedAt'].includes(parsed.sort.field) ||
@@ -256,7 +356,7 @@ type RetrievalCursor = NonNullable<RetrievalRequest['cursor']>
 type RetrievalContinuationRequest = Omit<RetrievalRequest, 'cursor' | 'limit'>
 
 interface RetrievalContinuationPayload {
-  version: 1
+  version: 2
   serverNonce: string
   request: RetrievalContinuationRequest
   cursor: RetrievalCursor
@@ -270,10 +370,14 @@ interface RetrievalContinuationPayload {
   accessFingerprint: string
 }
 
-const RETRIEVAL_CONTINUATION_PREFIX = 'onmove-retrieval-v1.'
+const RETRIEVAL_CONTINUATION_PREFIX = 'onmove-retrieval-v2.'
 
 function encodeRetrievalContinuation(payload: RetrievalContinuationPayload): string {
-  const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
+  const { lifecycle, ...request } = payload.request
+  const encoded = Buffer.from(JSON.stringify({
+    ...payload,
+    request: { ...request, l: encodeLifecycleToken(normalizeSearchLifecycle(lifecycle)) }
+  }), 'utf8').toString('base64url')
   const signature = createHmac('sha256', SEARCH_CONTINUATION_SECRET)
     .update(`${RETRIEVAL_CONTINUATION_PREFIX}${encoded}`)
     .digest('base64url')
@@ -299,11 +403,21 @@ function decodeRetrievalContinuation(
     if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
       throw new Error('invalid continuation signature')
     }
-    const parsed = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as
-      Partial<RetrievalContinuationPayload>
+    const raw = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as
+      Partial<RetrievalContinuationPayload> & {
+        request?: Partial<RetrievalContinuationRequest> & { l?: unknown }
+      }
+    const lifecycle = decodeLifecycleToken(raw.request?.l)
+    const request = { ...(raw.request ?? {}) }
+    delete request.l
+    const parsed = {
+      ...raw,
+      request: { ...request, lifecycle }
+    } as Partial<RetrievalContinuationPayload>
     if (
-      parsed.version !== 1 || parsed.serverNonce !== expectedServerNonce ||
+      parsed.version !== 2 || parsed.serverNonce !== expectedServerNonce ||
       !parsed.request || typeof parsed.request !== 'object' ||
+      !validAppliedSearchLifecycle(lifecycle) ||
       !parsed.cursor || typeof parsed.cursor !== 'object' ||
       !Number.isSafeInteger(parsed.pageSize) || Number(parsed.pageSize) < 1 ||
       Number(parsed.pageSize) > 25 || !Number.isSafeInteger(parsed.maxBytes) ||
@@ -1813,7 +1927,7 @@ export function createOnMoveMcpServer(
     { name: 'onmove', version: '0.1.0' },
     {
       instructions:
-        'Choose reads by intent. Every user-addressable entity returned by MCP has a canonical code such as #F2, #T4, or #U90. When the user supplies one, call onmove.get_entity_by_code directly and do not search. For a compact queryless inventory use list_focuses, list_threads, list_commitments, or list_routines; these return hierarchy and one explicit projection row per applicable Subject without child Updates, Notes, or rich-text documents. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Use onmove.search across all relevant kinds when the request asks for information "about" a Thread or Focus: the answer may be evidence inside a Note, Update, Todo, or other descendant, not an entity whose title matches the words. Each primary search match always reports its exact matched field, containing Thread, complete coded path, and recommendedWriteTarget; these are never optional or budget-truncated. hierarchyPaths is only an auxiliary Subject/Scope expansion and must not replace each match\'s own path. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Search never returns lossless rich text. Request includeRichText=true on one known entity only immediately before a full structural replacement. Use onmove.retrieve after exact hierarchy IDs are known when evidence must stay inside an explicit workspace, Focus, asserted Focus/Thread, and optional canonical Subject intersection, or when provider-neutral enhanced retrieval is useful. Context IDs are operational identity boundaries: semantic relevance can rank evidence inside them but must never disambiguate an entity, select a sibling context, or choose a write target. The legacy onmove.search, onmove.continue_search, and every onmove.search_<kind> tool remain available for initial cross-kind discovery, exact lexical search, queryless structured listing, and Subject hierarchy projection. Send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility. Initial search tools never accept continuationToken. Natural-language wrappers retain meaningful entity terms. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Projection controls auxiliary Subject/Scope expansion, not required primary hierarchy. Inspect projections.*.complete before treating auxiliary paths or Subject uses as exhaustive. Never invent or alter a continuationToken. For another page call onmove.continue_search with only the exact non-null signed token; it preserves the originating search, complete query, and stable cursor. If SEARCH_CURSOR_STALE is returned, restart the original search tool with its criteria. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop global discovery and fetch returned IDs or continue only inside the returned boundary. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Delete only after the user explicitly asks for and confirms the exact target; onmove.delete_entity requires confirm=true and may cascade through owned descendants. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and independent View/Edit/Delete grants by resource, Focus, and Thread.'
+        'Choose reads by intent. Every user-addressable entity returned by MCP has a canonical code such as #F2, #T4, or #U90. When the user supplies one, call onmove.get_entity_by_code directly and do not search. For a compact queryless inventory use list_focuses, list_threads, list_commitments, or list_routines; these return hierarchy and one explicit projection row per applicable Subject without child Updates, Notes, or rich-text documents. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Use onmove.search across all relevant kinds when the request asks for information "about" a Thread or Focus: the answer may be evidence inside a Note, Update, Todo, or other descendant, not an entity whose title matches the words. Each primary search match always reports its exact matched field, containing Thread, complete coded path, lifecycle provenance, and recommendedWriteTarget; these are never optional or budget-truncated. hierarchyPaths is only an auxiliary Subject/Scope expansion and must not replace each match\'s own path. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Search never returns lossless rich text. Request includeRichText=true on one known entity only immediately before a full structural replacement. Use onmove.retrieve after exact hierarchy IDs are known when evidence must stay inside an explicit workspace, Focus, asserted Focus/Thread, and optional canonical Subject intersection, or when provider-neutral enhanced retrieval is useful. Context IDs are operational identity boundaries: semantic relevance can rank evidence inside them but must never disambiguate an entity, select a sibling context, or choose a write target. Search and retrieve consistently default lifecycle.mode=current: active and paused lineage is eligible, while anything done/cancelled itself or beneath done/cancelled work is excluded before ranking. Every hit reports direct and inherited lifecycle. For historical intent send lifecycle.mode=closed, or all to compare current and history. Never silently treat excluded history as current; when lifecycleCoverage.wideningRecommended is true, repeat the same initial request exactly as directed by lifecycleCoverage.nextAction. The legacy onmove.search, onmove.continue_search, and every onmove.search_<kind> tool remain available for initial cross-kind discovery, exact lexical search, queryless structured listing, and Subject hierarchy projection. Send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility. Initial search tools never accept continuationToken. Natural-language wrappers retain meaningful entity terms. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Projection controls auxiliary Subject/Scope expansion, not required primary hierarchy. Inspect projections.*.complete before treating auxiliary paths or Subject uses as exhaustive. Never invent or alter a continuationToken. For another page call onmove.continue_search with only the exact non-null signed token; it preserves the originating search, complete query, lifecycle policy, and stable cursor. If SEARCH_CURSOR_STALE is returned, restart the original search tool with its criteria. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop global discovery and fetch returned IDs or continue only inside the returned boundary. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong placement. Delete only after the user explicitly asks for and confirms the exact target; onmove.delete_entity requires confirm=true and may cascade through owned descendants. Inspect diagnostics and warnings. OnMove Settings controls sensitive access and independent View/Edit/Delete grants by resource, Focus, and Thread.'
     }
   )
   const policy = () => database.mcpSettings.accessPolicy()
@@ -2409,11 +2523,22 @@ export function createOnMoveMcpServer(
   }).optional().describe(
     'Optional Subject metadata request. Complete primary hierarchy is mandatory and never removed for response budgeting.'
   )
+  const searchLifecycleSchema = z.strictObject({
+    mode: z.enum(['current', 'closed', 'all']).describe(
+      'current searches active/paused operational lineage only and is the default; closed searches records that are done/cancelled themselves or descend from done/cancelled work; all searches both.'
+    ),
+    terminalStatuses: z.array(z.enum(SEARCH_TERMINAL_STATUSES)).min(1).max(2).optional().describe(
+      'Optional closed-status selection for mode=closed or the closed portion of mode=all. Omission includes both done and cancelled. This never changes current mode.'
+    )
+  }).optional().describe(
+    'Structural lifecycle eligibility applied before lexical or semantic ranking. Omission means mode=current. Use closed or all intentionally for history; results never widen silently.'
+  )
   const entitySearchSchema = z.strictObject({
     text: z.string().min(1).max(1_000).describe(
       'The literal text to discover within this entity kind. For another page, call onmove.continue_search with the returned token instead of repeating this request.'
     ),
     scope: searchScopeSchema,
+    lifecycle: searchLifecycleSchema,
     date: localDateRangeSchema.optional(),
     createdAt: localDateRangeSchema.optional(),
     updatedAt: localDateRangeSchema.optional(),
@@ -2436,6 +2561,7 @@ export function createOnMoveMcpServer(
       'Record kinds to return: focus, thread, commitment, routine, update, todo, note, subject. Omit for all kinds.'
     ),
     scope: searchScopeSchema,
+    lifecycle: searchLifecycleSchema,
     date: localDateRangeSchema.optional().describe(
       'Filter the semantic local date: Update recorded date, or due date for dated Focuses, Threads, Commitments, and Todos. Timezone does not shift this field.'
     ),
@@ -2477,6 +2603,20 @@ export function createOnMoveMcpServer(
     code: z.string(),
     title: z.string()
   })
+  const lifecycleStatusOutputSchema = z.enum(['active', 'paused', 'done', 'cancelled'])
+  const lifecycleLineageReferenceOutputSchema = z.strictObject({
+    id: z.number().int().positive(),
+    status: lifecycleStatusOutputSchema
+  }).nullable()
+  const searchLifecycleResultOutputSchema = z.strictObject({
+    directStatus: lifecycleStatusOutputSchema.nullable(),
+    effective: z.enum(['current', 'closed', 'not_applicable']),
+    lineage: z.strictObject({
+      focus: lifecycleLineageReferenceOutputSchema,
+      thread: lifecycleLineageReferenceOutputSchema,
+      commitment: lifecycleLineageReferenceOutputSchema
+    })
+  })
   const searchRecordOutputSchema = z.looseObject({
     reference: searchReferenceOutputSchema,
     uri: z.string(),
@@ -2489,6 +2629,7 @@ export function createOnMoveMcpServer(
     date: z.string().nullable(),
     createdAt: z.string(),
     updatedAt: z.string(),
+    lifecycle: searchLifecycleResultOutputSchema,
     contextPath: z.array(z.string()),
     hierarchy: z.strictObject({
       focus: searchPrimaryEntityReferenceOutputSchema,
@@ -2520,6 +2661,16 @@ export function createOnMoveMcpServer(
     targetSelectionReady: z.boolean(),
     reason: z.string(),
     nextAction: z.string()
+  })
+  const appliedLifecycleOutputSchema = z.strictObject({
+    mode: z.enum(['current', 'closed', 'all']),
+    terminalStatuses: z.array(z.enum(SEARCH_TERMINAL_STATUSES)).min(1).max(2)
+  })
+  const lifecycleCoverageOutputSchema = z.strictObject({
+    closedMatchesAvailable: z.boolean(),
+    closedExactTitleMatchAvailable: z.boolean(),
+    wideningRecommended: z.boolean(),
+    nextAction: z.string().nullable()
   })
   const searchBudgetOutputSchema = z.strictObject({
     maxBytes: z.number().int(),
@@ -2563,6 +2714,7 @@ export function createOnMoveMcpServer(
     updatedAt: appliedRangeOutputSchema,
     timeZone: z.string(),
     sort: appliedSortOutputSchema,
+    lifecycle: appliedLifecycleOutputSchema,
     projection: appliedProjectionOutputSchema
   })
   const entitySearchOutputSchema = z.object({
@@ -2570,6 +2722,7 @@ export function createOnMoveMcpServer(
     hasMore: z.boolean(),
     continuationToken: z.string().nullable(),
     searchStatus: searchStatusOutputSchema,
+    lifecycleCoverage: lifecycleCoverageOutputSchema,
     appliedQuery: appliedQueryOutputSchema,
     budget: searchBudgetOutputSchema,
     diagnostics: diagnosticsOutputSchema
@@ -2585,6 +2738,7 @@ export function createOnMoveMcpServer(
     kind: z.enum(['focus', 'thread', 'commitment', 'subject']),
     displayPath: z.string(),
     relativePath: z.string(),
+    lifecycle: searchLifecycleResultOutputSchema,
     hierarchy: z.strictObject({
       focus: searchEntityReferenceOutputSchema.unwrap(),
       thread: searchEntityReferenceOutputSchema,
@@ -2631,6 +2785,7 @@ export function createOnMoveMcpServer(
       hierarchy: projectionCompletenessOutputSchema
     }),
     searchStatus: searchStatusOutputSchema,
+    lifecycleCoverage: lifecycleCoverageOutputSchema,
     hasMore: z.boolean(),
     continuationToken: z.string().nullable(),
     appliedQuery: appliedQueryOutputSchema,
@@ -2661,13 +2816,14 @@ export function createOnMoveMcpServer(
       'Optional canonical Subject intersection. This selects durable attribution history inside the boundary; it is never treated as a fuzzy semantic label.'
     )
   }).describe(
-    'Required operational context. Every supplied hierarchy and Subject identifier is intersected; none is silently ignored.'
+    'Required identity context. Every supplied hierarchy and Subject identifier is intersected; none is silently ignored. A closed boundary remains valid when lifecycle.mode=closed or all.'
   )
   const retrievalInputSchema = z.strictObject({
     text: z.string().min(1).max(1_000).nullable().optional().describe(
       'Text to retrieve. Null or omission performs a structured listing inside the required context.'
     ),
     context: retrievalContextSchema,
+    lifecycle: searchLifecycleSchema,
     kinds: z.array(z.enum(SEARCH_ENTITY_TYPES)).min(1).max(8).optional(),
     date: localDateRangeSchema.optional(),
     createdAt: localDateRangeSchema.optional(),
@@ -2706,6 +2862,7 @@ export function createOnMoveMcpServer(
     createdAt: appliedRangeOutputSchema,
     updatedAt: appliedRangeOutputSchema,
     timeZone: z.string(),
+    lifecycle: appliedLifecycleOutputSchema,
     strategy: z.enum(['auto', 'lexical', 'hybrid']),
     onUnavailable: z.enum(['fallback', 'error']),
     diversifyBy: z.enum(['none', 'lineage'])
@@ -2724,6 +2881,7 @@ export function createOnMoveMcpServer(
       semanticCoverage: z.number().min(0).max(1).nullable(),
       semanticState: z.enum(['current', 'stale', 'unavailable'])
     }),
+    lifecycleCoverage: lifecycleCoverageOutputSchema,
     hasMore: z.boolean(),
     continuationToken: z.string().nullable(),
     appliedQuery: retrievalAppliedQueryOutputSchema,
@@ -2747,7 +2905,7 @@ export function createOnMoveMcpServer(
           query: continuation.query,
           diagnostics: {
             appliedScope: continuation.appliedScope,
-            warnings: ['The complete entity search and stable cursor were verified from continuationToken.']
+            warnings: []
           }
         }
       : resolveSearchScope(input.scope, options.getCurrentUiContext?.() ?? EMPTY_UI_CONTEXT)
@@ -2764,6 +2922,7 @@ export function createOnMoveMcpServer(
       field: 'relevance' as const,
       direction: 'asc' as const
     }
+    const lifecycle = continuation?.lifecycle ?? normalizeSearchLifecycle(input.lifecycle)
     const projection: SearchProjectionInput = continuation?.projection ?? {
       hierarchy: true,
       subjects: true,
@@ -2779,6 +2938,7 @@ export function createOnMoveMcpServer(
       createdAt,
       updatedAt,
       timeZone,
+      lifecycle,
       sort,
       cursor: continuation?.cursor,
       limit: pageSize,
@@ -2797,7 +2957,7 @@ export function createOnMoveMcpServer(
     const projectionTruncated = false
     const continuationFor = (cursor: SearchPageCursor | null): string | null => cursor
       ? encodeSearchContinuation({
-          version: 4,
+          version: 5,
           origin: { type: 'entity', kind },
           text,
           query: resolved.query,
@@ -2808,6 +2968,7 @@ export function createOnMoveMcpServer(
           ...(updatedAt ? { updatedAt } : {}),
           timeZone,
           sort,
+          lifecycle,
           projection,
           pageSize,
           maxBytes,
@@ -2818,26 +2979,30 @@ export function createOnMoveMcpServer(
     const response = (): Record<string, unknown> => {
       const hasMore = searched.hasMore || recordsTruncated
       const hasMatches = records.length > 0
+      const coverage = lifecycleCoverage(searched.lifecycle, records.length)
       return {
         records,
         hasMore,
         continuationToken: hasMore ? continuationFor(cursors.at(-1) ?? null) : null,
         searchStatus: {
-          sufficient: hasMatches && !hasMore,
-          doNotBroaden: hasMatches && !hasMore,
+          sufficient: hasMatches && !hasMore && !coverage.wideningRecommended,
+          doNotBroaden: hasMatches && !hasMore && !coverage.wideningRecommended,
           targetSelectionReady: hasMatches && records.every((record) =>
             record.path && (record.path as { complete?: unknown }).complete === true),
-          reason: hasMore
+          reason: coverage.wideningRecommended
+            ? 'Current lifecycle results are not sufficient because matching closed history was excluded.'
+            : hasMore
             ? 'Another stable page remains for this entity-specific search.'
             : hasMatches
               ? `The complete visible ${kind} search was returned.`
               : `No visible ${kind} records matched the search criteria.`,
-          nextAction: hasMore
+          nextAction: coverage.nextAction ?? (hasMore
             ? 'Call onmove.continue_search with only this continuationToken.'
             : hasMatches
               ? 'Stop discovery and use the returned record IDs.'
-              : 'Adjust the text or applied filters, use a compact list tool when available, or resolve a known code, ID, or exact path.'
+              : 'Adjust the text or applied filters, use a compact list tool when available, or resolve a known code, ID, or exact path.')
         },
+        lifecycleCoverage: coverage,
         appliedQuery: {
           text,
           kind,
@@ -2846,6 +3011,7 @@ export function createOnMoveMcpServer(
           updatedAt: updatedAt ?? null,
           timeZone,
           sort,
+          lifecycle,
           projection: {
             hierarchy: projection.hierarchy,
             subjects: projection.subjects
@@ -2885,8 +3051,8 @@ export function createOnMoveMcpServer(
       cursors.pop()
       recordsTruncated = true
     }
-    if (projectionTruncated) warnings.push('Optional record projections were reduced to honor page.maxBytes.')
-    if (recordsTruncated) warnings.push('The record page was shortened to honor page.maxBytes.')
+    if (projectionTruncated) warnings.push('Optional projections reduced for page.maxBytes.')
+    if (recordsTruncated) warnings.push('Page shortened for page.maxBytes.')
     const finalResponse = response()
     const budget = finalResponse.budget as Record<string, unknown>
     for (let pass = 0; pass < 4; pass += 1) {
@@ -2915,7 +3081,7 @@ export function createOnMoveMcpServer(
       toolName,
       {
         title,
-        description: `Search only visible ${kind} records by text. ${kind === 'note' ? 'Matches Note title plus legacy plain/Markdown and current rich-text content.' : ''} ${kind === 'todo' ? 'Use returned Todo IDs with Todo mutation tools.' : kind === 'subject' ? 'Use the canonical Subject ID with Subject-scoped search, review_subject, or resolve_work_target.' : `Use get_${kind}_by_id when an ID is known${['focus', 'thread', 'commitment', 'routine', 'note'].includes(kind) ? ` and get_${kind}_by_path for an exact hierarchy path` : ''}.`} This does not search other entity kinds. If the user asks for evidence "about" a Thread or Focus rather than its title, use onmove.search without narrowing kinds so descendant Notes and Updates can match. Every record retains the exact matched field, complete coded parent path, containing Thread, and recommended write target. Search returns only bounded match snippets—never lossless rich text. Read the selected ID for Markdown; request includeRichText=true there only immediately before a full structural replacement. If hasMore=true, call onmove.continue_search with only the returned token; this initial search tool does not accept continuationToken.`,
+        description: `Search only visible ${kind} records by text. ${kind === 'note' ? 'Matches Note title plus legacy plain/Markdown and current rich-text content.' : ''} ${kind === 'todo' ? 'Use returned Todo IDs with Todo mutation tools.' : kind === 'subject' ? 'Use the canonical Subject ID with Subject-scoped search, review_subject, or resolve_work_target.' : `Use get_${kind}_by_id when an ID is known${['focus', 'thread', 'commitment', 'routine', 'note'].includes(kind) ? ` and get_${kind}_by_path for an exact hierarchy path` : ''}.`} This does not search other entity kinds. Lifecycle defaults to current active/paused lineage; use lifecycle.mode=closed or all intentionally for history. Every result reports direct and inherited lifecycle, and lifecycleCoverage reports authorized excluded history without silently widening. If the user asks for evidence "about" a Thread or Focus rather than its title, use onmove.search without narrowing kinds so descendant Notes and Updates can match. Every record retains the exact matched field, complete coded parent path, containing Thread, and recommended write target. Search returns only bounded match snippets—never lossless rich text. Read the selected ID for Markdown; request includeRichText=true there only immediately before a full structural replacement. If hasMore=true, call onmove.continue_search with only the returned token; this initial search tool does not accept continuationToken.`,
         inputSchema: entitySearchSchema,
         outputSchema: entitySearchOutputSchema,
         annotations: { readOnlyHint: true }
@@ -2939,7 +3105,7 @@ export function createOnMoveMcpServer(
             query: continuation.query,
             diagnostics: {
               appliedScope: continuation.appliedScope,
-              warnings: ['The complete search request and stable cursor were verified from continuationToken.']
+              warnings: []
             }
           }
         : resolveSearchScope(input.scope, options.getCurrentUiContext?.() ?? EMPTY_UI_CONTEXT)
@@ -2953,6 +3119,7 @@ export function createOnMoveMcpServer(
       const effectiveSort = continuation?.sort ?? input.sort ?? (normalizedText === null
         ? { field: 'updatedAt' as const, direction: 'desc' as const }
         : { field: 'relevance' as const, direction: 'asc' as const })
+      const lifecycle = continuation?.lifecycle ?? normalizeSearchLifecycle(input.lifecycle)
       const projection: SearchProjectionInput = continuation?.projection ?? {
         hierarchy: input.projection?.hierarchy ?? false,
         subjects: input.projection?.subjects ?? false,
@@ -2967,6 +3134,7 @@ export function createOnMoveMcpServer(
         createdAt: effectiveCreatedAt,
         updatedAt: effectiveUpdatedAt,
         timeZone: effectiveTimeZone,
+        lifecycle,
         sort: effectiveSort,
         cursor: continuation?.cursor,
         limit: pageSize,
@@ -3005,6 +3173,7 @@ export function createOnMoveMcpServer(
           updatedAt: effectiveUpdatedAt,
           timeZone: effectiveTimeZone,
           sort: { field: 'updatedAt', direction: 'desc' },
+          lifecycle,
           limit: pageSize
         }, access)
       }))
@@ -3027,6 +3196,7 @@ export function createOnMoveMcpServer(
             includeCommitments: projection.scopes || projection.subjects,
             includeSubjects: projection.subjects,
             includeScopes: projection.scopes,
+            lifecycle,
             limit: pageSize,
             offset: 0
           }, matches, access)
@@ -3086,7 +3256,7 @@ export function createOnMoveMcpServer(
 
       const continuationFor = (cursor: SearchPageCursor | null): string | null => cursor
         ? encodeSearchContinuation({
-            version: 4,
+            version: 5,
             origin: { type: 'global' },
             text: normalizedText,
             query: resolved.query,
@@ -3097,6 +3267,7 @@ export function createOnMoveMcpServer(
             ...(effectiveUpdatedAt ? { updatedAt: effectiveUpdatedAt } : {}),
             timeZone: effectiveTimeZone,
             sort: effectiveSort,
+            lifecycle,
             projection,
             pageSize,
             maxBytes,
@@ -3117,12 +3288,16 @@ export function createOnMoveMcpServer(
         )
         const auxiliaryComplete = hierarchyComplete && subjectUsesComplete
         const foundSubjectNames = [...new Set(matchedSubjects.map(({ name }) => name))]
+        const coverage = lifecycleCoverage(searched.lifecycle, matches.length)
         const searchStatus = {
-          sufficient: hasMatches && doNotBroaden && auxiliaryComplete,
-          doNotBroaden,
+          sufficient: hasMatches && doNotBroaden && auxiliaryComplete &&
+            !coverage.wideningRecommended,
+          doNotBroaden: doNotBroaden && !coverage.wideningRecommended,
           targetSelectionReady: items.length > 0 && items.every((item) =>
             item.path && (item.path as { complete?: unknown }).complete === true),
-          reason: !hasMatches
+          reason: coverage.wideningRecommended
+            ? 'Current lifecycle results are not sufficient because matching closed history was excluded.'
+            : !hasMatches
             ? 'No visible records matched the applied text, kind, date, and scope criteria.'
             : !auxiliaryComplete
             ? 'Relevant discovery may be present, but at least one requested auxiliary projection is incomplete. Do not broaden globally; continue within the returned Subject/Focus/Thread boundary or use the matching list/review tool.'
@@ -3133,13 +3308,13 @@ export function createOnMoveMcpServer(
             : globalComplete
               ? 'The global structured query is complete; every matching visible record was returned.'
               : 'Another bounded page remains; continue with the exact signed continuationToken.',
-          nextAction: !hasMatches
+          nextAction: coverage.nextAction ?? (!hasMatches
             ? 'Adjust the text or applied filters, use a compact list tool for inventory, or resolve a known code, ID, or exact path.'
             : !auxiliaryComplete
             ? 'Use scope.mode=subject/focus/thread with the returned ID, onmove.review_subject, or a compact list tool; do not infer completeness from the truncated projection.'
             : doNotBroaden
             ? 'Stop discovery and use the returned record IDs directly.'
-            : 'Call onmove.continue_search with only this continuationToken.'
+            : 'Call onmove.continue_search with only this continuationToken.')
         }
         return {
           items,
@@ -3171,6 +3346,7 @@ export function createOnMoveMcpServer(
             }
           },
           searchStatus,
+          lifecycleCoverage: coverage,
           hasMore,
           continuationToken: hasMore ? continuationFor(lastCursor) : null,
           appliedQuery: {
@@ -3181,6 +3357,7 @@ export function createOnMoveMcpServer(
             updatedAt: effectiveUpdatedAt ?? null,
             timeZone: effectiveTimeZone,
             sort: effectiveSort,
+            lifecycle,
             projection
           },
           budget: {
@@ -3220,7 +3397,7 @@ export function createOnMoveMcpServer(
         subjectUses = subjectUses.slice(0, -1)
         projectionTruncatedByBudget = true
       }
-      if (exceedsBudget()) {
+      if (exceedsBudget() && items.some((item) => 'subjectDiscovery' in item)) {
         items = items.map((item) => {
           const compact = { ...item }
           delete compact.subjectDiscovery
@@ -3248,10 +3425,10 @@ export function createOnMoveMcpServer(
         )
       }
       if (projectionTruncatedByBudget) {
-        warnings.push('Auxiliary projection data was reduced to honor page.maxBytes.')
+        warnings.push('Auxiliary projections reduced for page.maxBytes.')
       }
       if (recordsTruncatedByBudget) {
-        warnings.push('The record page was shortened to honor page.maxBytes; continue with the signed token.')
+        warnings.push('Page shortened for page.maxBytes; continue with the signed token.')
       }
       if (exceedsBudget() && warnings.length > 1) {
         const omittedWarnings = warnings.length - 1
@@ -3278,7 +3455,7 @@ export function createOnMoveMcpServer(
     'onmove.search',
     {
       title: 'Search or list OnMove records',
-      description: 'Use for initial FTS discovery, queryless structured listing, and cross-kind hierarchy browsing. Send text for language search, or text=null with kinds to list records without FTS. A request for information "about" a Thread/Focus should search all relevant kinds because the match may live in descendant Notes, Updates, Todos, or Routines rather than the container title. Note search covers title, current rich text, legacy Markdown, and legacy plain text. Every primary match includes its exact matched field, complete canonical-code path, containing Thread, and recommended write target; required primary metadata is never budget-truncated. hierarchyPaths is reserved for bounded auxiliary Subject/Scope expansion and is not duplicated for ordinary matches. Search returns bounded match snippets only—never lossless rich-text documents. Use the selected entity getter for Markdown and request includeRichText=true there only before a structural replacement. Date filters are database predicates, never search terms. Responses identify primary and auxiliary projection completeness, enforce a complete tool-result byte budget, and return a signed continuationToken only when another primary page exists. To fetch that page call onmove.continue_search; never attach a token to this initial-search tool or repeat the search body with it.',
+      description: 'Use for initial FTS discovery, queryless structured listing, and cross-kind hierarchy browsing. Send text for language search, or text=null with kinds to list records without FTS. Lifecycle defaults to current active/paused lineage and is applied before ranking; use lifecycle.mode=closed for history or all for comparison. Every result and auxiliary path reports lifecycle provenance. lifecycleCoverage reports authorized closed matches that were excluded and gives an exact retry when widening is recommended; results never widen silently. A request for information "about" a Thread/Focus should search all relevant kinds because the match may live in descendant Notes, Updates, Todos, or Routines rather than the container title. Note search covers title, current rich text, legacy Markdown, and legacy plain text. Every primary match includes its exact matched field, complete canonical-code path, containing Thread, and recommended write target; required primary metadata is never budget-truncated. hierarchyPaths is reserved for bounded auxiliary Subject/Scope expansion and is not duplicated for ordinary matches. Search returns bounded match snippets only—never lossless rich-text documents. Use the selected entity getter for Markdown and request includeRichText=true there only before a structural replacement. Date filters are database predicates, never search terms. Responses identify primary and auxiliary projection completeness, enforce a complete tool-result byte budget, and return a signed continuationToken only when another primary page exists. To fetch that page call onmove.continue_search; never attach a token to this initial-search tool or repeat the search body with it.',
       inputSchema: globalSearchSchema,
       outputSchema: globalSearchOutputSchema,
       annotations: { readOnlyHint: true }
@@ -3290,7 +3467,7 @@ export function createOnMoveMcpServer(
     'onmove.continue_search',
     {
       title: 'Continue an OnMove search',
-      description: 'Fetch exactly one next page from any OnMove search tool. Pass only the exact non-null continuationToken returned by the preceding page. The signed token identifies the originating search, filters, scope, projection, sort, page budget, index generation, and stable cursor. Do not repeat or modify the search body. Never invent, alter, or reuse a stale token.',
+      description: 'Fetch exactly one next page from any OnMove search tool. Pass only the exact non-null continuationToken returned by the preceding page. The signed token identifies the originating search, filters, lifecycle policy, scope, projection, sort, page budget, index generation, and stable cursor. Do not repeat or modify the search body. Never invent, alter, or reuse a stale token.',
       inputSchema: z.strictObject({
         continuationToken: z.string().min(1).describe(
           'Required opaque token returned by an OnMove search response with hasMore=true. No search criteria belong in this request.'
@@ -3318,6 +3495,7 @@ export function createOnMoveMcpServer(
   const normalizeRetrievalRequest = (input: RetrievalInput): RetrievalContinuationRequest => ({
     text: input.text ?? null,
     context: input.context,
+    lifecycle: normalizeSearchLifecycle(input.lifecycle),
     ...(input.kinds ? { kinds: input.kinds } : {}),
     ...(input.date ? { date: input.date } : {}),
     ...(input.createdAt ? { createdAt: input.createdAt } : {}),
@@ -3413,15 +3591,16 @@ export function createOnMoveMcpServer(
 
     let items = retrieved.items.map((item) =>
       retrievalSafeValue(item) as Record<string, unknown>)
+    const coverage = lifecycleCoverage(retrieved.lifecycle, retrieved.items.length)
     const itemCursors = [...retrieved.itemCursors]
     let recordsTruncated = false
     const warnings = [
-      ...(continuation
-        ? ['The complete retrieval request and stable cursor were verified from continuationToken.']
-        : []),
       ...(continuation?.fallbackReason
         ? [continuation.fallbackReason]
-        : retrieved.fallbackReason ? [retrieved.fallbackReason] : [])
+        : retrieved.fallbackReason ? [retrieved.fallbackReason] : []),
+      ...(coverage.wideningRecommended && coverage.nextAction
+        ? [`Closed lifecycle matches were excluded. ${coverage.nextAction}`]
+        : [])
     ]
     const appliedScope = retrievalDiagnosticsScope(request.context)
     const diagnostics = (): McpDiagnostics => ({
@@ -3432,7 +3611,7 @@ export function createOnMoveMcpServer(
     })
     const continuationFor = (cursor: RetrievalCursor | null): string | null => cursor
       ? encodeRetrievalContinuation({
-          version: 1,
+          version: 2,
           serverNonce: retrievalServerNonce,
           request,
           cursor,
@@ -3470,6 +3649,7 @@ export function createOnMoveMcpServer(
               ? 'current'
               : 'stale'
         },
+        lifecycleCoverage: coverage,
         hasMore,
         continuationToken: hasMore ? continuationFor(lastCursor) : null,
         appliedQuery: {
@@ -3480,6 +3660,7 @@ export function createOnMoveMcpServer(
           createdAt: request.createdAt ?? null,
           updatedAt: request.updatedAt ?? null,
           timeZone: request.timeZone,
+          lifecycle: request.lifecycle,
           strategy: request.strategy,
           onUnavailable: request.onUnavailable,
           diversifyBy: request.diversifyBy
@@ -3511,7 +3692,7 @@ export function createOnMoveMcpServer(
     }
     if (recordsTruncated) {
       warnings.push(
-        'The retrieval page was shortened to honor page.maxBytes; continue with the signed token.'
+        'Page shortened for page.maxBytes; continue with the signed token.'
       )
     }
     const finalResponse = response()
@@ -3540,6 +3721,10 @@ export function createOnMoveMcpServer(
         'Retrieve visible records inside one explicit workspace, Focus, or asserted Focus/Thread ' +
         'boundary, optionally intersected with one canonical Subject. IDs are operational identity: ' +
         'resolve names or public codes first, and never substitute a semantically similar sibling. ' +
+        'Lifecycle defaults to current active/paused lineage and is filtered before lexical/vector ' +
+        'ranking; request closed or all explicitly for history. Every result reports inherited ' +
+        'lifecycle, while lifecycleCoverage reports authorized excluded history and never widens ' +
+        'silently. ' +
         'The result is provider-neutral and reports the requested/applied strategy, fallback, index ' +
         'freshness, complete hierarchy provenance, and a signed continuationToken. Retrieval returns ' +
         'bounded excerpts only, never lossless rich text. Call onmove.continue_retrieval for another page.',
@@ -3557,7 +3742,7 @@ export function createOnMoveMcpServer(
       description:
         'Fetch exactly one next retrieval page. Pass only the exact non-null signed token returned ' +
         'by onmove.retrieve or this tool. The token preserves context, filters, strategy, byte ' +
-        'budget, access fingerprint, retrieval mode, index generations, and stable cursor. ' +
+        'budget, lifecycle policy, access fingerprint, retrieval mode, index generations, and stable cursor. ' +
         'Do not repeat or modify the retrieval request.',
       inputSchema: z.strictObject({
         continuationToken: z.string().min(1).describe(
@@ -3739,13 +3924,14 @@ export function createOnMoveMcpServer(
             threadId: reviewed.review.hierarchy.thread.id,
             subjectId: reviewed.review.subject.id,
             kinds: ['update', 'todo', 'commitment'],
+            lifecycle: DEFAULT_SEARCH_LIFECYCLE,
             sort: { field: 'updatedAt', direction: 'desc' },
             limit: 1
           }, policy()).generation
         : null
       const continuationToken = reviewed.review && reviewSearchGeneration !== null
         ? encodeSearchContinuation({
-            version: 4,
+            version: 5,
             origin: { type: 'global' },
             text: null,
             query: {
@@ -3767,6 +3953,7 @@ export function createOnMoveMcpServer(
             kinds: ['update', 'todo', 'commitment'],
             timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC',
             sort: { field: 'updatedAt', direction: 'desc' },
+            lifecycle: DEFAULT_SEARCH_LIFECYCLE,
             projection: {
               hierarchy: true,
               subjects: true,

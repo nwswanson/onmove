@@ -116,6 +116,15 @@ searches titles, current rich text, legacy Markdown, and legacy plain text. Ever
 returns its exact matching field, complete coded parent path, containing Thread, and recommended
 write target; use those fields directly instead of requesting a separate global hierarchy dump.
 
+Search and context-aware retrieval default to `lifecycle.mode: "current"`. Active and paused work
+is eligible; a record that is done/cancelled itself or inherits a done/cancelled Focus, Thread, or
+Commitment ancestor is historical and excluded before ranking. Request `closed` explicitly for
+history or `all` to compare current and historical work. The optional nonempty `terminalStatuses`
+array accepts `done` and/or `cancelled` and narrows the historical portion only. Every result reports
+its direct status, effective lifecycle, and Focus/Thread/Commitment lineage. Inspect
+`lifecycleCoverage` for authorized excluded history and its exact fresh-request guidance; OnMove
+never widens into history silently.
+
 The list tools keep the durable entity ID under `reference` and give every output row a separate
 `projectionKey`. A scoped Thread, Commitment, or Routine appears once per applicable Subject with
 `projection.projectedScope: true`; its readable `displayPath` ends in `[Subject name]`. Unscoped,
@@ -149,8 +158,10 @@ Initial search tools accept search criteria only; they do not accept `continuati
 ```
 
 If the response has `hasMore=true`, call `onmove.continue_search` with the exact non-null token as
-its only argument. The signed token preserves the originating search, complete query, stable cursor,
-and search-index generation. Never repeat the search body alongside it. If live edits cause
+its only argument. The signed token preserves the originating search, complete query, lifecycle
+policy, stable cursor, and search-index generation. Never repeat the search body alongside it or
+reuse the token to change lifecycle. If history is indicated, repeat the original initial request
+with `lifecycle.mode: "closed"` or `"all"`. If live edits cause
 `SEARCH_CURSOR_STALE`, restart the original search tool with its criteria. A named Subject result includes
 `namedSubjectDiscovery`, which puts the canonical Subject ID and every applicable Focus/Thread path
 beside ready `review_subject` arguments. Selectors use either an ID or a title/name, never both.
