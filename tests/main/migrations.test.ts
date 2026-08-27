@@ -83,6 +83,35 @@ describe('database migrations', () => {
     migrated.close()
   })
 
+  it('defaults legacy MCP settings to excluding closed work', () => {
+    const current = new AppDatabase(databasePath)
+    current.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      ALTER TABLE mcp_settings DROP COLUMN include_closed_by_default;
+      DELETE FROM schema_migrations WHERE version = 48;
+    `)
+    legacy.close()
+
+    let migrated = new AppDatabase(databasePath)
+    expect(migrated.mcpSettings.get().includeClosedByDefault).toBe(false)
+    expect(migrated.mcpSettings.update({ includeClosedByDefault: true })).toMatchObject({
+      includeClosedByDefault: true
+    })
+    migrated.close()
+
+    migrated = new AppDatabase(databasePath)
+    expect(migrated.mcpSettings.get().includeClosedByDefault).toBe(true)
+    migrated.close()
+
+    const raw = new DatabaseSync(databasePath)
+    expect(raw.prepare(
+      'SELECT version FROM schema_migrations WHERE version = 48'
+    ).get()).toEqual({ version: 48 })
+    raw.close()
+  })
+
   it('creates the rebuildable embedding cache without changing authoritative search data', () => {
     const database = new AppDatabase(databasePath)
     const focus = database.domain.focuses.create({ title: 'Durable source record' })

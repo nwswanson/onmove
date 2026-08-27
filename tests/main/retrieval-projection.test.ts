@@ -160,6 +160,10 @@ describe('RetrievalProjectionRepository', () => {
         focus: { id: focus.id, status: 'active' },
         thread: { id: cancelledThread.id, status: 'cancelled' },
         commitment: null
+      },
+      closure: {
+        explicit: null,
+        inherited: [{ type: 'thread', id: cancelledThread.id, status: 'cancelled' }]
       }
     })
   })

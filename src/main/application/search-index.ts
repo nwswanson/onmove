@@ -108,15 +108,32 @@ export interface SearchLifecycleLineageReference {
   status: SearchLifecycleStatus
 }
 
+export interface SearchLifecycleLineage {
+  focus: SearchLifecycleLineageReference | null
+  thread: SearchLifecycleLineageReference | null
+  commitment: SearchLifecycleLineageReference | null
+}
+
+export interface SearchLifecycleClosureReference {
+  type: keyof SearchLifecycleLineage
+  id: number
+  status: SearchTerminalStatus
+}
+
+export interface SearchLifecycleClosure {
+  /** The result itself is terminal. */
+  explicit: SearchTerminalStatus | null
+  /** Every terminal owner, nearest or otherwise; complete lineage remains available below. */
+  inherited: SearchLifecycleClosureReference[]
+}
+
 export interface SearchResultLifecycle {
   /** Routine health is separate; Routine results therefore have no direct lifecycle status. */
   directStatus: SearchLifecycleStatus | null
   effective: SearchEffectiveLifecycle
-  lineage: {
-    focus: SearchLifecycleLineageReference | null
-    thread: SearchLifecycleLineageReference | null
-    commitment: SearchLifecycleLineageReference | null
-  }
+  lineage: SearchLifecycleLineage
+  /** Null means no explicit or inherited terminal lifecycle applies. */
+  closure: SearchLifecycleClosure | null
 }
 
 export interface SearchResult {
@@ -354,6 +371,27 @@ function lifecycleLineage(
 ): SearchLifecycleLineageReference | null {
   const normalized = lifecycleStatus(status)
   return id === null || normalized === null ? null : { id: Number(id), status: normalized }
+}
+
+function terminalLifecycleStatus(
+  value: SearchLifecycleStatus | null | undefined
+): SearchTerminalStatus | null {
+  return value === 'done' || value === 'cancelled' ? value : null
+}
+
+export function deriveSearchLifecycleClosure(
+  directStatus: SearchLifecycleStatus | null,
+  lineage: SearchLifecycleLineage,
+  selfLineageType: keyof SearchLifecycleLineage | null
+): SearchLifecycleClosure | null {
+  const explicit = terminalLifecycleStatus(directStatus)
+  const inherited = (['focus', 'thread', 'commitment'] as const).flatMap((type) => {
+    if (type === selfLineageType) return []
+    const owner = lineage[type]
+    const status = terminalLifecycleStatus(owner?.status)
+    return owner && status ? [{ type, id: owner.id, status }] : []
+  })
+  return explicit || inherited.length > 0 ? { explicit, inherited } : null
 }
 
 function assertLocalDate(value: string, field: string): void {
@@ -854,13 +892,11 @@ export class SearchIndexRepository {
       // Routines deliberately keep operational health separate from lifecycle. Their backing
       // Commitment can still make the effective result closed through the structural lineage.
       const directStatus = type === 'routine' ? null : lifecycleStatus(row.document_status)
-      const lineageStatuses = [
-        lineage.focus?.status,
-        lineage.thread?.status,
-        lineage.commitment?.status
-      ]
-      const effective: SearchEffectiveLifecycle = [directStatus, ...lineageStatuses]
-        .some((status) => status === 'done' || status === 'cancelled')
+      const selfLineageType = type === 'focus' || type === 'thread' || type === 'commitment'
+        ? type
+        : null
+      const closure = deriveSearchLifecycleClosure(directStatus, lineage, selfLineageType)
+      const effective: SearchEffectiveLifecycle = closure
         ? 'closed'
         : directStatus === null && Object.values(lineage).every((entry) => entry === null)
           ? 'not_applicable'
@@ -886,7 +922,7 @@ export class SearchIndexRepository {
           field: writableField,
           ...writable
         },
-        lifecycle: { directStatus, effective, lineage },
+        lifecycle: { directStatus, effective, lineage, closure },
         snippet: compactSnippet(row.snippet),
         rank: Number(row.rank),
         effectiveSensitive: Boolean(row.effective_sensitive),

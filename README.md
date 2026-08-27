@@ -75,7 +75,8 @@ source, so clean clones produce the same Finder and Dock icon without a machine-
    }
    ```
 
-Keep OnMove open while using MCP. The server and sensitive-content access are off by default.
+Keep OnMove open while using MCP. The server, sensitive-content access, and **Include closed work
+in MCP results** setting are off by default.
 Under **Default access**, grant View, Edit, and Delete independently for Focuses, Threads,
 Commitments, Routines, Updates, Todos, Notes, and Subjects. Edit and Delete also require View;
 Delete defaults to denied. Add a Focus override only
@@ -116,14 +117,19 @@ searches titles, current rich text, legacy Markdown, and legacy plain text. Ever
 returns its exact matching field, complete coded parent path, containing Thread, and recommended
 write target; use those fields directly instead of requesting a separate global hierarchy dump.
 
-Search and context-aware retrieval default to `lifecycle.mode: "current"`. Active and paused work
-is eligible; a record that is done/cancelled itself or inherits a done/cancelled Focus, Thread, or
-Commitment ancestor is historical and excluded before ranking. Request `closed` explicitly for
-history or `all` to compare current and historical work. The optional nonempty `terminalStatuses`
-array accepts `done` and/or `cancelled` and narrows the historical portion only. Every result reports
-its direct status, effective lifecycle, and Focus/Thread/Commitment lineage. Inspect
-`lifecycleCoverage` for authorized excluded history and its exact fresh-request guidance; OnMove
-never widens into history silently.
+Search and context-aware retrieval resolve an omitted lifecycle from **Include closed work in MCP
+results**. The setting defaults to off, so an omitted lifecycle resolves to
+`lifecycle.mode: "current"`; when enabled, it resolves to `"all"`. An explicit per-request
+`current`, `closed`, or `all` mode always wins, and `appliedQuery.lifecycle` reports the resolved
+policy. Active and paused work is current; a record that is done/cancelled itself or inherits a
+done/cancelled Focus, Thread, or Commitment ancestor is historical and excluded from a `current`
+request before ranking. The optional nonempty `terminalStatuses` array accepts `done` and/or
+`cancelled` and narrows the historical portion only. Every result reports its direct status,
+effective lifecycle, and complete Focus/Thread/Commitment lineage. Its `lifecycle.closure` is `null`
+when it is not closed; otherwise `closure.explicit` identifies the record's own terminal status and
+`closure.inherited` identifies every terminal parent by type, ID, canonical code, and status. Inspect
+`lifecycleCoverage` for authorized history excluded by an explicit or resolved `current` request
+and its exact fresh-request guidance; OnMove never changes that request's boundary silently.
 
 The list tools keep the durable entity ID under `reference` and give every output row a separate
 `projectionKey`. A scoped Thread, Commitment, or Routine appears once per applicable Subject with
@@ -160,7 +166,9 @@ Initial search tools accept search criteria only; they do not accept `continuati
 If the response has `hasMore=true`, call `onmove.continue_search` with the exact non-null token as
 its only argument. The signed token preserves the originating search, complete query, lifecycle
 policy, stable cursor, and search-index generation. Never repeat the search body alongside it or
-reuse the token to change lifecycle. If history is indicated, repeat the original initial request
+reuse the token to change lifecycle. Changing **Include closed work in MCP results** after the
+initial request does not change that continuation: it retains the lifecycle already recorded in
+the token. If history is indicated, repeat the original initial request
 with `lifecycle.mode: "closed"` or `"all"`. If live edits cause
 `SEARCH_CURSOR_STALE`, restart the original search tool with its criteria. A named Subject result includes
 `namedSubjectDiscovery`, which puts the canonical Subject ID and every applicable Focus/Thread path

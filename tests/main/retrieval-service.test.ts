@@ -398,7 +398,7 @@ describe('RetrievalService', () => {
     expect(current.items.map(({ reference }) => reference)).toEqual([
       { type: 'update', id: currentUpdate.id }
     ])
-    expect(current.items[0].lifecycle).toMatchObject({ effective: 'current' })
+    expect(current.items[0].lifecycle).toMatchObject({ effective: 'current', closure: null })
     expect(current.lifecycle).toEqual({
       mode: 'current',
       terminalStatuses: ['done', 'cancelled'],
@@ -421,6 +421,10 @@ describe('RetrievalService', () => {
         focus: { id: focus.id, status: 'active' },
         thread: { id: cancelledThread.id, status: 'cancelled' },
         commitment: null
+      },
+      closure: {
+        explicit: null,
+        inherited: [{ type: 'thread', id: cancelledThread.id, status: 'cancelled' }]
       }
     })
     expect(closed.lifecycle).toEqual({
@@ -514,7 +518,12 @@ describe('RetrievalService', () => {
       })
       expect(page.items.every(({ lifecycle }) =>
         lifecycle.effective === 'closed' &&
-        lifecycle.lineage.commitment?.status === 'done')).toBe(true)
+        lifecycle.lineage.commitment?.status === 'done' &&
+        lifecycle.closure?.explicit === null &&
+        lifecycle.closure.inherited.length === 1 &&
+        lifecycle.closure.inherited[0]?.type === 'commitment' &&
+        lifecycle.closure.inherited[0]?.id === doneCommitment.id &&
+        lifecycle.closure.inherited[0]?.status === 'done')).toBe(true)
       seen.push(...page.items.map(({ reference }) => reference.id))
       cursor = page.nextCursor
     } while (cursor !== null)

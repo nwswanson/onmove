@@ -48,6 +48,21 @@ describe('hierarchical MCP permissions', () => {
     })).toThrow('retrievalMode must be classic or enhanced')
   })
 
+  it('persists and validates the default inclusion of closed MCP results', () => {
+    expect(database.mcpSettings.get().includeClosedByDefault).toBe(false)
+
+    expect(database.mcpSettings.update({ includeClosedByDefault: true })).toMatchObject({
+      includeClosedByDefault: true
+    })
+    database.close()
+    database = new AppDatabase(join(directory, 'onmove.sqlite3'))
+    expect(database.mcpSettings.get().includeClosedByDefault).toBe(true)
+
+    expect(() => database.mcpSettings.update({
+      includeClosedByDefault: 'yes' as never
+    })).toThrow('includeClosedByDefault must be a boolean')
+  })
+
   it('stores bounded defaults and only explicit hierarchy exceptions', () => {
     const first = hierarchy('First')
     const initial = database.mcpSettings.get()

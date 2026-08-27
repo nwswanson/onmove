@@ -252,7 +252,8 @@ describe('OnMove MCP hierarchy discovery', () => {
             focus: { id: focus.id, status: 'active' },
             thread: { id: current.thread.id, status: 'paused' },
             commitment: null
-          }
+          },
+          closure: null
         }
       }),
       expect.objectContaining({
@@ -268,7 +269,8 @@ describe('OnMove MCP hierarchy discovery', () => {
             focus: { id: focus.id, status: 'active' },
             thread: { id: current.thread.id, status: 'paused' },
             commitment: { id: current.commitment.id, status: 'active' }
-          }
+          },
+          closure: null
         }
       })
     ]))
@@ -323,13 +325,24 @@ describe('OnMove MCP hierarchy discovery', () => {
             focus: { id: focus.id, status: 'active' },
             thread: { id: done.thread.id, status: 'done' },
             commitment: { id: done.commitment.id, status: 'active' }
+          },
+          closure: {
+            explicit: null,
+            inherited: [{ type: 'thread', id: done.thread.id, status: 'done' }]
           }
         }
       }),
       expect.objectContaining({
         kind: 'subject',
         subject: { id: done.subject.id, name: 'Done subject' },
-        lifecycle: expect.objectContaining({ directStatus: null, effective: 'closed' })
+        lifecycle: expect.objectContaining({
+          directStatus: null,
+          effective: 'closed',
+          closure: {
+            explicit: null,
+            inherited: [{ type: 'thread', id: done.thread.id, status: 'done' }]
+          }
+        })
       })
     ]))
 
@@ -352,6 +365,10 @@ describe('OnMove MCP hierarchy discovery', () => {
         focus: { id: focus.id, status: 'active' },
         thread: { id: cancelled.thread.id, status: 'cancelled' },
         commitment: { id: cancelled.commitment.id, status: 'active' }
+      },
+      closure: {
+        explicit: null,
+        inherited: [{ type: 'thread', id: cancelled.thread.id, status: 'cancelled' }]
       }
     })
   })

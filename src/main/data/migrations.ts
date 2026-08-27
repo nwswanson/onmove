@@ -3924,6 +3924,17 @@ const migrations: readonly Migration[] = [
         UPDATE search_index_state SET dirty = 1 WHERE singleton = 1;
       `)
     }
+  },
+  {
+    version: 48,
+    name: 'mcp_include_closed_by_default',
+    up(database) {
+      database.exec(`
+        ALTER TABLE mcp_settings
+        ADD COLUMN include_closed_by_default INTEGER NOT NULL DEFAULT 0
+          CHECK (include_closed_by_default IN (0, 1));
+      `)
+    }
   }
 ]
 

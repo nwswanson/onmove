@@ -413,7 +413,8 @@ describe('OnMove MCP full-workspace search regressions', () => {
             focus: { id: active.id, status: 'active' },
             thread: null,
             commitment: null
-          }
+          },
+          closure: null
         }
       })
     ])
@@ -433,7 +434,11 @@ describe('OnMove MCP full-workspace search regressions', () => {
     expect(onlyDone.items).toEqual([
       expect.objectContaining({
         reference: { type: 'focus', id: done.id },
-        lifecycle: expect.objectContaining({ directStatus: 'done', effective: 'closed' })
+        lifecycle: expect.objectContaining({
+          directStatus: 'done',
+          effective: 'closed',
+          closure: { explicit: 'done', inherited: [] }
+        })
       })
     ])
     expect(onlyDone.lifecycle).toEqual({
@@ -456,6 +461,12 @@ describe('OnMove MCP full-workspace search regressions', () => {
     expect(currentAndCancelled.map(({ reference }) => reference)).not.toContainEqual(
       { type: 'focus', id: done.id }
     )
+    expect(currentAndCancelled.find(({ reference }) => reference.id === cancelled.id)?.lifecycle)
+      .toMatchObject({
+        directStatus: 'cancelled',
+        effective: 'closed',
+        closure: { explicit: 'cancelled', inherited: [] }
+      })
   })
 
   it('inherits effective closure through owners for descendant Updates and Notes', () => {
@@ -499,19 +510,21 @@ describe('OnMove MCP full-workspace search regressions', () => {
       'inheriteddonetoken'
     )
 
-    for (const [token, expected, expectedLineage] of [
+    for (const [token, expected, expectedLineage, expectedInheritedClosure] of [
       [
         'inheritedcancelledtoken',
         [{ type: 'update', id: threadUpdate.id }, { type: 'note', id: threadNote.id }],
         { focus: { id: focus.id, status: 'active' },
-          thread: { id: cancelledThread.id, status: 'cancelled' }, commitment: null }
+          thread: { id: cancelledThread.id, status: 'cancelled' }, commitment: null },
+        [{ type: 'thread', id: cancelledThread.id, status: 'cancelled' }]
       ],
       [
         'inheriteddonetoken',
         [{ type: 'update', id: commitmentUpdate.id }, { type: 'note', id: commitmentNote.id }],
         { focus: { id: focus.id, status: 'active' },
           thread: { id: activeThread.id, status: 'active' },
-          commitment: { id: doneCommitment.id, status: 'done' } }
+          commitment: { id: doneCommitment.id, status: 'done' } },
+        [{ type: 'commitment', id: doneCommitment.id, status: 'done' }]
       ]
     ] as const) {
       const current = database.queries.searchPage({
@@ -536,7 +549,8 @@ describe('OnMove MCP full-workspace search regressions', () => {
         expect(result.lifecycle).toEqual({
           directStatus: null,
           effective: 'closed',
-          lineage: expectedLineage
+          lineage: expectedLineage,
+          closure: { explicit: null, inherited: expectedInheritedClosure }
         })
       }
     }
@@ -590,7 +604,8 @@ describe('OnMove MCP full-workspace search regressions', () => {
           focus: { id: focus.id, status: 'active' },
           thread: { id: pausedThread.id, status: 'paused' },
           commitment: null
-        }
+        },
+        closure: null
       }
     })
     expect(database.queries.search({
@@ -602,7 +617,11 @@ describe('OnMove MCP full-workspace search regressions', () => {
       lifecycle: { mode: 'closed' }
     }, visible)[0]).toMatchObject({
       reference: { type: 'todo', id: todo.id },
-      lifecycle: expect.objectContaining({ directStatus: 'done', effective: 'closed' })
+      lifecycle: expect.objectContaining({
+        directStatus: 'done',
+        effective: 'closed',
+        closure: { explicit: 'done', inherited: [] }
+      })
     })
     expect(database.queries.search({
       text: 'subjectlifecycletoken', kinds: ['subject']
@@ -611,7 +630,8 @@ describe('OnMove MCP full-workspace search regressions', () => {
       lifecycle: {
         directStatus: null,
         effective: 'not_applicable',
-        lineage: { focus: null, thread: null, commitment: null }
+        lineage: { focus: null, thread: null, commitment: null },
+        closure: null
       }
     })
   })
@@ -637,7 +657,8 @@ describe('OnMove MCP full-workspace search regressions', () => {
           focus: expect.objectContaining({ status: 'active' }),
           thread: expect.objectContaining({ status: 'active' }),
           commitment: { id: routine.id, status: 'active' }
-        }
+        },
+        closure: null
       }
     })
   })

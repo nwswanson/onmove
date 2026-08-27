@@ -14,6 +14,7 @@ export interface PersistedMcpSettings {
   serverEnabled: boolean
   serverPort: number
   retrievalMode: McpRetrievalMode
+  includeClosedByDefault: boolean
   allowSensitive: boolean
   allowMutations: boolean
   updatedAt: string
@@ -86,11 +87,12 @@ export class McpSettingsRepository {
       server_enabled: number
       server_port: number
       retrieval_mode: string
+      include_closed_by_default: number
       allow_sensitive: number
       allow_mutations: number
       updated_at: string
     }>(
-      `SELECT server_enabled, server_port, retrieval_mode, allow_sensitive,
+      `SELECT server_enabled, server_port, retrieval_mode, include_closed_by_default, allow_sensitive,
               allow_mutations, updated_at
        FROM mcp_settings WHERE singleton = 1`
     )
@@ -99,6 +101,7 @@ export class McpSettingsRepository {
       serverEnabled: Boolean(row.server_enabled),
       serverPort: Number(row.server_port),
       retrievalMode: parseRetrievalMode(row.retrieval_mode),
+      includeClosedByDefault: Boolean(row.include_closed_by_default),
       allowSensitive: Boolean(row.allow_sensitive),
       allowMutations: Boolean(row.allow_mutations),
       updatedAt: row.updated_at,
@@ -109,7 +112,8 @@ export class McpSettingsRepository {
   update(
     input: Partial<Pick<
       PersistedMcpSettings,
-      'serverEnabled' | 'serverPort' | 'retrievalMode' | 'allowSensitive' | 'allowMutations'
+      'serverEnabled' | 'serverPort' | 'retrievalMode' | 'includeClosedByDefault' |
+      'allowSensitive' | 'allowMutations'
     >> & {
       permission?: UpdateMcpPermissionInput
       removePermissionTarget?: { type: 'focus' | 'thread'; id: number }
@@ -126,6 +130,12 @@ export class McpSettingsRepository {
       throw new TypeError('serverPort must be an integer between 1024 and 65535')
     }
     if (input.retrievalMode !== undefined) parseRetrievalMode(input.retrievalMode)
+    if (
+      input.includeClosedByDefault !== undefined &&
+      typeof input.includeClosedByDefault !== 'boolean'
+    ) {
+      throw new TypeError('includeClosedByDefault must be a boolean')
+    }
     if (input.allowSensitive !== undefined && typeof input.allowSensitive !== 'boolean') {
       throw new TypeError('allowSensitive must be a boolean')
     }
@@ -141,13 +151,14 @@ export class McpSettingsRepository {
     this.database.transaction(() => {
       this.database.run(
         `UPDATE mcp_settings
-         SET server_enabled = ?, server_port = ?, retrieval_mode = ?, allow_sensitive = ?,
-             allow_mutations = ?, updated_at = ?
+         SET server_enabled = ?, server_port = ?, retrieval_mode = ?,
+             include_closed_by_default = ?, allow_sensitive = ?, allow_mutations = ?, updated_at = ?
          WHERE singleton = 1`,
         [
           (input.serverEnabled ?? current.serverEnabled) ? 1 : 0,
           input.serverPort ?? current.serverPort,
           input.retrievalMode ?? current.retrievalMode,
+          (input.includeClosedByDefault ?? current.includeClosedByDefault) ? 1 : 0,
           (input.allowSensitive ?? current.allowSensitive) ? 1 : 0,
           (input.allowMutations ?? current.allowMutations) ? 1 : 0,
           changedAt

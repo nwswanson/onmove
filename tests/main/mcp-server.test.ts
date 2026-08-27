@@ -526,7 +526,8 @@ describe('OnMove MCP protocol adapter', () => {
     expect(searchSchema).toContain('updatedAt')
     expect(searchSchema).toContain('IANA timezone')
     expect(searchSchema).toContain('complete MCP tool result')
-    expect(searchSchema).toContain('Omission means mode=current')
+    expect(searchSchema).toContain('Include closed work in MCP results')
+    expect(searchSchema).toContain('Inspect appliedQuery.lifecycle for the resolved mode')
     expect(searchSchema).toContain('done/cancelled themselves or descend from done/cancelled work')
     expect(search.outputSchema).toMatchObject({
       type: 'object',
@@ -575,7 +576,7 @@ describe('OnMove MCP protocol adapter', () => {
     expect(retrievalSchema).toContain('durable attribution history')
     expect(retrievalSchema).toContain('hybrid')
     expect(retrievalSchema).toContain('lineage')
-    expect(retrievalSchema).toContain('Omission means mode=current')
+    expect(retrievalSchema).toContain('Include closed work in MCP results')
     expect(retrievalSchema).not.toContain('continuationToken')
     expect(retrieve.outputSchema).toMatchObject({
       type: 'object',
@@ -848,7 +849,8 @@ describe('OnMove MCP protocol adapter', () => {
             focus: { id: focus.id, status: 'active' },
             thread: { id: cancelledThread.id, status: 'cancelled' },
             commitment: null
-          }
+          },
+          closure: { explicit: 'cancelled', inherited: [] }
         }
       })],
       appliedQuery: {
@@ -907,6 +909,13 @@ describe('OnMove MCP protocol adapter', () => {
             focus: { id: focus.id, status: 'active' },
             thread: { id: cancelledThread.id, status: 'cancelled' },
             commitment: null
+          },
+          closure: {
+            explicit: null,
+            inherited: [{
+              type: 'thread', id: cancelledThread.id,
+              code: `#T${cancelledThread.id}`, status: 'cancelled'
+            }]
           }
         }
       })],
@@ -1737,7 +1746,8 @@ describe('OnMove MCP protocol adapter', () => {
             focus: { id: currentFocus.id, status: 'active' },
             thread: null,
             commitment: null
-          }
+          },
+          closure: null
         }
       })],
       appliedQuery: {
@@ -1816,7 +1826,8 @@ describe('OnMove MCP protocol adapter', () => {
             focus: { id: record?.reference.id, status },
             thread: null,
             commitment: null
-          }
+          },
+          closure: { explicit: status, inherited: [] }
         }
       })
     }
@@ -1849,6 +1860,174 @@ describe('OnMove MCP protocol adapter', () => {
         lifecycle: { mode: 'all', terminalStatuses: ['done', 'cancelled'] }
       }
     })
+  })
+
+  it('resolves omitted lifecycle from the live closed-work preference across every discovery path', async () => {
+    const text = 'mcpcloseddefaultmatrix'
+    const activeFocus = database.domain.focuses.create({
+      title: `${text} active`
+    }).toSnapshot()
+    const doneFocus = database.domain.focuses.create({
+      title: `${text} done`,
+      status: 'done'
+    }).toSnapshot()
+    const cancelledFocus = database.domain.focuses.create({
+      title: `${text} cancelled`,
+      status: 'cancelled'
+    }).toSnapshot()
+
+    const discover = async (lifecycle?: { mode: 'current' }) => Promise.all([
+      client.callTool({
+        name: 'onmove.search_focuses',
+        arguments: { text, ...(lifecycle ? { lifecycle } : {}) }
+      }),
+      client.callTool({
+        name: 'onmove.search',
+        arguments: { text, kinds: ['focus'], ...(lifecycle ? { lifecycle } : {}) }
+      }),
+      client.callTool({
+        name: 'onmove.retrieve',
+        arguments: {
+          text,
+          context: { boundary: { type: 'workspace' } },
+          kinds: ['focus'],
+          strategy: 'lexical',
+          diversifyBy: 'none',
+          ...(lifecycle ? { lifecycle } : {})
+        }
+      })
+    ])
+    const resultItems = (response: Awaited<ReturnType<typeof client.callTool>>) => {
+      const content = response.structuredContent as {
+        records?: Array<{
+          reference: { id: number }
+          lifecycle: unknown
+        }>
+        items?: Array<{
+          reference: { id: number }
+          lifecycle: unknown
+        }>
+      }
+      return content.records ?? content.items ?? []
+    }
+
+    expect(database.mcpSettings.get().includeClosedByDefault).toBe(false)
+    const currentByDefault = await discover()
+    for (const response of currentByDefault) {
+      expect(response.isError).not.toBe(true)
+      expect(response.structuredContent).toMatchObject({
+        appliedQuery: {
+          lifecycle: { mode: 'current', terminalStatuses: ['done', 'cancelled'] }
+        }
+      })
+      expect(resultItems(response)).toEqual([
+        expect.objectContaining({
+          reference: expect.objectContaining({ id: activeFocus.id }),
+          lifecycle: expect.objectContaining({
+            directStatus: 'active',
+            effective: 'current',
+            closure: null
+          })
+        })
+      ])
+    }
+
+    database.mcpSettings.update({ includeClosedByDefault: true })
+    expect(database.mcpSettings.get().includeClosedByDefault).toBe(true)
+
+    const allByDefault = await discover()
+    for (const response of allByDefault) {
+      expect(response.isError).not.toBe(true)
+      expect(response.structuredContent).toMatchObject({
+        appliedQuery: {
+          lifecycle: { mode: 'all', terminalStatuses: ['done', 'cancelled'] }
+        }
+      })
+      const items = resultItems(response)
+      expect(items.map(({ reference }) => reference.id)).toEqual(
+        expect.arrayContaining([activeFocus.id, doneFocus.id, cancelledFocus.id])
+      )
+      expect(items).toHaveLength(3)
+      expect(items.find(({ reference }) => reference.id === doneFocus.id)).toMatchObject({
+        lifecycle: {
+          directStatus: 'done',
+          effective: 'closed',
+          closure: { explicit: 'done', inherited: [] }
+        }
+      })
+      expect(items.find(({ reference }) => reference.id === cancelledFocus.id)).toMatchObject({
+        lifecycle: {
+          directStatus: 'cancelled',
+          effective: 'closed',
+          closure: { explicit: 'cancelled', inherited: [] }
+        }
+      })
+    }
+
+    const explicitlyCurrent = await discover({ mode: 'current' })
+    for (const response of explicitlyCurrent) {
+      expect(response.isError).not.toBe(true)
+      expect(response.structuredContent).toMatchObject({
+        appliedQuery: {
+          lifecycle: { mode: 'current', terminalStatuses: ['done', 'cancelled'] }
+        }
+      })
+      expect(resultItems(response).map(({ reference }) => reference.id)).toEqual([activeFocus.id])
+    }
+
+    const inheritedText = 'mcpcloseddefaultinherited'
+    const inheritedThread = database.domain.threads.create({
+      focusId: doneFocus.id,
+      title: 'Active child of default-included done Focus',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const inheritedUpdate = database.domain.updates.create({
+      parent: { type: 'thread', id: inheritedThread.id },
+      observation: inheritedText
+    }).toSnapshot()
+    const inheritedResponses = await Promise.all([
+      client.callTool({
+        name: 'onmove.search_updates',
+        arguments: { text: inheritedText }
+      }),
+      client.callTool({
+        name: 'onmove.search',
+        arguments: { text: inheritedText, kinds: ['update'] }
+      }),
+      client.callTool({
+        name: 'onmove.retrieve',
+        arguments: {
+          text: inheritedText,
+          context: { boundary: { type: 'workspace' } },
+          kinds: ['update'],
+          strategy: 'lexical',
+          diversifyBy: 'none'
+        }
+      })
+    ])
+    for (const response of inheritedResponses) {
+      expect(response.isError).not.toBe(true)
+      expect(response.structuredContent).toMatchObject({
+        appliedQuery: {
+          lifecycle: { mode: 'all', terminalStatuses: ['done', 'cancelled'] }
+        }
+      })
+      expect(resultItems(response)).toEqual([
+        expect.objectContaining({
+          reference: expect.objectContaining({ id: inheritedUpdate.id }),
+          lifecycle: expect.objectContaining({
+            directStatus: null,
+            effective: 'closed',
+            closure: {
+              explicit: null,
+              inherited: [{
+                type: 'focus', id: doneFocus.id, code: `#F${doneFocus.id}`, status: 'done'
+              }]
+            }
+          })
+        })
+      ])
+    }
   })
 
   it('inherits closed lifecycle through ancestors for descendant Updates and Notes', async () => {
@@ -1915,7 +2094,7 @@ describe('OnMove MCP protocol adapter', () => {
       'mcpinheritedfocustoken'
     )
 
-    for (const [text, expectedReferences, lineage] of [
+    for (const [text, expectedReferences, lineage, closure] of [
       [
         'mcpinheritedcancelledtoken',
         [
@@ -1926,6 +2105,13 @@ describe('OnMove MCP protocol adapter', () => {
           focus: { id: focus.id, status: 'active' },
           thread: { id: cancelledThread.id, status: 'cancelled' },
           commitment: null
+        },
+        {
+          explicit: null,
+          inherited: [{
+            type: 'thread', id: cancelledThread.id,
+            code: `#T${cancelledThread.id}`, status: 'cancelled'
+          }]
         }
       ],
       [
@@ -1938,6 +2124,13 @@ describe('OnMove MCP protocol adapter', () => {
           focus: { id: focus.id, status: 'active' },
           thread: { id: activeThread.id, status: 'active' },
           commitment: { id: doneCommitment.id, status: 'done' }
+        },
+        {
+          explicit: null,
+          inherited: [{
+            type: 'commitment', id: doneCommitment.id,
+            code: `#C${doneCommitment.id}`, status: 'done'
+          }]
         }
       ],
       [
@@ -1950,6 +2143,12 @@ describe('OnMove MCP protocol adapter', () => {
           focus: { id: doneFocus.id, status: 'done' },
           thread: { id: doneFocusThread.id, status: 'active' },
           commitment: null
+        },
+        {
+          explicit: null,
+          inherited: [{
+            type: 'focus', id: doneFocus.id, code: `#F${doneFocus.id}`, status: 'done'
+          }]
         }
       ]
     ] as const) {
@@ -1987,7 +2186,8 @@ describe('OnMove MCP protocol adapter', () => {
         expect(record.lifecycle).toEqual({
           directStatus: null,
           effective: 'closed',
-          lineage
+          lineage,
+          closure
         })
       }
     }
@@ -2130,6 +2330,163 @@ describe('OnMove MCP protocol adapter', () => {
     }).records[0].reference.id
     expect(focuses.map(({ id }) => id)).toContain(continuedId)
     expect(continuedId).not.toBe(firstContent.records[0].reference.id)
+  })
+
+  it('binds an omitted lifecycle to search and retrieval continuations across setting changes', async () => {
+    const searchText = 'mcpdefaultlifecyclecursorsearch'
+    const currentFocuses = Array.from({ length: 3 }, (_, index) =>
+      database.domain.focuses.create({ title: `${searchText} ${index}` }).toSnapshot())
+    const closedFocus = database.domain.focuses.create({
+      title: `${searchText} closed`,
+      status: 'done'
+    }).toSnapshot()
+
+    database.mcpSettings.update({ includeClosedByDefault: false })
+    const firstSearchPage = await client.callTool({
+      name: 'onmove.search_focuses',
+      arguments: { text: searchText, page: { size: 1 } }
+    })
+    expect(firstSearchPage.isError).not.toBe(true)
+    expect(firstSearchPage.structuredContent).toMatchObject({
+      records: [expect.objectContaining({
+        lifecycle: expect.objectContaining({ effective: 'current', closure: null })
+      })],
+      hasMore: true,
+      continuationToken: expect.stringMatching(/^onmove-search-v5\./u),
+      appliedQuery: {
+        lifecycle: { mode: 'current', terminalStatuses: ['done', 'cancelled'] }
+      }
+    })
+    const searchToken = (firstSearchPage.structuredContent as {
+      continuationToken: string
+    }).continuationToken
+
+    database.mcpSettings.update({ includeClosedByDefault: true })
+    const continuedSearch = await client.callTool({
+      name: 'onmove.continue_search',
+      arguments: { continuationToken: searchToken }
+    })
+    expect(continuedSearch.isError).not.toBe(true)
+    expect(continuedSearch.structuredContent).toMatchObject({
+      records: [expect.objectContaining({
+        lifecycle: expect.objectContaining({ effective: 'current', closure: null })
+      })],
+      appliedQuery: {
+        lifecycle: { mode: 'current', terminalStatuses: ['done', 'cancelled'] }
+      }
+    })
+    const continuedSearchIds = (continuedSearch.structuredContent as {
+      records: Array<{ reference: { id: number } }>
+    }).records.map(({ reference }) => reference.id)
+    expect(continuedSearchIds.every((id) => currentFocuses.some((focus) => focus.id === id))).toBe(
+      true
+    )
+    expect(continuedSearchIds).not.toContain(closedFocus.id)
+
+    const freshSearch = await client.callTool({
+      name: 'onmove.search_focuses',
+      arguments: { text: searchText }
+    })
+    expect(freshSearch.isError).not.toBe(true)
+    expect(freshSearch.structuredContent).toMatchObject({
+      appliedQuery: {
+        lifecycle: { mode: 'all', terminalStatuses: ['done', 'cancelled'] }
+      }
+    })
+    expect((freshSearch.structuredContent as {
+      records: Array<{ reference: { id: number } }>
+    }).records.map(({ reference }) => reference.id)).toContain(closedFocus.id)
+
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const currentThread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Current default lifecycle retrieval cursor owner',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const retrievalText = 'mcpdefaultlifecyclecursorretrieve'
+    const currentUpdates = Array.from({ length: 3 }, (_, index) =>
+      database.domain.updates.create({
+        parent: { type: 'thread', id: currentThread.id },
+        observation: `${retrievalText} ${index}`
+      }).toSnapshot())
+    const closedThread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Closed default lifecycle retrieval cursor owner',
+      status: 'cancelled',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const closedUpdate = database.domain.updates.create({
+      parent: { type: 'thread', id: closedThread.id },
+      observation: `${retrievalText} closed`
+    }).toSnapshot()
+
+    database.mcpSettings.update({ includeClosedByDefault: false })
+    const firstRetrievalPage = await client.callTool({
+      name: 'onmove.retrieve',
+      arguments: {
+        text: retrievalText,
+        context: { boundary: { type: 'workspace' } },
+        kinds: ['update'],
+        strategy: 'lexical',
+        diversifyBy: 'none',
+        page: { size: 1 }
+      }
+    })
+    expect(firstRetrievalPage.isError).not.toBe(true)
+    expect(firstRetrievalPage.structuredContent).toMatchObject({
+      items: [expect.objectContaining({
+        lifecycle: expect.objectContaining({ effective: 'current', closure: null })
+      })],
+      hasMore: true,
+      continuationToken: expect.stringMatching(/^onmove-retrieval-v2\./u),
+      appliedQuery: {
+        lifecycle: { mode: 'current', terminalStatuses: ['done', 'cancelled'] }
+      }
+    })
+    const retrievalToken = (firstRetrievalPage.structuredContent as {
+      continuationToken: string
+    }).continuationToken
+
+    database.mcpSettings.update({ includeClosedByDefault: true })
+    const continuedRetrieval = await client.callTool({
+      name: 'onmove.continue_retrieval',
+      arguments: { continuationToken: retrievalToken }
+    })
+    expect(continuedRetrieval.isError).not.toBe(true)
+    expect(continuedRetrieval.structuredContent).toMatchObject({
+      items: [expect.objectContaining({
+        lifecycle: expect.objectContaining({ effective: 'current', closure: null })
+      })],
+      appliedQuery: {
+        lifecycle: { mode: 'current', terminalStatuses: ['done', 'cancelled'] }
+      }
+    })
+    const continuedRetrievalIds = (continuedRetrieval.structuredContent as {
+      items: Array<{ reference: { id: number } }>
+    }).items.map(({ reference }) => reference.id)
+    expect(continuedRetrievalIds.every((id) => currentUpdates.some((update) => update.id === id)))
+      .toBe(true)
+    expect(continuedRetrievalIds).not.toContain(closedUpdate.id)
+
+    const freshRetrieval = await client.callTool({
+      name: 'onmove.retrieve',
+      arguments: {
+        text: retrievalText,
+        context: { boundary: { type: 'workspace' } },
+        kinds: ['update'],
+        strategy: 'lexical',
+        diversifyBy: 'none'
+      }
+    })
+    expect(freshRetrieval.isError).not.toBe(true)
+    expect(freshRetrieval.structuredContent).toMatchObject({
+      appliedQuery: {
+        lifecycle: { mode: 'all', terminalStatuses: ['done', 'cancelled'] }
+      }
+    })
+    expect((freshRetrieval.structuredContent as {
+      items: Array<{ reference: { id: number } }>
+    }).items.map(({ reference }) => reference.id)).toContain(closedUpdate.id)
   })
 
   it('keeps Unicode exact-title coverage and normalized lifecycle order stable across pages', async () => {

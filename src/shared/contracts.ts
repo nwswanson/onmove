@@ -1490,6 +1490,8 @@ export interface McpSettingsSnapshot {
   serverEnabled: boolean
   serverPort: number
   retrievalMode: McpRetrievalMode
+  /** Default omitted search/retrieval lifecycle to all instead of current. */
+  includeClosedByDefault: boolean
   allowSensitive: boolean
   /** @deprecated Compatibility summary; use permissionPolicy defaults instead. */
   allowMutations: boolean
@@ -1554,6 +1556,7 @@ export interface UpdateMcpSettingsInput {
   serverEnabled?: boolean
   serverPort?: number
   retrievalMode?: McpRetrievalMode
+  includeClosedByDefault?: boolean
   allowSensitive?: boolean
   /** @deprecated Compatibility master update; changes every default edit grant. */
   allowMutations?: boolean

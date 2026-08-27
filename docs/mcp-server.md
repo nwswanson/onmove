@@ -7,7 +7,8 @@ does not open SQLite independently and does not expose SQL or renderer state.
 ## Enable it
 
 Open OnMove → Settings → Model Context Protocol and turn on **Run MCP server**. The Settings pane
-also selects **Classic** or **Enhanced** retrieval and shows the active endpoint, which defaults to:
+also selects **Classic** or **Enhanced** retrieval, controls whether omitted search/retrieval
+requests include closed work, and shows the active endpoint, which defaults to:
 
 ```text
 http://127.0.0.1:47832/mcp
@@ -357,8 +358,11 @@ compatibility/discovery surface described below.
 ## Search and retrieval lifecycle
 
 Every initial cross-kind search, kind-specific search, and context-aware retrieval accepts the same
-optional `lifecycle` object. Omitting it is equivalent to the normalized policy returned under
-`appliedQuery.lifecycle`:
+optional `lifecycle` object. An explicit `current`, `closed`, or `all` mode always wins. When the
+object is omitted, the server resolves it from the persisted **Include closed work in MCP results**
+setting for that initial request: the setting defaults to off and resolves to `current`; enabling
+it resolves to `all`. The normalized policy is always returned under `appliedQuery.lifecycle`. For
+example, an omitted lifecycle while the setting is off resolves to:
 
 ```json
 {
@@ -373,7 +377,7 @@ Lifecycle is a structural eligibility boundary applied before lexical or semanti
 
 | `lifecycle.mode` | Eligible records |
 | --- | --- |
-| `current` | Current operational lineage only. Active and paused work remains eligible; anything done/cancelled itself or beneath done/cancelled work is excluded. This is the default. |
+| `current` | Current operational lineage only. Active and paused work remains eligible; anything done/cancelled itself or beneath done/cancelled work is excluded. This is the omitted-request default while **Include closed work in MCP results** is off. |
 | `closed` | Only records that are done/cancelled themselves or inherit a selected terminal status from an owning Focus, Thread, or Commitment. |
 | `all` | Current records plus the selected closed partition, for an intentional comparison of live work and history. |
 
@@ -393,6 +397,11 @@ Every primary search or retrieval item exposes provenance under `lifecycle`:
   use `null` here.
 - `effective` is `current`, `closed`, or `not_applicable`; `closed` includes inherited closure and
   `not_applicable` identifies records without an operational lineage.
+- `closure` is `null` when the result is not closed. Otherwise, `closure.explicit` is the result's
+  own `done` or `cancelled` status (or `null` when closure is inherited only), while
+  `closure.inherited` lists every terminal owning Focus, Thread, or Commitment by type, ID,
+  canonical code, and status. A directly cancelled Commitment beneath a done Focus reports both causes
+  without forcing the client to infer them from a similarity score or a single effective label.
 - `lineage.focus`, `lineage.thread`, and `lineage.commitment` each contain the ancestor ID and
   status when that owner exists. Auxiliary hierarchy paths expose the same provenance.
 
@@ -417,8 +426,9 @@ continuation token for that widening.
 
 Search and retrieval continuation tokens bind the normalized lifecycle mode and terminal-status
 selection. `continue_search` and `continue_retrieval` accept only the exact returned token, so every
-subsequent page retains the originating lifecycle boundary. Any intentional lifecycle change is a
-new initial request.
+subsequent page retains the originating lifecycle boundary. Changing **Include closed work in MCP
+results** after the initial request does not alter or invalidate that resolved boundary. Any
+intentional lifecycle change is a new initial request.
 
 ## Search
 

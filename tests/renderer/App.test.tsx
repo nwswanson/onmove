@@ -473,6 +473,7 @@ function installApi(
     serverEnabled: false,
     serverPort: 47_832,
     retrievalMode: 'classic',
+    includeClosedByDefault: false,
     allowSensitive: false,
     allowMutations: false,
     updatedAt: '2026-08-10T12:00:00.000Z',
@@ -622,6 +623,9 @@ function installApi(
           ...(input.serverEnabled === undefined ? {} : { serverEnabled: input.serverEnabled }),
           ...(input.serverPort === undefined ? {} : { serverPort: input.serverPort }),
           ...(input.retrievalMode === undefined ? {} : { retrievalMode: input.retrievalMode }),
+          ...(input.includeClosedByDefault === undefined
+            ? {}
+            : { includeClosedByDefault: input.includeClosedByDefault }),
           ...(input.allowSensitive === undefined ? {} : { allowSensitive: input.allowSensitive }),
           ...(input.allowMutations === undefined ? {} : { allowMutations: input.allowMutations }),
           serverEnabled,
@@ -5750,13 +5754,20 @@ describe('App', () => {
     expect(within(semanticModelPanel).queryByRole('button')).not.toBeInTheDocument()
     const serverEnabled = screen.getByRole('checkbox', { name: /Run MCP server/i })
     const retrievalMode = screen.getByRole('combobox', { name: 'MCP retrieval mode' })
+    const includeClosed = screen.getByRole('checkbox', {
+      name: /Include closed work in MCP results/i
+    })
     const sensitiveAccess = screen.getByRole('checkbox', { name: /Allow sensitive content/i })
     const updateEditAccess = screen.getByRole('checkbox', { name: 'Edit Updates by default' })
     const updateDeleteAccess = screen.getByRole('checkbox', { name: 'Delete Updates by default' })
     expect(sensitiveAccess).not.toBeChecked()
     expect(retrievalMode).toHaveValue('classic')
+    expect(includeClosed).not.toBeChecked()
     expect(updateEditAccess).not.toBeChecked()
     expect(updateDeleteAccess).not.toBeChecked()
+    await user.click(includeClosed)
+    expect(api.mcp.update).toHaveBeenCalledWith({ includeClosedByDefault: true })
+    expect(includeClosed).toBeChecked()
     await user.click(serverEnabled)
     expect(api.mcp.update).toHaveBeenCalledWith({ serverEnabled: true })
     expect(await screen.findByText('http://127.0.0.1:47832/mcp')).toBeVisible()

@@ -670,6 +670,26 @@ export function SettingsWorkspace({
                       <input
                         type="checkbox"
                         className="mt-0.5 size-4 accent-primary"
+                        checked={mcp.state?.includeClosedByDefault ?? false}
+                        disabled={mcp.loading || mcp.saving}
+                        onChange={(event) => void mcp.update({
+                          includeClosedByDefault: event.target.checked
+                        })}
+                      />
+                      <span>
+                        <span className="block text-sm font-medium">
+                          Include closed work in MCP results
+                        </span>
+                        <span className="mt-0.5 block text-xs text-muted-foreground">
+                          Search and retrieval include Done and Cancelled work—including records
+                          closed by a parent—unless the client explicitly requests current work only.
+                        </span>
+                      </span>
+                    </label>
+                    <label className="flex cursor-pointer items-start gap-3 py-3">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 size-4 accent-primary"
                         checked={mcp.state?.allowSensitive ?? false}
                         disabled={mcp.loading || mcp.saving}
                         onChange={(event) => void mcp.update({ allowSensitive: event.target.checked })}

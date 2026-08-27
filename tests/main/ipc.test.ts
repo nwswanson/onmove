@@ -27,8 +27,15 @@ describe('registerAppIpc', () => {
       getState: vi.fn(() => state),
       recordGreeting: vi.fn(() => ({ ...state, greetingCount: 3 })),
       mcpSettings: {
-        get: vi.fn(() => ({ allowSensitive: false, allowMutations: false })),
+        get: vi.fn(() => ({
+          includeClosedByDefault: false,
+          allowSensitive: false,
+          allowMutations: false
+        })),
         update: vi.fn((input) => ({
+          includeClosedByDefault: Boolean(
+            (input as { includeClosedByDefault?: boolean }).includeClosedByDefault
+          ),
           allowSensitive: Boolean((input as { allowSensitive?: boolean }).allowSensitive),
           allowMutations: Boolean((input as { allowMutations?: boolean }).allowMutations)
         }))
@@ -493,6 +500,7 @@ describe('registerAppIpc', () => {
         serverEnabled: false,
         serverPort: 47_832,
         retrievalMode: 'classic' as const,
+        includeClosedByDefault: false,
         allowSensitive: false,
         allowMutations: false,
         updatedAt: '2026-08-10T12:00:00.000Z',
@@ -517,6 +525,7 @@ describe('registerAppIpc', () => {
         serverEnabled: true,
         serverPort: 47_832,
         retrievalMode: 'enhanced' as const,
+        includeClosedByDefault: true,
         allowSensitive: false,
         allowMutations: true,
         updatedAt: '2026-08-10T12:01:00.000Z',
@@ -597,6 +606,7 @@ describe('registerAppIpc', () => {
     expect(notifySidebarFoldersChanged).toHaveBeenCalledTimes(3)
     expect(await handlers.get(IPC_CHANNELS.getMcpSettings)?.()).toMatchObject({
       retrievalMode: 'classic',
+      includeClosedByDefault: false,
       allowSensitive: false,
       allowMutations: false
     })
@@ -607,16 +617,28 @@ describe('registerAppIpc', () => {
     })
     expect(await handlers.get(IPC_CHANNELS.updateMcpSettings)?.(
       undefined,
-      { serverEnabled: true, retrievalMode: 'enhanced', allowMutations: true }
-    )).toMatchObject({ status: 'running', retrievalMode: 'enhanced', allowMutations: true })
+      {
+        serverEnabled: true,
+        retrievalMode: 'enhanced',
+        includeClosedByDefault: true,
+        allowMutations: true
+      }
+    )).toMatchObject({
+      status: 'running',
+      retrievalMode: 'enhanced',
+      includeClosedByDefault: true,
+      allowMutations: true
+    })
     expect(mcpRuntime.update).toHaveBeenCalledWith({
       serverEnabled: true,
       retrievalMode: 'enhanced',
+      includeClosedByDefault: true,
       allowMutations: true
     })
     expect(notifyMcpSettingsChanged).toHaveBeenCalledWith(expect.objectContaining({
       status: 'running',
       retrievalMode: 'enhanced',
+      includeClosedByDefault: true,
       allowMutations: true
     }))
     expect(startEnhancedRetrievalWarmup).toHaveBeenCalledOnce()

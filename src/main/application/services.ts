@@ -46,6 +46,7 @@ import {
   type SensitiveEntityType
 } from './access-policy'
 import {
+  deriveSearchLifecycleClosure,
   SearchIndexRepository,
   SEARCH_TERMINAL_STATUSES,
   type SearchPage,
@@ -693,7 +694,15 @@ function hierarchyPathLifecycle(
       : kind === 'commitment'
         ? commitment?.status ?? null
         : null
-  return { directStatus, effective, lineage }
+  const selfLineageType = kind === 'focus' || kind === 'thread' || kind === 'commitment'
+    ? kind
+    : null
+  return {
+    directStatus,
+    effective,
+    lineage,
+    closure: deriveSearchLifecycleClosure(directStatus, lineage, selfLineageType)
+  }
 }
 
 function hierarchyPathSelected(
