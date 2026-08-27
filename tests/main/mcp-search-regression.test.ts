@@ -556,6 +556,114 @@ describe('OnMove MCP full-workspace search regressions', () => {
     }
   })
 
+  it('keeps owner-closed Todos out of current MCP reads but searchable as history', () => {
+    const closedFocus = database.domain.focuses.create({ title: 'Closed Todo Focus' })
+    const focusThread = database.domain.threads.create({
+      focusId: closedFocus.id,
+      title: 'Focus-owned history path',
+      reviewFrequencyDays: 7
+    })
+    const focusTodo = database.domain.todos.create({
+      parent: { type: 'thread', id: focusThread.id },
+      name: 'closedfocustodotoken'
+    }).toSnapshot()
+    closedFocus.setStatus('done')
+
+    const threadFocus = database.domain.focuses.create({ title: 'Closed Thread Todo Focus' })
+    const closedThread = database.domain.threads.create({
+      focusId: threadFocus.id,
+      title: 'Closed Todo Thread',
+      reviewFrequencyDays: 7
+    })
+    const threadTodo = database.domain.todos.create({
+      parent: { type: 'thread', id: closedThread.id },
+      name: 'closedthreadtodotoken'
+    }).toSnapshot()
+    closedThread.setStatus('cancelled')
+
+    const commitmentFocus = database.domain.focuses.create({ title: 'Closed Commitment Todo Focus' })
+    const commitmentThread = database.domain.threads.create({
+      focusId: commitmentFocus.id,
+      title: 'Current Todo Thread',
+      reviewFrequencyDays: 7
+    })
+    const closedCommitment = database.domain.commitments.create({
+      type: 'tracking',
+      parent: { type: 'thread', id: commitmentThread.id },
+      title: 'Closed Todo Commitment'
+    })
+    const commitmentTodo = database.domain.todos.create({
+      parent: { type: 'commitment', id: closedCommitment.id },
+      name: 'closedcommitmenttodotoken'
+    }).toSnapshot()
+    closedCommitment.setStatus('done')
+
+    const currentFocus = database.domain.focuses.create({ title: 'Current Todo Focus' })
+    const pausedThread = database.domain.threads.create({
+      focusId: currentFocus.id,
+      title: 'Paused Todo Thread',
+      status: 'paused',
+      reviewFrequencyDays: 7
+    })
+    const currentTodo = database.domain.todos.create({
+      parent: { type: 'thread', id: pausedThread.id },
+      name: 'currentpausedtodotoken'
+    }).toSnapshot()
+
+    expect(database.queries.getTodos(visible).items.map(({ id }) => id)).toEqual([
+      currentTodo.id
+    ])
+
+    for (const [token, todo, inherited] of [
+      [
+        'closedfocustodotoken',
+        focusTodo,
+        [{ type: 'focus', id: closedFocus.id, status: 'done' }]
+      ],
+      [
+        'closedthreadtodotoken',
+        threadTodo,
+        [{ type: 'thread', id: closedThread.id, status: 'cancelled' }]
+      ],
+      [
+        'closedcommitmenttodotoken',
+        commitmentTodo,
+        [{ type: 'commitment', id: closedCommitment.id, status: 'done' }]
+      ]
+    ] as const) {
+      const current = database.queries.searchPage({ text: token, kinds: ['todo'] }, visible)
+      expect(current.items).toEqual([])
+      expect(current.lifecycle.closedMatchesAvailable).toBe(true)
+
+      expect(database.queries.search({
+        text: token,
+        kinds: ['todo'],
+        lifecycle: { mode: 'closed' }
+      }, visible)).toEqual([
+        expect.objectContaining({
+          reference: { type: 'todo', id: todo.id },
+          lifecycle: {
+            directStatus: 'active',
+            effective: 'closed',
+            lineage: expect.any(Object),
+            closure: { explicit: null, inherited }
+          },
+          path: expect.objectContaining({ complete: true })
+        })
+      ])
+    }
+
+    expect(database.queries.search({
+      text: 'currentpausedtodotoken',
+      kinds: ['todo']
+    }, visible)).toEqual([
+      expect.objectContaining({
+        reference: { type: 'todo', id: currentTodo.id },
+        lifecycle: expect.objectContaining({ effective: 'current', closure: null })
+      })
+    ])
+  })
+
   it('does not disclose excluded closed matches through lifecycle availability', () => {
     const title = 'Sensitive closed identity'
     database.domain.focuses.create({

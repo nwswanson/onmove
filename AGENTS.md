@@ -486,6 +486,12 @@ foreground colors and do not rely on color alone to communicate selection or sta
   nested Commitment route, and working-context tab restore atomically. Hide completed rows by
   default; the view option may reveal only the recently completed records already returned by the
   model. Never fetch all historical closed Todos and filter them in React.
+- Treat Todo activity as a structural lifecycle projection. Ordinary UI list/query/overview
+  boundaries include a Todo only while its complete owning Focus, optional Thread, and optional
+  Commitment hierarchy is `active` or `paused`; terminal ancestry must remove even an unchecked
+  Todo from the Todos workspace, contextual lists, command palette, and navigation badges without
+  deleting the durable record. Omit Todo creation controls on terminal hierarchy screens, and reject
+  new Todos against terminal parents so a write cannot immediately disappear from the UI.
 - Build the Tags workspace as a peer of Todos. It uses one parentless `ContextualSidebarLevel` whose
   rows are canonical lowercase tag names plus visible-use counts. Selecting a tag issues the bounded
   `listTagUses` query and renders at most one row per field for that tag with only Location, Field,
@@ -569,7 +575,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - Persist Todo closure time independently as `completed_at`: the first open-to-done transition sets
   it, edits to an already-done Todo preserve it, reopening clears it, and closing again records a new
   instant. The global overview returns every open Todo plus only completed Todos from the last seven
-  days, with the cutoff enforced in SQLite before snapshots cross IPC.
+  days, with the cutoff enforced in SQLite before snapshots cross IPC. That recent-completion window
+  is subordinate to the same current-parent hierarchy rule; terminal ancestry excludes both open and
+  recently completed rows from ordinary projections while retaining them for explicit history.
 - Preserve hierarchy cascades, relation `SET NULL` behavior, and automatic status-transition
   auditing.
 - Keep tag identity derived from literal current text instead of adding a second persisted source of
@@ -713,7 +721,10 @@ foreground colors and do not rely on color alone to communicate selection or sta
 - Expose Todo persistence only through named list/query/create/update/Subject-completion/reorder/
   delete IPC. The global
   query returns each Todo once for future cross-context screens; contextual list order remains in
-  each snapshot's sort placements and must not be replaced with an invented global ordering.
+  each snapshot's sort placements and must not be replaced with an invented global ordering. Keep
+  these ordinary projections current-hierarchy-only. MCP `get_todos` follows the same actionable
+  boundary; intentional historical discovery uses `search_todos` or cross-kind search with explicit
+  `lifecycle.mode=closed` or `all`, preserving full inherited closure provenance.
 - Model Notes as ordered children of exactly one Focus, Thread, or Commitment. Current inserts create
   one hardcoded `Default` Note through database triggers, but the schema and snapshots must tolerate
   zero or multiple Notes for future document organization. Parent deletion cascades Notes.

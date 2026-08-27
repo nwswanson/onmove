@@ -1039,13 +1039,22 @@ export class SearchIndexRepository {
   private todoRows(): IndexSourceRow[] {
     return this.database.all<IndexSourceRow>(
       `SELECT todo.id, todo.name AS title, todo.name AS body, 'name' AS field_name,
-              thread.focus_id, thread.id AS thread_id, commitment.id AS commitment_id,
+              focus.id AS focus_id,
+              COALESCE(direct_thread.id, commitment_thread.id) AS thread_id,
+              commitment.id AS commitment_id,
               todo.subject_id, todo.scope_id, 0 AS direct_sensitive,
               CASE WHEN todo.done = 1 THEN 'done' ELSE 'active' END AS status,
               NULL AS state, todo.due_on, todo.created_at, todo.updated_at
        FROM todos todo
        LEFT JOIN commitments commitment ON commitment.id = todo.commitment_id
-       JOIN threads thread ON thread.id = COALESCE(todo.thread_id, commitment.thread_id)`
+       LEFT JOIN threads direct_thread ON direct_thread.id = todo.thread_id
+       LEFT JOIN threads commitment_thread ON commitment_thread.id = commitment.thread_id
+       JOIN focuses focus ON focus.id = COALESCE(
+         todo.focus_id,
+         direct_thread.focus_id,
+         commitment.focus_id,
+         commitment_thread.focus_id
+       )`
     )
   }
 

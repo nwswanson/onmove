@@ -620,6 +620,70 @@ describe('Todo model', () => {
     expect(() => database!.domain.todos.overview(now, 0)).toThrow(/positive integer/)
   })
 
+  it('projects Todos only while their complete owner hierarchy is current', () => {
+    const focus = database!.domain.focuses.create({ title: 'Project Atlas' })
+    const thread = database!.domain.threads.create({
+      focusId: focus.id,
+      title: 'Sprint execution',
+      reviewFrequencyDays: 7
+    })
+    const commitment = database!.domain.commitments.create({
+      parent: { type: 'thread', id: thread.id },
+      type: 'tracking',
+      title: 'Improve ticket quality'
+    })
+    const threadTodo = database!.domain.todos.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Prepare sprint review'
+    })
+    const commitmentTodo = database!.domain.todos.create({
+      parent: { type: 'commitment', id: commitment.id },
+      name: 'Draft examples'
+    })
+
+    const visibleIds = (): number[] => database!.domain.todos.overview().items
+      .map(({ id }) => id)
+    expect(visibleIds()).toEqual([threadTodo.id, commitmentTodo.id])
+
+    commitment.setStatus('done')
+    expect(database!.domain.todos.list({ type: 'commitment', id: commitment.id })).toEqual([])
+    expect(database!.domain.todos.query().map(({ id }) => id)).toEqual([threadTodo.id])
+    expect(visibleIds()).toEqual([threadTodo.id])
+    expect(database!.domain.todos.find(commitmentTodo.id)?.done).toBe(false)
+    expect(() => database!.domain.todos.create({
+      parent: { type: 'commitment', id: commitment.id },
+      name: 'Invisible new work'
+    })).toThrow(/active or paused Focus, Thread, and Commitment hierarchy/)
+
+    commitment.setStatus('paused')
+    expect(visibleIds()).toEqual([threadTodo.id, commitmentTodo.id])
+
+    thread.setStatus('cancelled')
+    expect(database!.domain.todos.list({ type: 'thread', id: thread.id })).toEqual([])
+    expect(database!.domain.todos.list({ type: 'commitment', id: commitment.id })).toEqual([])
+    expect(database!.domain.todos.query()).toEqual([])
+    expect(visibleIds()).toEqual([])
+    expect(() => database!.domain.todos.create({
+      parent: { type: 'thread', id: thread.id },
+      name: 'Invisible Thread work'
+    })).toThrow(/active or paused Focus, Thread, and Commitment hierarchy/)
+
+    thread.setStatus('paused')
+    expect(visibleIds()).toEqual([threadTodo.id, commitmentTodo.id])
+
+    focus.setStatus('done')
+    expect(database!.domain.todos.list({ type: 'thread', id: thread.id })).toEqual([])
+    expect(database!.domain.todos.query()).toEqual([])
+    expect(visibleIds()).toEqual([])
+    expect(database!.domain.todos.find(threadTodo.id)).toMatchObject({
+      id: threadTodo.id,
+      done: false
+    })
+
+    focus.setStatus('paused')
+    expect(visibleIds()).toEqual([threadTodo.id, commitmentTodo.id])
+  })
+
   it('cascades Todo records and placements with their owner but retains shared Scope data', () => {
     const now = new Date('2026-08-09T12:00:00.000Z')
     const focus = database!.domain.focuses.create({ title: 'Project Atlas' })

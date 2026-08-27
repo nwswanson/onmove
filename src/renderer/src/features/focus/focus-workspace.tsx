@@ -71,7 +71,11 @@ import {
   threadSidebarItemId
 } from '@/features/focus/focus-presenters'
 import { FocusOverviewTimeline } from '@/features/focus/focus-overview-timeline'
-import { isVisibleThread } from '@/features/focus/focus-utils'
+import {
+  isCurrentWorkStatus,
+  isVisibleFocus,
+  isVisibleThread
+} from '@/features/focus/focus-utils'
 import { ThreadArchiveDialog } from '@/features/focus/thread-archive-dialog'
 import { useCommitmentWorkingContextModel } from '@/features/focus/use-commitment-working-context-model'
 import { useFocusWorkspaceModel } from '@/features/focus/use-focus-workspace-model'
@@ -2044,23 +2048,30 @@ export function FocusWorkspace({
                   </p>
                 ) : commitmentWorkingContext.snapshot ? (
                   <>
-                    <DirectTodos
-                      key={`commitment-todos:${selectedCommitment.id}:${selectedCommitmentCell?.subjectId ?? 'all'}`}
-                      context={selectedCommitmentCell
-                        ? {
-                            type: 'commitment-scope',
-                            id: selectedCommitment.id,
-                            scope: {
-                              scopeId: selectedCommitmentCell.scopeId,
-                              subjectId: selectedCommitmentCell.subjectId
-                            }
-                          }
-                        : { type: 'commitment', id: selectedCommitment.id }}
-                      currentCells={commitmentWorkingContext.snapshot.cells.map((cell) => ({
-                        cell: { scopeId: cell.scopeId, subjectId: cell.subjectId },
-                        subjectName: cell.subject.name
-                      }))}
-                    />
+                    {isVisibleFocus(focus) &&
+                      isCurrentWorkStatus(selectedCommitment.status) &&
+                      (selectedCommitment.parent.type === 'focus' || model.threads.some(
+                        (thread) => thread.id === selectedCommitment.parent.id &&
+                          isVisibleThread(thread)
+                      )) && (
+                        <DirectTodos
+                          key={`commitment-todos:${selectedCommitment.id}:${selectedCommitmentCell?.subjectId ?? 'all'}`}
+                          context={selectedCommitmentCell
+                            ? {
+                                type: 'commitment-scope',
+                                id: selectedCommitment.id,
+                                scope: {
+                                  scopeId: selectedCommitmentCell.scopeId,
+                                  subjectId: selectedCommitmentCell.subjectId
+                                }
+                              }
+                            : { type: 'commitment', id: selectedCommitment.id }}
+                          currentCells={commitmentWorkingContext.snapshot.cells.map((cell) => ({
+                            cell: { scopeId: cell.scopeId, subjectId: cell.subjectId },
+                            subjectName: cell.subject.name
+                          }))}
+                        />
+                      )}
                     <DirectUpdates
                       key={`${selectedCommitment.id}:${commitmentWorkingContext.snapshot.scopeId ?? 'open'}:${selectedCommitmentCell?.subjectId ?? 'all'}`}
                       parent={{ type: 'commitment', id: selectedCommitment.id }}
@@ -2258,23 +2269,25 @@ export function FocusWorkspace({
                         }}
                       />
                     )}
-                    <DirectTodos
-                      key={`thread-todos:${displayedThread.id}:${subjectCell?.subjectId ?? 'all'}`}
-                      context={subjectCell
-                        ? {
-                            type: 'thread-scope',
-                            id: displayedThread.id,
-                            scope: {
-                              scopeId: subjectCell.scopeId,
-                              subjectId: subjectCell.subjectId
+                    {isVisibleFocus(focus) && isVisibleThread(displayedThread) && (
+                      <DirectTodos
+                        key={`thread-todos:${displayedThread.id}:${subjectCell?.subjectId ?? 'all'}`}
+                        context={subjectCell
+                          ? {
+                              type: 'thread-scope',
+                              id: displayedThread.id,
+                              scope: {
+                                scopeId: subjectCell.scopeId,
+                                subjectId: subjectCell.subjectId
+                              }
                             }
-                          }
-                        : { type: 'thread', id: displayedThread.id }}
-                      currentCells={displayedThreadSubjectMatrix.map((cell) => ({
-                        cell: { scopeId: cell.scopeId, subjectId: cell.subjectId },
-                        subjectName: cell.subject.name
-                      }))}
-                    />
+                          : { type: 'thread', id: displayedThread.id }}
+                        currentCells={displayedThreadSubjectMatrix.map((cell) => ({
+                          cell: { scopeId: cell.scopeId, subjectId: cell.subjectId },
+                          subjectName: cell.subject.name
+                        }))}
+                      />
+                    )}
                     <DirectUpdates
                       key={`thread-updates:${displayedThread.id}:${scope.scopeId ?? 'open'}:${selectedSubject?.id ?? 'all'}`}
                       parent={{ type: 'thread', id: displayedThread.id }}

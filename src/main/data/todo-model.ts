@@ -89,6 +89,33 @@ const SORT_STRIDE = 1024
 export const RECENTLY_COMPLETED_TODO_DAYS = 7
 const DAY_MS = 24 * 60 * 60 * 1000
 
+/**
+ * Ordinary Todo projections include only records whose complete work
+ * hierarchy is current. Historical MCP discovery is intentionally handled by
+ * the search index's explicit lifecycle modes instead of weakening this rule.
+ */
+const TODO_HIERARCHY_JOINS = `
+  LEFT JOIN commitments todo_commitment ON todo_commitment.id = todo.commitment_id
+  LEFT JOIN threads todo_direct_thread ON todo_direct_thread.id = todo.thread_id
+  LEFT JOIN threads todo_commitment_thread
+    ON todo_commitment_thread.id = todo_commitment.thread_id
+  JOIN focuses todo_focus ON todo_focus.id = COALESCE(
+    todo.focus_id,
+    todo_direct_thread.focus_id,
+    todo_commitment.focus_id,
+    todo_commitment_thread.focus_id
+  )`
+
+const TODO_HIERARCHY_IS_CURRENT = `
+  todo_focus.status IN ('active', 'paused')
+  AND (
+    COALESCE(todo_direct_thread.status, todo_commitment_thread.status) IS NULL OR
+    COALESCE(todo_direct_thread.status, todo_commitment_thread.status) IN ('active', 'paused')
+  )
+  AND (
+    todo_commitment.status IS NULL OR todo_commitment.status IN ('active', 'paused')
+  )`
+
 function assertId(id: number, field: string): void {
   if (!Number.isSafeInteger(id) || id <= 0) {
     throw new ModelValidationError(`${field} must be a positive integer`)
@@ -360,7 +387,7 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
     const list = this.findList(context)
     if (!list) return []
 
-    const clauses = ['placement.list_id = ?']
+    const clauses = ['placement.list_id = ?', TODO_HIERARCHY_IS_CURRENT]
     const parameters: Array<number | string> = [list.id]
     if (options.done !== undefined) {
       clauses.push('todo.done = ?')
@@ -382,6 +409,7 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
               todo.created_at, todo.updated_at
        FROM todo_sort_placements placement
        JOIN todos todo ON todo.id = placement.todo_id
+       ${TODO_HIERARCHY_JOINS}
        WHERE ${clauses.join(' AND ')}
        ORDER BY placement.sort_key, todo.id`,
       parameters
@@ -395,26 +423,30 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
   query(options: TodoListOptions = {}, now = new Date()): TodoSnapshot[] {
     this.validateListOptions(options)
     this.reconcileAllSharedTodos(now)
-    const clauses: string[] = []
+    const clauses: string[] = [TODO_HIERARCHY_IS_CURRENT]
     const parameters: Array<number | string> = []
     if (options.done !== undefined) {
-      clauses.push('done = ?')
+      clauses.push('todo.done = ?')
       parameters.push(options.done ? 1 : 0)
     }
     if (options.dueOnOrBefore !== undefined) {
-      clauses.push('due_on IS NOT NULL AND due_on <= ?')
+      clauses.push('todo.due_on IS NOT NULL AND todo.due_on <= ?')
       parameters.push(normalizeDate(options.dueOnOrBefore, 'dueOnOrBefore'))
     }
     if (options.dueOnOrAfter !== undefined) {
-      clauses.push('due_on IS NOT NULL AND due_on >= ?')
+      clauses.push('todo.due_on IS NOT NULL AND todo.due_on >= ?')
       parameters.push(normalizeDate(options.dueOnOrAfter, 'dueOnOrAfter'))
     }
-    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''
     return this.database.all<TodoRow>(
-      `SELECT id, focus_id, thread_id, commitment_id, scope_id, subject_id,
-              name, due_on, done, completed_at, shared_across_subjects, created_at, updated_at
-       FROM todos ${where}
-       ORDER BY done, CASE WHEN due_on IS NULL THEN 1 ELSE 0 END, due_on, id`,
+      `SELECT todo.id, todo.focus_id, todo.thread_id, todo.commitment_id,
+              todo.scope_id, todo.subject_id, todo.name, todo.due_on,
+              todo.done, todo.completed_at, todo.shared_across_subjects,
+              todo.created_at, todo.updated_at
+       FROM todos todo
+       ${TODO_HIERARCHY_JOINS}
+       WHERE ${clauses.join(' AND ')}
+       ORDER BY todo.done, CASE WHEN todo.due_on IS NULL THEN 1 ELSE 0 END,
+                todo.due_on, todo.id`,
       parameters
     ).map((row) => this.snapshotFromRow(row))
   }
@@ -438,27 +470,22 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
               todo.scope_id, todo.subject_id, todo.name, todo.due_on,
               todo.done, todo.completed_at, todo.shared_across_subjects,
               todo.created_at, todo.updated_at,
-              focus.id AS overview_focus_id,
-              focus.title AS overview_focus_title,
-              focus.sensitive AS overview_focus_sensitive,
-              COALESCE(direct_thread.id, commitment_thread.id) AS overview_thread_id,
-              COALESCE(direct_thread.title, commitment_thread.title) AS overview_thread_title,
-              COALESCE(direct_thread.sensitive, commitment_thread.sensitive)
+              todo_focus.id AS overview_focus_id,
+              todo_focus.title AS overview_focus_title,
+              todo_focus.sensitive AS overview_focus_sensitive,
+              COALESCE(todo_direct_thread.id, todo_commitment_thread.id)
+                AS overview_thread_id,
+              COALESCE(todo_direct_thread.title, todo_commitment_thread.title)
+                AS overview_thread_title,
+              COALESCE(todo_direct_thread.sensitive, todo_commitment_thread.sensitive)
                 AS overview_thread_sensitive,
-              commitment.id AS overview_commitment_id,
-              commitment.title AS overview_commitment_title,
-              commitment.sensitive AS overview_commitment_sensitive
+              todo_commitment.id AS overview_commitment_id,
+              todo_commitment.title AS overview_commitment_title,
+              todo_commitment.sensitive AS overview_commitment_sensitive
        FROM todos todo
-       LEFT JOIN threads direct_thread ON direct_thread.id = todo.thread_id
-       LEFT JOIN commitments commitment ON commitment.id = todo.commitment_id
-       LEFT JOIN threads commitment_thread ON commitment_thread.id = commitment.thread_id
-       JOIN focuses focus ON focus.id = COALESCE(
-         todo.focus_id,
-         direct_thread.focus_id,
-         commitment.focus_id,
-         commitment_thread.focus_id
-       )
-       WHERE todo.done = 0 OR (todo.done = 1 AND todo.completed_at >= ?)
+       ${TODO_HIERARCHY_JOINS}
+       WHERE ${TODO_HIERARCHY_IS_CURRENT}
+         AND (todo.done = 0 OR (todo.done = 1 AND todo.completed_at >= ?))
        ORDER BY todo.done,
                 CASE WHEN todo.due_on IS NULL THEN 1 ELSE 0 END,
                 todo.due_on,
@@ -710,6 +737,7 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
       )
     }
     this.requireEntityParent(parent)
+    this.assertCurrentHierarchy(parent)
     const context = this.sharedContext(parent, now)
     if (context.scopeId === null || context.subjects.length === 0) {
       throw new ModelValidationError('a shared Todo requires at least one current Subject')
@@ -879,6 +907,7 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
       throw new ModelValidationError('a Todo must belong to a Thread or Commitment')
     }
     const focusId = this.requireEntityParent(entity)
+    this.assertCurrentHierarchy(entity)
     const scope = scopeCell(parent)
     if (!scope) {
       const owner = entity.type === 'thread'
@@ -980,6 +1009,41 @@ export class TodoRepository extends BaseRepository<TodoRecord, TodoModel> {
     )
     if (!row) throw new ModelNotFoundError('Commitment', parent.id)
     return Number(row.focus_id ?? row.thread_focus_id)
+  }
+
+  private assertCurrentHierarchy(parent: TodoEntityParent): void {
+    const current = parent.type === 'focus'
+      ? this.database.get<ExistsRow>(
+          `SELECT 1 AS found FROM focuses
+           WHERE id = ? AND status IN ('active', 'paused')`,
+          [parent.id]
+        )
+      : parent.type === 'thread'
+        ? this.database.get<ExistsRow>(
+            `SELECT 1 AS found
+             FROM threads thread
+             JOIN focuses focus ON focus.id = thread.focus_id
+             WHERE thread.id = ?
+               AND thread.status IN ('active', 'paused')
+               AND focus.status IN ('active', 'paused')`,
+            [parent.id]
+          )
+        : this.database.get<ExistsRow>(
+            `SELECT 1 AS found
+             FROM commitments commitment
+             LEFT JOIN threads thread ON thread.id = commitment.thread_id
+             JOIN focuses focus ON focus.id = COALESCE(commitment.focus_id, thread.focus_id)
+             WHERE commitment.id = ?
+               AND commitment.status IN ('active', 'paused')
+               AND (thread.id IS NULL OR thread.status IN ('active', 'paused'))
+               AND focus.status IN ('active', 'paused')`,
+            [parent.id]
+          )
+    if (!current) {
+      throw new ModelValidationError(
+        'a Todo requires an active or paused Focus, Thread, and Commitment hierarchy'
+      )
+    }
   }
 
   private findList(context: TodoParent): TodoListRow | undefined {
