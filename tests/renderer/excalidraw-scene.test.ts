@@ -6,7 +6,6 @@ import type { AppState, BinaryFiles } from '@excalidraw/excalidraw/types'
 import type { CanvasEntityReferenceSnapshot } from '../../src/shared/contracts'
 import {
   canvasEntityElementIds,
-  canvasEntityCardLink,
   createCanvasElementId,
   createEntityCardElements,
   encodeExcalidrawDocument,
@@ -34,29 +33,29 @@ function reference(
 }
 
 describe('Excalidraw Canvas scene adapter', () => {
-  it('creates one native embeddable whose React receiver owns the widget interior', () => {
+  it('creates one locked link-free geometry record for the React widget overlay', () => {
     const elements = createEntityCardElements(reference(), 120, 240)
 
     expect(elements).toHaveLength(1)
     expect(elements[0]).toMatchObject({
       id: 'onmove_thread_card',
-      type: 'embeddable',
+      type: 'rectangle',
       x: 120,
       y: 240,
       width: 336,
       height: 196,
-      link: 'onmove://thread/4',
+      link: null,
+      locked: true,
       customData: {
         onmoveRole: 'entity-card',
         onmoveEntityType: 'thread',
         onmoveEntityId: 4
       }
     })
-    expect(canvasEntityCardLink(reference())).toBe(elements[0].link)
     expect(canvasEntityElementIds(elements)).toEqual(['onmove_thread_card'])
   })
 
-  it('locks missing records for the dashed widget receiver without changing geometry', () => {
+  it('keeps deleted-record geometry locked while the React receiver becomes dashed', () => {
     const original = createEntityCardElements(reference(), 80, 160)
     const ghost = reference({
       title: 'Former sprint execution',
@@ -67,12 +66,12 @@ describe('Excalidraw Canvas scene adapter', () => {
 
     const reconciled = reconcileEntityCards(original, [ghost])
 
-    expect(reconciled.changed).toBe(true)
+    expect(reconciled.changed).toBe(false)
     expect(reconciled.elements[0]).toMatchObject({
       x: 80,
       y: 160,
       backgroundColor: 'transparent',
-      type: 'embeddable',
+      type: 'rectangle',
       locked: true
     })
     expect(entityCardText(ghost)).toContain('Deleted Thread')
@@ -121,12 +120,13 @@ describe('Excalidraw Canvas scene adapter', () => {
 
     expect(reconciled.changed).toBe(true)
     expect(reconciled.elements[0]).toMatchObject({
-      type: 'embeddable',
+      type: 'rectangle',
       x: 12,
       y: 34,
       width: 280,
       height: 112,
-      link: 'onmove://thread/4'
+      link: null,
+      locked: true
     })
     expect(reconciled.elements[1].isDeleted).toBe(true)
     expect(reconciled.elements[2]).toBe(legacy[2])
@@ -141,12 +141,13 @@ describe('Excalidraw Canvas scene adapter', () => {
     expect(reconciled.elements).toHaveLength(1)
     expect(reconciled.elements[0]).toMatchObject({
       id: 'legacy_canvas_1_1',
-      type: 'embeddable',
+      type: 'rectangle',
       x: 80,
       y: 80,
       width: 336,
       height: 196,
-      link: 'onmove://thread/4'
+      link: null,
+      locked: true
     })
   })
 

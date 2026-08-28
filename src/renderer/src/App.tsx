@@ -776,6 +776,7 @@ export function App(): React.JSX.Element {
               <CanvasWorkspace
                 contextDrawer={contextDrawer}
                 hideSensitiveContent={application.sensitiveContentHidden}
+                onOpenContext={(destination) => openWorkContext(destination, true)}
               />
             </Suspense>
           ) : selectedFocus ? (

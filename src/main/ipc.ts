@@ -1,9 +1,11 @@
 import type { IpcMain, IpcMainEvent, Shell } from 'electron'
 import {
+  CANVAS_ENTITY_KINDS,
   IPC_CHANNELS,
   IPC_SYNC_CHANNELS,
   type AddFocusScopeSubjectInput,
   type AddCanvasEntityReferenceInput,
+  type CanvasEntityTarget,
   type AttestRoutineRunItemInput,
   type CommitmentParent,
   type CreateCommitmentInput,
@@ -43,7 +45,9 @@ import {
   type UpdateMcpSettingsInput,
   type SaveCanvasDocumentInput
 } from '../shared/contracts'
+import { entityReference } from '../shared/entity-reference'
 import type { AppDatabase } from './database'
+import { resolveOnMoveEntityLink } from './entity-links'
 
 type IpcRegistrar = Pick<IpcMain, 'handle' | 'removeHandler' | 'on' | 'removeListener'>
 type FolderOpener = Pick<Shell, 'showItemInFolder' | 'openPath'>
@@ -159,6 +163,18 @@ export function registerAppIpc(
   )
   ipcMain.handle(IPC_CHANNELS.listCanvasEntities, () =>
     database.domain.canvases.listEntities()
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.resolveCanvasEntity,
+    (_event, target: CanvasEntityTarget) => {
+      if (!target || !CANVAS_ENTITY_KINDS.includes(target.type) ||
+          !Number.isSafeInteger(target.id) || target.id <= 0) return null
+      return resolveOnMoveEntityLink(database.domain, {
+        kind: target.type,
+        id: target.id,
+        code: entityReference(target.type, target.id)
+      })
+    }
   )
   ipcMain.handle(
     IPC_CHANNELS.addCanvasEntityReference,

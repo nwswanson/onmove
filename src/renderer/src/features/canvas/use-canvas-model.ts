@@ -3,7 +3,9 @@ import type {
   AddCanvasEntityReferenceInput,
   CanvasEntityReferenceSnapshot,
   CanvasEntitySnapshot,
+  CanvasEntityTarget,
   CanvasSnapshot,
+  OnMoveEntityLinkTarget,
   SaveCanvasDocumentInput
 } from '../../../../shared/contracts'
 
@@ -29,6 +31,7 @@ export interface CanvasModel {
   addEntityReference: (
     input: AddCanvasEntityReferenceInput
   ) => Promise<CanvasEntityReferenceSnapshot>
+  resolveEntity: (target: CanvasEntityTarget) => Promise<OnMoveEntityLinkTarget | null>
   saveDocument: (input: SaveCanvasDocumentInput) => Promise<void>
 }
 
@@ -83,6 +86,9 @@ export function useCanvasModel(): CanvasModel {
     return reference
   }, [canvas])
 
+  const resolveEntity = useCallback((target: CanvasEntityTarget) =>
+    window.onmove.canvas.resolveEntity(target), [])
+
   const saveDocument = useCallback(async (input: SaveCanvasDocumentInput): Promise<void> => {
     if (!canvas) return
     const summary = await window.onmove.canvas.saveDocument(canvas.id, input)
@@ -99,5 +105,13 @@ export function useCanvasModel(): CanvasModel {
       : current)
   }, [canvas])
 
-  return { canvas, entities, loading, error, addEntityReference, saveDocument }
+  return {
+    canvas,
+    entities,
+    loading,
+    error,
+    addEntityReference,
+    resolveEntity,
+    saveDocument
+  }
 }

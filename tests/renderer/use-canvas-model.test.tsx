@@ -55,6 +55,14 @@ describe('useCanvasModel', () => {
       revision: 1,
       updatedAt: '2026-08-27T12:01:00.000Z'
     })
+    const resolveEntity = vi.fn().mockResolvedValue({
+      reference: { type: 'thread', id: 1 },
+      focusId: 8,
+      threadId: 1,
+      commitmentId: null,
+      routineId: null,
+      subjectId: null
+    })
     Object.defineProperty(window, 'onmove', {
       configurable: true,
       value: {
@@ -62,6 +70,7 @@ describe('useCanvasModel', () => {
           list: vi.fn().mockResolvedValue([summary]),
           get: vi.fn().mockResolvedValue(canvas),
           listEntities: vi.fn().mockResolvedValue([]),
+          resolveEntity,
           addEntityReference: vi.fn(),
           saveDocument,
           onEntitiesChanged: vi.fn(() => () => undefined)
@@ -82,5 +91,11 @@ describe('useCanvasModel', () => {
     }))
     expect(result.current.canvas?.references.map(({ elementId }) => elementId))
       .toEqual(['onmove_thread'])
+
+    await expect(result.current.resolveEntity({ type: 'thread', id: 1 })).resolves.toMatchObject({
+      focusId: 8,
+      threadId: 1
+    })
+    expect(resolveEntity).toHaveBeenCalledWith({ type: 'thread', id: 1 })
   })
 })

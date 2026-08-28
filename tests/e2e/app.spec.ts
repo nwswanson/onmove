@@ -81,7 +81,11 @@ test('places a live entity on the durable Canvas and preserves it as a ghost aft
       env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
     })
     const appWindow = await application.firstWindow()
+    const pageErrors: string[] = []
+    appWindow.on('pageerror', (error) => pageErrors.push(error.message))
     await appWindow.getByRole('button', { name: 'Canvas', exact: true }).click()
+    await appWindow.waitForTimeout(500)
+    expect(pageErrors).toEqual([])
     const canvas = appWindow.getByLabel('Canvas workspace')
     await expect(appWindow.getByRole('complementary', {
       name: 'Canvas item library'
@@ -116,12 +120,69 @@ test('places a live entity on the durable Canvas and preserves it as a ghost aft
       const stored = reader.prepare(
         'SELECT revision, data_json FROM canvases WHERE id = 1'
       ).get() as { revision: number; data_json: string | null }
+      const document = stored.data_json
+        ? JSON.parse(stored.data_json) as { elements?: Array<{
+            type?: string
+            link?: string | null
+            locked?: boolean
+            customData?: { onmoveRole?: string }
+          }> }
+        : null
+      const element = document?.elements?.find(({ customData }) =>
+        customData?.onmoveRole === 'entity-card')
       reader.close()
       return {
         references: Number(reference.count),
-        persisted: stored.revision > 0 && stored.data_json !== null
+        persisted: stored.revision > 0 && stored.data_json !== null,
+        geometry: element
+          ? { type: element.type, link: element.link, locked: element.locked }
+          : null
       }
-    }).toEqual({ references: 1, persisted: true })
+    }).toEqual({
+      references: 1,
+      persisted: true,
+      geometry: { type: 'rectangle', link: null, locked: true }
+    })
+
+    const readCardPosition = (): { x: number; y: number } | null => {
+      const reader = new DatabaseSync(databasePath, { readOnly: true })
+      const stored = reader.prepare(
+        'SELECT data_json FROM canvases WHERE id = 1'
+      ).get() as { data_json: string | null }
+      reader.close()
+      if (!stored.data_json) return null
+      const document = JSON.parse(stored.data_json) as { elements?: Array<{
+        x?: number
+        y?: number
+        customData?: { onmoveRole?: string }
+      }> }
+      const element = document.elements?.find(({ customData }) =>
+        customData?.onmoveRole === 'entity-card')
+      return typeof element?.x === 'number' && typeof element.y === 'number'
+        ? { x: element.x, y: element.y }
+        : null
+    }
+    const beforeMove = readCardPosition()
+    const widgetBox = await widget.boundingBox()
+    expect(widgetBox).not.toBeNull()
+    if (!widgetBox || !beforeMove) throw new Error('Canvas widget geometry was unavailable')
+    await appWindow.mouse.move(widgetBox.x + 18, widgetBox.y + widgetBox.height - 18)
+    await appWindow.mouse.down()
+    await appWindow.mouse.move(
+      widgetBox.x + 88,
+      widgetBox.y + widgetBox.height + 24,
+      { steps: 4 }
+    )
+    await appWindow.mouse.up()
+    await expect.poll(readCardPosition).not.toEqual(beforeMove)
+
+    await widget.getByRole('button', { name: 'Open Thread Canvas delivery' }).click()
+    await expect(appWindow.getByRole('heading', {
+      name: 'Canvas delivery',
+      exact: true
+    })).toBeVisible()
+    await appWindow.getByRole('button', { name: 'Canvas', exact: true }).click()
+    await expect(widget).toBeVisible()
 
     await appWindow.evaluate(async (threadId) => {
       await globalThis.window.onmove.domain.updateThread(threadId, {
@@ -140,6 +201,18 @@ test('places a live entity on the durable Canvas and preserves it as a ghost aft
     const ghostWidget = canvas.locator('[aria-label="Deleted Thread: Canvas delivery"]')
     await expect(ghostWidget).toBeVisible()
     await expect(ghostWidget).toHaveClass(/border-dashed/)
+    await ghostWidget.getByRole('button', {
+      name: 'Remove Canvas delivery from Canvas'
+    }).click()
+    await expect(ghostWidget).not.toBeVisible()
+    await expect.poll(() => {
+      const reader = new DatabaseSync(databasePath, { readOnly: true })
+      const result = reader.prepare(
+        'SELECT COUNT(*) AS count FROM canvas_entity_references'
+      ).get() as { count: number }
+      reader.close()
+      return Number(result.count)
+    }).toBe(0)
   } finally {
     await application?.close().catch(() => undefined)
     rmSync(userDataDirectory, { recursive: true, force: true })

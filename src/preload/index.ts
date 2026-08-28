@@ -117,6 +117,7 @@ const api: OnMoveApi = {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.listCanvases),
     get: (id) => ipcRenderer.invoke(IPC_CHANNELS.getCanvas, id),
     listEntities: () => ipcRenderer.invoke(IPC_CHANNELS.listCanvasEntities),
+    resolveEntity: (target) => ipcRenderer.invoke(IPC_CHANNELS.resolveCanvasEntity, target),
     addEntityReference: (canvasId, input) =>
       ipcRenderer.invoke(IPC_CHANNELS.addCanvasEntityReference, canvasId, input),
     saveDocument: (canvasId, input) =>

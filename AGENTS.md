@@ -65,13 +65,18 @@
   Partition all live records by kind, retain hierarchy context in each row, honor sensitive-list
   visibility, show lifecycle/derived status, and disable only a live record already placed on that
   Canvas. Native drag data carries only an opaque presenter id; the Canvas feature resolves it and
-  creates one validated Excalidraw embeddable element. Excalidraw owns that element's geometry while
-  its supported `renderEmbeddable` boundary renders an OnMove-owned React widget using the same
-  shadcn/Tailwind card, badge, semantic-color, typography, and icon conventions as the surrounding
-  app. The model exposes receiver-neutral kind-specific facts such as due date, review cadence,
+  creates one validated, locked, transparent Excalidraw rectangle as a durable position record.
+  Never put a URL in that element or use Excalidraw's hyperlink/embeddable navigation for entity
+  cards. An OnMove-owned React overlay tracks the element's scene position and renders the widget
+  using the same shadcn/Tailwind card, badge, semantic-color, typography, and icon conventions as
+  the surrounding app. The React receiver owns direct internal navigation, removal from the Canvas,
+  and pointer dragging; it updates only `x`/`y` on the locked scene record. Locking suppresses
+  Excalidraw resize/rotation handles while preserving intentional movement through that receiver.
+  The model exposes receiver-neutral kind-specific facts such as due date, review cadence,
   activity/state, Routine schedule/progress, Note preview, and Todo Scope; a plain presenter decides
-  which facts and labels fit each widget. Existing rectangle/text entity cards must upgrade to the
-  embeddable representation in place without changing their id, position, size, rotation, or other
+  which facts and labels fit each widget. Existing rectangle/text/embeddable entity cards must
+  upgrade to the locked position-record representation in place without changing their id,
+  position, size, rotation, or other
   editor-owned geometry. Small legacy geometry receives a compact widget instead of a forced resize.
   Receiver-owned reconciliation may update identity and ghost behavior, but must preserve ordinary
   drawing elements. Deleted widgets become locked, dashed shadcn-style cached references. Excalidraw

@@ -3,6 +3,7 @@ import {
   CaptureUpdateAction,
   Excalidraw,
   newElementWith,
+  sceneCoordsToViewportCoords,
   viewportCoordsToSceneCoords
 } from '@excalidraw/excalidraw'
 import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types'
@@ -18,6 +19,7 @@ import {
   type ContextDrawerControl
 } from '@/components/ui/context-drawer'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
+import type { FocusWorkspaceDestinationTarget } from '@/features/application/application-navigation'
 import {
   canvasCardModel,
   canvasEntityKey,
@@ -26,14 +28,12 @@ import {
 import { CanvasEntityWidget } from '@/features/canvas/canvas-entity-widget'
 import {
   CANVAS_ENTITY_CARD_SIZE,
-  canvasEntityCardLink,
   canvasEntityElementIds,
   createCanvasElementId,
   createEntityCardElements,
   encodeExcalidrawDocument,
   entityCardText,
   excalidrawInitialData,
-  isCanvasEntityCardLink,
   reconcileEntityCards
 } from '@/features/canvas/excalidraw-scene'
 import { useCanvasModel } from '@/features/canvas/use-canvas-model'
@@ -46,6 +46,7 @@ const SAVE_DELAY_MS = 350
 interface CanvasWorkspaceProps {
   contextDrawer: ContextDrawerControl
   hideSensitiveContent: boolean
+  onOpenContext: (destination: FocusWorkspaceDestinationTarget) => void
 }
 
 interface PendingDocument {
@@ -54,18 +55,52 @@ interface PendingDocument {
   files: BinaryFiles
 }
 
+interface CanvasSceneFrame {
+  elements: readonly ExcalidrawElement[]
+  appState: AppState
+}
+
+function sameSceneFrame(
+  current: CanvasSceneFrame | null,
+  elements: readonly ExcalidrawElement[],
+  appState: AppState
+): boolean {
+  if (!current || current.elements.length !== elements.length) return false
+  const sameElements = current.elements.every((element, index) => {
+    const next = elements[index]
+    return element === next || (
+      element.id === next.id &&
+      element.version === next.version &&
+      element.versionNonce === next.versionNonce &&
+      element.isDeleted === next.isDeleted
+    )
+  })
+  return sameElements &&
+    current.appState.scrollX === appState.scrollX &&
+    current.appState.scrollY === appState.scrollY &&
+    current.appState.zoom.value === appState.zoom.value &&
+    current.appState.offsetLeft === appState.offsetLeft &&
+    current.appState.offsetTop === appState.offsetTop &&
+    current.appState.width === appState.width &&
+    current.appState.height === appState.height
+}
+
 /** One addressable OnMove Canvas backed by Excalidraw and SQLite, not browser storage. */
 export function CanvasWorkspace({
   contextDrawer,
-  hideSensitiveContent
+  hideSensitiveContent,
+  onOpenContext
 }: CanvasWorkspaceProps): React.JSX.Element {
   const model = useCanvasModel()
+  const resolveCanvasEntity = model.resolveEntity
   const [sidebarWidth, setSidebarWidth] = useState(280)
   const [excalidrawApi, setExcalidrawApi] = useState<ExcalidrawImperativeAPI | null>(null)
+  const [sceneFrame, setSceneFrame] = useState<CanvasSceneFrame | null>(null)
   const [interactionError, setInteractionError] = useState<string | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingDocument = useRef<PendingDocument | null>(null)
   const saveDocument = useRef(model.saveDocument)
+  const dragCleanup = useRef<(() => void) | null>(null)
   const references = useMemo(
     () => model.canvas?.references ?? [],
     [model.canvas?.references]
@@ -82,6 +117,15 @@ export function CanvasWorkspace({
   const entityByKey = useMemo(() => new Map(
     model.entities.map((entity) => [canvasEntityKey(entity), entity])
   ), [model.entities])
+
+  const updateSceneFrame = useCallback((
+    elements: readonly ExcalidrawElement[],
+    appState: AppState
+  ): void => {
+    setSceneFrame((current) => sameSceneFrame(current, elements, appState)
+      ? current
+      : { elements, appState })
+  }, [])
 
   useEffect(() => {
     saveDocument.current = model.saveDocument
@@ -119,6 +163,8 @@ export function CanvasWorkspace({
   }, [flushPendingDocument])
 
   useEffect(() => () => {
+    dragCleanup.current?.()
+    dragCleanup.current = null
     if (saveTimer.current) {
       clearTimeout(saveTimer.current)
       saveTimer.current = null
@@ -128,15 +174,24 @@ export function CanvasWorkspace({
 
   useEffect(() => {
     if (!excalidrawApi) return
+    let active = true
     const current = excalidrawApi.getSceneElements()
     const reconciled = reconcileEntityCards(current, references)
+    queueMicrotask(() => {
+      if (!active) return
+      updateSceneFrame(
+        reconciled.changed ? reconciled.elements : current,
+        excalidrawApi.getAppState()
+      )
+    })
     if (reconciled.changed) {
       excalidrawApi.updateScene({
         elements: reconciled.elements,
         captureUpdate: CaptureUpdateAction.NEVER
       })
     }
-  }, [excalidrawApi, references])
+    return () => { active = false }
+  }, [excalidrawApi, references, updateSceneFrame])
 
   const handleChange = useCallback((
     elements: readonly ExcalidrawElement[],
@@ -144,6 +199,7 @@ export function CanvasWorkspace({
     files: BinaryFiles
   ): void => {
     const reconciled = reconcileEntityCards(elements, referencesRef.current)
+    updateSceneFrame(reconciled.changed ? reconciled.elements : elements, appState)
     if (reconciled.changed && excalidrawApi) {
       excalidrawApi.updateScene({
         elements: reconciled.elements,
@@ -151,7 +207,101 @@ export function CanvasWorkspace({
       })
     }
     schedulePersist(reconciled.elements, appState, files)
-  }, [excalidrawApi, schedulePersist])
+  }, [excalidrawApi, schedulePersist, updateSceneFrame])
+
+  const moveCard = useCallback((
+    elementId: string,
+    pointer: React.PointerEvent<HTMLElement>
+  ): void => {
+    if (!excalidrawApi) return
+    const source = excalidrawApi.getSceneElements().find(({ id }) => id === elementId)
+    if (!source || source.isDeleted) return
+    const start = {
+      clientX: pointer.clientX,
+      clientY: pointer.clientY,
+      x: source.x,
+      y: source.y,
+      zoom: excalidrawApi.getAppState().zoom.value
+    }
+    let lastClientX = pointer.clientX
+    let lastClientY = pointer.clientY
+
+    const updatePosition = (
+      clientX: number,
+      clientY: number,
+      captureUpdate: typeof CaptureUpdateAction.NEVER | typeof CaptureUpdateAction.IMMEDIATELY
+    ): void => {
+      lastClientX = clientX
+      lastClientY = clientY
+      const next = excalidrawApi.getSceneElements().map((element) =>
+        element.id === elementId
+          ? newElementWith(element, {
+              x: start.x + (clientX - start.clientX) / start.zoom,
+              y: start.y + (clientY - start.clientY) / start.zoom
+            })
+          : element)
+      excalidrawApi.updateScene({ elements: next, captureUpdate })
+      updateSceneFrame(next, excalidrawApi.getAppState())
+    }
+
+    const cleanup = (): void => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+      window.removeEventListener('pointercancel', handlePointerUp)
+      if (dragCleanup.current === cleanup) dragCleanup.current = null
+    }
+    const handlePointerMove = (event: PointerEvent): void => {
+      event.preventDefault()
+      updatePosition(event.clientX, event.clientY, CaptureUpdateAction.NEVER)
+    }
+    const handlePointerUp = (event: PointerEvent): void => {
+      const cancelled = event.type === 'pointercancel'
+      updatePosition(cancelled ? lastClientX : event.clientX, cancelled ? lastClientY : event.clientY,
+        CaptureUpdateAction.IMMEDIATELY)
+      cleanup()
+    }
+
+    dragCleanup.current?.()
+    dragCleanup.current = cleanup
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+    window.addEventListener('pointercancel', handlePointerUp)
+  }, [excalidrawApi, updateSceneFrame])
+
+  const removeCard = useCallback((elementId: string): void => {
+    if (!excalidrawApi) return
+    const next = excalidrawApi.getSceneElements().map((element) =>
+      element.id === elementId
+        ? newElementWith(element, { isDeleted: true })
+        : element)
+    excalidrawApi.updateScene({
+      elements: next,
+      appState: { selectedElementIds: {} },
+      captureUpdate: CaptureUpdateAction.IMMEDIATELY
+    })
+    updateSceneFrame(next, excalidrawApi.getAppState())
+  }, [excalidrawApi, updateSceneFrame])
+
+  const openEntity = useCallback(async (
+    target: Parameters<typeof resolveCanvasEntity>[0]
+  ): Promise<void> => {
+    setInteractionError(null)
+    try {
+      const destination = await resolveCanvasEntity(target)
+      if (!destination) throw new Error('That item is no longer available.')
+      onOpenContext({
+        focusId: destination.focusId,
+        threadId: destination.threadId,
+        commitmentId: destination.commitmentId,
+        routineId: destination.routineId,
+        subjectId: destination.subjectId
+      })
+    } catch (reason) {
+      setInteractionError(reason instanceof Error
+        ? reason.message
+        : 'The item could not be opened.')
+    }
+  }, [onOpenContext, resolveCanvasEntity])
 
   const handleDrop = useCallback(async (event: React.DragEvent<HTMLElement>) => {
     if (!excalidrawApi || !model.canvas) return
@@ -179,7 +329,7 @@ export function CanvasWorkspace({
     excalidrawApi.updateScene({
       elements: [...excalidrawApi.getSceneElements(), ...cardElements],
       appState: {
-        selectedElementIds: { [elementId]: true }
+        selectedElementIds: {}
       },
       captureUpdate: CaptureUpdateAction.IMMEDIATELY
     })
@@ -269,17 +419,6 @@ export function CanvasWorkspace({
                 autoFocus
                 detectScroll={false}
                 handleKeyboardGlobally={false}
-                validateEmbeddable={isCanvasEntityCardLink}
-                renderEmbeddable={(element) => {
-                  const reference = referenceByElementId.get(element.id)
-                  if (!reference || element.link !== canvasEntityCardLink(reference)) return null
-                  return (
-                    <CanvasEntityWidget
-                      model={canvasCardModel(reference)}
-                      compact={element.width < 300 || element.height < 155}
-                    />
-                  )
-                }}
                 UIOptions={{
                   canvasActions: {
                     loadScene: false,
@@ -291,6 +430,49 @@ export function CanvasWorkspace({
                   tools: { image: false }
                 }}
               />
+              {sceneFrame && (
+                <div className="pointer-events-none absolute inset-0 z-[2]" aria-label="Canvas widgets">
+                  {sceneFrame.elements.map((element) => {
+                    if (element.isDeleted) return null
+                    const reference = referenceByElementId.get(element.id)
+                    if (!reference) return null
+                    const viewport = sceneCoordsToViewportCoords({
+                      sceneX: element.x,
+                      sceneY: element.y
+                    }, sceneFrame.appState)
+                    return (
+                      <div
+                        key={element.id}
+                        className="pointer-events-none absolute left-0 top-0 origin-top-left"
+                        style={{
+                          transform: `translate(${viewport.x - sceneFrame.appState.offsetLeft}px, ${viewport.y - sceneFrame.appState.offsetTop}px) scale(${sceneFrame.appState.zoom.value})`
+                        }}
+                      >
+                        <div
+                          className="pointer-events-none"
+                          style={{
+                            width: element.width,
+                            height: element.height,
+                            transform: `rotate(${element.angle}rad)`
+                          }}
+                        >
+                          <CanvasEntityWidget
+                            model={canvasCardModel(reference)}
+                            compact={element.width < 300 || element.height < 155}
+                            onOpen={reference.deleted
+                              ? undefined
+                              : () => void openEntity(reference.target)}
+                            onRemove={() => removeCard(element.id)}
+                            onMovePointerDown={reference.deleted
+                              ? undefined
+                              : (event) => moveCard(element.id, event)}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           ) : null}
           {interactionError && (

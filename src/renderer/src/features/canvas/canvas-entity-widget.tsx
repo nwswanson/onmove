@@ -4,7 +4,8 @@ import {
   GitBranch,
   Handshake,
   LockKeyhole,
-  Repeat2
+  Repeat2,
+  X
 } from 'lucide-react'
 import type { CanvasCardModel, CanvasCardTone } from '@/features/canvas/canvas-presenters'
 import { cn } from '@/lib/utils'
@@ -12,6 +13,9 @@ import { cn } from '@/lib/utils'
 interface CanvasEntityWidgetProps {
   model: CanvasCardModel
   compact?: boolean
+  onOpen?: () => void
+  onRemove: () => void
+  onMovePointerDown?: (event: React.PointerEvent<HTMLElement>) => void
 }
 
 const TONE_CLASSES: Record<CanvasCardTone, string> = {
@@ -36,20 +40,32 @@ function KindIcon({ kind }: { kind: CanvasCardModel['kind'] }): React.JSX.Elemen
 }
 
 /**
- * OnMove-owned React content rendered inside an Excalidraw embeddable. The
- * element shell owns geometry; this receiver owns only shadcn-style content.
+ * OnMove-owned React content positioned over locked Excalidraw geometry. The
+ * scene record owns position; this receiver owns interaction and presentation.
  */
 export function CanvasEntityWidget({
   model,
-  compact = false
+  compact = false,
+  onOpen,
+  onRemove,
+  onMovePointerDown
 }: CanvasEntityWidgetProps): React.JSX.Element {
   return (
     <article
       className={cn(
-        'pointer-events-none flex size-full select-none overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm',
+        'pointer-events-auto flex size-full select-none overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm',
+        onMovePointerDown && 'cursor-grab active:cursor-grabbing',
         model.deleted && 'border-dashed border-muted-foreground/55 bg-muted/35 opacity-80 shadow-none'
       )}
       aria-label={`${model.deleted ? 'Deleted ' : ''}${model.kindLabel}: ${model.title}`}
+      data-canvas-entity-widget="true"
+      onPointerDown={(event) => {
+        if (event.button > 0 || !onMovePointerDown) return
+        if ((event.target as HTMLElement).closest('button')) return
+        event.preventDefault()
+        event.stopPropagation()
+        onMovePointerDown(event)
+      }}
     >
       <div
         className={cn(
@@ -75,9 +91,19 @@ export function CanvasEntityWidget({
                 <LockKeyhole className="size-3 text-muted-foreground" aria-label="Sensitive" />
               )}
             </span>
-            <span className="mt-0.5 block truncate text-[0.9375rem] font-semibold leading-tight">
+            <button
+              type="button"
+              className={cn(
+                'mt-0.5 block max-w-full truncate rounded-sm text-left text-[0.9375rem] font-semibold leading-tight outline-none',
+                onOpen && 'hover:text-primary hover:underline focus-visible:ring-2 focus-visible:ring-ring'
+              )}
+              disabled={!onOpen}
+              aria-label={onOpen ? `Open ${model.kindLabel} ${model.title}` : undefined}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={onOpen}
+            >
               {model.title}
-            </span>
+            </button>
           </span>
           <span className={cn(
             'shrink-0 rounded-full border px-2 py-0.5 text-[0.625rem] font-medium leading-4',
@@ -85,6 +111,16 @@ export function CanvasEntityWidget({
           )}>
             {model.status}
           </span>
+          <button
+            type="button"
+            className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={`Remove ${model.title} from Canvas`}
+            title="Remove from Canvas"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={onRemove}
+          >
+            <X className="size-3.5" aria-hidden="true" />
+          </button>
         </header>
 
         {!compact && (

@@ -96,6 +96,7 @@ export const IPC_CHANNELS = {
   listCanvases: 'canvas:list',
   getCanvas: 'canvas:get',
   listCanvasEntities: 'canvas:list-entities',
+  resolveCanvasEntity: 'canvas:resolve-entity',
   addCanvasEntityReference: 'canvas:add-entity-reference',
   saveCanvasDocument: 'canvas:save-document'
 } as const
@@ -1471,6 +1472,7 @@ export interface CanvasApi {
   list: () => Promise<CanvasSummarySnapshot[]>
   get: (id: number) => Promise<CanvasSnapshot>
   listEntities: () => Promise<CanvasEntitySnapshot[]>
+  resolveEntity: (target: CanvasEntityTarget) => Promise<OnMoveEntityLinkTarget | null>
   addEntityReference: (
     canvasId: number,
     input: AddCanvasEntityReferenceInput

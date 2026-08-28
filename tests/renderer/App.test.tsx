@@ -681,6 +681,7 @@ function installApi(
         updatedAt: '2026-08-10T12:00:00.000Z'
       }),
       listEntities: vi.fn().mockResolvedValue([]),
+      resolveEntity: vi.fn().mockResolvedValue(null),
       addEntityReference: vi.fn(),
       saveDocument: vi.fn(),
       onEntitiesChanged: vi.fn(() => () => undefined)

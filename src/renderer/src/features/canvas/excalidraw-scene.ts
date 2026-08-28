@@ -64,17 +64,6 @@ export function entityCardText(
   return `${kind}\n${compact(reference.title, 42)}\n${formatStatus(reference.status)}${context}`
 }
 
-export function canvasEntityCardLink(
-  reference: CanvasEntityReferenceSnapshot | CanvasEntitySnapshot
-): string {
-  return `onmove://${reference.target.type}/${reference.target.id}`
-}
-
-export function isCanvasEntityCardLink(link: string | null | undefined): boolean {
-  return typeof link === 'string' &&
-    /^onmove:\/\/(thread|commitment|note|routine|todo)\/[1-9]\d*$/.test(link)
-}
-
 export function createCanvasElementId(): string {
   const uuid = globalThis.crypto?.randomUUID?.().replaceAll('-', '')
   if (uuid) return `onmove_${uuid}`
@@ -109,12 +98,10 @@ export function createEntityCardElements(
       customData: cardData
     }
   ], { regenerateIds: false })
-  return [{
-    ...base,
-    type: 'embeddable',
-    link: canvasEntityCardLink(reference),
-    locked: reference.deleted
-  } as ExcalidrawElement]
+  return [newElementWith(base, {
+    link: null,
+    locked: true
+  })]
 }
 
 export function canvasEntityElementIds(
@@ -130,16 +117,16 @@ function hasSameCardPresentation(
   reference: CanvasEntityReferenceSnapshot
 ): boolean {
   const data = customData(element)
-  return element.type === 'embeddable' &&
-    element.link === canvasEntityCardLink(reference) &&
+  return element.type === 'rectangle' &&
+    element.link === null &&
+    element.locked &&
     element.backgroundColor === 'transparent' &&
     element.strokeColor === 'transparent' &&
     element.strokeStyle === 'solid' &&
     element.strokeWidth === 1 &&
     element.roughness === 0 &&
     data.onmoveEntityType === reference.target.type &&
-    data.onmoveEntityId === reference.target.id &&
-    (!reference.deleted || element.locked)
+    data.onmoveEntityId === reference.target.id
 }
 
 /**
@@ -160,25 +147,25 @@ export function reconcileEntityCards(
     if (!reference || element.isDeleted || !isEntityCard(element)) continue
     if (!hasSameCardPresentation(element, reference)) {
       const updated = newElementWith(element, {
-        link: canvasEntityCardLink(reference),
+        link: null,
         backgroundColor: 'transparent',
         strokeColor: 'transparent',
         strokeStyle: 'solid',
         strokeWidth: 1,
         roughness: 0,
-        locked: reference.deleted ? true : element.locked,
+        locked: true,
         customData: {
           onmoveRole: 'entity-card',
           onmoveEntityType: reference.target.type,
           onmoveEntityId: reference.target.id
         }
       })
-      // `renderEmbeddable` is Excalidraw's supported React rendering boundary.
-      // Converting the legacy rectangle in place retains id, index, position,
-      // size, rotation, grouping, and every other editor-owned geometry field.
+      // React renders the interactive overlay while this locked rectangle owns
+      // persisted position. Converting an older embeddable/rectangle in place
+      // retains id, index, position, size, rotation, grouping, and geometry.
       next[index] = {
         ...updated,
-        type: 'embeddable'
+        type: 'rectangle'
       } as ExcalidrawElement
       changed = true
     }
