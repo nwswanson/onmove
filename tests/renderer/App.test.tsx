@@ -649,6 +649,28 @@ function installApi(
       getRetrievalStatus: vi.fn().mockResolvedValue(retrievalStatus),
       onRetrievalStatusChanged: vi.fn(() => () => undefined)
     },
+    canvas: {
+      list: vi.fn().mockResolvedValue([{
+        id: 1,
+        name: 'Default',
+        revision: 0,
+        createdAt: '2026-08-10T12:00:00.000Z',
+        updatedAt: '2026-08-10T12:00:00.000Z'
+      }]),
+      get: vi.fn().mockResolvedValue({
+        id: 1,
+        name: 'Default',
+        revision: 0,
+        data: null,
+        references: [],
+        createdAt: '2026-08-10T12:00:00.000Z',
+        updatedAt: '2026-08-10T12:00:00.000Z'
+      }),
+      listEntities: vi.fn().mockResolvedValue([]),
+      addEntityReference: vi.fn(),
+      saveDocument: vi.fn(),
+      onEntitiesChanged: vi.fn(() => () => undefined)
+    },
     domain,
     richText: {
       getDocument: vi.fn(() => new Promise<RichTextDocumentSnapshot>(() => undefined)),
@@ -696,6 +718,19 @@ describe('App', () => {
     expect(screen.getByLabelText('Primary sidebar')).toBeInTheDocument()
     expect(screen.getByRole('toolbar', { name: 'Application toolbar' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'New focus' })).toBeDisabled()
+  })
+
+  it('opens the addressable Canvas workspace from aggregate navigation', async () => {
+    installApi()
+    render(<App />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Canvas' }))
+
+    expect(await screen.findByRole('complementary', {
+      name: 'Canvas item library'
+    })).toBeInTheDocument()
+    expect(screen.getByLabelText('Canvas workspace')).toBeInTheDocument()
+    expect(screen.getByRole('searchbox', { name: 'Search Canvas items' })).toBeInTheDocument()
   })
 
   it('creates and deletes visual Focus folders without deleting their Focuses', async () => {

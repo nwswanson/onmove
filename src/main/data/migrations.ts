@@ -3946,6 +3946,172 @@ const migrations: readonly Migration[] = [
           CHECK (length(client_instructions) <= 8000);
       `)
     }
+  },
+  {
+    version: 50,
+    name: 'addressable_canvases',
+    up(database) {
+      database.exec(`
+        CREATE TABLE canvases (
+          id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 120),
+          data_json TEXT CHECK (
+            data_json IS NULL OR (
+              json_valid(data_json) AND json_type(data_json) = 'object'
+            )
+          ),
+          revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT;
+
+        CREATE UNIQUE INDEX canvases_name_index ON canvases(name COLLATE NOCASE);
+
+        CREATE TABLE canvas_entity_references (
+          canvas_id INTEGER NOT NULL REFERENCES canvases(id) ON DELETE CASCADE,
+          shape_id TEXT NOT NULL CHECK (
+            length(shape_id) BETWEEN 7 AND 160 AND shape_id GLOB 'shape:*'
+          ),
+          entity_type TEXT NOT NULL CHECK (entity_type IN (
+            'thread', 'commitment', 'note', 'routine', 'todo'
+          )),
+          entity_id INTEGER NOT NULL CHECK (entity_id > 0),
+          cached_title TEXT NOT NULL,
+          cached_status TEXT,
+          cached_context TEXT NOT NULL,
+          entity_created_at TEXT NOT NULL,
+          effective_sensitive INTEGER NOT NULL DEFAULT 0
+            CHECK (effective_sensitive IN (0, 1)),
+          missing_since TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (canvas_id, shape_id),
+          UNIQUE (canvas_id, entity_type, entity_id, entity_created_at)
+        ) STRICT, WITHOUT ROWID;
+
+        CREATE INDEX canvas_entity_references_target_index
+          ON canvas_entity_references(entity_type, entity_id);
+
+        INSERT INTO canvases (name, data_json, revision, created_at, updated_at)
+        VALUES (
+          'Default',
+          NULL,
+          0,
+          strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+          strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        );
+      `)
+
+      const hasTable = (name: string): boolean => Boolean(database.get(
+        "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?",
+        [name]
+      ))
+      if (hasTable('threads')) database.exec(`
+        CREATE TRIGGER canvas_cache_thread_update
+        AFTER UPDATE OF title, status, sensitive, focus_id ON threads
+        BEGIN
+          UPDATE canvas_entity_references
+          SET cached_title = NEW.title,
+              cached_status = NEW.status,
+              effective_sensitive = (
+                NEW.sensitive OR COALESCE((
+                  SELECT sensitive FROM focuses WHERE id = NEW.focus_id
+                ), 0)
+              ),
+              cached_context = COALESCE((
+                SELECT title FROM focuses WHERE id = NEW.focus_id
+              ), cached_context),
+              missing_since = NULL,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE entity_type = 'thread' AND entity_id = NEW.id;
+        END;
+
+        CREATE TRIGGER canvas_cache_thread_delete
+        AFTER DELETE ON threads
+        BEGIN
+          UPDATE canvas_entity_references
+          SET missing_since = COALESCE(
+                missing_since,
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+              ),
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE entity_type = 'thread' AND entity_id = OLD.id;
+        END;
+      `)
+      if (hasTable('commitments')) database.exec(`
+        CREATE TRIGGER canvas_cache_commitment_update
+        AFTER UPDATE OF title, status, sensitive ON commitments
+        BEGIN
+          UPDATE canvas_entity_references
+          SET cached_title = NEW.title,
+              cached_status = CASE WHEN entity_type = 'routine'
+                THEN cached_status ELSE NEW.status END,
+              effective_sensitive = NEW.sensitive,
+              missing_since = NULL,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE entity_type IN ('commitment', 'routine') AND entity_id = NEW.id;
+        END;
+
+        CREATE TRIGGER canvas_cache_commitment_delete
+        AFTER DELETE ON commitments
+        BEGIN
+          UPDATE canvas_entity_references
+          SET missing_since = COALESCE(
+                missing_since,
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+              ),
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE entity_type IN ('commitment', 'routine') AND entity_id = OLD.id;
+        END;
+      `)
+      if (hasTable('notes')) database.exec(`
+        CREATE TRIGGER canvas_cache_note_update
+        AFTER UPDATE OF title ON notes
+        BEGIN
+          UPDATE canvas_entity_references
+          SET cached_title = NEW.title,
+              missing_since = NULL,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE entity_type = 'note' AND entity_id = NEW.id;
+        END;
+
+        CREATE TRIGGER canvas_cache_note_delete
+        AFTER DELETE ON notes
+        BEGIN
+          UPDATE canvas_entity_references
+          SET missing_since = COALESCE(
+                missing_since,
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+              ),
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE entity_type = 'note' AND entity_id = OLD.id;
+        END;
+      `)
+      if (hasTable('todos')) database.exec(`
+        CREATE TRIGGER canvas_cache_todo_update
+        AFTER UPDATE OF name, done ON todos
+        BEGIN
+          UPDATE canvas_entity_references
+          SET cached_title = NEW.name,
+              cached_status = CASE WHEN NEW.done = 1 THEN 'done' ELSE 'open' END,
+              missing_since = NULL,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE entity_type = 'todo' AND entity_id = NEW.id;
+        END;
+
+        CREATE TRIGGER canvas_cache_todo_delete
+        AFTER DELETE ON todos
+        BEGIN
+          UPDATE canvas_entity_references
+          SET missing_since = COALESCE(
+                missing_since,
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+              ),
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE entity_type = 'todo' AND entity_id = OLD.id;
+        END;
+      `)
+    }
   }
 ]
 

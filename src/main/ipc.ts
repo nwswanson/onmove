@@ -3,6 +3,7 @@ import {
   IPC_CHANNELS,
   IPC_SYNC_CHANNELS,
   type AddFocusScopeSubjectInput,
+  type AddCanvasEntityReferenceInput,
   type AttestRoutineRunItemInput,
   type CommitmentParent,
   type CreateCommitmentInput,
@@ -39,7 +40,8 @@ import {
   type UpdateRoutineInput,
   type UpdateThreadInput,
   type UpdateTodoInput,
-  type UpdateMcpSettingsInput
+  type UpdateMcpSettingsInput,
+  type SaveCanvasDocumentInput
 } from '../shared/contracts'
 import type { AppDatabase } from './database'
 
@@ -76,11 +78,13 @@ export function registerAppIpc(
   notifyMcpSettingsChanged: (settings: McpSettingsSnapshot) => void = () => undefined,
   notifyNavigationPinsChanged: (pins: NavigationPinSnapshot[]) => void = () => undefined,
   notifySidebarFoldersChanged: (folders: SidebarFolderSnapshot[]) => void = () => undefined,
-  startEnhancedRetrievalWarmup: () => void = () => undefined
+  startEnhancedRetrievalWarmup: () => void = () => undefined,
+  notifyCanvasEntitiesChanged: () => void = () => undefined
 ): () => void {
   function mutation<T>(operation: () => T): T {
     const result = operation()
     invalidateNavigationBadges()
+    notifyCanvasEntitiesChanged()
     return result
   }
 
@@ -149,6 +153,23 @@ export function registerAppIpc(
     const error = await shell.openPath(database.backups.ensureDirectory())
     if (error) throw new Error(error)
   })
+  ipcMain.handle(IPC_CHANNELS.listCanvases, () => database.domain.canvases.list())
+  ipcMain.handle(IPC_CHANNELS.getCanvas, (_event, id: number) =>
+    database.domain.canvases.get(id)
+  )
+  ipcMain.handle(IPC_CHANNELS.listCanvasEntities, () =>
+    database.domain.canvases.listEntities()
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.addCanvasEntityReference,
+    (_event, canvasId: number, input: AddCanvasEntityReferenceInput) =>
+      database.domain.canvases.addEntityReference(canvasId, input)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.saveCanvasDocument,
+    (_event, canvasId: number, input: SaveCanvasDocumentInput) =>
+      database.domain.canvases.saveDocument(canvasId, input)
+  )
   ipcMain.handle(IPC_CHANNELS.createRelation, (_event, input: CreateRelationInput) =>
     database.domain.relations.create(input).toSnapshot()
   )

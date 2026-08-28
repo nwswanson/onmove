@@ -34,6 +34,7 @@ import { DueRepository } from './due-model'
 import { NavigationRepository } from './navigation-model'
 import { RoutineRepository } from './routine-model'
 import { FocusOverviewRepository } from './focus-overview-model'
+import { CanvasRepository } from './canvas-model'
 
 type RelationRecord = RelationSnapshot
 
@@ -561,6 +562,7 @@ export class DomainStore {
   readonly due: DueRepository
   readonly navigation: NavigationRepository
   readonly focusOverview: FocusOverviewRepository
+  readonly canvases: CanvasRepository
 
   constructor(database: SqliteAdapter) {
     this.relations = new RelationRepository(database)
@@ -585,5 +587,6 @@ export class DomainStore {
     this.due = new DueRepository(database)
     this.navigation = new NavigationRepository(database)
     this.focusOverview = new FocusOverviewRepository(database)
+    this.canvases = new CanvasRepository(database, this.routines)
   }
 }

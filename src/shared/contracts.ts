@@ -92,7 +92,12 @@ export const IPC_CHANNELS = {
   listRichTextHistory: 'rich-text:list-history',
   restoreRichTextHistory: 'rich-text:restore-history',
   openRichTextDocumentWindow: 'rich-text:open-window',
-  getRichTextWindowTarget: 'rich-text:get-window-target'
+  getRichTextWindowTarget: 'rich-text:get-window-target',
+  listCanvases: 'canvas:list',
+  getCanvas: 'canvas:get',
+  listCanvasEntities: 'canvas:list-entities',
+  addCanvasEntityReference: 'canvas:add-entity-reference',
+  saveCanvasDocument: 'canvas:save-document'
 } as const
 
 export const IPC_SYNC_CHANNELS = {
@@ -109,7 +114,8 @@ export const IPC_EVENTS = {
   sidebarFoldersChanged: 'app:sidebar-folders-changed',
   mcpSettingsChanged: 'app:mcp-settings-changed',
   enhancedRetrievalStatusChanged: 'app:enhanced-retrieval-status-changed',
-  richTextDocumentChanged: 'rich-text:document-changed'
+  richTextDocumentChanged: 'rich-text:document-changed',
+  canvasEntitiesChanged: 'canvas:entities-changed'
 } as const
 
 /**
@@ -1377,6 +1383,83 @@ export interface AppState {
   databasePath: string
 }
 
+export const CANVAS_ENTITY_KINDS = [
+  'thread',
+  'commitment',
+  'note',
+  'routine',
+  'todo'
+] as const
+export type CanvasEntityKind = (typeof CANVAS_ENTITY_KINDS)[number]
+
+export interface CanvasEntityTarget {
+  type: CanvasEntityKind
+  id: number
+}
+
+/**
+ * Receiver-neutral metadata for one entity that may be placed on a Canvas.
+ * `status` intentionally preserves each domain model's vocabulary; the Canvas
+ * view owns how that status is presented.
+ */
+export interface CanvasEntitySnapshot {
+  target: CanvasEntityTarget
+  title: string
+  /** Null for entity kinds such as Notes that do not own lifecycle state. */
+  status: string | null
+  context: string
+  effectiveSensitive: boolean
+  /** Incarnation fingerprint prevents a reused SQLite row id from reviving a deleted card. */
+  createdAt: string
+}
+
+/** A durable Canvas reference, hydrated from live data or its deletion cache. */
+export interface CanvasEntityReferenceSnapshot extends CanvasEntitySnapshot {
+  shapeId: string
+  deleted: boolean
+  deletedAt: string | null
+}
+
+export interface CanvasSummarySnapshot {
+  id: number
+  name: string
+  revision: number
+  createdAt: string
+  updatedAt: string
+}
+
+/** TLDraw document data is opaque JSON at the domain boundary. */
+export interface CanvasSnapshot extends CanvasSummarySnapshot {
+  data: JsonObject | null
+  references: CanvasEntityReferenceSnapshot[]
+}
+
+export interface AddCanvasEntityReferenceInput {
+  shapeId: string
+  target: CanvasEntityTarget
+}
+
+export interface SaveCanvasDocumentInput {
+  data: JsonObject
+  /** Current entity-card shape ids; missing references are removed from this Canvas only. */
+  entityShapeIds: string[]
+}
+
+export interface CanvasApi {
+  list: () => Promise<CanvasSummarySnapshot[]>
+  get: (id: number) => Promise<CanvasSnapshot>
+  listEntities: () => Promise<CanvasEntitySnapshot[]>
+  addEntityReference: (
+    canvasId: number,
+    input: AddCanvasEntityReferenceInput
+  ) => Promise<CanvasEntityReferenceSnapshot>
+  saveDocument: (
+    canvasId: number,
+    input: SaveCanvasDocumentInput
+  ) => Promise<CanvasSummarySnapshot>
+  onEntitiesChanged: (listener: () => void) => () => void
+}
+
 export type NavigationPinTarget =
   | { type: 'focus'; id: number }
   | { type: 'thread'; id: number }
@@ -1617,6 +1700,7 @@ export interface OnMoveApi {
   sidebarFolders: SidebarFolderApi
   backups: BackupApi
   mcp: McpSettingsApi
+  canvas: CanvasApi
   domain: DomainApi
   richText: RichTextApi
 }

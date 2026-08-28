@@ -19,6 +19,20 @@ if (typeof ResizeObserver === 'undefined') {
   })
 }
 
+if (typeof CSS !== 'undefined' && typeof CSS.supports !== 'function') {
+  Object.defineProperty(CSS, 'supports', {
+    value: () => false,
+    configurable: true
+  })
+}
+
+if (typeof Image !== 'undefined' && typeof Image.prototype.decode !== 'function') {
+  Object.defineProperty(Image.prototype, 'decode', {
+    value: () => Promise.resolve(),
+    configurable: true
+  })
+}
+
 // jsdom does not currently expose these event constructors. Lexical uses
 // instanceof checks while handling the default (non-intercepted) paste path.
 if (typeof window !== 'undefined' && typeof DragEvent === 'undefined') {
