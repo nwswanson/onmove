@@ -1,5 +1,4 @@
 import {
-  FONT_FAMILY,
   convertToExcalidrawElements,
   newElementWith,
   serializeAsJSON
@@ -12,23 +11,16 @@ import type {
   JsonObject
 } from '../../../../shared/contracts'
 
-const CARD_WIDTH = 280
-const CARD_HEIGHT = 112
-const CARD_BACKGROUND = '#ffffff'
-const CARD_STROKE = '#868e96'
-const CARD_TEXT = '#343a40'
-const GHOST_TEXT = '#868e96'
+export const CANVAS_ENTITY_CARD_SIZE = { width: 336, height: 196 } as const
+const CARD_WIDTH = CANVAS_ENTITY_CARD_SIZE.width
+const CARD_HEIGHT = CANVAS_ENTITY_CARD_SIZE.height
 
 type EntityCardData = {
   onmoveRole: 'entity-card'
   onmoveEntityType: CanvasEntitySnapshot['target']['type']
   onmoveEntityId: number
-  onmoveLabelId: string
-}
-
-type EntityLabelData = {
-  onmoveRole: 'entity-label'
-  onmoveCardId: string
+  /** Present only on the legacy rectangle/text representation. */
+  onmoveLabelId?: string
 }
 
 function customData(element: ExcalidrawElement): Record<string, unknown> {
@@ -68,7 +60,19 @@ export function entityCardText(
     const context = reference.context ? `\nWas in: ${compact(reference.context, 52)}` : ''
     return `Deleted ${kind}\n${compact(reference.title, 42)}${context}`
   }
-  return `${kind}\n${compact(reference.title, 42)}\n${formatStatus(reference.status)}`
+  const context = reference.context ? `\n${compact(reference.context, 64)}` : ''
+  return `${kind}\n${compact(reference.title, 42)}\n${formatStatus(reference.status)}${context}`
+}
+
+export function canvasEntityCardLink(
+  reference: CanvasEntityReferenceSnapshot | CanvasEntitySnapshot
+): string {
+  return `onmove://${reference.target.type}/${reference.target.id}`
+}
+
+export function isCanvasEntityCardLink(link: string | null | undefined): boolean {
+  return typeof link === 'string' &&
+    /^onmove:\/\/(thread|commitment|note|routine|todo)\/[1-9]\d*$/.test(link)
 }
 
 export function createCanvasElementId(): string {
@@ -83,20 +87,12 @@ export function createEntityCardElements(
   y: number
 ): ExcalidrawElement[] {
   const elementId = reference.elementId
-  const labelId = `${elementId}_label`
-  const groupId = `${elementId}_group`
   const cardData: EntityCardData = {
     onmoveRole: 'entity-card',
     onmoveEntityType: reference.target.type,
-    onmoveEntityId: reference.target.id,
-    onmoveLabelId: labelId
+    onmoveEntityId: reference.target.id
   }
-  const labelData: EntityLabelData = {
-    onmoveRole: 'entity-label',
-    onmoveCardId: elementId
-  }
-
-  return convertToExcalidrawElements([
+  const [base] = convertToExcalidrawElements([
     {
       id: elementId,
       type: 'rectangle',
@@ -104,33 +100,21 @@ export function createEntityCardElements(
       y,
       width: CARD_WIDTH,
       height: CARD_HEIGHT,
-      groupIds: [groupId],
-      backgroundColor: reference.deleted ? 'transparent' : CARD_BACKGROUND,
+      backgroundColor: 'transparent',
       fillStyle: 'solid',
-      strokeColor: CARD_STROKE,
-      strokeStyle: reference.deleted ? 'dashed' : 'solid',
-      strokeWidth: 2,
+      strokeColor: 'transparent',
+      strokeStyle: 'solid',
+      strokeWidth: 1,
       roughness: 0,
       customData: cardData
-    },
-    {
-      id: labelId,
-      type: 'text',
-      x: x + 18,
-      y: y + 15,
-      width: CARD_WIDTH - 36,
-      height: CARD_HEIGHT - 30,
-      groupIds: [groupId],
-      text: entityCardText(reference),
-      fontFamily: FONT_FAMILY.Helvetica,
-      fontSize: 16,
-      textAlign: 'left',
-      verticalAlign: 'middle',
-      strokeColor: reference.deleted ? GHOST_TEXT : CARD_TEXT,
-      roughness: 0,
-      customData: labelData
     }
   ], { regenerateIds: false })
+  return [{
+    ...base,
+    type: 'embeddable',
+    link: canvasEntityCardLink(reference),
+    locked: reference.deleted
+  } as ExcalidrawElement]
 }
 
 export function canvasEntityElementIds(
@@ -145,14 +129,17 @@ function hasSameCardPresentation(
   element: ExcalidrawElement,
   reference: CanvasEntityReferenceSnapshot
 ): boolean {
-  return element.type === 'rectangle' &&
-    element.width === CARD_WIDTH &&
-    element.height === CARD_HEIGHT &&
-    element.backgroundColor === (reference.deleted ? 'transparent' : CARD_BACKGROUND) &&
-    element.strokeColor === CARD_STROKE &&
-    element.strokeStyle === (reference.deleted ? 'dashed' : 'solid') &&
-    element.strokeWidth === 2 &&
-    element.roughness === 0
+  const data = customData(element)
+  return element.type === 'embeddable' &&
+    element.link === canvasEntityCardLink(reference) &&
+    element.backgroundColor === 'transparent' &&
+    element.strokeColor === 'transparent' &&
+    element.strokeStyle === 'solid' &&
+    element.strokeWidth === 1 &&
+    element.roughness === 0 &&
+    data.onmoveEntityType === reference.target.type &&
+    data.onmoveEntityId === reference.target.id &&
+    (!reference.deleted || element.locked)
 }
 
 /**
@@ -172,40 +159,54 @@ export function reconcileEntityCards(
     const reference = referenceById.get(element.id)
     if (!reference || element.isDeleted || !isEntityCard(element)) continue
     if (!hasSameCardPresentation(element, reference)) {
-      next[index] = newElementWith(element, {
-        width: CARD_WIDTH,
-        height: CARD_HEIGHT,
-        backgroundColor: reference.deleted ? 'transparent' : CARD_BACKGROUND,
-        strokeColor: CARD_STROKE,
-        strokeStyle: reference.deleted ? 'dashed' : 'solid',
-        strokeWidth: 2,
-        roughness: 0
+      const updated = newElementWith(element, {
+        link: canvasEntityCardLink(reference),
+        backgroundColor: 'transparent',
+        strokeColor: 'transparent',
+        strokeStyle: 'solid',
+        strokeWidth: 1,
+        roughness: 0,
+        locked: reference.deleted ? true : element.locked,
+        customData: {
+          onmoveRole: 'entity-card',
+          onmoveEntityType: reference.target.type,
+          onmoveEntityId: reference.target.id
+        }
       })
+      // `renderEmbeddable` is Excalidraw's supported React rendering boundary.
+      // Converting the legacy rectangle in place retains id, index, position,
+      // size, rotation, grouping, and every other editor-owned geometry field.
+      next[index] = {
+        ...updated,
+        type: 'embeddable'
+      } as ExcalidrawElement
       changed = true
     }
 
     const labelIndex = next.findIndex((candidate) =>
       !candidate.isDeleted && isEntityLabelFor(candidate, element.id))
-    const expectedText = entityCardText(reference)
     if (labelIndex >= 0) {
-      const label = next[labelIndex]
-      if (label.type === 'text' && (
-        label.text !== expectedText ||
-        label.strokeColor !== (reference.deleted ? GHOST_TEXT : CARD_TEXT) ||
-        label.fontFamily !== FONT_FAMILY.Helvetica ||
-        label.fontSize !== 16
-      )) {
-        next[labelIndex] = newElementWith(label, {
-          text: expectedText,
-          originalText: expectedText,
-          strokeColor: reference.deleted ? GHOST_TEXT : CARD_TEXT,
-          fontFamily: FONT_FAMILY.Helvetica,
-          fontSize: 16,
-          roughness: 0
-        })
-        changed = true
-      }
+      next[labelIndex] = newElementWith(next[labelIndex], { isDeleted: true })
+      changed = true
     }
+  }
+
+  // References and the Excalidraw document are committed together during
+  // ordinary use, so a missing element indicates an interrupted write or a
+  // migrated TLDraw document. Recover the authoritative reference as a card
+  // instead of leaving the source item disabled and invisible. The stable grid
+  // is deliberately presentation-only; subsequent geometry belongs to Excalidraw.
+  const existingIds = new Set(next.map(({ id }) => id))
+  const missing = references.filter(({ elementId }) => !existingIds.has(elementId))
+  for (const [index, reference] of missing.entries()) {
+    const column = index % 2
+    const row = Math.floor(index / 2)
+    next.push(...createEntityCardElements(
+      reference,
+      80 + column * (CARD_WIDTH + 40),
+      80 + row * (CARD_HEIGHT + 40)
+    ))
+    changed = true
   }
 
   return { elements: next, changed }

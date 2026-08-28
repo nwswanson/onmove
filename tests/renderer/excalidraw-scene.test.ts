@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from 'vitest'
+import { FONT_FAMILY, convertToExcalidrawElements } from '@excalidraw/excalidraw'
 import type { AppState, BinaryFiles } from '@excalidraw/excalidraw/types'
 import type { CanvasEntityReferenceSnapshot } from '../../src/shared/contracts'
 import {
   canvasEntityElementIds,
+  canvasEntityCardLink,
   createCanvasElementId,
   createEntityCardElements,
   encodeExcalidrawDocument,
@@ -22,6 +24,7 @@ function reference(
     title: 'Sprint execution',
     status: 'active',
     context: 'Project execution',
+    details: {},
     effectiveSensitive: false,
     createdAt: '2026-08-27T12:00:00.000Z',
     deleted: false,
@@ -31,37 +34,29 @@ function reference(
 }
 
 describe('Excalidraw Canvas scene adapter', () => {
-  it('creates a grouped native card with durable receiver metadata', () => {
+  it('creates one native embeddable whose React receiver owns the widget interior', () => {
     const elements = createEntityCardElements(reference(), 120, 240)
 
-    expect(elements).toHaveLength(2)
+    expect(elements).toHaveLength(1)
     expect(elements[0]).toMatchObject({
       id: 'onmove_thread_card',
-      type: 'rectangle',
+      type: 'embeddable',
       x: 120,
       y: 240,
-      width: 280,
-      height: 112,
+      width: 336,
+      height: 196,
+      link: 'onmove://thread/4',
       customData: {
         onmoveRole: 'entity-card',
         onmoveEntityType: 'thread',
         onmoveEntityId: 4
       }
     })
-    expect(elements[1]).toMatchObject({
-      id: 'onmove_thread_card_label',
-      type: 'text',
-      text: 'Thread\nSprint execution\nActive',
-      customData: {
-        onmoveRole: 'entity-label',
-        onmoveCardId: 'onmove_thread_card'
-      }
-    })
-    expect(elements[0].groupIds).toEqual(elements[1].groupIds)
+    expect(canvasEntityCardLink(reference())).toBe(elements[0].link)
     expect(canvasEntityElementIds(elements)).toEqual(['onmove_thread_card'])
   })
 
-  it('turns missing records into dashed cached ghosts without changing geometry', () => {
+  it('locks missing records for the dashed widget receiver without changing geometry', () => {
     const original = createEntityCardElements(reference(), 80, 160)
     const ghost = reference({
       title: 'Former sprint execution',
@@ -77,32 +72,82 @@ describe('Excalidraw Canvas scene adapter', () => {
       x: 80,
       y: 160,
       backgroundColor: 'transparent',
-      strokeStyle: 'dashed'
-    })
-    expect(reconciled.elements[1]).toMatchObject({
-      text: 'Deleted Thread\nFormer sprint execution\nWas in: Portfolio › Delivery'
+      type: 'embeddable',
+      locked: true
     })
     expect(entityCardText(ghost)).toContain('Deleted Thread')
   })
 
-  it('reconciles live status and title from the model while leaving ordinary drawings alone', () => {
-    const original = createEntityCardElements(reference(), 0, 0)
-    const ordinary = createEntityCardElements({
-      ...reference(),
-      elementId: 'ordinary_rectangle'
-    }, 400, 0)[0]
-    const ordinaryWithoutReceiverMetadata = { ...ordinary, customData: undefined }
+  it('upgrades legacy rectangle/text cards in place while leaving ordinary drawings alone', () => {
+    const legacy = convertToExcalidrawElements([
+      {
+        id: 'onmove_thread_card',
+        type: 'rectangle',
+        x: 12,
+        y: 34,
+        width: 280,
+        height: 112,
+        customData: {
+          onmoveRole: 'entity-card',
+          onmoveEntityType: 'thread',
+          onmoveEntityId: 4,
+          onmoveLabelId: 'onmove_thread_card_label'
+        }
+      },
+      {
+        id: 'onmove_thread_card_label',
+        type: 'text',
+        x: 30,
+        y: 49,
+        text: 'Thread\nSprint execution\nActive',
+        fontFamily: FONT_FAMILY.Helvetica,
+        customData: {
+          onmoveRole: 'entity-label',
+          onmoveCardId: 'onmove_thread_card'
+        }
+      },
+      {
+        id: 'ordinary_rectangle',
+        type: 'rectangle',
+        x: 400,
+        y: 0,
+        width: 120,
+        height: 80
+      }
+    ], { regenerateIds: false })
     const changedReference = reference({ title: 'Release readiness', status: 'done' })
 
-    const reconciled = reconcileEntityCards(
-      [...original, ordinaryWithoutReceiverMetadata],
-      [changedReference]
-    )
+    const reconciled = reconcileEntityCards(legacy, [changedReference])
 
-    expect(reconciled.elements[1]).toMatchObject({
-      text: 'Thread\nRelease readiness\nDone'
+    expect(reconciled.changed).toBe(true)
+    expect(reconciled.elements[0]).toMatchObject({
+      type: 'embeddable',
+      x: 12,
+      y: 34,
+      width: 280,
+      height: 112,
+      link: 'onmove://thread/4'
     })
-    expect(reconciled.elements[2]).toBe(ordinaryWithoutReceiverMetadata)
+    expect(reconciled.elements[1].isDeleted).toBe(true)
+    expect(reconciled.elements[2]).toBe(legacy[2])
+  })
+
+  it('recovers a durable reference whose migrated scene has no matching element', () => {
+    const repairedReference = reference({ elementId: 'legacy_canvas_1_1' })
+
+    const reconciled = reconcileEntityCards([], [repairedReference])
+
+    expect(reconciled.changed).toBe(true)
+    expect(reconciled.elements).toHaveLength(1)
+    expect(reconciled.elements[0]).toMatchObject({
+      id: 'legacy_canvas_1_1',
+      type: 'embeddable',
+      x: 80,
+      y: 80,
+      width: 336,
+      height: 196,
+      link: 'onmove://thread/4'
+    })
   })
 
   it('serializes a database scene and restores only valid scene-shaped data', () => {
@@ -117,7 +162,7 @@ describe('Excalidraw Canvas scene adapter', () => {
       type: 'excalidraw',
       elements: expect.any(Array)
     })
-    expect(excalidrawInitialData(document).elements).toHaveLength(2)
+    expect(excalidrawInitialData(document).elements).toHaveLength(1)
     expect(excalidrawInitialData({ unrelated: true }).elements).toEqual([])
     expect(createCanvasElementId()).toMatch(/^onmove_[A-Za-z0-9_]+$/)
   })

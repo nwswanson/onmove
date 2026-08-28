@@ -19,16 +19,21 @@ import {
 } from '@/components/ui/context-drawer'
 import { WorkspaceShell } from '@/components/ui/workspace-shell'
 import {
+  canvasCardModel,
   canvasEntityKey,
   canvasLibraryGroups
 } from '@/features/canvas/canvas-presenters'
+import { CanvasEntityWidget } from '@/features/canvas/canvas-entity-widget'
 import {
+  CANVAS_ENTITY_CARD_SIZE,
+  canvasEntityCardLink,
   canvasEntityElementIds,
   createCanvasElementId,
   createEntityCardElements,
   encodeExcalidrawDocument,
   entityCardText,
   excalidrawInitialData,
+  isCanvasEntityCardLink,
   reconcileEntityCards
 } from '@/features/canvas/excalidraw-scene'
 import { useCanvasModel } from '@/features/canvas/use-canvas-model'
@@ -66,6 +71,9 @@ export function CanvasWorkspace({
     [model.canvas?.references]
   )
   const referencesRef = useRef(references)
+  const referenceByElementId = useMemo(() => new Map(
+    references.map((reference) => [reference.elementId, reference])
+  ), [references])
   const groups = useMemo(() => canvasLibraryGroups(
     model.entities,
     references,
@@ -165,8 +173,8 @@ export function CanvasWorkspace({
         deleted: false,
         deletedAt: null
       },
-      point.x - 140,
-      point.y - 56
+      point.x - CANVAS_ENTITY_CARD_SIZE.width / 2,
+      point.y - CANVAS_ENTITY_CARD_SIZE.height / 2
     )
     excalidrawApi.updateScene({
       elements: [...excalidrawApi.getSceneElements(), ...cardElements],
@@ -261,6 +269,17 @@ export function CanvasWorkspace({
                 autoFocus
                 detectScroll={false}
                 handleKeyboardGlobally={false}
+                validateEmbeddable={isCanvasEntityCardLink}
+                renderEmbeddable={(element) => {
+                  const reference = referenceByElementId.get(element.id)
+                  if (!reference || element.link !== canvasEntityCardLink(reference)) return null
+                  return (
+                    <CanvasEntityWidget
+                      model={canvasCardModel(reference)}
+                      compact={element.width < 300 || element.height < 155}
+                    />
+                  )
+                }}
                 UIOptions={{
                   canvasActions: {
                     loadScene: false,

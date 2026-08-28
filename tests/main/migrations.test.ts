@@ -145,6 +145,67 @@ describe('database migrations', () => {
     raw.close()
   })
 
+  it('repairs migration-50 TLDraw Canvas references without losing placed entities', () => {
+    const current = new AppDatabase(databasePath)
+    const focus = current.domain.focuses.create({ title: 'Canvas migration focus' })
+    const thread = current.domain.threads.create({
+      focusId: focus.id,
+      title: 'Placed before Excalidraw',
+      reviewFrequencyDays: 7
+    })
+    current.domain.canvases.addEntityReference(1, {
+      elementId: 'onmove_preexisting_thread',
+      target: { type: 'thread', id: thread.id }
+    })
+    current.domain.canvases.saveDocument(1, {
+      data: { type: 'excalidraw', elements: [] },
+      entityElementIds: ['onmove_preexisting_thread']
+    })
+    current.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      ALTER TABLE canvas_entity_references RENAME COLUMN element_id TO shape_id;
+      UPDATE canvases
+      SET data_json = json_object(
+        'store', json_object('shape:thread-card', json_object('typeName', 'shape'))
+      );
+      DELETE FROM schema_migrations WHERE version = 51;
+    `)
+    expect(() => legacy.prepare(
+      'SELECT element_id FROM canvas_entity_references'
+    )).toThrow(/no such column: element_id/)
+    legacy.close()
+
+    const migrated = new AppDatabase(databasePath)
+    expect(migrated.domain.canvases.get(1)).toMatchObject({
+      data: null,
+      references: [expect.objectContaining({
+        elementId: 'legacy_canvas_1_1',
+        target: { type: 'thread', id: thread.id },
+        title: 'Placed before Excalidraw',
+        deleted: false
+      })]
+    })
+    migrated.domain.threads.update(thread.id, { title: 'Still live after repair' })
+    expect(migrated.domain.canvases.get(1).references[0]).toMatchObject({
+      title: 'Still live after repair',
+      deleted: false
+    })
+    migrated.close()
+
+    const repaired = new DatabaseSync(databasePath)
+    const columns = repaired.prepare(
+      "SELECT name FROM pragma_table_info('canvas_entity_references') ORDER BY cid"
+    ).all() as Array<{ name: string }>
+    expect(columns.map(({ name }) => name)).toContain('element_id')
+    expect(columns.map(({ name }) => name)).not.toContain('shape_id')
+    expect(repaired.prepare(
+      'SELECT version FROM schema_migrations WHERE version = 51'
+    ).get()).toEqual({ version: 51 })
+    repaired.close()
+  })
+
   it('creates the rebuildable embedding cache without changing authoritative search data', () => {
     const database = new AppDatabase(databasePath)
     const focus = database.domain.focuses.create({ title: 'Durable source record' })

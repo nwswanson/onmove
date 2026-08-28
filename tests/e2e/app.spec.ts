@@ -103,6 +103,10 @@ test('places a live entity on the durable Canvas and preserves it as a ghost aft
     const card = canvas.locator('[data-canvas-entity-kind="thread"]')
     await expect(card).toContainText('Canvas delivery')
     await expect(card).toContainText('Active')
+    const widget = canvas.locator('[aria-label="Thread: Canvas delivery"]')
+    await expect(widget).toBeVisible()
+    await expect(widget).toContainText('Canvas project')
+    await expect(widget).toContainText('Every 7d')
     await expect.poll(() => {
       const reader = new DatabaseSync(databasePath, { readOnly: true })
       const reference = reader.prepare(
@@ -120,14 +124,91 @@ test('places a live entity on the durable Canvas and preserves it as a ghost aft
     }).toEqual({ references: 1, persisted: true })
 
     await appWindow.evaluate(async (threadId) => {
-      await globalThis.window.onmove.domain.updateThread(threadId, { status: 'done' })
+      await globalThis.window.onmove.domain.updateThread(threadId, {
+        status: 'done',
+        dueDate: '2026-09-04'
+      })
     }, thread.id)
     await expect(card).toContainText('Done')
+    await expect(widget).toContainText('Done')
+    await expect(widget.locator('dd').first()).not.toHaveText('Not set')
     await appWindow.evaluate(async (threadId) => {
       await globalThis.window.onmove.domain.deleteThread(threadId)
     }, thread.id)
     await expect(card).toHaveAttribute('data-canvas-entity-deleted', 'true')
     await expect(card).toContainText('Deleted Thread')
+    const ghostWidget = canvas.locator('[aria-label="Deleted Thread: Canvas delivery"]')
+    await expect(ghostWidget).toBeVisible()
+    await expect(ghostWidget).toHaveClass(/border-dashed/)
+  } finally {
+    await application?.close().catch(() => undefined)
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
+test('repairs a migration-50 TLDraw Canvas and renders its placed entity', async () => {
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-canvas-migration-e2e-'))
+  const databasePath = join(userDataDirectory, 'onmove.sqlite3')
+  const seeded = new AppDatabase(databasePath)
+  const focus = seeded.domain.focuses.create({ title: 'Migrated Canvas project' })
+  const thread = seeded.domain.threads.create({
+    focusId: focus.id,
+    title: 'Recovered Canvas thread',
+    reviewFrequencyDays: 5
+  })
+  seeded.domain.canvases.addEntityReference(1, {
+    elementId: 'onmove_before_tldraw_repair',
+    target: { type: 'thread', id: thread.id }
+  })
+  seeded.close()
+
+  const legacy = new DatabaseSync(databasePath)
+  legacy.exec(`
+    ALTER TABLE canvas_entity_references RENAME COLUMN element_id TO shape_id;
+    UPDATE canvases
+    SET data_json = json_object(
+      'store', json_object('shape:thread-card', json_object('typeName', 'shape'))
+    );
+    DELETE FROM schema_migrations WHERE version = 51;
+  `)
+  legacy.close()
+  let application: ElectronApplication | undefined
+
+  try {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    const appWindow = await application.firstWindow()
+    await appWindow.getByRole('button', { name: 'Canvas', exact: true }).click()
+
+    await expect(appWindow.getByText(/no such column: element_id/i)).toHaveCount(0)
+    const widget = appWindow.getByLabel('Thread: Recovered Canvas thread')
+    await expect(widget).toBeVisible()
+    await expect(widget).toContainText('Migrated Canvas project')
+    await expect(widget).toContainText('Every 5d')
+
+    await expect.poll(() => {
+      const repaired = new DatabaseSync(databasePath, { readOnly: true })
+      const columns = repaired.prepare(
+        "SELECT name FROM pragma_table_info('canvas_entity_references')"
+      ).all() as Array<{ name: string }>
+      const stored = repaired.prepare(
+        'SELECT data_json FROM canvases WHERE id = 1'
+      ).get() as { data_json: string | null }
+      repaired.close()
+      return {
+        hasElementId: columns.some(({ name }) => name === 'element_id'),
+        hasShapeId: columns.some(({ name }) => name === 'shape_id'),
+        persistedExcalidraw: stored.data_json?.includes('excalidraw') ?? false
+      }
+    }).toEqual({
+      hasElementId: true,
+      hasShapeId: false,
+      persistedExcalidraw: true
+    })
   } finally {
     await application?.close().catch(() => undefined)
     rmSync(userDataDirectory, { recursive: true, force: true })

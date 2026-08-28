@@ -1,5 +1,7 @@
 import {
   CANVAS_ENTITY_KINDS,
+  HEALTH_STATES,
+  type CanvasEntityDetails,
   type AddCanvasEntityReferenceInput,
   type CanvasEntityKind,
   type CanvasEntityReferenceSnapshot,
@@ -9,6 +11,7 @@ import {
   type JsonObject,
   type SaveCanvasDocumentInput
 } from '../../shared/contracts'
+import { richTextPlainText } from '../../shared/rich-text-value'
 import { ModelNotFoundError, ModelValidationError } from './model'
 import type { RoutineRepository } from './routine-model'
 import type { SqliteAdapter } from './sqlite-adapter'
@@ -47,6 +50,15 @@ interface EntityRow {
   subject_name: string | null
   effective_sensitive: number
   created_at: string
+  updated_at: string
+  due_on?: string | null
+  review_frequency_days?: number | null
+  needs_review?: number | null
+  last_update_date?: string | null
+  state?: string | null
+  content?: string | null
+  completed_at?: string | null
+  shared_across_subjects?: number | null
 }
 
 const CANVAS_COLUMNS = 'id, name, data_json, revision, created_at, updated_at'
@@ -105,12 +117,17 @@ function contextFromRow(row: EntityRow): string {
   return row.subject_name ? `${base} [${row.subject_name}]` : base
 }
 
-function entityFromRow(type: CanvasEntityKind, row: EntityRow): CanvasEntitySnapshot {
+function entityFromRow(
+  type: CanvasEntityKind,
+  row: EntityRow,
+  details: CanvasEntityDetails = {}
+): CanvasEntitySnapshot {
   return {
     target: { type, id: Number(row.id) },
     title: row.title,
     status: row.status,
     context: contextFromRow(row),
+    details,
     effectiveSensitive: Boolean(row.effective_sensitive),
     createdAt: row.created_at
   }
@@ -126,11 +143,25 @@ function referenceFromCache(row: CanvasReferenceRow): CanvasEntityReferenceSnaps
     title: row.cached_title,
     status: row.cached_status,
     context: row.cached_context,
+    details: {},
     effectiveSensitive: Boolean(row.effective_sensitive),
     createdAt: row.entity_created_at,
     deleted: row.missing_since !== null,
     deletedAt: row.missing_since
   }
+}
+
+function healthState(value: string | null | undefined): CanvasEntityDetails['state'] {
+  return HEALTH_STATES.includes(value as (typeof HEALTH_STATES)[number])
+    ? value as CanvasEntityDetails['state']
+    : undefined
+}
+
+function contentPreview(value: string | null | undefined): string | null {
+  if (!value) return null
+  const plain = richTextPlainText(value).replace(/\s+/g, ' ').trim()
+  if (!plain) return null
+  return plain.length <= 180 ? plain : `${plain.slice(0, 179)}…`
 }
 
 function timestamp(): string {
@@ -231,18 +262,47 @@ export class CanvasRepository {
              focus.title AS focus_title,
              NULL AS thread_title,
              NULL AS commitment_title,
-             NULL AS subject_name, thread.created_at,
+             NULL AS subject_name, thread.created_at, thread.updated_at,
+             thread.due_on, thread.review_frequency_days, thread.needs_review,
+             (
+               SELECT update_record.recorded_on FROM updates update_record
+               WHERE update_record.thread_id = thread.id
+               ORDER BY update_record.recorded_on DESC, update_record.id DESC LIMIT 1
+             ) AS last_update_date,
+             (
+               SELECT update_record.state FROM updates update_record
+               WHERE update_record.thread_id = thread.id
+               ORDER BY update_record.recorded_on DESC, update_record.id DESC LIMIT 1
+             ) AS state,
              (thread.sensitive OR focus.sensitive) AS effective_sensitive
       FROM threads thread
       JOIN focuses focus ON focus.id = thread.focus_id
-    `).map((row) => entityFromRow('thread', row))
+    `).map((row) => entityFromRow('thread', row, {
+      dueDate: row.due_on ?? null,
+      state: healthState(row.state),
+      reviewFrequencyDays: row.review_frequency_days ?? null,
+      needsReview: Boolean(row.needs_review),
+      lastUpdateDate: row.last_update_date ?? null,
+      updatedAt: row.updated_at
+    }))
 
     const commitmentRows = this.database.all<EntityRow>(`
       SELECT commitment.id, commitment.title, commitment.status,
              focus.title AS focus_title,
              thread.title AS thread_title,
              NULL AS commitment_title,
-             NULL AS subject_name, commitment.created_at,
+             NULL AS subject_name, commitment.created_at, commitment.updated_at,
+             commitment.due_on, commitment.review_frequency_days, commitment.needs_review,
+             (
+               SELECT update_record.recorded_on FROM updates update_record
+               WHERE update_record.commitment_id = commitment.id
+               ORDER BY update_record.recorded_on DESC, update_record.id DESC LIMIT 1
+             ) AS last_update_date,
+             (
+               SELECT update_record.state FROM updates update_record
+               WHERE update_record.commitment_id = commitment.id
+               ORDER BY update_record.recorded_on DESC, update_record.id DESC LIMIT 1
+             ) AS state,
              (commitment.sensitive OR focus.sensitive OR
                COALESCE(thread.sensitive, 0)) AS effective_sensitive
       FROM commitments commitment
@@ -250,15 +310,22 @@ export class CanvasRepository {
       JOIN focuses focus ON focus.id = COALESCE(commitment.focus_id, thread.focus_id)
       WHERE commitment.behavior_type = 'tracking'
     `)
-    const commitments = commitmentRows.map((row) => entityFromRow('commitment', row))
+    const commitments = commitmentRows.map((row) => entityFromRow('commitment', row, {
+      dueDate: row.due_on ?? null,
+      state: healthState(row.state),
+      reviewFrequencyDays: row.review_frequency_days ?? null,
+      needsReview: Boolean(row.needs_review),
+      lastUpdateDate: row.last_update_date ?? null,
+      updatedAt: row.updated_at
+    }))
 
-    const routineStatus = new Map(this.routines.list().map((routine) => [routine.id, routine.status]))
+    const routineById = new Map(this.routines.list().map((routine) => [routine.id, routine]))
     const routines = this.database.all<EntityRow>(`
       SELECT commitment.id, commitment.title, 'green' AS status,
              focus.title AS focus_title,
              thread.title AS thread_title,
              NULL AS commitment_title,
-             NULL AS subject_name, commitment.created_at,
+             NULL AS subject_name, commitment.created_at, commitment.updated_at,
              (commitment.sensitive OR focus.sensitive OR
                COALESCE(thread.sensitive, 0)) AS effective_sensitive
       FROM commitments commitment
@@ -266,17 +333,27 @@ export class CanvasRepository {
       LEFT JOIN threads thread ON thread.id = commitment.thread_id
       JOIN focuses focus ON focus.id = COALESCE(commitment.focus_id, thread.focus_id)
       WHERE commitment.behavior_type = 'routine'
-    `).map((row) => entityFromRow('routine', {
-      ...row,
-      status: routineStatus.get(Number(row.id)) ?? 'green'
-    }))
+    `).map((row) => {
+      const routine = routineById.get(Number(row.id))
+      return entityFromRow('routine', {
+        ...row,
+        status: routine?.status ?? 'green'
+      }, {
+        nextReviewDate: routine?.nextReviewDate ?? null,
+        nextScheduledDate: routine?.nextScheduledDate ?? null,
+        needsReview: routine?.needsAttestation ?? false,
+        scheduleWeekdays: routine?.scheduleWeekdays ?? [],
+        progress: routine?.currentRun?.progress ?? null,
+        updatedAt: row.updated_at
+      })
+    })
 
     const notes = this.database.all<EntityRow>(`
       SELECT note.id, note.title, NULL AS status,
              focus.title AS focus_title,
              thread.title AS thread_title,
              commitment.title AS commitment_title,
-             NULL AS subject_name, note.created_at,
+             NULL AS subject_name, note.created_at, note.updated_at, note.content,
              (focus.sensitive OR COALESCE(thread.sensitive, 0) OR
                COALESCE(commitment.sensitive, 0)) AS effective_sensitive
       FROM notes note
@@ -290,7 +367,10 @@ export class CanvasRepository {
         thread.focus_id,
         commitment.focus_id
       )
-    `).map((row) => entityFromRow('note', row))
+    `).map((row) => entityFromRow('note', row, {
+      preview: contentPreview(row.content),
+      updatedAt: row.updated_at
+    }))
 
     const todos = this.database.all<EntityRow>(`
       SELECT todo.id, todo.name AS title,
@@ -298,7 +378,8 @@ export class CanvasRepository {
              focus.title AS focus_title,
              thread.title AS thread_title,
              commitment.title AS commitment_title,
-             subject.name AS subject_name, todo.created_at,
+             subject.name AS subject_name, todo.created_at, todo.updated_at,
+             todo.due_on, todo.completed_at, todo.shared_across_subjects,
              (focus.sensitive OR COALESCE(thread.sensitive, 0) OR
                COALESCE(commitment.sensitive, 0) OR
                COALESCE(subject.sensitive, 0)) AS effective_sensitive
@@ -314,7 +395,13 @@ export class CanvasRepository {
         commitment.focus_id
       )
       LEFT JOIN subjects subject ON subject.id = todo.subject_id
-    `).map((row) => entityFromRow('todo', row))
+    `).map((row) => entityFromRow('todo', row, {
+      dueDate: row.due_on ?? null,
+      subjectName: row.subject_name,
+      sharedAcrossSubjects: Boolean(row.shared_across_subjects),
+      completedAt: row.completed_at ?? null,
+      updatedAt: row.updated_at
+    }))
 
     return [...threads, ...commitments, ...notes, ...routines, ...todos].sort((left, right) =>
       left.target.type.localeCompare(right.target.type) ||

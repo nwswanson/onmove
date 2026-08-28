@@ -25,12 +25,14 @@ describe('Canvas model', () => {
     const thread = database.domain.threads.create({
       focusId: focus.id,
       title: 'Delivery confidence',
+      dueDate: '2026-09-04',
       reviewFrequencyDays: 7
     })
     const commitment = database.domain.commitments.create({
       parent: { type: 'thread', id: thread.id },
       type: 'tracking',
-      title: 'Keep sponsors aligned'
+      title: 'Keep sponsors aligned',
+      dueDate: '2026-09-01'
     })
     const routine = database.domain.routines.create({
       parent: { type: 'thread', id: thread.id },
@@ -40,7 +42,8 @@ describe('Canvas model', () => {
     })
     const todo = database.domain.todos.create({
       parent: { type: 'commitment', id: commitment.id },
-      name: 'Share the revised plan'
+      name: 'Share the revised plan',
+      dueDate: '2026-08-30'
     })
     const note = database.domain.notes.list({ type: 'thread', id: thread.id })[0]
     return { focus, thread, commitment, routine, todo, note }
@@ -48,6 +51,16 @@ describe('Canvas model', () => {
 
   it('creates one addressable default Canvas and lists every supported live entity kind', () => {
     const hierarchy = createHierarchy()
+    database.domain.updates.create({
+      parent: { type: 'commitment', id: hierarchy.commitment.id },
+      date: '2026-08-27',
+      observation: 'Sponsors approved the revised plan.',
+      state: 'green'
+    })
+    database.domain.richTextDocuments.save(
+      { type: 'note', id: hierarchy.note.id, field: 'content' },
+      'Decisions and rollout context for the delivery team.'
+    )
 
     expect(database.domain.canvases.list()).toEqual([
       expect.objectContaining({ id: 1, name: 'Default', revision: 0 })
@@ -65,27 +78,41 @@ describe('Canvas model', () => {
         target: { type: 'thread', id: hierarchy.thread.id },
         title: 'Delivery confidence',
         status: 'active',
-        context: 'Project Atlas'
+        context: 'Project Atlas',
+        details: expect.objectContaining({
+          dueDate: '2026-09-04',
+          reviewFrequencyDays: 7
+        })
       }),
       expect.objectContaining({
         target: { type: 'commitment', id: hierarchy.commitment.id },
         title: 'Keep sponsors aligned',
-        context: 'Project Atlas › Delivery confidence'
+        context: 'Project Atlas › Delivery confidence',
+        details: expect.objectContaining({
+          dueDate: '2026-09-01',
+          state: 'green',
+          lastUpdateDate: '2026-08-27'
+        })
       }),
       expect.objectContaining({
         target: { type: 'routine', id: hierarchy.routine.id },
         title: 'Inspect the weekly report',
-        status: 'green'
+        status: 'green',
+        details: expect.objectContaining({ scheduleWeekdays: [], progress: null })
       }),
       expect.objectContaining({
         target: { type: 'todo', id: hierarchy.todo.id },
         title: 'Share the revised plan',
-        status: 'open'
+        status: 'open',
+        details: expect.objectContaining({ dueDate: '2026-08-30' })
       }),
       expect.objectContaining({
         target: { type: 'note', id: hierarchy.note.id },
         title: 'Default',
-        status: null
+        status: null,
+        details: expect.objectContaining({
+          preview: 'Decisions and rollout context for the delivery team.'
+        })
       })
     ]))
   })
@@ -104,7 +131,11 @@ describe('Canvas model', () => {
       entityElementIds: ['onmove_thread-card']
     })
 
-    thread.update({ title: 'Renamed delivery confidence', status: 'done' })
+    thread.update({
+      title: 'Renamed delivery confidence',
+      status: 'done',
+      dueDate: '2026-09-12'
+    })
     expect(database.domain.canvases.get(1)).toMatchObject({
       revision: 1,
       data: {
@@ -115,6 +146,7 @@ describe('Canvas model', () => {
         elementId: 'onmove_thread-card',
         title: 'Renamed delivery confidence',
         status: 'done',
+        details: expect.objectContaining({ dueDate: '2026-09-12' }),
         deleted: false
       })]
     })
@@ -123,7 +155,10 @@ describe('Canvas model', () => {
     database = new AppDatabase(databasePath)
     expect(database.domain.canvases.get(1)).toMatchObject({
       revision: 1,
-      references: [expect.objectContaining({ status: 'done' })]
+      references: [expect.objectContaining({
+        status: 'done',
+        details: expect.objectContaining({ dueDate: '2026-09-12' })
+      })]
     })
   })
 

@@ -3,7 +3,10 @@ import type {
   CanvasEntityReferenceSnapshot,
   CanvasEntitySnapshot
 } from '../../src/shared/contracts'
-import { canvasLibraryGroups } from '../../src/renderer/src/features/canvas/canvas-presenters'
+import {
+  canvasCardModel,
+  canvasLibraryGroups
+} from '../../src/renderer/src/features/canvas/canvas-presenters'
 
 function entity(
   type: CanvasEntitySnapshot['target']['type'],
@@ -15,6 +18,7 @@ function entity(
     title: `${type} ${id}`,
     status: 'active',
     context: 'Project Atlas',
+    details: {},
     effectiveSensitive: false,
     createdAt: '2026-08-27T12:00:00.000Z',
     ...overrides
@@ -66,5 +70,76 @@ describe('Canvas presenters', () => {
       entity('thread', 2, { title: 'Private', effectiveSensitive: true })
     ], [], true)
     expect(groups[0].items.map(({ label }) => label)).toEqual(['Public'])
+  })
+
+  it('projects kind-specific facts into the widget contract without leaking layout into models', () => {
+    const card = canvasCardModel({
+      ...entity('commitment', 2, {
+        title: 'Resolve rollout risks',
+        context: 'Mission Control › Launch readiness',
+        details: {
+          dueDate: '2026-08-26',
+          state: 'yellow',
+          lastUpdateDate: '2026-08-27'
+        }
+      }),
+      elementId: 'onmove_commitment',
+      deleted: false,
+      deletedAt: null
+    }, '2026-08-27')
+
+    expect(card).toMatchObject({
+      kindLabel: 'Commitment',
+      title: 'Resolve rollout risks',
+      status: 'Active',
+      statusTone: 'primary',
+      context: 'Mission Control › Launch readiness',
+      facts: [
+        { label: 'Due', value: expect.any(String), tone: 'destructive' },
+        { label: 'State', value: 'Yellow', tone: 'warning' },
+        { label: 'Last update', value: expect.any(String) }
+      ]
+    })
+  })
+
+  it('keeps Thread, Routine, Note, and Todo widget facts specific to their domains', () => {
+    const reference = (
+      kind: CanvasEntitySnapshot['target']['type'],
+      details: CanvasEntitySnapshot['details']
+    ): CanvasEntityReferenceSnapshot => ({
+      ...entity(kind, 7, { details }),
+      elementId: `onmove_${kind}`,
+      deleted: false,
+      deletedAt: null
+    })
+
+    expect(canvasCardModel(reference('thread', {
+      dueDate: '2026-09-04',
+      reviewFrequencyDays: 7,
+      lastUpdateDate: null,
+      needsReview: true
+    }), '2026-08-27').facts.map(({ label, value }) => [label, value])).toEqual([
+      ['Due', expect.any(String)],
+      ['Review', 'Every 7d'],
+      ['Last update', 'Never']
+    ])
+    expect(canvasCardModel(reference('routine', {
+      nextReviewDate: '2026-08-28',
+      scheduleWeekdays: ['monday', 'friday'],
+      progress: { complete: 2, required: 4 }
+    })).facts.map(({ value }) => value)).toEqual([
+      expect.any(String), '2 of 4', 'Mon, Fri'
+    ])
+    expect(canvasCardModel(reference('note', {
+      preview: 'The current decision log.',
+      updatedAt: '2026-08-27T12:00:00.000Z'
+    })).preview).toBe('The current decision log.')
+    expect(canvasCardModel(reference('todo', {
+      dueDate: '2026-08-30',
+      sharedAcrossSubjects: true,
+      completedAt: null
+    })).facts.map(({ value }) => value)).toEqual([
+      expect.any(String), 'All subjects', 'Open'
+    ])
   })
 })

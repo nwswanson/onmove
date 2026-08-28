@@ -11,8 +11,9 @@ sandboxed from Node.js.
 - A shadcn/ui-based application shell with aggregate workspaces and a direct Focuses list, active navigation,
   and bottom-anchored workspace utilities.
 - A lazy-loaded, MIT-licensed Excalidraw Canvas workspace with a searchable library of Threads,
-  Commitments, Routines, Notes, and Todos. Dropped entity cards retain live status, persist in
-  SQLite, and become cached dashed ghosts if their source records are later deleted.
+  Commitments, Routines, Notes, and Todos. Dropped entities render as shadcn-styled widgets with
+  live hierarchy, status, and kind-specific facts, persist in SQLite, and become cached dashed
+  ghosts if their source records are later deleted.
 - A full-width macOS-style toolbar, resizable primary and contextual sidebars, flexible main canvas,
   and composable, resizable contextual drawer that participates in layout rather than covering
   content.

@@ -1398,6 +1398,27 @@ export interface CanvasEntityTarget {
 }
 
 /**
+ * Optional domain facts a Canvas card may present. The model owns the values;
+ * the Canvas presenter owns their labels, ordering, formatting, and layout.
+ */
+export interface CanvasEntityDetails {
+  dueDate?: string | null
+  state?: HealthState
+  reviewFrequencyDays?: number | null
+  lastUpdateDate?: string | null
+  nextReviewDate?: string | null
+  needsReview?: boolean
+  nextScheduledDate?: string | null
+  scheduleWeekdays?: RoutineWeekday[]
+  progress?: { complete: number; required: number } | null
+  preview?: string | null
+  subjectName?: string | null
+  sharedAcrossSubjects?: boolean
+  completedAt?: string | null
+  updatedAt?: string | null
+}
+
+/**
  * Receiver-neutral metadata for one entity that may be placed on a Canvas.
  * `status` intentionally preserves each domain model's vocabulary; the Canvas
  * view owns how that status is presented.
@@ -1408,6 +1429,7 @@ export interface CanvasEntitySnapshot {
   /** Null for entity kinds such as Notes that do not own lifecycle state. */
   status: string | null
   context: string
+  details: CanvasEntityDetails
   effectiveSensitive: boolean
   /** Incarnation fingerprint prevents a reused SQLite row id from reviving a deleted card. */
   createdAt: string

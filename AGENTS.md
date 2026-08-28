@@ -65,10 +65,18 @@
   Partition all live records by kind, retain hierarchy context in each row, honor sensitive-list
   visibility, show lifecycle/derived status, and disable only a live record already placed on that
   Canvas. Native drag data carries only an opaque presenter id; the Canvas feature resolves it and
-  creates a grouped set of validated native Excalidraw elements. Receiver-owned reconciliation may
-  update card content and ghost styling, but must preserve editor-owned geometry and ordinary
-  drawing elements. Excalidraw owns geometry and drawing records, the Canvas model owns entity
-  identity and caching, and neither side may infer or mutate the other's domain.
+  creates one validated Excalidraw embeddable element. Excalidraw owns that element's geometry while
+  its supported `renderEmbeddable` boundary renders an OnMove-owned React widget using the same
+  shadcn/Tailwind card, badge, semantic-color, typography, and icon conventions as the surrounding
+  app. The model exposes receiver-neutral kind-specific facts such as due date, review cadence,
+  activity/state, Routine schedule/progress, Note preview, and Todo Scope; a plain presenter decides
+  which facts and labels fit each widget. Existing rectangle/text entity cards must upgrade to the
+  embeddable representation in place without changing their id, position, size, rotation, or other
+  editor-owned geometry. Small legacy geometry receives a compact widget instead of a forced resize.
+  Receiver-owned reconciliation may update identity and ghost behavior, but must preserve ordinary
+  drawing elements. Deleted widgets become locked, dashed shadcn-style cached references. Excalidraw
+  owns geometry and drawing records, the Canvas model owns entity identity and caching, and neither
+  side may infer or mutate the other's domain.
 - Keep the primary sidebar free of summary-card placeholders. Put bounded, receiver-owned numeric
   badges on actionable destinations instead: Todos counts open items overdue or due today, Review
   counts remaining review targets, and Due counts open/paused dated work overdue or due within the

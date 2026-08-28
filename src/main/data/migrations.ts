@@ -4121,6 +4121,239 @@ const migrations: readonly Migration[] = [
         END;
       `)
     }
+  },
+  {
+    version: 51,
+    name: 'repair_legacy_tldraw_canvas_references',
+    up(database) {
+      const columns = database.all<{ name: string }>(
+        "SELECT name FROM pragma_table_info('canvas_entity_references')"
+      )
+      const names = new Set(columns.map(({ name }) => name))
+
+      // The short-lived TLDraw build shipped migration 50 with `shape_id`.
+      // Excalidraw subsequently retained migration 50 but correctly renamed
+      // that external-editor identity to `element_id`. A database that opened
+      // the TLDraw build therefore records migration 50 while retaining the
+      // incompatible column. Rebuild only that known legacy shape and retain
+      // every entity cache/ghost record; the renderer recreates those cards in
+      // a neutral grid because TLDraw geometry is not an Excalidraw document.
+      if (!names.has('shape_id') || names.has('element_id')) return
+
+      interface LegacyCanvasReferenceRow {
+        canvas_id: number
+        shape_id: string
+        entity_type: string
+        entity_id: number
+        cached_title: string
+        cached_status: string | null
+        cached_context: string
+        entity_created_at: string
+        effective_sensitive: number
+        missing_since: string | null
+        created_at: string
+        updated_at: string
+      }
+
+      const references = database.all<LegacyCanvasReferenceRow>(`
+        SELECT canvas_id, shape_id, entity_type, entity_id, cached_title,
+               cached_status, cached_context, entity_created_at,
+               effective_sensitive, missing_since, created_at, updated_at
+        FROM canvas_entity_references
+        ORDER BY canvas_id, created_at, shape_id
+      `)
+
+      database.exec(`
+        DROP TRIGGER IF EXISTS canvas_cache_thread_update;
+        DROP TRIGGER IF EXISTS canvas_cache_thread_delete;
+        DROP TRIGGER IF EXISTS canvas_cache_commitment_update;
+        DROP TRIGGER IF EXISTS canvas_cache_commitment_delete;
+        DROP TRIGGER IF EXISTS canvas_cache_note_update;
+        DROP TRIGGER IF EXISTS canvas_cache_note_delete;
+        DROP TRIGGER IF EXISTS canvas_cache_todo_update;
+        DROP TRIGGER IF EXISTS canvas_cache_todo_delete;
+
+        DROP TABLE IF EXISTS canvas_entity_references_v51;
+
+        CREATE TABLE canvas_entity_references_v51 (
+          canvas_id INTEGER NOT NULL REFERENCES canvases(id) ON DELETE CASCADE,
+          element_id TEXT NOT NULL CHECK (
+            length(element_id) BETWEEN 1 AND 160 AND
+            element_id NOT GLOB '*[^A-Za-z0-9_-]*'
+          ),
+          entity_type TEXT NOT NULL CHECK (entity_type IN (
+            'thread', 'commitment', 'note', 'routine', 'todo'
+          )),
+          entity_id INTEGER NOT NULL CHECK (entity_id > 0),
+          cached_title TEXT NOT NULL,
+          cached_status TEXT,
+          cached_context TEXT NOT NULL,
+          entity_created_at TEXT NOT NULL,
+          effective_sensitive INTEGER NOT NULL DEFAULT 0
+            CHECK (effective_sensitive IN (0, 1)),
+          missing_since TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (canvas_id, element_id),
+          UNIQUE (canvas_id, entity_type, entity_id, entity_created_at)
+        ) STRICT, WITHOUT ROWID;
+      `)
+
+      let previousCanvasId = -1
+      let position = 0
+      for (const reference of references) {
+        const canvasId = Number(reference.canvas_id)
+        if (canvasId !== previousCanvasId) {
+          previousCanvasId = canvasId
+          position = 0
+        }
+        position += 1
+        database.run(`
+          INSERT INTO canvas_entity_references_v51 (
+            canvas_id, element_id, entity_type, entity_id, cached_title,
+            cached_status, cached_context, entity_created_at,
+            effective_sensitive, missing_since, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+          canvasId,
+          `legacy_canvas_${canvasId}_${position}`,
+          reference.entity_type,
+          Number(reference.entity_id),
+          reference.cached_title,
+          reference.cached_status,
+          reference.cached_context,
+          reference.entity_created_at,
+          Number(reference.effective_sensitive),
+          reference.missing_since,
+          reference.created_at,
+          reference.updated_at
+        ])
+      }
+
+      database.exec(`
+        DROP TABLE canvas_entity_references;
+        ALTER TABLE canvas_entity_references_v51
+          RENAME TO canvas_entity_references;
+        CREATE INDEX canvas_entity_references_target_index
+          ON canvas_entity_references(entity_type, entity_id);
+
+        UPDATE canvases
+        SET data_json = NULL,
+            revision = revision + 1,
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now');
+      `)
+
+      database.exec(`
+        CREATE TRIGGER canvas_cache_thread_update
+        AFTER UPDATE OF title, status, sensitive, focus_id ON threads
+        BEGIN
+          UPDATE canvas_entity_references
+          SET cached_title = NEW.title,
+              cached_status = NEW.status,
+              effective_sensitive = (
+                NEW.sensitive OR COALESCE((
+                  SELECT sensitive FROM focuses WHERE id = NEW.focus_id
+                ), 0)
+              ),
+              cached_context = COALESCE((
+                SELECT title FROM focuses WHERE id = NEW.focus_id
+              ), cached_context),
+              missing_since = NULL,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE entity_type = 'thread' AND entity_id = NEW.id
+            AND entity_created_at = NEW.created_at;
+        END;
+
+        CREATE TRIGGER canvas_cache_thread_delete
+        AFTER DELETE ON threads
+        BEGIN
+          UPDATE canvas_entity_references
+          SET missing_since = COALESCE(
+                missing_since,
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+              ),
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE entity_type = 'thread' AND entity_id = OLD.id
+            AND entity_created_at = OLD.created_at;
+        END;
+
+        CREATE TRIGGER canvas_cache_commitment_update
+        AFTER UPDATE OF title, status, sensitive ON commitments
+        BEGIN
+          UPDATE canvas_entity_references
+          SET cached_title = NEW.title,
+              cached_status = CASE WHEN entity_type = 'routine'
+                THEN cached_status ELSE NEW.status END,
+              effective_sensitive = NEW.sensitive,
+              missing_since = NULL,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE entity_type IN ('commitment', 'routine') AND entity_id = NEW.id
+            AND entity_created_at = NEW.created_at;
+        END;
+
+        CREATE TRIGGER canvas_cache_commitment_delete
+        AFTER DELETE ON commitments
+        BEGIN
+          UPDATE canvas_entity_references
+          SET missing_since = COALESCE(
+                missing_since,
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+              ),
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE entity_type IN ('commitment', 'routine') AND entity_id = OLD.id
+            AND entity_created_at = OLD.created_at;
+        END;
+
+        CREATE TRIGGER canvas_cache_note_update
+        AFTER UPDATE OF title ON notes
+        BEGIN
+          UPDATE canvas_entity_references
+          SET cached_title = NEW.title,
+              missing_since = NULL,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE entity_type = 'note' AND entity_id = NEW.id
+            AND entity_created_at = NEW.created_at;
+        END;
+
+        CREATE TRIGGER canvas_cache_note_delete
+        AFTER DELETE ON notes
+        BEGIN
+          UPDATE canvas_entity_references
+          SET missing_since = COALESCE(
+                missing_since,
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+              ),
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE entity_type = 'note' AND entity_id = OLD.id
+            AND entity_created_at = OLD.created_at;
+        END;
+
+        CREATE TRIGGER canvas_cache_todo_update
+        AFTER UPDATE OF name, done ON todos
+        BEGIN
+          UPDATE canvas_entity_references
+          SET cached_title = NEW.name,
+              cached_status = CASE WHEN NEW.done = 1 THEN 'done' ELSE 'open' END,
+              missing_since = NULL,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE entity_type = 'todo' AND entity_id = NEW.id
+            AND entity_created_at = NEW.created_at;
+        END;
+
+        CREATE TRIGGER canvas_cache_todo_delete
+        AFTER DELETE ON todos
+        BEGIN
+          UPDATE canvas_entity_references
+          SET missing_since = COALESCE(
+                missing_since,
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+              ),
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE entity_type = 'todo' AND entity_id = OLD.id
+            AND entity_created_at = OLD.created_at;
+        END;
+      `)
+    }
   }
 ]
 
