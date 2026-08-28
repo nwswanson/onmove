@@ -19,6 +19,53 @@ if (typeof ResizeObserver === 'undefined') {
   })
 }
 
+// Excalidraw probes a 2D context while its module loads. Scene-model tests do
+// not paint, but jsdom's default getContext implementation throws before the
+// pure conversion helpers can be exercised.
+if (typeof HTMLCanvasElement !== 'undefined') {
+  Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
+    configurable: true,
+    value() {
+      return {
+        canvas: this,
+        filter: 'none',
+        measureText: (text: string) => ({ width: text.length * 8 })
+      }
+    }
+  })
+}
+
+if (typeof FontFace === 'undefined') {
+  class TestFontFace {
+    family: string
+    status: FontFaceLoadStatus = 'loaded'
+
+    constructor(family: string) {
+      this.family = family
+    }
+
+    load(): Promise<TestFontFace> {
+      return Promise.resolve(this)
+    }
+  }
+  Object.defineProperty(globalThis, 'FontFace', {
+    value: TestFontFace,
+    configurable: true
+  })
+}
+
+if (typeof document !== 'undefined' && !document.fonts) {
+  Object.defineProperty(document, 'fonts', {
+    configurable: true,
+    value: {
+      add: () => undefined,
+      check: () => true,
+      load: () => Promise.resolve([]),
+      ready: Promise.resolve()
+    }
+  })
+}
+
 // jsdom does not currently expose these event constructors. Lexical uses
 // instanceof checks while handling the default (non-intercepted) paste path.
 if (typeof window !== 'undefined' && typeof DragEvent === 'undefined') {

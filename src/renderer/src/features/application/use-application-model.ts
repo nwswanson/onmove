@@ -37,7 +37,7 @@ export interface ApplicationModel {
   navigationBadges: NavigationBadgeCounts | null
   selectedFocus: FocusSnapshot | null
   selectedFocusId: number | null
-  selectedView: 'todos' | 'tags' | 'review' | 'routines' | 'due' | 'archive' | 'focus' | 'settings'
+  selectedView: 'todos' | 'tags' | 'review' | 'routines' | 'due' | 'canvas' | 'archive' | 'focus' | 'settings'
   sensitiveContentHidden: boolean
   enabled: boolean
   pendingEntityLink: OnMoveEntityLinkTarget | null
@@ -47,6 +47,7 @@ export interface ApplicationModel {
   goReview: () => void
   goRoutines: () => void
   goDue: () => void
+  goCanvas: () => void
   goArchive: () => void
   goSettings: () => void
   reportMcpUiContext: (context: McpUiContextSnapshot) => void
@@ -88,7 +89,7 @@ export function useApplicationModel(): ApplicationModel {
   const [selectedFocusId, setSelectedFocusId] = useState<number | null>(null)
   const [closedFocusSelectionId, setClosedFocusSelectionId] = useState<number | null>(null)
   const [selectedView, setSelectedView] = useState<
-    'todos' | 'tags' | 'review' | 'routines' | 'due' | 'archive' | 'focus' | 'settings'
+    'todos' | 'tags' | 'review' | 'routines' | 'due' | 'canvas' | 'archive' | 'focus' | 'settings'
   >('todos')
   const [sensitiveContentHidden, setSensitiveContentHidden] = useState(false)
   const [pendingEntityLink, setPendingEntityLink] = useState<OnMoveEntityLinkTarget | null>(null)
@@ -256,6 +257,12 @@ export function useApplicationModel(): ApplicationModel {
     setSelectedFocusId(null)
     setClosedFocusSelectionId(null)
     setSelectedView('due')
+  }
+
+  function goCanvas(): void {
+    setSelectedFocusId(null)
+    setClosedFocusSelectionId(null)
+    setSelectedView('canvas')
   }
 
   function goArchive(): void {
@@ -454,6 +461,7 @@ export function useApplicationModel(): ApplicationModel {
     goReview,
     goRoutines,
     goDue,
+    goCanvas,
     goArchive,
     goSettings,
     reportMcpUiContext,

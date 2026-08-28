@@ -187,6 +187,34 @@ describe('registerAppIpc', () => {
         focusOverview: {
           timeline: vi.fn((focusId: number) => ({ focusId, threads: [], updates: [] }))
         },
+        canvases: {
+          list: vi.fn(() => [{ id: 1, name: 'Default', revision: 0 }]),
+          get: vi.fn(() => ({
+            id: 1,
+            name: 'Default',
+            revision: 0,
+            data: null,
+            references: []
+          })),
+          listEntities: vi.fn(() => [{
+            target: { type: 'thread', id: 21 },
+            title: 'Sprint execution',
+            status: 'active',
+            context: 'Launch',
+            effectiveSensitive: false
+          }]),
+          addEntityReference: vi.fn(() => ({
+            elementId: 'onmove_thread',
+            target: { type: 'thread', id: 21 },
+            title: 'Sprint execution',
+            status: 'active',
+            context: 'Launch',
+            effectiveSensitive: false,
+            deleted: false,
+            deletedAt: null
+          })),
+          saveDocument: vi.fn(() => ({ id: 1, name: 'Default', revision: 1 }))
+        },
         threadScopes: {
           get: vi.fn(() => ({
             threadId: 21,
@@ -675,6 +703,24 @@ describe('registerAppIpc', () => {
     })
     await handlers.get(IPC_CHANNELS.showBackupFolder)?.()
     expect(shell.openPath).toHaveBeenCalledWith('/tmp/Backups')
+    expect(await handlers.get(IPC_CHANNELS.listCanvases)?.()).toEqual([
+      { id: 1, name: 'Default', revision: 0 }
+    ])
+    expect(await handlers.get(IPC_CHANNELS.getCanvas)?.(undefined, 1)).toMatchObject({
+      id: 1,
+      references: []
+    })
+    expect(await handlers.get(IPC_CHANNELS.listCanvasEntities)?.()).toEqual([
+      expect.objectContaining({ target: { type: 'thread', id: 21 } })
+    ])
+    expect(await handlers.get(IPC_CHANNELS.addCanvasEntityReference)?.(undefined, 1, {
+      elementId: 'onmove_thread',
+      target: { type: 'thread', id: 21 }
+    })).toMatchObject({ elementId: 'onmove_thread', deleted: false })
+    expect(await handlers.get(IPC_CHANNELS.saveCanvasDocument)?.(undefined, 1, {
+      data: { store: {} },
+      entityElementIds: ['onmove_thread']
+    })).toMatchObject({ revision: 1 })
 
     expect(await handlers.get(IPC_CHANNELS.createRelation)?.(undefined, { name: 'blocks' })).toEqual({
       id: 4,

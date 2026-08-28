@@ -83,6 +83,18 @@ describe('DataArchiveRepository', () => {
       { type: 'note', id: defaultNote.id, field: 'content' },
       'Durable imported note'
     )
+    source.domain.canvases.addEntityReference(1, {
+      elementId: 'onmove_archived-thread-card',
+      target: { type: 'thread', id: thread.id }
+    })
+    source.domain.canvases.addEntityReference(1, {
+      elementId: 'onmove_archived-note-card',
+      target: { type: 'note', id: defaultNote.id }
+    })
+    source.domain.canvases.saveDocument(1, {
+      data: { type: 'excalidraw', elements: [{ id: 'durable-element' }] },
+      entityElementIds: ['onmove_archived-thread-card', 'onmove_archived-note-card']
+    })
 
     const archive = source.dataArchive.export('9.9.9', new Date('2026-08-09T12:00:00.000Z'))
     expect(archive).toMatchObject({
@@ -105,6 +117,10 @@ describe('DataArchiveRepository', () => {
         entity_id: defaultNote.id
       })
     ]))
+    expect(archive.tables.canvases).toEqual([
+      expect.objectContaining({ name: 'Default', revision: 1 })
+    ])
+    expect(archive.tables.canvas_entity_references).toHaveLength(2)
 
     const target = createDatabase('archive-target')
     target.domain.focuses.create({ title: 'Replaced local data' })
@@ -129,6 +145,19 @@ describe('DataArchiveRepository', () => {
       fromFocusId: null,
       toFocusId: importedFocus.id
     }])
+    expect(target.domain.canvases.get(1)).toMatchObject({
+      name: 'Default',
+      revision: 1,
+      data: { type: 'excalidraw', elements: [{ id: 'durable-element' }] },
+      references: expect.arrayContaining([
+        expect.objectContaining({
+          elementId: 'onmove_archived-thread-card',
+          target: { type: 'thread', id: importedThread.id },
+          deleted: false
+        }),
+        expect.objectContaining({ elementId: 'onmove_archived-note-card', deleted: false })
+      ])
+    })
     const importedCommitment = target.domain.commitments.listForThread(importedThread.id)[0]
     expect(importedCommitment).toMatchObject({
       title: 'Improve ticket quality',
@@ -419,6 +448,9 @@ describe('DataArchiveRepository', () => {
     expect(summary.ignoredTables).toEqual(['future_documents'])
     expect(summary.ignoredFields).toContain('focuses.futurePresentationHint')
     expect(summary.repairedRows).toBeGreaterThan(0)
+    expect(target.domain.canvases.list()).toEqual([
+      expect.objectContaining({ name: 'Default', revision: 0 })
+    ])
 
     const focus = target.domain.focuses.list()[0]
     expect(focus).toMatchObject({ id: 10, title: 'Older focus', kind: 'generic', status: 'active' })

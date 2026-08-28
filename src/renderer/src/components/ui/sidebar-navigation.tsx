@@ -2,6 +2,7 @@ import {
   Archive,
   CalendarClock,
   ClipboardCheck,
+  LayoutDashboard,
   ListChecks,
   PauseCircle,
   Repeat2,
@@ -44,7 +45,7 @@ export interface SidebarNavigationItemModel {
   id: string
   label: string
   ariaLabel?: string
-  icon?: 'todos' | 'tags' | 'review' | 'routines' | 'due' | 'archive' | 'sunflower' | 'paused'
+  icon?: 'todos' | 'tags' | 'review' | 'routines' | 'due' | 'canvas' | 'archive' | 'sunflower' | 'paused'
   sunflower?: SemanticSunflowerModel
   tone?: 'default' | 'muted'
   disabled?: boolean
@@ -168,6 +169,8 @@ function SidebarNavigationRow({
             <Repeat2 aria-hidden="true" />
           ) : item.icon === 'due' ? (
             <CalendarClock aria-hidden="true" />
+          ) : item.icon === 'canvas' ? (
+            <LayoutDashboard aria-hidden="true" />
           ) : item.icon === 'archive' ? (
             <Archive aria-hidden="true" />
           ) : item.icon === 'paused' ? (

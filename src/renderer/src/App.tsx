@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { AlertTriangle, Info, Search, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -69,6 +69,19 @@ const SIDEBAR_MAX = 288
 const DRAWER_MIN = 280
 const DRAWER_MAX = 384
 
+// The packaged renderer includes Excalidraw's fonts beside index.html. Set the
+// path before the lazy editor chunk evaluates so it never needs its CDN fallback.
+if (typeof window !== 'undefined' && !window.EXCALIDRAW_ASSET_PATH) {
+  window.EXCALIDRAW_ASSET_PATH = new URL('.', window.location.href).toString()
+}
+
+// Excalidraw is intentionally loaded only when Canvas is selected; its editor
+// bundle must not increase startup cost for the rest of the macOS shell.
+const CanvasWorkspace = lazy(async () => {
+  const module = await import('@/features/canvas/canvas-workspace')
+  return { default: module.CanvasWorkspace }
+})
+
 interface AppToolbarProps {
   title: string
   contextOpen: boolean
@@ -126,7 +139,7 @@ interface AppSidebarProps {
   navigationBadges: NavigationBadgeCounts | null
   selectedFocusId: string | null
   selectedPinnedItemId: string | null
-  selectedView: 'todos' | 'tags' | 'review' | 'routines' | 'due' | 'archive' | 'focus' | 'settings'
+  selectedView: 'todos' | 'tags' | 'review' | 'routines' | 'due' | 'canvas' | 'archive' | 'focus' | 'settings'
   enabled: boolean
   width: number
   onTodos: () => void
@@ -134,6 +147,7 @@ interface AppSidebarProps {
   onReview: () => void
   onRoutines: () => void
   onDue: () => void
+  onCanvas: () => void
   onArchive: () => void
   onSettings: () => void
   onSelectFocus: (focusId: string) => void
@@ -168,6 +182,7 @@ function AppSidebar({
   onReview,
   onRoutines,
   onDue,
+  onCanvas,
   onArchive,
   onSettings,
   onSelectFocus,
@@ -182,6 +197,7 @@ function AppSidebar({
     selectedView === 'todos' || selectedView === 'tags' ||
       selectedView === 'review' || selectedView === 'routines' ||
       selectedView === 'due' || selectedView === 'archive'
+      || selectedView === 'canvas'
       ? selectedView
       : null
 
@@ -240,6 +256,11 @@ function AppSidebar({
                   : undefined
               },
               {
+                id: 'canvas',
+                label: 'Canvas',
+                icon: 'canvas'
+              },
+              {
                 id: 'archive',
                 label: 'Archive',
                 icon: 'archive'
@@ -251,6 +272,7 @@ function AppSidebar({
               else if (itemId === 'review') onReview()
               else if (itemId === 'routines') onRoutines()
               else if (itemId === 'due') onDue()
+              else if (itemId === 'canvas') onCanvas()
               else if (itemId === 'archive') onArchive()
               else onTodos()
             }}
@@ -440,6 +462,8 @@ export function App(): React.JSX.Element {
     ? 'Settings'
     : application.selectedView === 'archive'
       ? 'Archive'
+      : application.selectedView === 'canvas'
+        ? 'Canvas'
       : application.selectedView === 'due'
       ? 'Due'
       : application.selectedView === 'routines'
@@ -613,6 +637,11 @@ export function App(): React.JSX.Element {
               setTagsDestination(null)
               application.goDue()
             }}
+            onCanvas={() => {
+              setFocusDestination(null)
+              setTagsDestination(null)
+              application.goCanvas()
+            }}
             onArchive={() => {
               setFocusDestination(null)
               setTagsDestination(null)
@@ -742,6 +771,13 @@ export function App(): React.JSX.Element {
               contextDrawer={contextDrawer}
               hideSensitiveContent={application.sensitiveContentHidden}
             />
+          ) : application.selectedView === 'canvas' ? (
+            <Suspense fallback={<WorkspaceShell main={<LoadingView />} />}>
+              <CanvasWorkspace
+                contextDrawer={contextDrawer}
+                hideSensitiveContent={application.sensitiveContentHidden}
+              />
+            </Suspense>
           ) : selectedFocus ? (
             <FocusWorkspace
               key={selectedFocus.id}

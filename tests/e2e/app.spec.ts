@@ -45,6 +45,95 @@ async function openContextualItemMenu(
   return window.getByRole('menu', { name: `${menuItemLabel} actions` })
 }
 
+test('places a live entity on the durable Canvas and preserves it as a ghost after deletion', async () => {
+  const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-canvas-e2e-'))
+  const databasePath = join(userDataDirectory, 'onmove.sqlite3')
+  const seeded = new AppDatabase(databasePath)
+  const focus = seeded.domain.focuses.create({ title: 'Canvas project' })
+  const thread = seeded.domain.threads.create({
+    focusId: focus.id,
+    title: 'Canvas delivery',
+    reviewFrequencyDays: 7
+  })
+  const commitment = seeded.domain.commitments.create({
+    parent: { type: 'thread', id: thread.id },
+    type: 'tracking',
+    title: 'Canvas commitment'
+  })
+  seeded.domain.routines.create({
+    parent: { type: 'thread', id: thread.id },
+    name: 'Canvas routine',
+    scheduleWeekdays: [],
+    checklist: [{ inspection: 'Verify Canvas evidence.' }]
+  })
+  seeded.domain.todos.create({
+    parent: { type: 'commitment', id: commitment.id },
+    name: 'Canvas Todo'
+  })
+  seeded.close()
+  let application: ElectronApplication | undefined
+
+  try {
+    const executablePath = process.env.ONMOVE_E2E_EXECUTABLE_PATH
+    application = await electron.launch({
+      ...(executablePath ? { executablePath } : {}),
+      args: executablePath ? [] : [resolve('.')],
+      env: { ...process.env, ONMOVE_USER_DATA_DIR: userDataDirectory } as Record<string, string>
+    })
+    const appWindow = await application.firstWindow()
+    await appWindow.getByRole('button', { name: 'Canvas', exact: true }).click()
+    const canvas = appWindow.getByLabel('Canvas workspace')
+    await expect(appWindow.getByRole('complementary', {
+      name: 'Canvas item library'
+    })).toBeVisible()
+    await expect(appWindow.getByRole('button', {
+      name: 'Canvas commitment, Canvas project › Canvas delivery, active, drag onto Canvas'
+    })).toBeVisible()
+    await expect(appWindow.getByRole('button', {
+      name: 'Canvas routine, Canvas project › Canvas delivery, green, drag onto Canvas'
+    })).toBeVisible()
+    await expect(appWindow.getByRole('button', {
+      name: 'Canvas Todo, Canvas project › Canvas delivery › Canvas commitment, open, drag onto Canvas'
+    })).toBeVisible()
+
+    await appWindow.getByRole('button', {
+      name: 'Canvas delivery, Canvas project, active, drag onto Canvas'
+    }).dragTo(canvas, { targetPosition: { x: 420, y: 260 } })
+
+    const card = canvas.locator('[data-canvas-entity-kind="thread"]')
+    await expect(card).toContainText('Canvas delivery')
+    await expect(card).toContainText('Active')
+    await expect.poll(() => {
+      const reader = new DatabaseSync(databasePath, { readOnly: true })
+      const reference = reader.prepare(
+        `SELECT COUNT(*) AS count FROM canvas_entity_references
+         WHERE entity_type = 'thread' AND entity_id = ?`
+      ).get(thread.id) as { count: number }
+      const stored = reader.prepare(
+        'SELECT revision, data_json FROM canvases WHERE id = 1'
+      ).get() as { revision: number; data_json: string | null }
+      reader.close()
+      return {
+        references: Number(reference.count),
+        persisted: stored.revision > 0 && stored.data_json !== null
+      }
+    }).toEqual({ references: 1, persisted: true })
+
+    await appWindow.evaluate(async (threadId) => {
+      await globalThis.window.onmove.domain.updateThread(threadId, { status: 'done' })
+    }, thread.id)
+    await expect(card).toContainText('Done')
+    await appWindow.evaluate(async (threadId) => {
+      await globalThis.window.onmove.domain.deleteThread(threadId)
+    }, thread.id)
+    await expect(card).toHaveAttribute('data-canvas-entity-deleted', 'true')
+    await expect(card).toContainText('Deleted Thread')
+  } finally {
+    await application?.close().catch(() => undefined)
+    rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
 test('quits completely after one native quit request', async () => {
   const userDataDirectory = mkdtempSync(join(tmpdir(), 'onmove-single-quit-e2e-'))
   let application: ElectronApplication | undefined

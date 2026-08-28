@@ -6,7 +6,8 @@
 - Keep one macOS-style toolbar across the full window, with the sidebar and main workspace beneath
   it. Do not add view-level breadcrumb bars above the main canvas.
 - Put primary item destinations at the top of the sidebar. `Todos` is selectable and is the default
-  aggregate workspace; `Tags`, `Review`, and `Due` are its peer destinations immediately below it;
+  aggregate workspace; `Tags`, `Review`, `Routines`, `Due`, `Canvas`, and `Archive` are its peer
+  destinations immediately below it;
   `Focuses` is a section label with focus records and the `New focus` action exposed directly
   beneath it.
 - Treat primary-sidebar pins as shell-owned references, never fields on Focus, Thread, or other
@@ -45,6 +46,29 @@
   bounded archive projection, never editable Update controls. The receiver owns permanent per-row
   deletion and a confirmed Clear all action; sensitive archive rows follow the application-wide
   list visibility preference.
+- Expose `Canvas` as a top-level aggregate destination and lazy-load Excalidraw only after it is
+  selected, so the editor does not increase ordinary application startup cost. Persist Canvases as
+  addressable SQLite records with stable positive ids, names, revisioned opaque Excalidraw scene
+  JSON, and timestamps; the first UI uses the seeded `Default` Canvas but must call id-based APIs so
+  later multi-Canvas navigation does not require a storage rewrite. Persist placed entity cards in
+  a separate reference table keyed by Canvas and Excalidraw element id. The reference owns the
+  target's creation-time incarnation fingerprint plus cached title, status, hierarchy context,
+  sensitivity, and first-observed deletion time, so SQLite row-id reuse can never revive an
+  unrelated ghost. Live Thread, Commitment, Routine, Note, and Todo records remain authoritative
+  whenever they exist. Title, status, sensitivity, and MCP/UI mutations notify the narrow Canvas
+  metadata event so open cards reconcile without broad application remounts. A deleted target must
+  never cascade its Canvas reference: render the cached card as a dashed, display-only ghost until
+  the user removes that element from the Canvas. Removing a card deletes only its Canvas reference,
+  never the underlying entity. Include both Canvas tables in tolerant application import/export and
+  repair a missing Default Canvas when importing an older archive.
+- Build the Canvas source panel through the domain-free searchable entity-library sidebar contract.
+  Partition all live records by kind, retain hierarchy context in each row, honor sensitive-list
+  visibility, show lifecycle/derived status, and disable only a live record already placed on that
+  Canvas. Native drag data carries only an opaque presenter id; the Canvas feature resolves it and
+  creates a grouped set of validated native Excalidraw elements. Receiver-owned reconciliation may
+  update card content and ghost styling, but must preserve editor-owned geometry and ordinary
+  drawing elements. Excalidraw owns geometry and drawing records, the Canvas model owns entity
+  identity and caching, and neither side may infer or mutate the other's domain.
 - Keep the primary sidebar free of summary-card placeholders. Put bounded, receiver-owned numeric
   badges on actionable destinations instead: Todos counts open items overdue or due today, Review
   counts remaining review targets, and Due counts open/paused dated work overdue or due within the

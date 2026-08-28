@@ -113,6 +113,20 @@ const api: OnMoveApi = {
       )
     }
   },
+  canvas: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.listCanvases),
+    get: (id) => ipcRenderer.invoke(IPC_CHANNELS.getCanvas, id),
+    listEntities: () => ipcRenderer.invoke(IPC_CHANNELS.listCanvasEntities),
+    addEntityReference: (canvasId, input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.addCanvasEntityReference, canvasId, input),
+    saveDocument: (canvasId, input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.saveCanvasDocument, canvasId, input),
+    onEntitiesChanged: (listener) => {
+      const handler = (): void => listener()
+      ipcRenderer.on(IPC_EVENTS.canvasEntitiesChanged, handler)
+      return () => ipcRenderer.removeListener(IPC_EVENTS.canvasEntitiesChanged, handler)
+    }
+  },
   domain: {
     createRelation: (input) => ipcRenderer.invoke(IPC_CHANNELS.createRelation, input),
     deleteRelation: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteRelation, id),

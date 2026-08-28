@@ -17,6 +17,7 @@ export const DATA_ARCHIVE_VERSION = 1
 export const DATA_ARCHIVE_TABLES = [
   'relations',
   'items',
+  'canvases',
   'focuses',
   'threads',
   'commitments',
@@ -45,6 +46,7 @@ export const DATA_ARCHIVE_TABLES = [
   'todo_lists',
   'todo_sort_placements',
   'notes',
+  'canvas_entity_references',
   'status_transitions',
   'focus_status_transitions',
   'thread_status_transitions',
@@ -101,6 +103,7 @@ const BOOLEAN_COLUMNS = new Set([
   'needs_review',
   'done',
   'shared_across_subjects',
+  'effective_sensitive',
   'required',
   'needs_attestation'
 ])
@@ -147,7 +150,9 @@ const INTEGER_COLUMNS = new Set([
   'template_version',
   'version',
   'position',
-  'weekday'
+  'weekday',
+  'canvas_id',
+  'entity_id'
 ])
 const TIMESTAMP_COLUMNS = new Set([
   'created_at',
@@ -157,7 +162,7 @@ const TIMESTAMP_COLUMNS = new Set([
   'baseline_at',
   'last_edit_at'
 ])
-const OPTIONAL_TIMESTAMP_COLUMNS = new Set(['completed_at'])
+const OPTIONAL_TIMESTAMP_COLUMNS = new Set(['completed_at', 'missing_since'])
 const DATE_COLUMNS = new Set([
   'recorded_on',
   'effective_from',
@@ -654,6 +659,12 @@ function repairRequiredRecords(
 ): number {
   const timestamp = now.toISOString()
   let repaired = 0
+  repaired += database.run(
+    `INSERT INTO canvases (name, data_json, revision, created_at, updated_at)
+     SELECT 'Default', NULL, 0, ?, ?
+     WHERE NOT EXISTS (SELECT 1 FROM canvases)`,
+    [timestamp, timestamp]
+  ).changes
   if (repairLegacyRoutineSchedules) {
     repaired += database.run(
       `INSERT OR IGNORE INTO routine_schedule_weekdays (routine_id, weekday)

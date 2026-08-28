@@ -248,6 +248,15 @@ function broadcastDomainChanged(): void {
   }
   invalidateNavigationBadges()
   broadcastRoutinesChanged()
+  broadcastCanvasEntitiesChanged()
+}
+
+function broadcastCanvasEntitiesChanged(): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(IPC_EVENTS.canvasEntitiesChanged)
+    }
+  }
 }
 
 function broadcastMcpSettingsChanged(settings: McpSettingsSnapshot): void {
@@ -486,7 +495,8 @@ app.whenReady().then(async () => {
     broadcastMcpSettingsChanged,
     broadcastNavigationPinsChanged,
     broadcastSidebarFoldersChanged,
-    startEnhancedRetrievalWarmup
+    startEnhancedRetrievalWarmup,
+    broadcastCanvasEntitiesChanged
   )
 
   Menu.setApplicationMenu(
