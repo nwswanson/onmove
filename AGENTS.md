@@ -57,10 +57,11 @@
   unrelated ghost. Live Thread, Commitment, Routine, Note, and Todo records remain authoritative
   whenever they exist. Title, status, sensitivity, and MCP/UI mutations notify the narrow Canvas
   metadata event so open cards reconcile without broad application remounts. A deleted target must
-  never cascade its Canvas reference: render the cached card as a dashed, display-only ghost until
-  the user removes that element from the Canvas. Removing a card deletes only its Canvas reference,
-  never the underlying entity. Include both Canvas tables in tolerant application import/export and
-  repair a missing Default Canvas when importing an older archive.
+  never cascade its Canvas reference: render the cached card as a dashed, non-navigable ghost until
+  the user removes that element from the Canvas. Ghosts retain the same React-owned pointer-drag
+  behavior as live cards, while remaining otherwise read-only. Removing a card deletes only its
+  Canvas reference, never the underlying entity. Include both Canvas tables in tolerant application
+  import/export and repair a missing Default Canvas when importing an older archive.
 - Build the Canvas source panel through the domain-free searchable entity-library sidebar contract.
   Partition all live records by kind, retain hierarchy context in each row, honor sensitive-list
   visibility, show lifecycle/derived status, and disable only a live record already placed on that

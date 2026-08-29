@@ -463,9 +463,7 @@ export function CanvasWorkspace({
                               ? undefined
                               : () => void openEntity(reference.target)}
                             onRemove={() => removeCard(element.id)}
-                            onMovePointerDown={reference.deleted
-                              ? undefined
-                              : (event) => moveCard(element.id, event)}
+                            onMovePointerDown={(event) => moveCard(element.id, event)}
                           />
                         </div>
                       </div>

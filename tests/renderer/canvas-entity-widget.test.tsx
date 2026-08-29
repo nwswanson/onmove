@@ -57,8 +57,9 @@ describe('CanvasEntityWidget', () => {
     expect(onMovePointerDown).toHaveBeenCalledOnce()
   })
 
-  it('keeps legacy small geometry readable and makes deleted widgets visibly inert', () => {
+  it('keeps legacy small geometry readable and lets a deleted widget move without opening', () => {
     const onRemove = vi.fn()
+    const onMovePointerDown = vi.fn()
     const { rerender } = render(
       <CanvasEntityWidget model={model} compact onRemove={onRemove} />
     )
@@ -74,10 +75,14 @@ describe('CanvasEntityWidget', () => {
           deletedAt: '2026-08-28T12:00:00.000Z'
         }}
         onRemove={onRemove}
+        onMovePointerDown={onMovePointerDown}
       />
     )
-    expect(screen.getByRole('article')).toHaveClass('border-dashed', 'shadow-none')
+    const ghost = screen.getByRole('article')
+    expect(ghost).toHaveClass('border-dashed', 'shadow-none', 'cursor-grab')
     expect(screen.getByText('Previously in Mission Control › Launch readiness')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Open Commitment/ })).not.toBeInTheDocument()
+    fireEvent.pointerDown(ghost, { button: 0, clientX: 40, clientY: 50 })
+    expect(onMovePointerDown).toHaveBeenCalledOnce()
   })
 })

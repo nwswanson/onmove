@@ -201,6 +201,24 @@ test('places a live entity on the durable Canvas and preserves it as a ghost aft
     const ghostWidget = canvas.locator('[aria-label="Deleted Thread: Canvas delivery"]')
     await expect(ghostWidget).toBeVisible()
     await expect(ghostWidget).toHaveClass(/border-dashed/)
+    const beforeGhostMove = readCardPosition()
+    const ghostWidgetBox = await ghostWidget.boundingBox()
+    expect(ghostWidgetBox).not.toBeNull()
+    if (!ghostWidgetBox || !beforeGhostMove) {
+      throw new Error('Canvas ghost widget geometry was unavailable')
+    }
+    await appWindow.mouse.move(
+      ghostWidgetBox.x + 18,
+      ghostWidgetBox.y + ghostWidgetBox.height - 18
+    )
+    await appWindow.mouse.down()
+    await appWindow.mouse.move(
+      ghostWidgetBox.x + 76,
+      ghostWidgetBox.y + ghostWidgetBox.height + 18,
+      { steps: 4 }
+    )
+    await appWindow.mouse.up()
+    await expect.poll(readCardPosition).not.toEqual(beforeGhostMove)
     await ghostWidget.getByRole('button', {
       name: 'Remove Canvas delivery from Canvas'
     }).click()
