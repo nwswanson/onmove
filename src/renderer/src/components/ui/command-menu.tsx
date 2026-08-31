@@ -1,7 +1,7 @@
+import { useMemo, useState } from 'react'
 import { CheckSquare2, CircleDot, FolderKanban, GitBranch, Tag } from 'lucide-react'
 import {
   CommandDialog,
-  CommandEmpty,
   CommandGroup,
   CommandInput,
   CommandItem,
@@ -9,6 +9,7 @@ import {
   CommandLoading,
   CommandShortcut
 } from '@/components/ui/command'
+import { rankedCommandMenuGroups } from '@/components/ui/command-menu-ranking'
 import {
   LifecycleStatusLabel,
   type LifecycleStatusOptionModel
@@ -62,6 +63,15 @@ function ResultIcon({ icon }: { icon: CommandMenuIcon }): React.JSX.Element {
 /** Domain-free Spotlight-style receiver; callers supply data and receive only a selected id. */
 export function CommandMenu({
   open,
+  ...props
+}: CommandMenuProps): React.JSX.Element {
+  // A search session is intentionally ephemeral. Unmounting it with the
+  // dialog resets query and keyboard selection without synchronizing React
+  // state from an effect when a caller closes the command externally.
+  return open ? <OpenCommandMenu {...props} /> : <></>
+}
+
+function OpenCommandMenu({
   label,
   placeholder,
   resultsLabel = 'Navigation results',
@@ -73,10 +83,41 @@ export function CommandMenu({
   error,
   onOpenChange,
   onSelect
-}: CommandMenuProps): React.JSX.Element {
+}: Omit<CommandMenuProps, 'open'>): React.JSX.Element {
+  const [search, setSearch] = useState('')
+  const [selectedItemId, setSelectedItemId] = useState('')
+  const visibleGroups = useMemo(
+    () => rankedCommandMenuGroups(groups, search),
+    [groups, search]
+  )
+
+  const selectedValue = visibleGroups.some(({ items }) =>
+    items.some(({ id }) => id === selectedItemId))
+    ? selectedItemId
+    : visibleGroups[0]?.items[0]?.id ?? ''
+
+  function updateSearch(value: string): void {
+    const nextGroups = rankedCommandMenuGroups(groups, value)
+    setSearch(value)
+    setSelectedItemId(nextGroups[0]?.items[0]?.id ?? '')
+  }
+
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange} label={label} loop>
-      <CommandInput autoFocus placeholder={placeholder} />
+    <CommandDialog
+      open
+      onOpenChange={onOpenChange}
+      label={label}
+      loop
+      shouldFilter={false}
+      value={selectedValue}
+      onValueChange={setSelectedItemId}
+    >
+      <CommandInput
+        autoFocus
+        placeholder={placeholder}
+        value={search}
+        onValueChange={updateSearch}
+      />
       <CommandList label={resultsLabel}>
         {loading && groups.length === 0 ? (
           <CommandLoading label={loadingLabel}>{loadingLabel}</CommandLoading>
@@ -86,14 +127,17 @@ export function CommandMenu({
           </p>
         ) : (
           <>
-            <CommandEmpty>{emptyLabel}</CommandEmpty>
-            {groups.map((group) => (
+            {visibleGroups.length === 0 && (
+              <p className="py-10 text-center text-sm text-muted-foreground">
+                {emptyLabel}
+              </p>
+            )}
+            {visibleGroups.map((group) => (
               <CommandGroup key={group.id} heading={group.label}>
                 {group.items.map((item) => (
                   <CommandItem
                     key={item.id}
-                    value={`${item.label} ${item.description} ${item.id}`}
-                    keywords={[...item.keywords]}
+                    value={item.id}
                     onSelect={() => onSelect(item.id)}
                   >
                     <ResultIcon icon={item.icon} />

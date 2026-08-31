@@ -228,6 +228,11 @@
   apply the same hierarchy-cascading sensitive visibility used by ordinary collections, including
   sensitive Subjects. Result selection must emit a typed destination and reuse atomic Focus or Tag
   deep-link navigation rather than coordinating sidebar state in the palette.
+- Keep the shared `Cmd-K` and `Cmd-P` receiver grouped by kind only while its query is empty. Once
+  the user types, flatten all kinds into one globally relevance-ranked result set so an earlier
+  group can never place weaker matches above an exact title, Subject, or hierarchy-segment match.
+  Weight exact semantic fields ahead of prefixes, substrings, and fuzzy fallbacks; keep every query
+  token mandatory and select the highest-ranked result for immediate keyboard activation.
 - Share one presentation-only, safely persisted closed-work preference between the `Cmd-K` command
   palette and `Cmd-P` Update target picker. It defaults off, so both menus project only Active and
   Paused Focus, Thread, and Commitment hierarchy; enabling it admits Done and Cancelled hierarchy
