@@ -4,6 +4,7 @@ import type {
   ThreadSnapshot,
   TodoSnapshot
 } from '../../../../shared/contracts'
+import { entityReference } from '../../../../shared/entity-reference'
 import type {
   FocusWorkspaceDestinationTarget
 } from '@/features/application/application-navigation'
@@ -125,15 +126,19 @@ export function commandPaletteGroups(
     {
       id: 'focuses',
       label: 'Focuses',
-      items: sorted(focuses.map((focus) => ({
-        id: `focus:${focus.id}`,
-        icon: 'folder' as const,
-        label: focus.title,
-        description: 'Focus · Overall',
-        keywords: ['focus', 'overall', focus.title, focus.status],
-        status: workStatusLabel(focus.status),
-        destination: { type: 'focus' as const, target: focusTarget(focus.id) }
-      })))
+      items: sorted(focuses.map((focus) => {
+        const code = entityReference('focus', focus.id)
+        return {
+          id: `focus:${focus.id}`,
+          icon: 'folder' as const,
+          label: focus.title,
+          description: 'Focus · Overall',
+          code,
+          keywords: ['focus', 'overall', focus.title, focus.status, code],
+          status: workStatusLabel(focus.status),
+          destination: { type: 'focus' as const, target: focusTarget(focus.id) }
+        }
+      }))
     },
     {
       id: 'threads',
@@ -144,14 +149,16 @@ export function commandPaletteGroups(
         const ordinaryContextLabel = scope?.scopeId == null
           ? 'Thread-wide'
           : 'All subjects'
+        const code = entityReference('thread', thread.id)
         const ordinaryDestination: CommandPaletteItemModel = {
           id: `thread:${thread.id}`,
           icon: 'branch' as const,
           label: thread.title,
           description: `${focus.title} › ${ordinaryContextLabel}`,
+          code,
           keywords: [
             'thread', 'scope', thread.title, focus.title, ordinaryContextLabel,
-            thread.status, thread.health
+            thread.status, thread.health, code
           ],
           status: workStatusLabel(thread.status),
           ...(thread.health === 'none' ? {} : { state: healthStateLabel(thread.health) }),
@@ -167,6 +174,7 @@ export function commandPaletteGroups(
             icon: 'branch',
             label: thread.title,
             description: `${focus.title} › ${subject.name}`,
+            code,
             keywords: [
               'thread',
               'scope',
@@ -174,6 +182,8 @@ export function commandPaletteGroups(
               thread.title,
               focus.title,
               subject.name,
+              code,
+              entityReference('subject', subject.id),
               thread.status,
               thread.health
             ],
@@ -199,17 +209,20 @@ export function commandPaletteGroups(
         const ordinaryContextLabel = workingContext?.scopeId === null
           ? 'Commitment-wide'
           : 'All subjects'
+        const code = entityReference('commitment', commitment.id)
         const ordinaryDestination: CommandPaletteItemModel = {
           id: `commitment:${commitment.id}`,
           icon: 'item' as const,
           label: commitment.title,
           description: `${path} › ${ordinaryContextLabel}`,
+          code,
           keywords: [
             'commitment',
             commitment.title,
             context.focus.title,
             parent,
             ordinaryContextLabel,
+            code,
             commitment.status,
             commitment.state
           ],
@@ -229,6 +242,7 @@ export function commandPaletteGroups(
             icon: 'item',
             label: commitment.title,
             description: `${path} › ${cell.subject.name}`,
+            code,
             keywords: [
               'commitment',
               'scope',
@@ -237,6 +251,8 @@ export function commandPaletteGroups(
               context.focus.title,
               parent,
               cell.subject.name,
+              code,
+              entityReference('subject', cell.subjectId),
               commitment.status,
               cell.state
             ],
@@ -268,12 +284,18 @@ export function commandPaletteGroups(
           context.commitment?.title,
           todo.subject?.name
         ].filter((part): part is string => part !== undefined)
+        const code = entityReference('todo', todo.id)
         return [{
           id: `todo:${todo.id}`,
           icon: 'check' as const,
           label: todo.name,
           description: path.join(' › '),
-          keywords: ['todo', todo.name, todo.done ? 'done' : 'open', ...path],
+          code,
+          keywords: [
+            'todo', todo.name, todo.done ? 'done' : 'open', code,
+            ...(todo.subject ? [entityReference('subject', todo.subject.id)] : []),
+            ...path
+          ],
           status: todoStatus(todo),
           destination: {
             type: 'focus' as const,

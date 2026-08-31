@@ -209,6 +209,14 @@ describe('update command presenters', () => {
       scope: { scopeId: 50, subjectId: 61 },
       description: 'Project Atlas › Sprint execution › Customer Operations'
     })
+    expect(threadItems[0]).toMatchObject({
+      code: '#T10',
+      keywords: expect.arrayContaining(['#S61'])
+    })
+    expect(commitmentItems[0]).toMatchObject({
+      code: '#C20',
+      keywords: expect.arrayContaining(['#S61'])
+    })
     expect(threadItems).not.toContainEqual(expect.objectContaining({ id: 'thread:10' }))
     expect(commitmentItems).not.toContainEqual(expect.objectContaining({ id: 'commitment:20' }))
   })

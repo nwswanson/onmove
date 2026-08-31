@@ -95,9 +95,11 @@
   markup.
 - Every selected destination must update the main view, use `aria-current="page"`, and retain a
   visible keyboard focus state.
-- Expose a selected user-addressable record's public code only in its main-pane detail header;
-  never repeat codes in primary/contextual sidebars, collection rows, tables, menus, drawers, or
-  other list projections. Public codes derive from the stable SQLite id and a collision-free kind
+- Expose a selected user-addressable record's public code in its main-pane detail header and as a
+  compact trailing identifier in `Cmd-K` / `Cmd-P` results; never repeat codes in primary/contextual
+  sidebars, ordinary collection rows, tables, context menus, drawers, or other list projections.
+  Command search indexes both the result entity code and any canonical Subject code that identifies
+  its scoped destination. Public codes derive from the stable SQLite id and a collision-free kind
   prefix in `#T4` form: `F` Focus, `T` Thread, `C` Commitment, `R` Routine, `U` Update, `TD` Todo,
   `N` Note, and `S` Subject. Do not persist the formatted code or expose internal Scope overlays,
   memberships, Routine Runs, and cells as user-addressable records. MCP responses own the same
@@ -232,7 +234,8 @@
   the user types, flatten all kinds into one globally relevance-ranked result set so an earlier
   group can never place weaker matches above an exact title, Subject, or hierarchy-segment match.
   Weight exact semantic fields ahead of prefixes, substrings, and fuzzy fallbacks; keep every query
-  token mandatory and select the highest-ranked result for immediate keyboard activation.
+  token mandatory and select the highest-ranked result for immediate keyboard activation. Treat an
+  exact public `#Code` as the strongest searchable field.
 - Share one presentation-only, safely persisted closed-work preference between the `Cmd-K` command
   palette and `Cmd-P` Update target picker. It defaults off, so both menus project only Active and
   Paused Focus, Thread, and Commitment hierarchy; enabling it admits Done and Cancelled hierarchy

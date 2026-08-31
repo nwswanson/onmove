@@ -24,6 +24,7 @@ function matchStrength(candidate: string, query: string): number {
 function searchFields(item: CommandMenuItemModel): SearchField[] {
   const descriptionSegments = item.description.split(/[›·/]/u)
   return [
+    ...(item.code ? [{ value: item.code, weight: 1_200 }] : []),
     { value: item.label, weight: 1_000 },
     ...item.keywords.map((keyword) => ({ value: keyword, weight: 900 })),
     ...descriptionSegments.map((segment) => ({ value: segment, weight: 850 })),

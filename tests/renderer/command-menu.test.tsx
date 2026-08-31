@@ -18,6 +18,7 @@ describe('CommandMenu', () => {
           items: [{
             id: 'focus:1',
             icon: 'folder',
+            code: '#F1',
             label: 'Personname planning',
             description: 'Focus · Overall',
             keywords: ['focus', 'personname planning']
@@ -28,6 +29,7 @@ describe('CommandMenu', () => {
           items: [{
             id: 'thread:2',
             icon: 'branch',
+            code: '#T2',
             label: 'Personname',
             description: 'People › All subjects',
             keywords: ['thread', 'personname']
@@ -57,6 +59,11 @@ describe('CommandMenu', () => {
       expect.stringContaining('Personname planningFocus · Overall')
     ])
     expect(options[0]).toHaveAttribute('aria-selected', 'true')
+    fireEvent.change(within(dialog).getByRole('combobox'), {
+      target: { value: '#T2' }
+    })
+    expect(within(dialog).getAllByRole('option')).toHaveLength(1)
+    expect(within(dialog).getByText('#T2')).toBeVisible()
     fireEvent.keyDown(within(dialog).getByRole('combobox'), { key: 'Enter' })
     expect(onSelect).toHaveBeenCalledWith('thread:2')
   })

@@ -24,6 +24,7 @@ export interface CommandMenuItemModel {
   label: string
   description: string
   keywords: readonly string[]
+  code?: string
   status?: LifecycleStatusOptionModel
   state?: StateLabelModel
 }
@@ -151,6 +152,15 @@ function OpenCommandMenu({
                     <span className="max-w-[38%] truncate text-xs text-muted-foreground">
                       {item.description}
                     </span>
+                    {item.code && (
+                      <span
+                        title={`Public ID ${item.code}`}
+                        aria-label={`Public ID ${item.code}`}
+                        className="inline-flex h-5 shrink-0 select-text items-center rounded-md border border-border/70 bg-muted/35 px-1.5 font-mono text-[0.625rem] font-medium leading-none tracking-[-0.01em] tabular-nums text-muted-foreground"
+                      >
+                        {item.code}
+                      </span>
+                    )}
                   </CommandItem>
                 ))}
               </CommandGroup>

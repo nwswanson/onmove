@@ -8,6 +8,7 @@ import type {
   UpdateParent,
   UpdateScopeCell
 } from '../../../../shared/contracts'
+import { entityReference } from '../../../../shared/entity-reference'
 import type {
   CommandMenuGroupModel,
   CommandMenuIcon,
@@ -113,7 +114,14 @@ function item(
   status: LifecycleStatusOptionModel,
   state?: StateLabelModel
 ): UpdateCommandItemModel {
-  return { ...target, icon, status, ...(state ? { state } : {}), target }
+  return {
+    ...target,
+    icon,
+    code: entityReference(target.kind, target.parent.id),
+    status,
+    ...(state ? { state } : {}),
+    target
+  }
 }
 
 function sorted(items: UpdateCommandItemModel[]): UpdateCommandItemModel[] {
@@ -157,6 +165,7 @@ function threadTargets(
         description: `${focus.title} › ${subject.name}`,
         keywords: [
           'thread', 'subject', focus.title, thread.title, subject.name,
+          entityReference('subject', subject.id),
           thread.status, thread.health
         ]
       }, 'branch', workStatusLabel(thread.status), thread.health === 'none'
@@ -216,7 +225,8 @@ function commitmentTargets(
         description: `${parentPath} › ${cell.subject.name}`,
         keywords: [
           'commitment', 'subject', focus.title, thread?.title ?? 'overall',
-          commitment.title, cell.subject.name, commitment.status, cell.state
+          commitment.title, cell.subject.name, entityReference('subject', cell.subjectId),
+          commitment.status, cell.state
         ]
       }, 'item', workStatusLabel(commitment.status), cell.state === 'none'
         ? undefined

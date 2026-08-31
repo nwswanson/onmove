@@ -174,6 +174,7 @@ describe('command palette presenters', () => {
       {
         id: 'focus:1',
         label: 'Project Atlas',
+        code: '#F1',
         destination: {
           type: 'focus',
           target: { focusId: 1, threadId: null, commitmentId: null, subjectId: null }
@@ -182,6 +183,7 @@ describe('command palette presenters', () => {
       {
         id: 'thread:10',
         label: 'Sprint execution',
+        code: '#T10',
         description: 'Project Atlas › All subjects',
         destination: {
           type: 'focus',
@@ -191,6 +193,8 @@ describe('command palette presenters', () => {
       {
         id: 'thread:10:scope:4:subject:30',
         label: 'Sprint execution',
+        code: '#T10',
+        keywords: expect.arrayContaining(['#T10', '#S30']),
         description: 'Project Atlas › North region',
         destination: {
           type: 'focus',
@@ -209,6 +213,7 @@ describe('command palette presenters', () => {
       {
         id: 'commitment:20',
         label: 'Improve ticket quality',
+        code: '#C20',
         description: 'Project Atlas › Sprint execution › All subjects',
         destination: {
           type: 'focus',
@@ -218,6 +223,8 @@ describe('command palette presenters', () => {
       {
         id: 'commitment:20:scope:4:subject:30',
         label: 'Improve ticket quality',
+        code: '#C20',
+        keywords: expect.arrayContaining(['#C20', '#S30']),
         description: 'Project Atlas › Sprint execution › North region',
         destination: {
           type: 'focus',
@@ -236,6 +243,8 @@ describe('command palette presenters', () => {
       {
         id: 'todo:40',
         label: 'Confirm regional owner',
+        code: '#TD40',
+        keywords: expect.arrayContaining(['#TD40', '#S30']),
         description: 'Project Atlas › Sprint execution › Improve ticket quality › North region',
         destination: {
           type: 'focus',

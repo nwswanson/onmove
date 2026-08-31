@@ -1989,6 +1989,10 @@ describe('App', () => {
     })).toBeVisible()
     expect(within(dialog).getByRole('option', { name: /^Confirm launch owner/ })).toBeVisible()
     expect(within(dialog).getByRole('option', { name: /^@launch/ })).toBeVisible()
+    expect(within(dialog).getByText('#F5')).toBeVisible()
+    expect(within(dialog).getAllByText('#T15')).toHaveLength(2)
+    expect(within(dialog).getAllByText('#C25')).toHaveLength(2)
+    expect(within(dialog).getByText('#TD75')).toBeVisible()
 
     await user.type(
       within(dialog).getByPlaceholderText(/Search Focuses, Threads, Commitments/),
@@ -2005,7 +2009,7 @@ describe('App', () => {
     const commitmentSearch = await screen.findByRole('dialog', { name: 'Jump to anything' })
     await user.type(
       within(commitmentSearch).getByPlaceholderText(/Search Focuses, Threads, Commitments/),
-      'ticket quality'
+      '#C25'
     )
     await user.click(within(commitmentSearch).getByRole('option', {
       name: /Improve ticket quality Active Project Atlas › Sprint execution › All subjects/
@@ -2021,7 +2025,7 @@ describe('App', () => {
     const reopened = await screen.findByRole('dialog', { name: 'Jump to anything' })
     await user.type(
       within(reopened).getByPlaceholderText(/Search Focuses, Threads, Commitments/),
-      'customer operations'
+      '#S61'
     )
     await user.click(within(reopened).getByRole('option', {
       name: /Improve ticket quality Active Green Project Atlas › Sprint execution › Customer Operations/
@@ -2484,6 +2488,10 @@ describe('App', () => {
       document.dispatchEvent(shortcut)
       expect(shortcut.defaultPrevented).toBe(true)
       const chooser = await screen.findByRole('dialog', { name: 'Choose update target' })
+      await user.type(
+        within(chooser).getByPlaceholderText(/Filter Threads, Commitments, and Subjects/),
+        '#T18'
+      )
       expect(await within(chooser).findByRole('option', {
         name: /^Global update target/
       })).toBeVisible()
