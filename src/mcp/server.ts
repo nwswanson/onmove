@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer'
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
 import type { AppDatabase } from '../main/database'
@@ -66,6 +66,8 @@ export interface OnMoveMcpServerOptions {
   getCurrentUiContext?: () => McpUiContextSnapshot
   /** Shared by protocol instances belonging to one running endpoint. */
   rejectedCallTracker?: RejectedCallTracker
+  /** Shared UUID handles for search cursors across protocol connections. */
+  searchContinuationStore?: SearchContinuationStore
 }
 
 export interface SearchScopeInput {
@@ -276,6 +278,88 @@ interface SearchContinuationPayload {
 
 const SEARCH_CONTINUATION_PREFIX = 'onmove-search-v5.'
 const SEARCH_CONTINUATION_SECRET = randomBytes(32)
+const SEARCH_CONTINUATION_HANDLE_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
+const SEARCH_CONTINUATION_TTL_MS = 3 * 60 * 60 * 1_000
+const SEARCH_CONTINUATION_MAXIMUM_ENTRIES = 1_024
+
+interface SearchContinuationStoreEntry {
+  signedToken: string
+  expiresAt: number
+}
+
+export interface SearchContinuationStoreOptions {
+  ttlMs?: number
+  maximumEntries?: number
+  now?: () => number
+}
+
+/**
+ * Keeps complete signed cursors server-side and gives MCP clients short UUID
+ * handles. The store is shared by every protocol connection on one running
+ * app, bounded in size, and intentionally reset when the MCP endpoint stops.
+ */
+export class SearchContinuationStore {
+  private readonly entries = new Map<string, SearchContinuationStoreEntry>()
+  private readonly ttlMs: number
+  private readonly maximumEntries: number
+  private readonly now: () => number
+
+  constructor(options: SearchContinuationStoreOptions = {}) {
+    this.ttlMs = options.ttlMs ?? SEARCH_CONTINUATION_TTL_MS
+    this.maximumEntries = options.maximumEntries ?? SEARCH_CONTINUATION_MAXIMUM_ENTRIES
+    this.now = options.now ?? Date.now
+    if (!Number.isSafeInteger(this.ttlMs) || this.ttlMs < 1) {
+      throw new TypeError('Search continuation ttlMs must be a positive integer')
+    }
+    if (!Number.isSafeInteger(this.maximumEntries) || this.maximumEntries < 1) {
+      throw new TypeError('Search continuation maximumEntries must be a positive integer')
+    }
+  }
+
+  issue(signedToken: string): string {
+    const now = this.now()
+    this.prune(now)
+    const handle = randomUUID()
+    this.entries.set(handle, { signedToken, expiresAt: now + this.ttlMs })
+    while (this.entries.size > this.maximumEntries) {
+      this.entries.delete(this.entries.keys().next().value as string)
+    }
+    return handle
+  }
+
+  resolve(value: string): string {
+    const handle = value.replace(/\s/gu, '').toLocaleLowerCase()
+    if (!SEARCH_CONTINUATION_HANDLE_PATTERN.test(handle)) {
+      throw new TypeError(
+        'SEARCH_CONTINUATION_INVALID: continuationToken must be the UUID handle returned by ' +
+        'the preceding OnMove search page. Copy only that handle; inserted whitespace is tolerated.'
+      )
+    }
+    const entry = this.entries.get(handle)
+    if (!entry) {
+      throw new TypeError(
+        'SEARCH_CONTINUATION_EXPIRED_OR_UNKNOWN: This UUID handle is unavailable. Search ' +
+        'continuation handles expire after 3 hours and when the OnMove MCP server restarts. ' +
+        'Restart the original search with its criteria.'
+      )
+    }
+    if (entry.expiresAt <= this.now()) {
+      this.entries.delete(handle)
+      throw new TypeError(
+        'SEARCH_CONTINUATION_EXPIRED: This UUID handle expired after 3 hours. Restart the ' +
+        'original search with its criteria.'
+      )
+    }
+    return entry.signedToken
+  }
+
+  private prune(now: number): void {
+    for (const [handle, entry] of this.entries) {
+      if (entry.expiresAt <= now) this.entries.delete(handle)
+    }
+  }
+}
 
 function encodeSearchContinuation(payload: SearchContinuationPayload): string {
   const { lifecycle, ...rest } = payload
@@ -2049,7 +2133,7 @@ export function createOnMoveMcpServer(
     {
       instructions: composeOnMoveMcpInstructions(
         database.mcpSettings.get().clientInstructions,
-        'Choose reads by intent. Every user-addressable entity returned by MCP has a canonical code such as #F2, #T4, or #U90 and a canonical onmove:// URI. Single-entity reads and mutation results also return a ready-to-use markdownLink in textual content without expanding collection results. In user-facing mutation summaries, use that returned link exactly—for example, Updated [Delivery #T24](onmove://thread/24)—instead of reporting an unlinked code. When the user supplies a code, call onmove.get_entity_by_code directly and do not search. For current action queues use onmove.get_reviews and onmove.get_todos. get_todos includes open Todos and the bounded recent-completion window only while their complete Focus/Thread/Commitment hierarchy is active or paused; use search_todos with lifecycle.mode=closed or all when the user intentionally asks for historical Todos. For a compact queryless inventory use list_focuses, list_threads, list_commitments, or list_routines; these return hierarchy and one explicit projection row per applicable Subject without child Updates, Notes, or rich-text documents. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Use onmove.search across all relevant kinds when the request asks for information "about" a Thread or Focus: the answer may be evidence inside a Note, Update, Todo, or other descendant, not an entity whose title matches the words. Each primary search match always reports its exact matched field, containing Thread, complete coded path, lifecycle provenance, and recommendedWriteTarget; these are never optional or budget-truncated. hierarchyPaths is only an auxiliary Subject/Scope expansion and must not replace each match\'s own path. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Search never returns lossless rich text. Request includeRichText=true on one known entity only immediately before a full structural replacement. Use onmove.retrieve after exact hierarchy IDs are known when evidence must stay inside an explicit workspace, Focus, asserted Focus/Thread, and optional canonical Subject intersection, or when provider-neutral enhanced retrieval is useful. Context IDs are operational identity boundaries: semantic relevance can rank evidence inside them but must never disambiguate an entity, select a sibling context, or choose a write target. Search and retrieve resolve an omitted lifecycle from OnMove Settings: current active/paused lineage by default, or all current and closed work when Include closed work in MCP results is enabled. Explicit lifecycle.mode=current, closed, or all always overrides that preference. Every hit reports direct status, effective lifecycle, complete lineage, and explicit closure provenance identifying direct versus parent-inherited closure. Never silently treat excluded history as current; when lifecycleCoverage.wideningRecommended is true, repeat the same initial request exactly as directed by lifecycleCoverage.nextAction. The legacy onmove.search, onmove.continue_search, and every onmove.search_<kind> tool remain available for initial cross-kind discovery, exact lexical search, queryless structured listing, and Subject hierarchy projection. Send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility. Initial search tools never accept continuationToken. Natural-language wrappers retain meaningful entity terms. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Projection controls auxiliary Subject/Scope expansion, not required primary hierarchy. Inspect projections.*.complete before treating auxiliary paths or Subject uses as exhaustive. Never invent or alter a continuationToken. For another page call onmove.continue_search with only the exact non-null signed token; it preserves the originating search, complete query, lifecycle policy, and stable cursor. If SEARCH_CURSOR_STALE is returned, restart the original search tool with its criteria. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop global discovery and fetch returned IDs or continue only inside the returned boundary. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong Update placement. To move a Thread between Focuses, call onmove.plan_thread_reparent first, inspect its Scope effects, then copy its exact nextAction arguments into onmove.reparent_thread. Delete only after the user explicitly asks for and confirms the exact target; onmove.delete_entity requires confirm=true and may cascade through owned descendants. Inspect diagnostics and warnings. OnMove Settings controls sensitive access, the omitted lifecycle default, and independent View/Edit/Delete grants by resource, Focus, and Thread.'
+        'Choose reads by intent. Every user-addressable entity returned by MCP has a canonical code such as #F2, #T4, or #U90 and a canonical onmove:// URI. Single-entity reads and mutation results also return a ready-to-use markdownLink in textual content without expanding collection results. In user-facing mutation summaries, use that returned link exactly—for example, Updated [Delivery #T24](onmove://thread/24)—instead of reporting an unlinked code. When the user supplies a code, call onmove.get_entity_by_code directly and do not search. For current action queues use onmove.get_reviews and onmove.get_todos. get_todos includes open Todos and the bounded recent-completion window only while their complete Focus/Thread/Commitment hierarchy is active or paused; use search_todos with lifecycle.mode=closed or all when the user intentionally asks for historical Todos. For a compact queryless inventory use list_focuses, list_threads, list_commitments, or list_routines; these return hierarchy and one explicit projection row per applicable Subject without child Updates, Notes, or rich-text documents. A known durable ID uses get_<entity>_by_id; an exact title hierarchy uses get_<entity>_by_path; unknown text in one kind uses search_<entities>. Use onmove.search across all relevant kinds when the request asks for information "about" a Thread or Focus: the answer may be evidence inside a Note, Update, Todo, or other descendant, not an entity whose title matches the words. Each primary search match always reports its exact matched field, containing Thread, complete coded path, lifecycle provenance, and recommendedWriteTarget; these are never optional or budget-truncated. hierarchyPaths is only an auxiliary Subject/Scope expansion and must not replace each match\'s own path. Path tools accept titles only and return ambiguity rather than guessing. Updates have get_update_by_id, get_updates_by_ids, and search_updates but no by-path getter because a hierarchy path is not unique. Compact reads render rich fields as Markdown and omit lossless richText. Search never returns lossless rich text. Request includeRichText=true on one known entity only immediately before a full structural replacement. Use onmove.retrieve after exact hierarchy IDs are known when evidence must stay inside an explicit workspace, Focus, asserted Focus/Thread, and optional canonical Subject intersection, or when provider-neutral enhanced retrieval is useful. Context IDs are operational identity boundaries: semantic relevance can rank evidence inside them but must never disambiguate an entity, select a sibling context, or choose a write target. Search and retrieve resolve an omitted lifecycle from OnMove Settings: current active/paused lineage by default, or all current and closed work when Include closed work in MCP results is enabled. Explicit lifecycle.mode=current, closed, or all always overrides that preference. Every hit reports direct status, effective lifecycle, complete lineage, and explicit closure provenance identifying direct versus parent-inherited closure. Never silently treat excluded history as current; when lifecycleCoverage.wideningRecommended is true, repeat the same initial request exactly as directed by lifecycleCoverage.nextAction. The legacy onmove.search, onmove.continue_search, and every onmove.search_<kind> tool remain available for initial cross-kind discovery, exact lexical search, queryless structured listing, and Subject hierarchy projection. Send the user\'s specific entity/Subject name as text, or send text=null with kinds for a queryless list; omit scope for global visibility. Initial search tools never accept continuationToken. Natural-language wrappers retain meaningful entity terms. Date, createdAt, and updatedAt are structured local-date ranges, never full-text terms. Projection controls auxiliary Subject/Scope expansion, not required primary hierarchy. Inspect projections.*.complete before treating auxiliary paths or Subject uses as exhaustive. For another page call onmove.continue_search with only the returned non-null UUID continuationToken. The running app keeps the complete signed query server-side; the UUID expires after 3 hours or an MCP server restart, and inserted whitespace is tolerated. Never invent a UUID. If SEARCH_CURSOR_STALE or SEARCH_CONTINUATION_EXPIRED_OR_UNKNOWN is returned, restart the original search tool with its criteria. When a request names a Subject, preserve it as the primary filter, inspect namedSubjectDiscovery and subjectUses, and treat attributed uses as authoritative. If searchStatus.sufficient or doNotBroaden is true, stop global discovery and fetch returned IDs or continue only inside the returned boundary. Use onmove.review_subject for a compact person/entity situation inside one Thread. Paths use {thread:"Team management",commitment:"1:1s",subject:"Michael"}, displayed as Team management > 1:1s[Michael]. Preserve bracketed Subject attribution on create_update. Use onmove.resolve_work_target for semantic scoped-write planning. Before mutations inspect writeGuide. Use onmove.reparent_update to repair wrong Update placement. To move a Thread between Focuses, call onmove.plan_thread_reparent first, inspect its Scope effects, then copy its exact nextAction arguments into onmove.reparent_thread. Delete only after the user explicitly asks for and confirms the exact target; onmove.delete_entity requires confirm=true and may cascade through owned descendants. Inspect diagnostics and warnings. OnMove Settings controls sensitive access, the omitted lifecycle default, and independent View/Edit/Delete grants by resource, Focus, and Thread.'
       )
     }
   )
@@ -2063,6 +2147,11 @@ export function createOnMoveMcpServer(
     configuredDefaultLifecycleMode()
   )
   const retrievalServerNonce = randomBytes(16).toString('base64url')
+  const searchContinuationStore = options.searchContinuationStore ?? new SearchContinuationStore()
+  const issueSearchContinuation = (payload: SearchContinuationPayload): string =>
+    searchContinuationStore.issue(encodeSearchContinuation(payload))
+  const resolveSearchContinuation = (handle: string): SearchContinuationPayload =>
+    decodeSearchContinuation(searchContinuationStore.resolve(handle))
   const retrievalEnvironment = () => {
     const settings = database.mcpSettings.get()
     const access = {
@@ -2861,7 +2950,7 @@ export function createOnMoveMcpServer(
   const entitySearchOutputSchema = z.object({
     records: z.array(searchRecordOutputSchema),
     hasMore: z.boolean(),
-    continuationToken: z.string().nullable(),
+    continuationToken: z.string().uuid().nullable(),
     searchStatus: searchStatusOutputSchema,
     lifecycleCoverage: lifecycleCoverageOutputSchema,
     appliedQuery: appliedQueryOutputSchema,
@@ -2928,7 +3017,7 @@ export function createOnMoveMcpServer(
     searchStatus: searchStatusOutputSchema,
     lifecycleCoverage: lifecycleCoverageOutputSchema,
     hasMore: z.boolean(),
-    continuationToken: z.string().nullable(),
+    continuationToken: z.string().uuid().nullable(),
     appliedQuery: appliedQueryOutputSchema,
     budget: searchBudgetOutputSchema,
     diagnostics: diagnosticsOutputSchema
@@ -3097,7 +3186,7 @@ export function createOnMoveMcpServer(
     let recordsTruncated = false
     const projectionTruncated = false
     const continuationFor = (cursor: SearchPageCursor | null): string | null => cursor
-      ? encodeSearchContinuation({
+      ? issueSearchContinuation({
           version: 5,
           origin: { type: 'entity', kind },
           text,
@@ -3396,7 +3485,7 @@ export function createOnMoveMcpServer(
       let projectionTruncatedByBudget = false
 
       const continuationFor = (cursor: SearchPageCursor | null): string | null => cursor
-        ? encodeSearchContinuation({
+        ? issueSearchContinuation({
             version: 5,
             origin: { type: 'global' },
             text: normalizedText,
@@ -3448,7 +3537,7 @@ export function createOnMoveMcpServer(
               : 'The requested Subject boundary returned authoritative attributed records.'
             : globalComplete
               ? 'The global structured query is complete; every matching visible record was returned.'
-              : 'Another bounded page remains; continue with the exact signed continuationToken.',
+              : 'Another bounded page remains; continue with the returned UUID continuationToken.',
           nextAction: coverage.nextAction ?? (!hasMatches
             ? 'Adjust the text or applied filters, use a compact list tool for inventory, or resolve a known code, ID, or exact path.'
             : !auxiliaryComplete
@@ -3569,7 +3658,7 @@ export function createOnMoveMcpServer(
         warnings.push('Auxiliary projections reduced for page.maxBytes.')
       }
       if (recordsTruncatedByBudget) {
-        warnings.push('Page shortened for page.maxBytes; continue with the signed token.')
+        warnings.push('Page shortened for page.maxBytes; continue with the UUID token.')
       }
       if (exceedsBudget() && warnings.length > 1) {
         const omittedWarnings = warnings.length - 1
@@ -3596,7 +3685,7 @@ export function createOnMoveMcpServer(
     'onmove.search',
     {
       title: 'Search or list OnMove records',
-      description: 'Use for initial FTS discovery, queryless structured listing, and cross-kind hierarchy browsing. Send text for language search, or text=null with kinds to list records without FTS. An omitted lifecycle follows the user\'s Include closed work in MCP results setting: current active/paused lineage when off, or all current and closed work when on. An explicit lifecycle.mode overrides the setting, and lifecycle filtering happens before ranking. Every result and auxiliary path reports lifecycle.closure.explicit and lifecycle.closure.inherited provenance. lifecycleCoverage reports authorized closed matches that were excluded and gives an exact retry when widening is recommended; results never widen silently. A request for information "about" a Thread/Focus should search all relevant kinds because the match may live in descendant Notes, Updates, Todos, or Routines rather than the container title. Note search covers title, current rich text, legacy Markdown, and legacy plain text. Every primary match includes its exact matched field, complete canonical-code path, containing Thread, and recommended write target; required primary metadata is never budget-truncated. hierarchyPaths is reserved for bounded auxiliary Subject/Scope expansion and is not duplicated for ordinary matches. Search returns bounded match snippets only—never lossless rich-text documents. Use the selected entity getter for Markdown and request includeRichText=true there only before a structural replacement. Date filters are database predicates, never search terms. Responses identify primary and auxiliary projection completeness, enforce a complete tool-result byte budget, and return a signed continuationToken only when another primary page exists. To fetch that page call onmove.continue_search; never attach a token to this initial-search tool or repeat the search body with it.',
+      description: 'Use for initial FTS discovery, queryless structured listing, and cross-kind hierarchy browsing. Send text for language search, or text=null with kinds to list records without FTS. An omitted lifecycle follows the user\'s Include closed work in MCP results setting: current active/paused lineage when off, or all current and closed work when on. An explicit lifecycle.mode overrides the setting, and lifecycle filtering happens before ranking. Every result and auxiliary path reports lifecycle.closure.explicit and lifecycle.closure.inherited provenance. lifecycleCoverage reports authorized closed matches that were excluded and gives an exact retry when widening is recommended; results never widen silently. A request for information "about" a Thread/Focus should search all relevant kinds because the match may live in descendant Notes, Updates, Todos, or Routines rather than the container title. Note search covers title, current rich text, legacy Markdown, and legacy plain text. Every primary match includes its exact matched field, complete canonical-code path, containing Thread, and recommended write target; required primary metadata is never budget-truncated. hierarchyPaths is reserved for bounded auxiliary Subject/Scope expansion and is not duplicated for ordinary matches. Search returns bounded match snippets only—never lossless rich-text documents. Use the selected entity getter for Markdown and request includeRichText=true there only before a structural replacement. Date filters are database predicates, never search terms. Responses identify primary and auxiliary projection completeness, enforce a complete tool-result byte budget, and return a short UUID continuationToken only when another primary page exists. The complete signed cursor stays in the running app for 3 hours. To fetch that page call onmove.continue_search; never attach a token to this initial-search tool or repeat the search body with it.',
       inputSchema: globalSearchSchema,
       outputSchema: globalSearchOutputSchema,
       annotations: { readOnlyHint: true }
@@ -3608,17 +3697,17 @@ export function createOnMoveMcpServer(
     'onmove.continue_search',
     {
       title: 'Continue an OnMove search',
-      description: 'Fetch exactly one next page from any OnMove search tool. Pass only the exact non-null continuationToken returned by the preceding page. The signed token identifies the originating search, filters, lifecycle policy, scope, projection, sort, page budget, index generation, and stable cursor. Do not repeat or modify the search body. Never invent, alter, or reuse a stale token.',
+      description: 'Fetch exactly one next page from any OnMove search tool. Pass only the non-null UUID continuationToken returned by the preceding page. The running app stores the originating search, filters, lifecycle policy, scope, projection, sort, page budget, index generation, and stable cursor for 3 hours. Do not repeat or modify the search body. Copy the UUID; whitespace inserted into it is tolerated. Never invent a UUID. Restart the original search if the handle expired or the MCP server restarted.',
       inputSchema: z.strictObject({
-        continuationToken: z.string().min(1).describe(
-          'Required opaque token returned by an OnMove search response with hasMore=true. No search criteria belong in this request.'
+        continuationToken: z.string().min(1).max(4_096).describe(
+          'Required UUID handle returned by an OnMove search response with hasMore=true. It expires after 3 hours or an MCP server restart. Copy only this value; inserted whitespace is tolerated. No search criteria belong in this request.'
         )
       }),
       outputSchema: z.union([globalSearchOutputSchema, entitySearchOutputSchema]),
       annotations: { readOnlyHint: true }
     },
     async ({ continuationToken }) => {
-      const continuation = decodeSearchContinuation(continuationToken)
+      const continuation = resolveSearchContinuation(continuationToken)
       if (continuation.origin.type === 'global') {
         return runGlobalSearch({}, continuation)
       }
@@ -4073,7 +4162,7 @@ export function createOnMoveMcpServer(
           }, policy()).generation
         : null
       const continuationToken = reviewed.review && reviewSearchGeneration !== null
-        ? encodeSearchContinuation({
+        ? issueSearchContinuation({
             version: 5,
             origin: { type: 'global' },
             text: null,

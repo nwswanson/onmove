@@ -185,14 +185,17 @@ Initial search tools accept search criteria only; they do not accept `continuati
 }
 ```
 
-If the response has `hasMore=true`, call `onmove.continue_search` with the exact non-null token as
-its only argument. The signed token preserves the originating search, complete query, lifecycle
-policy, stable cursor, and search-index generation. Never repeat the search body alongside it or
-reuse the token to change lifecycle. Changing **Include closed work in MCP results** after the
-initial request does not change that continuation: it retains the lifecycle already recorded in
-the token. If history is indicated, repeat the original initial request
+If the response has `hasMore=true`, call `onmove.continue_search` with the non-null UUID
+`continuationToken` as its only argument. OnMove keeps the complete signed search state in the
+running app and gives the client only this short handle. It tolerates whitespace inserted while a
+client copies the UUID. The handle expires after 3 hours and is lost when the MCP server stops;
+never invent one. Never repeat the search body alongside it or reuse it to change lifecycle.
+Changing **Include closed work in MCP results** after the initial request does not change that
+continuation: it retains the lifecycle already recorded on the server. If history is indicated,
+repeat the original initial request
 with `lifecycle.mode: "closed"` or `"all"`. If live edits cause
-`SEARCH_CURSOR_STALE`, restart the original search tool with its criteria. A named Subject result includes
+`SEARCH_CURSOR_STALE`, or if the handle is expired or unknown, restart the original search tool with
+its criteria. A named Subject result includes
 `namedSubjectDiscovery`, which puts the canonical Subject ID and every applicable Focus/Thread path
 beside ready `review_subject` arguments. Selectors use either an ID or a title/name, never both.
 
@@ -223,8 +226,8 @@ Subjects that would be added to the destination Focus, and the exact stale-safe 
 all Commitments, Routines, Updates, Todos, Notes, review evidence, and scoped history. Scope widening
 requires copying the planner's exact confirmed Subject IDs; the mutation checks Thread Edit access
 at both the source record and destination Focus.
-Search pages default to ten records, return explicit `hasMore`, and provide a signed continuation
-token only when another primary page exists. `page.maxBytes` budgets the complete MCP result—not
+Search pages default to ten records, return explicit `hasMore`, and provide a short UUID
+continuation handle only when another primary page exists. `page.maxBytes` budgets the complete MCP result—not
 just its structured half—and has an 8 KiB minimum. The `projections` metadata separately reports
 whether primary records, Subject uses, and hierarchy paths are complete. Search snippets and
 queryless previews are capped at 200 characters. Use `onmove.get_updates_by_ids` to hydrate several

@@ -228,6 +228,49 @@ describe('running-application MCP server', () => {
     }
   })
 
+  it('keeps UUID search continuations available across MCP client connections', async () => {
+    for (let index = 0; index < 3; index += 1) {
+      database.domain.focuses.create({ title: `Cross connection cursor ${index}` })
+    }
+    const server = new OnMoveMcpHttpServer(database, vi.fn())
+    const endpoint = await server.start(0)
+    const firstClient = new Client({ name: 'cursor-first', version: '1.0.0' })
+    const secondClient = new Client({ name: 'cursor-second', version: '1.0.0' })
+
+    try {
+      await firstClient.connect(new StreamableHTTPClientTransport(new URL(endpoint)))
+      const first = await firstClient.callTool({
+        name: 'onmove.search_focuses',
+        arguments: { text: 'Cross connection cursor', page: { size: 1 } }
+      })
+      const token = (first.structuredContent as {
+        hasMore: boolean
+        continuationToken: string
+      }).continuationToken
+      expect(first.isError).not.toBe(true)
+      expect(token).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
+      )
+      await firstClient.close()
+
+      await secondClient.connect(new StreamableHTTPClientTransport(new URL(endpoint)))
+      const continued = await secondClient.callTool({
+        name: 'onmove.continue_search',
+        arguments: { continuationToken: token }
+      })
+      expect(continued.isError).not.toBe(true)
+      expect(continued.structuredContent).toMatchObject({
+        records: [expect.objectContaining({
+          title: expect.stringContaining('Cross connection cursor')
+        })]
+      })
+    } finally {
+      await firstClient.close().catch(() => undefined)
+      await secondClient.close().catch(() => undefined)
+      await server.stop()
+    }
+  })
+
   it('serves saved client instructions to new connections without restarting the listener', async () => {
     const port = await availablePort()
     const runtime = new OnMoveMcpRuntime(database, vi.fn())

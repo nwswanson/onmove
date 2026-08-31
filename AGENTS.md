@@ -998,7 +998,8 @@ foreground colors and do not rely on color alone to communicate selection or sta
   changes with `RETRIEVAL_CURSOR_STALE`; never silently restart or downgrade a continued page.
 - Retain `onmove.search`, its kind-specific variants, and `continue_search` as the deterministic
   FTS5 compatibility/discovery surface. Enhanced retrieval is additive and must not alter their
-  schemas, lexical behavior, continuation format, or existing stopping and write-target guidance.
+  schemas, lexical behavior, UUID continuation-handle contract, or existing stopping and
+  write-target guidance.
 - Index every Note title and content value, including current Lexical rich text, legacy Markdown,
   and legacy plain text. A migration must mark existing Note records for transactional backfill,
   Note table triggers must invalidate future projections, and the MCP mutation boundary must also
@@ -1031,14 +1032,19 @@ foreground colors and do not rely on color alone to communicate selection or sta
   Subject boundary. Never encourage a second global search for a generic Thread/Commitment term.
 - Keep pagination input structurally separate from initial search input. Initial search tools expose
   criteria only and never accept `continuationToken`; `onmove.continue_search` accepts exactly one
-  required opaque token and no search body. Tool instructions must explicitly forbid inventing,
-  altering, or synthesizing a value. Follow-ups may use only the exact opaque token returned by
-  OnMove. Sign every token and preserve its originating response shape plus the complete immutable request: text, all three local-date
-  predicates, timezone, named scope, sort, kinds, projection, page size, byte budget, stable
-  `(sort value, source key)` cursor, and durable index generation. Reject sibling filters at the
+  required UUID handle and no search body. Keep the complete signed cursor server-side in one
+  process-owned store shared across every protocol connection on the running endpoint; client-visible
+  UUIDs last 3 hours, tolerate inserted whitespace, are bounded to the newest 1,024 handles, and
+  reset when the MCP server stops. Tool instructions must explicitly forbid inventing a UUID and
+  explain expiry/restart recovery. The internal signed value preserves its originating response shape
+  plus the complete immutable request: text, all three local-date predicates, timezone, named scope,
+  sort, kinds, projection, page size, byte budget, stable `(sort value, source key)` cursor, and durable
+  index generation. Reject sibling filters at the
   continuation tool schema rather than ambiguously merging or silently ignoring them. Return explicit `hasMore`; return no token when the
   bounded query is complete. Reject a token after a live index rebuild with
-  `SEARCH_CURSOR_STALE`. Deliberate query or scope changes start a fresh request.
+  `SEARCH_CURSOR_STALE`; reject unavailable handles with an explicit
+  `SEARCH_CONTINUATION_EXPIRED_OR_UNKNOWN` restart instruction. Deliberate query or scope changes
+  start a fresh request.
 - Keep search output bounded and purpose-specific. Default to ten records and cap a requested page
   at 25. Enforce the caller's complete MCP-result byte budget by dropping optional projection data
   before shortening the record page, and emit a token from the last record actually returned.
@@ -1203,8 +1209,9 @@ foreground colors and do not rely on color alone to communicate selection or sta
   structured copies), with an 8 KiB minimum. Return separate completeness metadata for primary
   records, Subject uses, and hierarchy paths; a complete primary page must never imply that a
   truncated auxiliary projection is exhaustive.
-- Sign continuation tokens over the originating search shape, full query, stable record cursor, and
-  durable search-index generation. If live writes rebuild the index between pages, return
+- Sign internal search continuations over the originating search shape, full query, stable record
+  cursor, and durable search-index generation, then expose only their stored UUID handles. If live
+  writes rebuild the index between pages, return
   `SEARCH_CURSOR_STALE` and tell the client to restart the original search tool with its criteria.
   Never continue against a changed index.
   For natural-language discovery, remove only a conservative stop-word set so a request such as

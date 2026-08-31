@@ -14,6 +14,9 @@ import {
 } from '../../src/shared/rich-text-document'
 import { RICH_TEXT_PREFIX } from '../../src/shared/rich-text-value'
 
+const UUID_CONTINUATION_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
+
 function richText(text: string): OnMoveRichTextDocument {
   return {
     version: 1,
@@ -643,8 +646,10 @@ describe('OnMove MCP protocol adapter', () => {
       additionalProperties: false,
       properties: { continuationToken: expect.any(Object) }
     })
-    expect(continueSearch.description).toContain('Pass only the exact non-null continuationToken')
+    expect(continueSearch.description).toContain('non-null UUID continuationToken')
     expect(continueSearch.description).toContain('Do not repeat or modify the search body')
+    expect(continueSearch.description).toContain('whitespace inserted into it is tolerated')
+    expect(continuationSchema).toContain('expires after 3 hours')
     expect(retrievalSchema).toContain('Required identity context')
     expect(retrievalSchema).toContain('asserted owning Focus')
     expect(retrievalSchema).toContain('durable attribution history')
@@ -674,7 +679,8 @@ describe('OnMove MCP protocol adapter', () => {
     expect(continueRetrieval.description).toContain('Do not repeat or modify the retrieval request')
     expect(searchSchema).toContain('preserve a previously returned Thread ID')
     expect(search.description).toContain('queryless structured listing')
-    expect(search.description).toContain('signed continuationToken')
+    expect(search.description).toContain('short UUID continuationToken')
+    expect(JSON.stringify(search.outputSchema)).toContain('"format":"uuid"')
     expect(search.description).toContain('initial FTS discovery')
     expect(search.description).toContain('onmove.continue_search')
     expect(threadSchema).toContain('hierarchy.thread.id')
@@ -1126,7 +1132,7 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: { continuationToken: firstToken }
     })
     expect(wrongContinuationTool.isError).toBe(true)
-    expect(JSON.stringify(wrongContinuationTool)).toContain('not a valid OnMove search')
+    expect(JSON.stringify(wrongContinuationTool)).toContain('SEARCH_CONTINUATION_INVALID')
 
     const searched = await client.callTool({
       name: 'onmove.search',
@@ -2357,7 +2363,7 @@ describe('OnMove MCP protocol adapter', () => {
     }
   })
 
-  it('preserves explicit lifecycle selection through signed search continuations', async () => {
+  it('preserves explicit lifecycle selection through UUID search continuations', async () => {
     const focuses = Array.from({ length: 3 }, (_, index) =>
       database.domain.focuses.create({
         title: `Lifecycle continuation needle ${index}`,
@@ -2377,7 +2383,7 @@ describe('OnMove MCP protocol adapter', () => {
         lifecycle: expect.objectContaining({ directStatus: 'cancelled', effective: 'closed' })
       })],
       hasMore: true,
-      continuationToken: expect.stringMatching(/^onmove-search-v5\./u),
+      continuationToken: expect.stringMatching(UUID_CONTINUATION_PATTERN),
       appliedQuery: {
         lifecycle: { mode: 'closed', terminalStatuses: ['cancelled'] }
       }
@@ -2426,7 +2432,7 @@ describe('OnMove MCP protocol adapter', () => {
         lifecycle: expect.objectContaining({ effective: 'current', closure: null })
       })],
       hasMore: true,
-      continuationToken: expect.stringMatching(/^onmove-search-v5\./u),
+      continuationToken: expect.stringMatching(UUID_CONTINUATION_PATTERN),
       appliedQuery: {
         lifecycle: { mode: 'current', terminalStatuses: ['done', 'cancelled'] }
       }
@@ -2868,7 +2874,7 @@ describe('OnMove MCP protocol adapter', () => {
     })
     expect(invented.isError).toBe(true)
     expect(JSON.stringify(invented)).toContain(
-      'continuationToken is not a valid OnMove search continuation token'
+      'SEARCH_CONTINUATION_INVALID'
     )
   })
 
@@ -5600,7 +5606,7 @@ describe('OnMove MCP protocol adapter', () => {
     }).items.map(({ reference }) => reference.id)).toEqual([lateChicago.id])
   })
 
-  it('paginates with a stable signed cursor and never repeats a record ID', async () => {
+  it('paginates with a stable UUID cursor handle and never repeats a record ID', async () => {
     const focus = database.domain.focuses.requireModel(1).toSnapshot()
     const thread = database.domain.threads.create({
       focusId: focus.id,
@@ -5657,7 +5663,7 @@ describe('OnMove MCP protocol adapter', () => {
         expect(page.continuationToken).toBeNull()
         break
       }
-      expect(page.continuationToken).toMatch(/^onmove-search-v5\./u)
+      expect(page.continuationToken).toMatch(UUID_CONTINUATION_PATTERN)
       response = await client.callTool({
         name: 'onmove.continue_search',
         arguments: { continuationToken: page.continuationToken }
@@ -5671,16 +5677,23 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: { text: null, kinds: ['update'], page: { size: 1 } }
     })
     const token = (firstPage.structuredContent as { continuationToken: string }).continuationToken
-    const separator = token.lastIndexOf('.')
-    const signatureStart = separator + 1
-    const signatureFirst = token[signatureStart]
-    const tampered = `${token.slice(0, signatureStart)}${signatureFirst === 'a' ? 'b' : 'a'}${token.slice(signatureStart + 1)}`
+    expect(token).toMatch(UUID_CONTINUATION_PATTERN)
+    const spacedToken = token.split('').map((character, index) =>
+      index > 0 && index % 6 === 0 ? ` ${character}` : character).join('')
+    const whitespaceTolerant = await client.callTool({
+      name: 'onmove.continue_search',
+      arguments: { continuationToken: spacedToken }
+    })
+    expect(whitespaceTolerant.isError).not.toBe(true)
+
+    const lastCharacter = token.at(-1) as string
+    const tampered = `${token.slice(0, -1)}${lastCharacter === 'a' ? 'b' : 'a'}`
     const rejected = await client.callTool({
       name: 'onmove.continue_search',
       arguments: { continuationToken: tampered }
     })
     expect(rejected.isError).toBe(true)
-    expect(JSON.stringify(rejected)).toContain('invalid or incompatible')
+    expect(JSON.stringify(rejected)).toContain('SEARCH_CONTINUATION_EXPIRED_OR_UNKNOWN')
 
     const staleFirst = await client.callTool({
       name: 'onmove.search',

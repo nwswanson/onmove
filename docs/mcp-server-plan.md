@@ -221,13 +221,16 @@ name search returns `subjectUses`, which is authoritative for attributed records
 `searchStatus`. `sufficient=true` or `doNotBroaden=true` tells the client to stop discovery and fetch
 the returned IDs directly rather than searching globally for a generic hierarchy label. A response
 also returns `namedSubjectDiscovery`, colocating the canonical Subject ID, applicable Focus/Thread
-paths, and ready Subject-review calls. It returns an opaque signed continuation token when another
-page exists. Initial search tools contain criteria only and do not accept that token; clients must
-never synthesize one. `onmove.continue_search` accepts only the exact returned token, which preserves
-text, date ranges, timezone, scope, sort, kinds, projection, byte budget, stable cursor, search index
-generation, and originating response shape. A request therefore cannot ambiguously combine old
-cursor state with new filters.
-A live rebuild rejects the old token with `SEARCH_CURSOR_STALE`; restart the original search tool
+paths, and ready Subject-review calls. It returns a short UUID continuation handle when another
+page exists. The running app retains the complete signed state behind that handle for 3 hours,
+shares it across protocol connections to the same live server, and tolerates whitespace inserted
+in the copied UUID. Initial search tools contain criteria only and do not accept the handle; clients
+must never synthesize one. `onmove.continue_search` accepts only the returned handle, whose stored
+state preserves text, date ranges, timezone, scope, sort, kinds, projection, byte budget, stable
+cursor, search index generation, and originating response shape. A request therefore cannot
+ambiguously combine old cursor state with new filters. Server restart or expiry requires repeating
+the original search.
+A live rebuild rejects the handle with `SEARCH_CURSOR_STALE`; restart the original search tool
 with its criteria. A new original-search call is required to intentionally change the query. Named scopes support
 `all`, `focus`, `thread`,
 `subject`, and the explicitly requested live `current` context.
