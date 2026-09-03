@@ -15,6 +15,7 @@ import type { AppDatabase } from '../main/database'
 import {
   createOnMoveMcpServer,
   RejectedCallTracker,
+  RetrievalContinuationStore,
   SearchContinuationStore
 } from './server'
 
@@ -37,6 +38,7 @@ export class OnMoveMcpHttpServer {
   private activePort: number | null = null
   private rejectedCallTracker = new RejectedCallTracker()
   private searchContinuationStore = new SearchContinuationStore()
+  private retrievalContinuationStore = new RetrievalContinuationStore()
 
   constructor(
     private readonly database: AppDatabase,
@@ -54,6 +56,7 @@ export class OnMoveMcpHttpServer {
     await this.stop()
     this.rejectedCallTracker = new RejectedCallTracker()
     this.searchContinuationStore = new SearchContinuationStore()
+    this.retrievalContinuationStore = new RetrievalContinuationStore()
 
     const handler = createMcpHandler(
       () => createOnMoveMcpServer(this.database, {
@@ -61,7 +64,8 @@ export class OnMoveMcpHttpServer {
         onRichTextMutation: this.onRichTextMutation,
         getCurrentUiContext: this.getUiContext,
         rejectedCallTracker: this.rejectedCallTracker,
-        searchContinuationStore: this.searchContinuationStore
+        searchContinuationStore: this.searchContinuationStore,
+        retrievalContinuationStore: this.retrievalContinuationStore
       }),
       {
         onerror: (error) => console.error('OnMove MCP protocol error:', error.message)

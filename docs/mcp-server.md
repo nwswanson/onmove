@@ -390,9 +390,11 @@ vector came from the durable cache.
 SQLite resolves permissions and the complete context before Orama ranks any candidate. Responses
 report match channels, complete hierarchy provenance, requested/applied strategy, fallback reason,
 lexical and semantic generations, and semantic coverage. They return bounded excerpts, never
-lossless rich text. When `hasMore=true`, call `onmove.continue_retrieval` with only the exact signed
-token. The token binds the normalized lifecycle policy as well as the complete request; changing
-access, retrieval mode, strategy, or either index generation makes that continuation stale.
+lossless rich text. When `hasMore=true`, call `onmove.continue_retrieval` with only the returned UUID
+handle. The complete signed continuation remains server-side for 3 hours and binds the normalized
+lifecycle policy as well as the complete request; changing access, retrieval mode, strategy, or
+either index generation makes that continuation stale. Handles also expire when the MCP server
+stops.
 
 The established `onmove.search` and kind-specific search tools remain the deterministic lexical
 compatibility/discovery surface described below.
@@ -466,8 +468,8 @@ closed match exists. To inspect history, repeat the same initial request with
 `lifecycle.mode: "closed"`, or use `"all"` to compare partitions. Do not modify or reuse a
 continuation token for that widening.
 
-Search and retrieval continuation tokens bind the normalized lifecycle mode and terminal-status
-selection. `continue_search` and `continue_retrieval` accept only the exact returned token, so every
+Search and retrieval continuation handles bind the normalized lifecycle mode and terminal-status
+selection. `continue_search` and `continue_retrieval` accept only the exact returned UUID, so every
 subsequent page retains the originating lifecycle boundary. Changing **Include closed work in MCP
 results** after the initial request does not alter or invalidate that resolved boundary. Any
 intentional lifecycle change is a new initial request.
@@ -482,9 +484,9 @@ The read contract deliberately separates these intents:
 | Known durable ID | `get_focus_by_id`, `get_thread_by_id`, `get_commitment_by_id`, `get_routine_by_id`, `get_update_by_id`, `get_note_by_id` |
 | Exact title hierarchy | `get_focus_by_path`, `get_thread_by_path`, `get_commitment_by_path`, `get_routine_by_path`, `get_note_by_path` |
 | Text discovery in one kind | `search_focuses`, `search_threads`, `search_commitments`, `search_routines`, `search_updates`, `search_notes`, `search_todos`, `search_subjects` |
-| Next page from any search | `continue_search` with only the returned opaque token |
+| Next page from any search | `continue_search` with only the returned UUID handle |
 | Evidence in an exact operational context | `retrieve` with an explicit boundary and optional Subject intersection |
-| Next page from retrieval | `continue_retrieval` with only the returned opaque token |
+| Next page from retrieval | `continue_retrieval` with only the returned UUID handle |
 
 Path schemas contain title fields only. Matching is exact and case-insensitive; duplicate exact
 paths return `ambiguous` with candidates. They never accept IDs or perform fuzzy search. Updates
@@ -553,11 +555,11 @@ contains the canonical Subject ID, applicable paths with Focus and Thread IDs, a
 `reviewSubjectRequest` calls. That is sufficient to call `onmove.review_subject` without another
 hierarchy lookup. If
 `searchStatus.sufficient` or `searchStatus.doNotBroaden` is true, stop discovery and fetch those IDs
-directly; do not search globally for a generic parent label. A paged search response includes an
-opaque `continuationToken` only when another page exists. The token is signed and preserves the complete
-request: text, all local-date filters, timezone, scope, lifecycle, sort, kinds, projection, page
+directly; do not search globally for a generic parent label. A paged search response includes a UUID
+`continuationToken` only when another page exists. The complete signed request state remains in the
+running app: text, all local-date filters, timezone, scope, lifecycle, sort, kinds, projection, page
 size, byte budget, stable cursor, durable search-index generation, and the originating search response shape.
-Send only that token to `onmove.continue_search`; never repeat criteria beside it. Changing the
+Send only that UUID to `onmove.continue_search`; never repeat criteria beside it. Changing the
 query, scope, or lifecycle starts a new call to the original search tool. A live write between pages returns
 `SEARCH_CURSOR_STALE`; restart the original search with its criteria. Broaden only when the user
 requests all people or all records.

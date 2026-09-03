@@ -992,10 +992,14 @@ foreground colors and do not rely on color alone to communicate selection or sta
   semantic generations, and semantic coverage. Honor an explicit `onUnavailable=error` without
   mutating or partially trusting the derived index.
 - Keep `onmove.retrieve` criteria separate from `onmove.continue_retrieval`, which accepts only the
-  exact returned opaque token. Sign retrieval continuations over the complete request, explicit
+  exact returned UUID handle. Sign retrieval continuations over the complete request, explicit
   context, lifecycle policy, byte budget, access fingerprint, persisted retrieval mode, applied
-  strategy, stable cursor, and both index generations. Reject continuations after data, access, mode, or strategy
-  changes with `RETRIEVAL_CURSOR_STALE`; never silently restart or downgrade a continued page.
+  strategy, stable cursor, and both index generations, but keep that complete value server-side in
+  a dedicated process-owned store shared across protocol connections. Retrieval UUIDs last 3 hours,
+  tolerate inserted whitespace, are bounded to the newest 1,024 handles, and reset when the MCP
+  server stops. Never expose the signed/base64 payload. Reject continuations after data, access,
+  mode, or strategy changes with `RETRIEVAL_CURSOR_STALE`; never silently restart or downgrade a
+  continued page.
 - Retain `onmove.search`, its kind-specific variants, and `continue_search` as the deterministic
   FTS5 compatibility/discovery surface. Enhanced retrieval is additive and must not alter their
   schemas, lexical behavior, UUID continuation-handle contract, or existing stopping and
@@ -1051,6 +1055,11 @@ foreground colors and do not rely on color alone to communicate selection or sta
   Never return an unbounded hierarchy fanout merely because one Subject or parent matched. Do not
   duplicate ordinary primary-match paths in a global `hierarchyPaths` array; reserve that array for
   bounded Subject/Scope applicability expansion, with its own completeness metadata and next step.
+- Keep `onmove.search_threads` relevance-only. Its strict input schema must omit `date`,
+  `createdAt`, `updatedAt`, `timeZone`, and date-oriented sorting because a durable Thread's storage
+  timestamps are unrelated to the day mentioned in most evidence requests. Tell clients not to
+  constrain Thread discovery to a calendar day. Intentional structured date filtering remains
+  available through generic `onmove.search`.
 - Expose `date`, `createdAt`, and `updatedAt` on every search record. `date` is the Update's recorded
   local date or a dated entity's due date and is compared directly; `createdAt` and `updatedAt` are
   instants filtered by inclusive local calendar ranges using an explicit IANA timezone. These are

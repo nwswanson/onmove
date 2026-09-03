@@ -7,6 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppDatabase } from '../../src/main/database'
 import { OnMoveMcpHttpServer, OnMoveMcpRuntime } from '../../src/mcp/live-server'
 
+const UUID_CONTINUATION_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
+const LEGACY_RETRIEVAL_CONTINUATION_PREFIX = 'onmove-retrieval-v2.'
+
 async function availablePort(): Promise<number> {
   const server = createServer()
   await new Promise<void>((resolve, reject) => {
@@ -248,9 +252,7 @@ describe('running-application MCP server', () => {
         continuationToken: string
       }).continuationToken
       expect(first.isError).not.toBe(true)
-      expect(token).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
-      )
+      expect(token).toMatch(UUID_CONTINUATION_PATTERN)
       await firstClient.close()
 
       await secondClient.connect(new StreamableHTTPClientTransport(new URL(endpoint)))
@@ -264,6 +266,74 @@ describe('running-application MCP server', () => {
           title: expect.stringContaining('Cross connection cursor')
         })]
       })
+    } finally {
+      await firstClient.close().catch(() => undefined)
+      await secondClient.close().catch(() => undefined)
+      await server.stop()
+    }
+  })
+
+  it('keeps UUID retrieval continuations available across MCP client connections', async () => {
+    const focus = database.domain.focuses.create({ title: 'Retrieval cursor focus' }).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Cross-connection retrieval cursor',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const expectedIds = Array.from({ length: 3 }, (_, index) =>
+      database.domain.updates.create({
+        parent: { type: 'thread', id: thread.id },
+        observation: `Cross connection retrieval evidence ${index}`
+      }).id)
+    const server = new OnMoveMcpHttpServer(database, vi.fn())
+    const endpoint = await server.start(0)
+    const firstClient = new Client({ name: 'retrieval-cursor-first', version: '1.0.0' })
+    const secondClient = new Client({ name: 'retrieval-cursor-second', version: '1.0.0' })
+
+    try {
+      await firstClient.connect(new StreamableHTTPClientTransport(new URL(endpoint)))
+      const first = await firstClient.callTool({
+        name: 'onmove.retrieve',
+        arguments: {
+          text: 'cross connection retrieval evidence',
+          context: {
+            boundary: { type: 'thread', focusId: focus.id, threadId: thread.id }
+          },
+          kinds: ['update'],
+          strategy: 'lexical',
+          diversifyBy: 'none',
+          page: { size: 1 }
+        }
+      })
+      expect(first.isError).not.toBe(true)
+      const firstContent = first.structuredContent as {
+        items: Array<{ reference: { id: number } }>
+        hasMore: boolean
+        continuationToken: string
+      }
+      expect(firstContent).toMatchObject({ hasMore: true })
+      expect(firstContent.continuationToken).toMatch(UUID_CONTINUATION_PATTERN)
+      expect(JSON.stringify(first)).not.toContain(LEGACY_RETRIEVAL_CONTINUATION_PREFIX)
+      await firstClient.close()
+
+      await secondClient.connect(new StreamableHTTPClientTransport(new URL(endpoint)))
+      const continued = await secondClient.callTool({
+        name: 'onmove.continue_retrieval',
+        arguments: { continuationToken: firstContent.continuationToken }
+      })
+      expect(continued.isError).not.toBe(true)
+      const continuedContent = continued.structuredContent as {
+        items: Array<{ reference: { id: number } }>
+        hasMore: boolean
+        continuationToken: string | null
+      }
+      expect(continuedContent.items).toHaveLength(1)
+      expect(expectedIds).toContain(continuedContent.items[0].reference.id)
+      expect(continuedContent.items[0].reference.id).not.toBe(
+        firstContent.items[0].reference.id
+      )
+      expect(continuedContent.continuationToken).toMatch(UUID_CONTINUATION_PATTERN)
+      expect(JSON.stringify(continued)).not.toContain(LEGACY_RETRIEVAL_CONTINUATION_PREFIX)
     } finally {
       await firstClient.close().catch(() => undefined)
       await secondClient.close().catch(() => undefined)

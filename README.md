@@ -126,7 +126,7 @@ Use the tool whose name matches what you know:
   `get_commitment_by_path`, `get_routine_by_path`, or `get_note_by_path`.
 - Unknown text: `search_focuses`, `search_threads`, `search_commitments`, `search_routines`,
   `search_updates`, `search_notes`, `search_todos`, or `search_subjects`.
-- Next page from any search: `continue_search` with only the returned opaque token.
+- Next page from any search: `continue_search` with only the returned UUID handle.
 
 Path tools accept titles only and return `ambiguous` instead of guessing duplicate names. Updates
 do not have a by-path getter because several Updates may occupy the same hierarchy and Subject;
@@ -175,6 +175,11 @@ Those uses are authoritative for records attributed to that Subject; fetch their
 instead of globally searching a generic container label such as “1:1s.” Use `scope.mode` with
 `subject`, `thread`, or `focus` and the returned ID for a new narrowed query. Broaden to `all` only
 when the user actually requests every person or record.
+
+`onmove.search_threads` is intentionally relevance-only and accepts no date, `createdAt`,
+`updatedAt`, timezone, or date-sort inputs. A Thread may have been created weeks before the evidence
+being discussed, so a day from the user's request must not be applied to Thread discovery. Use the
+generic `onmove.search` date predicates only when the user explicitly requests date-filtered records.
 
 Initial search tools accept search criteria only; they do not accept `continuationToken`:
 
@@ -226,8 +231,9 @@ Subjects that would be added to the destination Focus, and the exact stale-safe 
 all Commitments, Routines, Updates, Todos, Notes, review evidence, and scoped history. Scope widening
 requires copying the planner's exact confirmed Subject IDs; the mutation checks Thread Edit access
 at both the source record and destination Focus.
-Search pages default to ten records, return explicit `hasMore`, and provide a short UUID
-continuation handle only when another primary page exists. `page.maxBytes` budgets the complete MCP result—not
+Search and retrieval pages return explicit `hasMore` and provide a short UUID continuation handle
+only when another page exists. The complete signed continuation remains in the running app for 3
+hours instead of being exposed as a large encoded token. `page.maxBytes` budgets the complete MCP result—not
 just its structured half—and has an 8 KiB minimum. The `projections` metadata separately reports
 whether primary records, Subject uses, and hierarchy paths are complete. Search snippets and
 queryless previews are capped at 200 characters. Use `onmove.get_updates_by_ids` to hydrate several

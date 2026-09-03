@@ -3,10 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EmbeddingProvider } from '../../src/main/application/embedding-provider'
 import { AppDatabase } from '../../src/main/database'
-import { createOnMoveMcpServer } from '../../src/mcp/server'
+import { createOnMoveMcpServer, RetrievalContinuationStore } from '../../src/mcp/server'
 import type { McpUiContextSnapshot } from '../../src/shared/contracts'
 import {
   onMoveRichTextDocumentToStored,
@@ -16,6 +16,27 @@ import { RICH_TEXT_PREFIX } from '../../src/shared/rich-text-value'
 
 const UUID_CONTINUATION_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
+const LEGACY_RETRIEVAL_CONTINUATION_PREFIX = 'onmove-retrieval-v2.'
+
+function expectUuidRetrievalContinuation(response: unknown): string | null {
+  const result = response as {
+    structuredContent?: { hasMore?: unknown; continuationToken?: unknown }
+  }
+  const hasMore = result.structuredContent?.hasMore
+  const continuationToken = result.structuredContent?.continuationToken
+
+  expect(hasMore).toEqual(expect.any(Boolean))
+  if (hasMore) {
+    expect(continuationToken).toEqual(expect.any(String))
+    expect(continuationToken).toMatch(UUID_CONTINUATION_PATTERN)
+  } else {
+    expect(continuationToken).toBeNull()
+  }
+  // `result()` intentionally mirrors structured content into model-facing text. Inspect the
+  // complete tool result so a signed payload cannot leak through either representation.
+  expect(JSON.stringify(response)).not.toContain(LEGACY_RETRIEVAL_CONTINUATION_PREFIX)
+  return typeof continuationToken === 'string' ? continuationToken : null
+}
 
 function richText(text: string): OnMoveRichTextDocument {
   return {
@@ -43,6 +64,7 @@ describe('OnMove MCP protocol adapter', () => {
   let database: AppDatabase
   let client: Client
   let server: ReturnType<typeof createOnMoveMcpServer>
+  let retrievalContinuationStore: RetrievalContinuationStore
   let currentUiContext: McpUiContextSnapshot
   let mutationNotifications: number
 
@@ -52,9 +74,11 @@ describe('OnMove MCP protocol adapter', () => {
     database.domain.focuses.create({ title: 'Launch readiness' })
     currentUiContext = { focusId: null, subjectId: null }
     mutationNotifications = 0
+    retrievalContinuationStore = new RetrievalContinuationStore()
     server = createOnMoveMcpServer(database, {
       getCurrentUiContext: () => currentUiContext,
-      onMutation: () => { mutationNotifications += 1 }
+      onMutation: () => { mutationNotifications += 1 },
+      retrievalContinuationStore
     })
     client = new Client({ name: 'vitest-mcp-client', version: '1.0.0' })
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -65,9 +89,11 @@ describe('OnMove MCP protocol adapter', () => {
   async function reconnect(): Promise<void> {
     await client.close()
     await server.close()
+    retrievalContinuationStore = new RetrievalContinuationStore()
     server = createOnMoveMcpServer(database, {
       getCurrentUiContext: () => currentUiContext,
-      onMutation: () => { mutationNotifications += 1 }
+      onMutation: () => { mutationNotifications += 1 },
+      retrievalContinuationStore
     })
     client = new Client({ name: 'vitest-mcp-client', version: '1.0.0' })
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -572,6 +598,7 @@ describe('OnMove MCP protocol adapter', () => {
     const retrieve = tools.find(({ name }) => name === 'onmove.retrieve')!
     const continueRetrieval = tools.find(({ name }) => name === 'onmove.continue_retrieval')!
     const searchNotes = tools.find(({ name }) => name === 'onmove.search_notes')!
+    const searchThreads = tools.find(({ name }) => name === 'onmove.search_threads')!
     const getThread = tools.find(({ name }) => name === 'onmove.get_thread_by_id')!
     const resolveTarget = tools.find(({ name }) => name === 'onmove.resolve_work_target')!
     const createUpdate = tools.find(({ name }) => name === 'onmove.create_update')!
@@ -638,6 +665,19 @@ describe('OnMove MCP protocol adapter', () => {
     expect(searchSchema).not.toContain('hierarchy-only')
     expect(searchSchema).not.toContain('continuationToken')
     expect(JSON.stringify(searchNotes.inputSchema)).not.toContain('continuationToken')
+    expect(searchThreads.inputSchema).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+      properties: expect.not.objectContaining({
+        date: expect.anything(),
+        createdAt: expect.anything(),
+        updatedAt: expect.anything(),
+        timeZone: expect.anything(),
+        sort: expect.anything()
+      })
+    })
+    expect(searchThreads.description).toContain('Thread discovery is relevance-only')
+    expect(searchThreads.description).toContain('Do not constrain Thread discovery to the day')
     expect(continuationSchema).toContain('continuationToken')
     expect(continuationSchema).not.toContain('projection')
     expect(continueSearch.inputSchema).toMatchObject({
@@ -669,6 +709,7 @@ describe('OnMove MCP protocol adapter', () => {
         diagnostics: expect.any(Object)
       })
     })
+    expect(JSON.stringify(retrieve.outputSchema)).toContain('"format":"uuid"')
     expect(continueRetrieval.inputSchema).toMatchObject({
       type: 'object',
       required: ['continuationToken'],
@@ -676,6 +717,8 @@ describe('OnMove MCP protocol adapter', () => {
       properties: { continuationToken: expect.any(Object) }
     })
     expect(retrievalContinuationSchema).not.toContain('context')
+    expect(retrievalContinuationSchema).toContain('UUID')
+    expect(continueRetrieval.description).toContain('UUID continuationToken')
     expect(continueRetrieval.description).toContain('Do not repeat or modify the retrieval request')
     expect(searchSchema).toContain('preserve a previously returned Thread ID')
     expect(search.description).toContain('queryless structured listing')
@@ -868,6 +911,59 @@ describe('OnMove MCP protocol adapter', () => {
     expect(JSON.stringify(hidden)).not.toContain(projectA.title)
   })
 
+  it('uses UUID handles for every page of structured retrieval', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Structured retrieval cursor owner',
+      reviewFrequencyDays: 7
+    }).snapshot()
+    const expectedIds = Array.from({ length: 3 }, (_, index) =>
+      database.domain.updates.create({
+        parent: { type: 'thread', id: thread.id },
+        observation: `Structured retrieval evidence ${index}`
+      }).id)
+
+    let page = await client.callTool({
+      name: 'onmove.retrieve',
+      arguments: {
+        text: null,
+        context: {
+          boundary: { type: 'thread', focusId: focus.id, threadId: thread.id }
+        },
+        kinds: ['update'],
+        diversifyBy: 'none',
+        page: { size: 1 }
+      }
+    })
+    const seen: number[] = []
+
+    while (true) {
+      expect(page.isError).not.toBe(true)
+      expect(page.structuredContent).toMatchObject({
+        retrieval: {
+          mode: 'classic',
+          appliedStrategy: 'structured'
+        },
+        appliedQuery: { text: null }
+      })
+      const content = page.structuredContent as {
+        items: Array<{ reference: { id: number } }>
+        hasMore: boolean
+      }
+      seen.push(...content.items.map(({ reference }) => reference.id))
+      const continuationToken = expectUuidRetrievalContinuation(page)
+      if (!content.hasMore) break
+      page = await client.callTool({
+        name: 'onmove.continue_retrieval',
+        arguments: { continuationToken }
+      })
+    }
+
+    expect(new Set(seen)).toEqual(new Set(expectedIds))
+    expect(seen).toHaveLength(expectedIds.length)
+  })
+
   it('applies current, closed, and all lifecycle selection consistently in retrieval', async () => {
     const focus = database.domain.focuses.requireModel(1).toSnapshot()
     const cancelledThread = database.domain.threads.create({
@@ -1000,14 +1096,12 @@ describe('OnMove MCP protocol adapter', () => {
         }
       })],
       hasMore: true,
-      continuationToken: expect.stringMatching(/^onmove-retrieval-v2\./u),
+      continuationToken: expect.stringMatching(UUID_CONTINUATION_PATTERN),
       appliedQuery: {
         lifecycle: { mode: 'closed', terminalStatuses: ['cancelled'] }
       }
     })
-    const retrievalToken = (firstPage.structuredContent as {
-      continuationToken: string
-    }).continuationToken
+    const retrievalToken = expectUuidRetrievalContinuation(firstPage) as string
     const continued = await client.callTool({
       name: 'onmove.continue_retrieval',
       arguments: { continuationToken: retrievalToken }
@@ -1027,6 +1121,7 @@ describe('OnMove MCP protocol adapter', () => {
         lifecycle: { mode: 'closed', terminalStatuses: ['cancelled'] }
       }
     })
+    expectUuidRetrievalContinuation(continued)
     expect(updates.map(({ id }) => id)).toContain(
       (continued.structuredContent as {
         items: Array<{ reference: { id: number } }>
@@ -1075,8 +1170,7 @@ describe('OnMove MCP protocol adapter', () => {
       },
       appliedQuery: { diversifyBy: 'lineage' }
     })
-    const firstToken = (page.structuredContent as { continuationToken: string }).continuationToken
-    expect(firstToken).toMatch(/^onmove-retrieval-v2\./u)
+    const firstToken = expectUuidRetrievalContinuation(page) as string
 
     const mixedContinuation = await client.callTool({
       name: 'onmove.continue_retrieval',
@@ -1087,6 +1181,7 @@ describe('OnMove MCP protocol adapter', () => {
 
     const seen: number[] = []
     let paging = true
+    let continuationCalls = 0
     while (paging) {
       const content = page.structuredContent as {
         items: Array<{ reference: { id: number } }>
@@ -1096,7 +1191,6 @@ describe('OnMove MCP protocol adapter', () => {
           fallbackReason: string | null
         }
         hasMore: boolean
-        continuationToken: string | null
       }
       seen.push(...content.items.map(({ reference }) => reference.id))
       expect(content.retrieval).toMatchObject({
@@ -1104,11 +1198,17 @@ describe('OnMove MCP protocol adapter', () => {
         appliedStrategy: 'lexical',
         fallbackReason: expect.stringContaining('disabled')
       })
+      const continuationToken = expectUuidRetrievalContinuation(page)
       paging = content.hasMore
       if (paging) {
+        const copiedToken = continuationCalls === 0
+          ? (continuationToken as string).split('').map((character, index) =>
+              index > 0 && index % 5 === 0 ? ` \n${character}` : character).join('')
+          : continuationToken
+        continuationCalls += 1
         page = await client.callTool({
           name: 'onmove.continue_retrieval',
-          arguments: { continuationToken: content.continuationToken }
+          arguments: { continuationToken: copiedToken }
         })
         expect(page.isError).not.toBe(true)
       }
@@ -1116,23 +1216,41 @@ describe('OnMove MCP protocol adapter', () => {
     expect(new Set(seen).size).toBe(seen.length)
     expect(new Set(seen)).toEqual(new Set(expectedIds))
 
-    const separator = firstToken.lastIndexOf('.')
-    const signatureStart = separator + 1
-    const firstSignatureCharacter = firstToken[signatureStart]
-    const tampered = `${firstToken.slice(0, signatureStart)}${firstSignatureCharacter === 'a' ? 'b' : 'a'}${firstToken.slice(signatureStart + 1)}`
+    const lastCharacter = firstToken.at(-1) as string
+    const tampered = `${firstToken.slice(0, -1)}${lastCharacter === 'a' ? 'b' : 'a'}`
     const rejected = await client.callTool({
       name: 'onmove.continue_retrieval',
       arguments: { continuationToken: tampered }
     })
     expect(rejected.isError).toBe(true)
-    expect(JSON.stringify(rejected)).toContain('invalid or incompatible')
+    expect(JSON.stringify(rejected)).toMatch(/RETRIEVAL_CONTINUATION|UUID handle|unavailable/iu)
+
+    const unknown = await client.callTool({
+      name: 'onmove.continue_retrieval',
+      arguments: { continuationToken: '00000000-0000-4000-8000-000000000001' }
+    })
+    expect(unknown.isError).toBe(true)
+    expect(JSON.stringify(unknown)).toMatch(/RETRIEVAL_CONTINUATION|UUID handle|unavailable/iu)
+
+    const legacyToken =
+      'onmove-retrieval-v2.eyJ2ZXJzaW9uIjoyLCJjdXJzb3IiOnsib2Zmc2V0IjoxfX0.signature'
+    const rejectedLegacy = await client.callTool({
+      name: 'onmove.continue_retrieval',
+      arguments: { continuationToken: legacyToken }
+    })
+    expect(rejectedLegacy.isError).toBe(true)
+    expect(JSON.stringify(rejectedLegacy)).toMatch(
+      /RETRIEVAL_CONTINUATION|UUID handle|valid OnMove retrieval/iu
+    )
 
     const wrongContinuationTool = await client.callTool({
       name: 'onmove.continue_search',
       arguments: { continuationToken: firstToken }
     })
     expect(wrongContinuationTool.isError).toBe(true)
-    expect(JSON.stringify(wrongContinuationTool)).toContain('SEARCH_CONTINUATION_INVALID')
+    expect(JSON.stringify(wrongContinuationTool)).toContain(
+      'SEARCH_CONTINUATION_EXPIRED_OR_UNKNOWN'
+    )
 
     const searched = await client.callTool({
       name: 'onmove.search',
@@ -1145,14 +1263,15 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: { continuationToken: searchToken }
     })
     expect(wrongSearchTool.isError).toBe(true)
-    expect(JSON.stringify(wrongSearchTool)).toContain('not a valid OnMove retrieval')
+    expect(JSON.stringify(wrongSearchTool)).toMatch(
+      /RETRIEVAL_CONTINUATION|UUID handle|valid OnMove retrieval/iu
+    )
 
     const staleByData = await client.callTool({
       name: 'onmove.retrieve',
       arguments: argumentsValue
     })
-    const dataToken = (staleByData.structuredContent as { continuationToken: string })
-      .continuationToken
+    const dataToken = expectUuidRetrievalContinuation(staleByData) as string
     database.domain.updates.create({
       parent: { type: 'thread', id: thread.id },
       observation: 'Retrieval cursor needle changed the generation'
@@ -1168,8 +1287,7 @@ describe('OnMove MCP protocol adapter', () => {
       name: 'onmove.retrieve',
       arguments: argumentsValue
     })
-    const modeToken = (staleByMode.structuredContent as { continuationToken: string })
-      .continuationToken
+    const modeToken = expectUuidRetrievalContinuation(staleByMode) as string
     database.mcpSettings.update({ retrievalMode: 'enhanced' })
     const modeStale = await client.callTool({
       name: 'onmove.continue_retrieval',
@@ -1183,8 +1301,7 @@ describe('OnMove MCP protocol adapter', () => {
       name: 'onmove.retrieve',
       arguments: argumentsValue
     })
-    const accessToken = (staleByAccess.structuredContent as { continuationToken: string })
-      .continuationToken
+    const accessToken = expectUuidRetrievalContinuation(staleByAccess) as string
     database.mcpSettings.update({
       permission: {
         target: { type: 'focus', id: focus.id },
@@ -1252,7 +1369,7 @@ describe('OnMove MCP protocol adapter', () => {
         semanticCoverage: 1
       },
       hasMore: true,
-      continuationToken: expect.stringMatching(/^onmove-retrieval-v2\./u)
+      continuationToken: expect.stringMatching(UUID_CONTINUATION_PATTERN)
     })
     const firstContent = first.structuredContent as {
       items: Array<{ reference: { id: number } }>
@@ -1263,6 +1380,8 @@ describe('OnMove MCP protocol adapter', () => {
       arguments: { continuationToken: firstContent.continuationToken }
     })
     expect(second.isError).not.toBe(true)
+    expectUuidRetrievalContinuation(first)
+    expectUuidRetrievalContinuation(second)
     expect(second.structuredContent).toMatchObject({
       retrieval: {
         requestedStrategy: 'hybrid',
@@ -1293,6 +1412,7 @@ describe('OnMove MCP protocol adapter', () => {
         observation: `Retrievalbudgetneedle ${index} ${'long evidence '.repeat(100)}`
       })
     }
+    const issueContinuation = vi.spyOn(retrievalContinuationStore, 'issue')
 
     const compact = await client.callTool({
       name: 'onmove.retrieve',
@@ -1310,7 +1430,7 @@ describe('OnMove MCP protocol adapter', () => {
     expect(Buffer.byteLength(JSON.stringify(compact), 'utf8')).toBeLessThanOrEqual(8192)
     expect(compact.structuredContent).toMatchObject({
       hasMore: true,
-      continuationToken: expect.stringMatching(/^onmove-retrieval-v2\./u),
+      continuationToken: expect.stringMatching(UUID_CONTINUATION_PATTERN),
       budget: {
         maxBytes: 8192,
         estimatedToolResultBytes: expect.any(Number),
@@ -1318,9 +1438,18 @@ describe('OnMove MCP protocol adapter', () => {
         projectionTruncated: false
       }
     })
+    const compactToken = expectUuidRetrievalContinuation(compact) as string
+    expect(issueContinuation).toHaveBeenCalledTimes(1)
     expect(JSON.stringify(compact.structuredContent)).not.toContain('richText')
     expect((compact.structuredContent as { items: Array<Record<string, unknown>> }).items
       .every((item) => !('rank' in item))).toBe(true)
+
+    const continued = await client.callTool({
+      name: 'onmove.continue_retrieval',
+      arguments: { continuationToken: compactToken }
+    })
+    expect(continued.isError).not.toBe(true)
+    expectUuidRetrievalContinuation(continued)
   })
 
   it('separates exact hierarchy paths from durable ID reads for every addressable entity', async () => {
@@ -1548,6 +1677,37 @@ describe('OnMove MCP protocol adapter', () => {
     })
     expect(stale.isError).toBe(true)
     expect(JSON.stringify(stale)).toContain('SEARCH_CURSOR_STALE')
+  })
+
+  it('keeps specialized Thread discovery free of accidental calendar constraints', async () => {
+    const focus = database.domain.focuses.requireModel(1).toSnapshot()
+    const thread = database.domain.threads.create({
+      focusId: focus.id,
+      title: 'Long-lived thread with current evidence',
+      reviewFrequencyDays: 7
+    }).snapshot()
+
+    const found = await client.callTool({
+      name: 'onmove.search_threads',
+      arguments: { text: 'Long-lived thread with current evidence' }
+    })
+    expect(found.isError).not.toBe(true)
+    expect(found.structuredContent).toMatchObject({
+      records: [expect.objectContaining({
+        reference: { type: 'thread', id: thread.id },
+        field: 'title'
+      })]
+    })
+
+    const staleClientShape = await client.callTool({
+      name: 'onmove.search_threads',
+      arguments: {
+        text: 'Long-lived thread with current evidence',
+        createdAt: { from: '2026-08-31', to: '2026-08-31' }
+      }
+    })
+    expect(staleClientShape.isError).toBe(true)
+    expect(JSON.stringify(staleClientShape)).toContain('createdAt')
   })
 
   it.each([
@@ -2518,14 +2678,12 @@ describe('OnMove MCP protocol adapter', () => {
         lifecycle: expect.objectContaining({ effective: 'current', closure: null })
       })],
       hasMore: true,
-      continuationToken: expect.stringMatching(/^onmove-retrieval-v2\./u),
+      continuationToken: expect.stringMatching(UUID_CONTINUATION_PATTERN),
       appliedQuery: {
         lifecycle: { mode: 'current', terminalStatuses: ['done', 'cancelled'] }
       }
     })
-    const retrievalToken = (firstRetrievalPage.structuredContent as {
-      continuationToken: string
-    }).continuationToken
+    const retrievalToken = expectUuidRetrievalContinuation(firstRetrievalPage) as string
 
     database.mcpSettings.update({ includeClosedByDefault: true })
     const continuedRetrieval = await client.callTool({
@@ -2541,6 +2699,7 @@ describe('OnMove MCP protocol adapter', () => {
         lifecycle: { mode: 'current', terminalStatuses: ['done', 'cancelled'] }
       }
     })
+    expectUuidRetrievalContinuation(continuedRetrieval)
     const continuedRetrievalIds = (continuedRetrieval.structuredContent as {
       items: Array<{ reference: { id: number } }>
     }).items.map(({ reference }) => reference.id)

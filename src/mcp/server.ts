@@ -68,6 +68,8 @@ export interface OnMoveMcpServerOptions {
   rejectedCallTracker?: RejectedCallTracker
   /** Shared UUID handles for search cursors across protocol connections. */
   searchContinuationStore?: SearchContinuationStore
+  /** Shared UUID handles for retrieval cursors across protocol connections. */
+  retrievalContinuationStore?: RetrievalContinuationStore
 }
 
 export interface SearchScopeInput {
@@ -278,7 +280,7 @@ interface SearchContinuationPayload {
 
 const SEARCH_CONTINUATION_PREFIX = 'onmove-search-v5.'
 const SEARCH_CONTINUATION_SECRET = randomBytes(32)
-const SEARCH_CONTINUATION_HANDLE_PATTERN =
+const CONTINUATION_HANDLE_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
 const SEARCH_CONTINUATION_TTL_MS = 3 * 60 * 60 * 1_000
 const SEARCH_CONTINUATION_MAXIMUM_ENTRIES = 1_024
@@ -330,7 +332,7 @@ export class SearchContinuationStore {
 
   resolve(value: string): string {
     const handle = value.replace(/\s/gu, '').toLocaleLowerCase()
-    if (!SEARCH_CONTINUATION_HANDLE_PATTERN.test(handle)) {
+    if (!CONTINUATION_HANDLE_PATTERN.test(handle)) {
       throw new TypeError(
         'SEARCH_CONTINUATION_INVALID: continuationToken must be the UUID handle returned by ' +
         'the preceding OnMove search page. Copy only that handle; inserted whitespace is tolerated.'
@@ -458,6 +460,9 @@ interface RetrievalContinuationPayload {
 }
 
 const RETRIEVAL_CONTINUATION_PREFIX = 'onmove-retrieval-v2.'
+const RETRIEVAL_CONTINUATION_TTL_MS = 3 * 60 * 60 * 1_000
+const RETRIEVAL_CONTINUATION_MAXIMUM_ENTRIES = 1_024
+const CONTINUATION_HANDLE_SIZE_PLACEHOLDER = '00000000-0000-4000-8000-000000000000'
 
 function encodeRetrievalContinuation(payload: RetrievalContinuationPayload): string {
   const { lifecycle, ...request } = payload.request
@@ -521,6 +526,80 @@ function decodeRetrievalContinuation(
     return parsed as RetrievalContinuationPayload
   } catch {
     throw new TypeError('continuationToken is invalid or incompatible; start a new retrieval')
+  }
+}
+
+export type RetrievalContinuationStoreOptions = SearchContinuationStoreOptions
+
+/**
+ * Keeps signed retrieval state inside the running endpoint and exposes only
+ * short UUID handles. Its nonce is shared with every protocol connection that
+ * shares this store, and both disappear when the endpoint restarts.
+ */
+export class RetrievalContinuationStore {
+  private readonly entries = new Map<string, SearchContinuationStoreEntry>()
+  private readonly ttlMs: number
+  private readonly maximumEntries: number
+  private readonly now: () => number
+  private readonly nonce = randomBytes(16).toString('base64url')
+
+  constructor(options: RetrievalContinuationStoreOptions = {}) {
+    this.ttlMs = options.ttlMs ?? RETRIEVAL_CONTINUATION_TTL_MS
+    this.maximumEntries = options.maximumEntries ?? RETRIEVAL_CONTINUATION_MAXIMUM_ENTRIES
+    this.now = options.now ?? Date.now
+    if (!Number.isSafeInteger(this.ttlMs) || this.ttlMs < 1) {
+      throw new TypeError('Retrieval continuation ttlMs must be a positive integer')
+    }
+    if (!Number.isSafeInteger(this.maximumEntries) || this.maximumEntries < 1) {
+      throw new TypeError('Retrieval continuation maximumEntries must be a positive integer')
+    }
+  }
+
+  serverNonce(): string {
+    return this.nonce
+  }
+
+  issue(signedToken: string): string {
+    const now = this.now()
+    this.prune(now)
+    const handle = randomUUID()
+    this.entries.set(handle, { signedToken, expiresAt: now + this.ttlMs })
+    while (this.entries.size > this.maximumEntries) {
+      this.entries.delete(this.entries.keys().next().value as string)
+    }
+    return handle
+  }
+
+  resolve(value: string): string {
+    const handle = value.replace(/\s/gu, '').toLocaleLowerCase()
+    if (!CONTINUATION_HANDLE_PATTERN.test(handle)) {
+      throw new TypeError(
+        'RETRIEVAL_CONTINUATION_INVALID: continuationToken must be the UUID handle returned by ' +
+        'the preceding OnMove retrieval page. Copy only that handle; inserted whitespace is tolerated.'
+      )
+    }
+    const entry = this.entries.get(handle)
+    if (!entry) {
+      throw new TypeError(
+        'RETRIEVAL_CONTINUATION_EXPIRED_OR_UNKNOWN: This UUID handle is unavailable. Retrieval ' +
+        'continuation handles expire after 3 hours and when the OnMove MCP server restarts. ' +
+        'Restart onmove.retrieve with its original criteria.'
+      )
+    }
+    if (entry.expiresAt <= this.now()) {
+      this.entries.delete(handle)
+      throw new TypeError(
+        'RETRIEVAL_CONTINUATION_EXPIRED: This UUID handle expired after 3 hours. Restart ' +
+        'onmove.retrieve with its original criteria.'
+      )
+    }
+    return entry.signedToken
+  }
+
+  private prune(now: number): void {
+    for (const [handle, entry] of this.entries) {
+      if (entry.expiresAt <= now) this.entries.delete(handle)
+    }
   }
 }
 
@@ -2146,12 +2225,21 @@ export function createOnMoveMcpServer(
     lifecycle,
     configuredDefaultLifecycleMode()
   )
-  const retrievalServerNonce = randomBytes(16).toString('base64url')
   const searchContinuationStore = options.searchContinuationStore ?? new SearchContinuationStore()
   const issueSearchContinuation = (payload: SearchContinuationPayload): string =>
     searchContinuationStore.issue(encodeSearchContinuation(payload))
   const resolveSearchContinuation = (handle: string): SearchContinuationPayload =>
     decodeSearchContinuation(searchContinuationStore.resolve(handle))
+  const retrievalContinuationStore = options.retrievalContinuationStore ??
+    new RetrievalContinuationStore()
+  const retrievalServerNonce = retrievalContinuationStore.serverNonce()
+  const issueRetrievalContinuation = (payload: RetrievalContinuationPayload): string =>
+    retrievalContinuationStore.issue(encodeRetrievalContinuation(payload))
+  const resolveRetrievalContinuation = (handle: string): RetrievalContinuationPayload =>
+    decodeRetrievalContinuation(
+      retrievalContinuationStore.resolve(handle),
+      retrievalServerNonce
+    )
   const retrievalEnvironment = () => {
     const settings = database.mcpSettings.get()
     const access = {
@@ -2773,6 +2861,19 @@ export function createOnMoveMcpServer(
     page: searchPageSchema
   })
 
+  // Thread discovery is intentionally relevance-only. A Thread is a durable
+  // container whose creation or modification day usually has no relationship
+  // to the evidence an agent is trying to locate. Keeping calendar inputs out
+  // of this specialized schema prevents accidental empty-result constraints;
+  // the generic onmove.search remains available for intentional date queries.
+  const threadEntitySearchSchema = entitySearchSchema.omit({
+    date: true,
+    createdAt: true,
+    updatedAt: true,
+    timeZone: true,
+    sort: true
+  })
+
   const globalSearchSchema = z.strictObject({
     text: z.string().min(1).max(1_000).nullable().optional().describe(
       'Non-null uses full-text search. Null or omitted is queryless list mode and returns records selected by kinds, scope, and date filters.'
@@ -3113,7 +3214,7 @@ export function createOnMoveMcpServer(
     }),
     lifecycleCoverage: lifecycleCoverageOutputSchema,
     hasMore: z.boolean(),
-    continuationToken: z.string().nullable(),
+    continuationToken: z.string().uuid().nullable(),
     appliedQuery: retrievalAppliedQueryOutputSchema,
     budget: searchBudgetOutputSchema,
     diagnostics: diagnosticsOutputSchema
@@ -3307,12 +3408,13 @@ export function createOnMoveMcpServer(
     ['onmove.search_subjects', 'Search OnMove subjects', 'subject']
   ] as const
   for (const [toolName, title, kind] of entitySearchTools) {
+    const inputSchema = kind === 'thread' ? threadEntitySearchSchema : entitySearchSchema
     server.registerTool(
       toolName,
       {
         title,
-        description: `Search only visible ${kind} records by text. ${kind === 'note' ? 'Matches Note title plus legacy plain/Markdown and current rich-text content.' : ''} ${kind === 'todo' ? 'A current Todo must be open and have an entirely active/paused owner hierarchy. Use lifecycle.mode=closed or all only for intentionally historical Todo discovery. Use returned Todo IDs with Todo mutation tools.' : kind === 'subject' ? 'Use the canonical Subject ID with Subject-scoped search, review_subject, or resolve_work_target.' : `Use get_${kind}_by_id when an ID is known${['focus', 'thread', 'commitment', 'routine', 'note'].includes(kind) ? ` and get_${kind}_by_path for an exact hierarchy path` : ''}.`} This does not search other entity kinds. An omitted lifecycle follows the user's Include closed work in MCP results setting: current active/paused lineage when off, or all current and closed work when on. An explicit lifecycle.mode overrides the setting. Every result reports lifecycle.closure.explicit and lifecycle.closure.inherited provenance, and lifecycleCoverage reports authorized excluded history without silently widening. If the user asks for evidence "about" a Thread or Focus rather than its title, use onmove.search without narrowing kinds so descendant Notes and Updates can match. Every record retains the exact matched field, complete coded parent path, containing Thread, and recommended write target. Search returns only bounded match snippets—never lossless rich text. Read the selected ID for Markdown; request includeRichText=true there only immediately before a full structural replacement. If hasMore=true, call onmove.continue_search with only the returned token; this initial search tool does not accept continuationToken.`,
-        inputSchema: entitySearchSchema,
+        description: `Search only visible ${kind} records by text. ${kind === 'thread' ? 'Thread discovery is relevance-only and intentionally has no date, createdAt, updatedAt, timeZone, or date-sort inputs: a Thread may have been created long before its current evidence. Do not constrain Thread discovery to the day mentioned in the user request. Use generic onmove.search only when the user explicitly asks to filter records by a date.' : ''} ${kind === 'note' ? 'Matches Note title plus legacy plain/Markdown and current rich-text content.' : ''} ${kind === 'todo' ? 'A current Todo must be open and have an entirely active/paused owner hierarchy. Use lifecycle.mode=closed or all only for intentionally historical Todo discovery. Use returned Todo IDs with Todo mutation tools.' : kind === 'subject' ? 'Use the canonical Subject ID with Subject-scoped search, review_subject, or resolve_work_target.' : `Use get_${kind}_by_id when an ID is known${['focus', 'thread', 'commitment', 'routine', 'note'].includes(kind) ? ` and get_${kind}_by_path for an exact hierarchy path` : ''}.`} This does not search other entity kinds. An omitted lifecycle follows the user's Include closed work in MCP results setting: current active/paused lineage when off, or all current and closed work when on. An explicit lifecycle.mode overrides the setting. Every result reports lifecycle.closure.explicit and lifecycle.closure.inherited provenance, and lifecycleCoverage reports authorized excluded history without silently widening. If the user asks for evidence "about" a Thread or Focus rather than its title, use onmove.search without narrowing kinds so descendant Notes and Updates can match. Every record retains the exact matched field, complete coded parent path, containing Thread, and recommended write target. Search returns only bounded match snippets—never lossless rich text. Read the selected ID for Markdown; request includeRichText=true there only immediately before a full structural replacement. If hasMore=true, call onmove.continue_search with only the returned token; this initial search tool does not accept continuationToken.`,
+        inputSchema,
         outputSchema: entitySearchOutputSchema,
         annotations: { readOnlyHint: true }
       },
@@ -3840,7 +3942,7 @@ export function createOnMoveMcpServer(
       resultCount: items.length
     })
     const continuationFor = (cursor: RetrievalCursor | null): string | null => cursor
-      ? encodeRetrievalContinuation({
+      ? issueRetrievalContinuation({
           version: 2,
           serverNonce: retrievalServerNonce,
           request,
@@ -3855,7 +3957,7 @@ export function createOnMoveMcpServer(
           accessFingerprint: environment.accessFingerprint
         })
       : null
-    const response = (): Record<string, unknown> => {
+    const response = (issueContinuation = false): Record<string, unknown> => {
       const hasMore = retrieved.hasMore || recordsTruncated
       const lastCursor = itemCursors.at(-1) ?? null
       if (hasMore && !lastCursor) {
@@ -3881,7 +3983,11 @@ export function createOnMoveMcpServer(
         },
         lifecycleCoverage: coverage,
         hasMore,
-        continuationToken: hasMore ? continuationFor(lastCursor) : null,
+        continuationToken: hasMore
+          ? issueContinuation
+            ? continuationFor(lastCursor)
+            : CONTINUATION_HANDLE_SIZE_PLACEHOLDER
+          : null,
         appliedQuery: {
           text: request.text,
           context: request.context,
@@ -3922,10 +4028,10 @@ export function createOnMoveMcpServer(
     }
     if (recordsTruncated) {
       warnings.push(
-        'Page shortened for page.maxBytes; continue with the signed token.'
+        'Page shortened for page.maxBytes; continue with the UUID continuation handle.'
       )
     }
-    const finalResponse = response()
+    const finalResponse = response(true)
     const budget = finalResponse.budget as Record<string, unknown>
     for (let pass = 0; pass < 4; pass += 1) {
       budget.structuredBytes = Buffer.byteLength(JSON.stringify({
@@ -3958,7 +4064,8 @@ export function createOnMoveMcpServer(
         'while lifecycleCoverage reports authorized excluded history and never widens ' +
         'silently. ' +
         'The result is provider-neutral and reports the requested/applied strategy, fallback, index ' +
-        'freshness, complete hierarchy provenance, and a signed continuationToken. Retrieval returns ' +
+        'freshness and complete hierarchy provenance. When another page exists, it returns a short ' +
+        'UUID continuationToken while the complete signed state remains in the running app for 3 hours. Retrieval returns ' +
         'bounded excerpts only, never lossless rich text. Call onmove.continue_retrieval for another page.',
       inputSchema: retrievalInputSchema,
       outputSchema: retrievalOutputSchema,
@@ -3972,13 +4079,15 @@ export function createOnMoveMcpServer(
     {
       title: 'Continue an OnMove retrieval',
       description:
-        'Fetch exactly one next retrieval page. Pass only the exact non-null signed token returned ' +
-        'by onmove.retrieve or this tool. The token preserves context, filters, strategy, byte ' +
-        'budget, lifecycle policy, access fingerprint, retrieval mode, index generations, and stable cursor. ' +
-        'Do not repeat or modify the retrieval request.',
+        'Fetch exactly one next retrieval page. Pass only the non-null UUID continuationToken ' +
+        'returned by onmove.retrieve or this tool. The running app keeps the complete signed context, ' +
+        'filters, strategy, byte budget, lifecycle policy, access fingerprint, retrieval mode, index ' +
+        'generations, and stable cursor for 3 hours. Copy the UUID; inserted whitespace is tolerated. ' +
+        'Never invent a UUID. Do not repeat or modify the retrieval request. Restart onmove.retrieve ' +
+        'if the handle expired or the MCP server restarted.',
       inputSchema: z.strictObject({
-        continuationToken: z.string().min(1).describe(
-          'The exact opaque token returned by an OnMove retrieval response with hasMore=true.'
+        continuationToken: z.string().min(1).max(4_096).describe(
+          'The exact UUID handle returned by an OnMove retrieval response with hasMore=true. It expires after 3 hours or an MCP server restart. Copy only this value; inserted whitespace is tolerated.'
         )
       }),
       outputSchema: retrievalOutputSchema,
@@ -3986,7 +4095,7 @@ export function createOnMoveMcpServer(
     },
     async ({ continuationToken }) => runRetrieval(
       null,
-      decodeRetrievalContinuation(continuationToken, retrievalServerNonce)
+      resolveRetrievalContinuation(continuationToken)
     )
   )
 

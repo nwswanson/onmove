@@ -236,6 +236,9 @@ with its criteria. A new original-search call is required to intentionally chang
 `subject`, and the explicitly requested live `current` context.
 
 Search always returns records. Snippets and queryless previews are capped at 200 characters.
+Specialized `onmove.search_threads` remains relevance-only: its strict schema omits semantic,
+creation, and modification date ranges, timezone, and date-oriented sorting. Thread creation time is
+not evidence time. Intentional date-filtered record discovery uses generic `onmove.search` instead.
 Optional projections are trimmed before record pages to enforce a complete MCP-result byte budget
 (text plus structuredContent), with an 8 KiB minimum. Compact search defaults to ten records, caps
 pages at 25, and returns explicit `hasMore`. Independent completeness metadata prevents a complete
