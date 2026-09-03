@@ -75,6 +75,28 @@ describe('RichTextEditorWithHistory', () => {
     expect(screen.queryByRole('dialog', { name: 'Text history' })).not.toBeInTheDocument()
   })
 
+  it('applies a first restore when the external synchronization revision is one', async () => {
+    const richText = installHistoryApi()
+    const user = userEvent.setup()
+    render(
+      <RichTextEditorWithHistory
+        historyReference={reference}
+        value="Current text"
+        externalRevision={1}
+        ariaLabel="Document"
+        onChange={() => undefined}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'View history' }))
+    await user.click(await screen.findByRole('button', { name: /Before a large edit/ }))
+    await user.click(screen.getByRole('button', { name: 'Restore this version' }))
+
+    await waitFor(() => expect(richText.restoreHistory).toHaveBeenCalledWith(reference, 2))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Document' }))
+      .toHaveTextContent('Earlier text'))
+  })
+
   it('flushes throttled content before loading history', async () => {
     const richText = installHistoryApi()
     const flush = vi.fn().mockResolvedValue(undefined)

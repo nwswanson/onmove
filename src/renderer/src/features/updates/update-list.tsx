@@ -56,6 +56,13 @@ function UpdateEditorCard({
     isEqual: updateDraftsEqual,
     onSave
   })
+  // An external observation and its revision arrive atomically in `item`.
+  // Pairing the new revision with the mirrored draft from the prior render
+  // makes Lexical consume that revision against stale text and stay one edit
+  // behind. Local-only/throttled editors continue to use their draft.
+  const editorObservation = item.externalRevision === undefined
+    ? draft.observation
+    : item.observation
 
   useEffect(() => {
     const nextDraft = {
@@ -159,7 +166,7 @@ function UpdateEditorCard({
             id={`${fieldPrefix}-observation`}
             ariaLabel="Update observation"
             placeholder="What changed?"
-            value={draft.observation}
+            value={editorObservation}
             externalRevision={item.externalRevision}
             autoFocus={autoFocus}
             onChange={updateObservation}
@@ -171,7 +178,7 @@ function UpdateEditorCard({
             id={`${fieldPrefix}-observation`}
             ariaLabel="Update observation"
             placeholder="What changed?"
-            value={draft.observation}
+            value={editorObservation}
             externalRevision={item.externalRevision}
             autoFocus={autoFocus}
             onChange={updateObservation}

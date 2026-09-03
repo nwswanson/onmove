@@ -737,7 +737,7 @@ export function useFocusWorkspaceModel({
     commitmentsFor,
     routinesFor,
     descriptionValue: descriptionDocument.value,
-    descriptionRevision: descriptionDocument.revision,
+    descriptionRevision: descriptionDocument.externalRevision,
     saveDescription: descriptionDocument.save,
     openDescriptionInWindow: descriptionDocument.openInWindow,
     addFocusScopeSubject,

@@ -2506,10 +2506,28 @@ test('creates, edits, reloads, and deletes a persisted focus across Electron lau
     await updateComposer.getByLabel('Update observation').fill('Sprint review completed')
     await updateComposer.getByLabel('Update state').selectOption('green')
     await updateComposer.getByRole('button', { name: 'Add update' }).click()
+    const threadUpdateObservation = threadUpdates.getByLabel('Update observation')
+    await expect(threadUpdateObservation).toContainText('Sprint review completed')
+    const updateDocumentWindowPromise = application.waitForEvent('window')
+    await threadUpdates.getByRole('button', { name: 'Open in new window' }).click()
+    const updateDocumentWindow = await updateDocumentWindowPromise
+    const detachedUpdateEditor = updateDocumentWindow.getByRole('textbox', {
+      name: 'Document content'
+    })
+    await expect(detachedUpdateEditor).toContainText('Sprint review completed')
+    let synchronizedPrefix = ''
+    for (const character of 'synced ') {
+      synchronizedPrefix += character
+      await detachedUpdateEditor.type(character)
+      const synchronizedUpdate = `${synchronizedPrefix}Sprint review completed`
+      await expect(detachedUpdateEditor).toHaveText(synchronizedUpdate)
+      await expect(threadUpdateObservation).toHaveText(synchronizedUpdate)
+    }
+    await updateDocumentWindow.close()
     await expect.poll(() => storedThreadUpdate()?.state, { timeout: 3_000 }).toBe('green')
     await expect
       .poll(() => storedThreadUpdate()?.observation, { timeout: 3_000 })
-      .toContain('Sprint review completed')
+      .toContain('synced Sprint review completed')
     const threadUpdateDate = storedThreadUpdate()!.date
     await expect(window.getByLabel('Thread last reviewed')).toContainText(
       `Last reviewed · ${threadUpdateDate}`

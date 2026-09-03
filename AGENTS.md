@@ -793,7 +793,11 @@ foreground colors and do not rely on color alone to communicate selection or sta
   documents. Save each changed value before returning to its editor, increment the live field's
   synchronization revision, and broadcast that committed revision across renderer windows.
   Dedicated document windows use the same sandboxed preload contract and SQLite path; they must not
-  own a second cache or delayed persistence queue.
+  own a second cache or delayed persistence queue. Keep an editor's external-synchronization token
+  separate from the durable document revision: local synchronous saves update the snapshot without
+  making Lexical reconcile its own keystrokes as remote edits. Initial hydration must still apply a
+  non-empty revision-zero document, and cross-window receivers must present each broadcast value
+  atomically with its matching external token rather than pairing it with a prior local draft.
 - Route every existing rich-text mutation—including aggregate update helpers and MCP writes—through
   `RichTextDocumentRepository`; Routine attestation evidence notes must call the same underlying
   `RichTextHistoryRepository` inside their finalization-aware transaction. The history service owns

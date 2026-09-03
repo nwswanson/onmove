@@ -132,6 +132,40 @@ describe('UpdateList', () => {
     await waitFor(() => expect(scrollIntoView.mock.instances).toContain(card))
   })
 
+  it('applies an externally committed observation with its matching revision', async () => {
+    const item = {
+      id: '20',
+      date: '2026-08-01',
+      observation: 'a',
+      state: 'green',
+      sensitive: false,
+      externalRevision: 1
+    }
+    const props = {
+      ariaLabel: 'Externally synchronized updates',
+      stateOptions: states,
+      defaultDate: '2026-08-07',
+      defaultState: 'none',
+      onUpdate: vi.fn(),
+      onObservationChange: vi.fn(),
+      onDelete: vi.fn()
+    } as const
+    const rendered = render(<UpdateList {...props} items={[item]} />)
+    const observation = screen.getByLabelText('Update observation')
+
+    expect(observation).toHaveTextContent('a')
+    rendered.rerender(<UpdateList
+      {...props}
+      items={[{ ...item, observation: 'ab', externalRevision: 2 }]}
+    />)
+    await waitFor(() => expect(observation).toHaveTextContent('ab'))
+    rendered.rerender(<UpdateList
+      {...props}
+      items={[{ ...item, observation: 'abc', externalRevision: 3 }]}
+    />)
+    await waitFor(() => expect(observation).toHaveTextContent('abc'))
+  })
+
   it('owns choice-based immediate creation without exposing a second create step', async () => {
     const onCreateFor = vi.fn().mockResolvedValue(undefined)
     const user = userEvent.setup()

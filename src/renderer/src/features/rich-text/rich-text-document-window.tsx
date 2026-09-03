@@ -119,7 +119,7 @@ export function RichTextDocumentWindow({
           className="min-h-0 flex-1"
           fillHeight
           value={editor.value}
-          externalRevision={editor.revision}
+          externalRevision={editor.externalRevision}
           onChange={editor.save}
         />
         {editor.error ? (

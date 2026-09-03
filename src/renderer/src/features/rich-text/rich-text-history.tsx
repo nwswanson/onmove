@@ -243,7 +243,8 @@ export const RichTextEditorWithHistory = forwardRef<
   const [historyOpen, setHistoryOpen] = useState(false)
   const [restored, setRestored] = useState<{
     value: string
-    token: number
+    token: string
+    sequence: number
     baseRevision: typeof externalRevision
     baseValue: string
   } | null>(null)
@@ -272,12 +273,16 @@ export const RichTextEditorWithHistory = forwardRef<
           reference={historyReference}
           open={historyOpen}
           onClose={() => setHistoryOpen(false)}
-          onRestored={(nextValue) => setRestored((current) => ({
-            value: nextValue,
-            token: (current?.token ?? 0) + 1,
-            baseRevision: externalRevision,
-            baseValue: value
-          }))}
+          onRestored={(nextValue) => setRestored((current) => {
+            const sequence = (current?.sequence ?? 0) + 1
+            return {
+              value: nextValue,
+              token: `onmove-history-restore:${sequence}`,
+              sequence,
+              baseRevision: externalRevision,
+              baseValue: value
+            }
+          })}
         />
       ) : null}
     </>

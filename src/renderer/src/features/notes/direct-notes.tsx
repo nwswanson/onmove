@@ -41,7 +41,7 @@ export function NoteEditor({
         ariaLabel={`${note.title} note`}
         placeholder="Write a note…"
         value={document.value}
-        externalRevision={document.revision}
+        externalRevision={document.externalRevision}
         fillHeight
         onChange={(value) => {
           document.save(value)
