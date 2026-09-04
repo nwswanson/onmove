@@ -870,6 +870,15 @@ export interface UpdateSnapshot {
   updatedAt: string
 }
 
+/**
+ * A committed external domain mutation delivered from the main process.
+ * Specific snapshots let an open receiver reconcile immediately; `refresh`
+ * remains the safe fallback for mutations without a narrow projection.
+ */
+export type DomainChangeSnapshot =
+  | { source: 'mcp'; kind: 'refresh' }
+  | { source: 'mcp'; kind: 'update-created'; update: UpdateSnapshot }
+
 /** Exact Subject cell represented by one review-queue entry. */
 export interface ReviewScopeCellSnapshot extends UpdateScopeCell {
   subject: SubjectSnapshot
@@ -1716,7 +1725,7 @@ export interface OnMoveApi {
   onSensitiveContentVisibilityChanged: (listener: (hidden: boolean) => void) => () => void
   onNavigationBadgesInvalidated: (listener: () => void) => () => void
   onRoutinesChanged: (listener: () => void) => () => void
-  onDomainChanged: (listener: () => void) => () => void
+  onDomainChanged: (listener: (change: DomainChangeSnapshot) => void) => () => void
   onOpenEntityLink: (listener: (target: OnMoveEntityLinkTarget) => void) => () => void
   recordGreeting: () => Promise<AppState>
   showDataFolder: () => Promise<void>

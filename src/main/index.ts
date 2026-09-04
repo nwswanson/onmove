@@ -13,6 +13,7 @@ import { OnMoveMcpRuntime } from '../mcp/live-server'
 import { parseOnMoveEntityUrl, ONMOVE_URL_SCHEME } from '../shared/onmove-url'
 import {
   IPC_EVENTS,
+  type DomainChangeSnapshot,
   type EnhancedRetrievalStatusSnapshot,
   type McpSettingsSnapshot,
   type NavigationPinSnapshot,
@@ -240,10 +241,10 @@ function broadcastRoutinesChanged(): void {
   }
 }
 
-function broadcastDomainChanged(): void {
+function broadcastDomainChanged(change: DomainChangeSnapshot): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
-      window.webContents.send(IPC_EVENTS.domainChanged)
+      window.webContents.send(IPC_EVENTS.domainChanged, change)
     }
   }
   invalidateNavigationBadges()

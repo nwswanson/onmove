@@ -73,6 +73,27 @@ describe('running-application MCP server', () => {
       ])
       expect(changed).toHaveBeenCalledOnce()
 
+      changed.mockClear()
+      const createdUpdate = await client.callTool({
+        name: 'onmove.create_update',
+        arguments: {
+          parent: { type: 'thread', id: thread.id },
+          attribution: { mode: 'unscoped' },
+          state: 'green'
+        }
+      })
+      expect(createdUpdate.isError).not.toBe(true)
+      const createdUpdateId = (createdUpdate.structuredContent as { id: number }).id
+      expect(changed).toHaveBeenCalledWith({
+        source: 'mcp',
+        kind: 'update-created',
+        update: expect.objectContaining({
+          id: createdUpdateId,
+          parent: { type: 'thread', id: thread.id },
+          state: 'green'
+        })
+      })
+
       const note = database.domain.notes.list({ type: 'thread', id: thread.id })[0]
       changed.mockClear()
       const updatedNote = await client.callTool({

@@ -78,19 +78,21 @@ export function useUpdatesModel(
     ReadonlyMap<number, number>
   >(() => new Map())
   const latestObservationRevisionsRef = useRef(new Map<number, number>())
+  const refreshRequestRef = useRef(0)
 
   useEffect(() => {
     let active = true
+    const requestId = ++refreshRequestRef.current
     latestObservationRevisionsRef.current.clear()
     window.onmove.domain.listUpdates(updateParent(parentType, parentId)).then(
       (nextUpdates) => {
-        if (!active) return
+        if (!active || requestId !== refreshRequestRef.current) return
         setExternalObservationRevisions(new Map())
         setUpdates(sortUpdates(nextUpdates))
         setLoading(false)
       },
       () => {
-        if (!active) return
+        if (!active || requestId !== refreshRequestRef.current) return
         setExternalObservationRevisions(new Map())
         setLoadError('Updates could not be loaded.')
         setLoading(false)
@@ -138,8 +140,23 @@ export function useUpdatesModel(
       : sortUpdates([...current, created]))
   }), [parentId, parentType])
 
-  useEffect(() => window.onmove.onDomainChanged(() => {
+  useEffect(() => window.onmove.onDomainChanged((change) => {
+    if (change.kind === 'update-created') {
+      const created = change.update
+      if (created.parent.type !== parentType || created.parent.id !== parentId) return
+      // Apply the committed snapshot before crossing IPC again. Besides making
+      // MCP writes visible immediately, incrementing the request invalidates
+      // any older list response that was already in flight.
+      setRevealUpdateId(created.id)
+      setUpdates((current) => current.some(({ id }) => id === created.id)
+        ? sortUpdates(current.map((update) => update.id === created.id ? created : update))
+        : sortUpdates([...current, created]))
+      setLoading(false)
+      setLoadError(null)
+    }
+    const requestId = ++refreshRequestRef.current
     void window.onmove.domain.listUpdates(updateParent(parentType, parentId)).then((next) => {
+      if (requestId !== refreshRequestRef.current) return
       setUpdates(sortUpdates(next))
       setLoadError(null)
     }).catch(() => undefined)

@@ -1014,6 +1014,13 @@ foreground colors and do not rely on color alone to communicate selection or sta
   invalidate defensively after every successful write. Preserve regressions through both
   `search_notes` and cross-kind `search(kinds:["note"])` so live MCP edits become discoverable
   without restarting the app.
+- Broadcast every committed MCP mutation to all open renderers through the typed domain-change
+  contract. A created Update must carry its canonical stored `UpdateSnapshot`—never the MCP
+  Markdown projection—so a mounted direct-Updates receiver can insert it synchronously before any
+  follow-up IPC read. Update list models must sequence their persistence refreshes and ignore older
+  in-flight responses; a pre-mutation list response may never overwrite a newer pushed snapshot.
+  Reconcile from SQLite in the background after the immediate insertion so the push remains an
+  acceleration rather than a second authority.
 - Make every primary search hit independently actionable. It always retains the exact matched
   entity and field, its containing Thread when one exists, a complete root-to-record path with a
   canonical code on every segment, and a `recommendedWriteTarget`. This primary hierarchy is not

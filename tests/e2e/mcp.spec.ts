@@ -560,6 +560,26 @@ test('serves MCP from the running app and immediately refreshes its open windows
       })])
     })
 
+    await window.getByRole('button', { name: 'MCP launch', exact: true }).click()
+    await window.getByRole('button', { name: 'Edited in the live app', exact: true }).click()
+    const visibleThreadUpdates = window.getByRole('list', { name: 'Thread updates' })
+    await expect(visibleThreadUpdates).toBeVisible()
+
+    const liveCreatedUpdate = await client.callTool({
+      name: 'onmove.create_update',
+      arguments: {
+        parent: { type: 'thread', id: thread.id },
+        attribution: { mode: 'unscoped' },
+        richText: richText('Created through MCP while this Thread is open'),
+        state: 'green'
+      }
+    })
+    expect(liveCreatedUpdate.isError).not.toBe(true)
+    await expect(visibleThreadUpdates).toContainText(
+      'Created through MCP while this Thread is open',
+      { timeout: 5_000 }
+    )
+
     const created = await client.callTool({
       name: 'onmove.create_todo',
       arguments: {

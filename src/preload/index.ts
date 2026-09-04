@@ -3,6 +3,7 @@ import {
   IPC_CHANNELS,
   IPC_EVENTS,
   IPC_SYNC_CHANNELS,
+  type DomainChangeSnapshot,
   type OnMoveApi,
   type OnMoveEntityLinkTarget,
   type RichTextDocumentSnapshot
@@ -43,7 +44,10 @@ const api: OnMoveApi = {
     return () => ipcRenderer.removeListener(IPC_EVENTS.routinesChanged, handler)
   },
   onDomainChanged: (listener) => {
-    const handler = (): void => listener()
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      change: DomainChangeSnapshot
+    ): void => listener(change)
     ipcRenderer.on(IPC_EVENTS.domainChanged, handler)
     return () => ipcRenderer.removeListener(IPC_EVENTS.domainChanged, handler)
   },

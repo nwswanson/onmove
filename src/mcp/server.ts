@@ -37,6 +37,7 @@ import type {
   RetrievalRequest
 } from '../main/application/retrieval-service'
 import type {
+  DomainChangeSnapshot,
   McpRetrievalMode,
   McpUiContextSnapshot,
   RichTextDocumentSnapshot
@@ -59,7 +60,7 @@ import {
 
 export interface OnMoveMcpServerOptions {
   /** Called after a committed MCP mutation so the live application can refresh its windows. */
-  onMutation?: () => void
+  onMutation?: (change: DomainChangeSnapshot) => void
   /** Called with committed rich-text state so open editors can apply an external revision. */
   onRichTextMutation?: (document: RichTextDocumentSnapshot) => void
   /** Read only for an explicit scope.mode=current search; never an implicit default filter. */
@@ -2252,11 +2253,13 @@ export function createOnMoveMcpServer(
       .digest('base64url')
     return { access, accessFingerprint, retrievalMode: settings.retrievalMode }
   }
-  const notifyMutation = (): void => {
+  const notifyMutation = (
+    change: DomainChangeSnapshot = { source: 'mcp', kind: 'refresh' }
+  ): void => {
     // Source-table triggers already invalidate the projection. This explicit MCP boundary makes
     // that guarantee resilient if a future command writes through a new persistence path.
     database.queries.searchIndex.invalidate()
-    options.onMutation?.()
+    options.onMutation?.(change)
   }
   const rejectedCalls = options.rejectedCallTracker ?? new RejectedCallTracker()
   const rejected = (
@@ -4867,21 +4870,28 @@ export function createOnMoveMcpServer(
       }
       const subjectId = normalizedUpdateSubject(normalized)
       try {
-        return mutationResult(() => withUpdateRichTextWriteGuide(
-          database.commands.createUpdate(
-            {
-              parent: normalized.parent,
-              subjectId,
-              semanticPath: normalized.semanticPath,
-              date: normalized.date,
-              document: normalized.richText,
-              state: normalized.state,
-              sensitive: normalized.sensitive
-            },
-            policy(),
-            server.server.getClientVersion()?.name
-          )
-        ))
+        const created = database.commands.createUpdate(
+          {
+            parent: normalized.parent,
+            subjectId,
+            semanticPath: normalized.semanticPath,
+            date: normalized.date,
+            document: normalized.richText,
+            state: normalized.state,
+            sensitive: normalized.sensitive
+          },
+          policy(),
+          server.server.getClientVersion()?.name
+        )
+        const response = withUpdateRichTextWriteGuide(created)
+        notifyMutation({
+          source: 'mcp',
+          kind: 'update-created',
+          // The UI owns the stored rich-text envelope rather than the MCP
+          // Markdown projection returned to an agent.
+          update: database.domain.updates.requireModel(created.id).toSnapshot()
+        })
+        return result(response)
       } catch (error) {
         if (error instanceof SemanticTargetValidationError) {
           return semanticTargetErrorResult(error, 'onmove.create_update', { ...normalized })

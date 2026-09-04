@@ -6,6 +6,7 @@ import {
   toNodeHandler
 } from '@modelcontextprotocol/node'
 import type {
+  DomainChangeSnapshot,
   McpSettingsSnapshot,
   McpUiContextSnapshot,
   RichTextDocumentSnapshot,
@@ -42,7 +43,7 @@ export class OnMoveMcpHttpServer {
 
   constructor(
     private readonly database: AppDatabase,
-    private readonly onMutation: () => void,
+    private readonly onMutation: (change: DomainChangeSnapshot) => void,
     private readonly getUiContext: () => McpUiContextSnapshot = () => EMPTY_UI_CONTEXT,
     private readonly onRichTextMutation: (document: RichTextDocumentSnapshot) => void = () => {}
   ) {}
@@ -140,7 +141,7 @@ export class OnMoveMcpRuntime {
 
   constructor(
     private readonly database: AppDatabase,
-    onMutation: () => void,
+    onMutation: (change: DomainChangeSnapshot) => void,
     onRichTextMutation: (document: RichTextDocumentSnapshot) => void = () => {}
   ) {
     this.http = new OnMoveMcpHttpServer(
